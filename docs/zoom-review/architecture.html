@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Orbita — Zoom integration architecture</title>
+<style>
+  body{margin:0;background:#fff;font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:#1c1c28}
+  .wrap{width:1200px;height:780px;box-sizing:border-box;padding:28px 36px;position:relative}
+  h1{font-size:22px;margin:0 0 4px} .sub{color:#6b6b80;margin:0 0 18px;font-size:14px}
+  svg text{font-family:inherit}
+</style></head><body><div class="wrap">
+<h1>Orbita — Zoom integration architecture</h1>
+<p class="sub">General OAuth app (user-managed). No in-client app, no Meeting SDK, no bots joining meetings, no Cloud Recording API.</p>
+<svg width="1128" height="660" viewBox="0 0 1128 660" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6f72f2"/></marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2d8cff"/></marker>
+  </defs>
+  <style>
+    .box{fill:#f6f6fb;stroke:#d5d5e3;stroke-width:1.5;rx:14}
+    .srv{fill:#f1f1ff;stroke:#6f72f2;stroke-width:2}
+    .zm{fill:#eef6ff;stroke:#2d8cff;stroke-width:2}
+    .t{font-size:16px;font-weight:600} .s{font-size:13px;fill:#4a4a5e} .m{font-size:12.5px;fill:#4a4a5e}
+    .l{stroke:#6f72f2;stroke-width:2;fill:none} .lz{stroke:#2d8cff;stroke-width:2;fill:none}
+    .lab{font-size:12.5px;fill:#34346b}
+  </style>
+
+  <!-- User -->
+  <rect class="box" x="0" y="40" width="250" height="150" rx="14"/>
+  <text class="t" x="20" y="72">User</text>
+  <text class="s" x="20" y="98">Orbita web app / PWA</text>
+  <text class="s" x="20" y="118">getorbita.me/webapp</text>
+  <text class="s" x="20" y="146">Orbita Telegram mini app</text>
+  <text class="s" x="20" y="166">(same web app)</text>
+
+  <!-- Browser consent -->
+  <rect class="box" x="0" y="300" width="250" height="110" rx="14"/>
+  <text class="t" x="20" y="332">Browser tab</text>
+  <text class="s" x="20" y="358">Zoom OAuth consent</text>
+  <text class="s" x="20" y="378">(Authorization Code flow)</text>
+
+  <!-- Server -->
+  <rect class="srv" x="360" y="10" width="420" height="560" rx="16"/>
+  <text class="t" x="380" y="42">Orbita server (getorbita.me)</text>
+  <text class="s" x="380" y="64">Dedicated Linux server · nginx TLS 1.2+ → Uvicorn (localhost)</text>
+
+  <rect class="box" x="380" y="84" width="380" height="120" rx="12"/>
+  <text class="t" x="396" y="110">FastAPI app (usage_server.py)</text>
+  <text class="m" x="396" y="132">REST API for the web app · events CRUD</text>
+  <text class="m" x="396" y="152">/oauth/zoom/callback · /webhook/deauthorize</text>
+  <text class="m" x="396" y="172">Leo assistant (LLM tools call the same</text>
+  <text class="m" x="396" y="190">calendar functions)</text>
+
+  <rect class="box" x="380" y="220" width="380" height="140" rx="12"/>
+  <text class="t" x="396" y="246">Zoom modules</text>
+  <text class="m" x="396" y="268">zoom_oauth.py — code exchange, refresh, revoke</text>
+  <text class="m" x="396" y="288">zoom_api.py — create / list / update / delete</text>
+  <text class="m" x="396" y="308">           meetings, users/me</text>
+  <text class="m" x="396" y="328">zoom_webhook.py — URL validation (signature),</text>
+  <text class="m" x="396" y="348">           app_deauthorized → delete tokens</text>
+
+  <rect class="box" x="380" y="376" width="380" height="176" rx="12"/>
+  <text class="t" x="396" y="402">Storage (on the same server)</text>
+  <text class="m" x="396" y="426">Zoom OAuth tokens + account name/email:</text>
+  <text class="m" x="396" y="446">  per-user JSON files, permissions 600</text>
+  <text class="m" x="396" y="470">Events (SQLite): Zoom meeting ID + join link</text>
+  <text class="m" x="396" y="490">  of meetings created by Orbita</text>
+  <text class="m" x="396" y="514">OAuth state (CSRF): short-lived, 15 min</text>
+  <text class="m" x="396" y="538">Secrets: .env on server, not in git</text>
+
+  <!-- Zoom -->
+  <rect class="zm" x="880" y="40" width="248" height="300" rx="16"/>
+  <text class="t" x="900" y="72">Zoom</text>
+  <text class="s" x="900" y="100">OAuth 2.0</text>
+  <text class="m" x="900" y="120">zoom.us/oauth/authorize, /token,</text>
+  <text class="m" x="900" y="138">/revoke</text>
+  <text class="s" x="900" y="172">REST API v2</text>
+  <text class="m" x="900" y="192">POST /users/me/meetings</text>
+  <text class="m" x="900" y="210">GET /users/me/meetings</text>
+  <text class="m" x="900" y="228">PATCH /meetings/{id}</text>
+  <text class="m" x="900" y="246">DELETE /meetings/{id}</text>
+  <text class="m" x="900" y="264">GET /users/me</text>
+  <text class="s" x="900" y="298">Deauthorization notification</text>
+  <text class="m" x="900" y="318">app_deauthorized</text>
+
+  <!-- arrows -->
+  <path class="l" d="M250 115 H372" marker-end="url(#a)"/>
+  <text class="lab" x="262" y="106">HTTPS API</text>
+  <path class="l" d="M125 190 V292" marker-end="url(#a)"/>
+  <text class="lab" x="134" y="246">Connect Zoom</text>
+  <path class="lz" d="M125 410 V615 H1004 V348" marker-end="url(#g)"/>
+  <text class="lab" x="420" y="606" fill="#2d8cff">user signs in to Zoom and allows access → Zoom redirects to getorbita.me/oauth/zoom/callback</text>
+  <path class="lz" d="M760 270 H872" marker-end="url(#g)"/>
+  <text class="lab" x="772" y="262">HTTPS</text>
+  <text class="lab" x="772" y="290">Bearer token</text>
+  <path class="lz" d="M880 318 C 830 330, 800 340, 768 330" marker-end="url(#g)"/>
+  <text class="lab" x="788" y="360">signed webhook</text>
+</svg>
+</div></body></html>

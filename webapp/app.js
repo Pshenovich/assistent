@@ -9786,8 +9786,11 @@
       setSvcPill(stEl, on, on ? st.zoom_display_name || st.zoom_email || "Подключён" : "Не подключён");
       if (connectBtn) setHidden(connectBtn, on);
       setSvcConnectedUi("zoom", on);
-      setHidden(document.getElementById("profile-zoom-recordings-group"), !on);
-      if (on) await loadZoomRecordings();
+      // Записи — только с ботом записи (Vexa); без него про записи не говорим вовсе.
+      var recOn = !!settings.meeting_bot_available;
+      setHidden(document.getElementById("profile-zoom-free-hint"), !recOn);
+      setHidden(document.getElementById("profile-zoom-recordings-group"), !on || !recOn);
+      if (on && recOn) await loadZoomRecordings();
     } catch (e) {
       setSvcPill(stEl, false, "Не удалось проверить");
       if (err) {
