@@ -186,6 +186,19 @@ printf '%s' "$(_env_get USAGE_DASHBOARD_TOKEN)" > "$_DASH_SYNC_FILE"
 rm -f "$_DASH_SYNC_FILE"
 _ssh_retry "python3 /opt/assistant/scripts/sync_dashboard_token.py"
 
+# Настройки, которые ведём в локальном .env и переносим на сервер (пустые/отсутствующие не трогаем).
+ENV_SYNC_KEYS=(REVIEW_LOGIN_CODE ZOOM_OAUTH_SCOPE)
+_ENV_SYNC_FILE="$(mktemp)"
+for _k in "${ENV_SYNC_KEYS[@]}"; do
+  _v="$(_env_get "$_k")"
+  [[ -n "$_v" ]] && printf '%s="%s"\n' "$_k" "$_v" >> "$_ENV_SYNC_FILE"
+done
+if [[ -s "$_ENV_SYNC_FILE" ]]; then
+  "${SCP[@]}" "$_ENV_SYNC_FILE" "${SSH_USER}@${SSH_HOST}:${ASSISTANT_ROOT}/.env_sync"
+  _ssh_retry "python3 ${STAGE_ROOT}/scripts/sync_env_keys.py"
+fi
+rm -f "$_ENV_SYNC_FILE"
+
 echo "==> systemd + prod .env tweaks + pip"
 REMOTE_SETUP_SCRIPT=$(cat <<'REMOTE_SETUP'
 set -euo pipefail
