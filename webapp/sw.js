@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261031-onb6";
+var CACHE_VERSION = "miniapp-v1-20261101-focusbleed";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -12,7 +12,7 @@ var PRECACHE_URLS = [
   "./",
   "./index.html",
   "./theme.js?v=20261029-spktools",
-  "./styles.css?v=20261031-discuss1",
+  "./styles.css?v=20261101-focusbleed",
   "./board.css?v=20261029-spktools",
   "./board-geom.js?v=20261029-spktools",
   "./board.js?v=20261029-spktools",

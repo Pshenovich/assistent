@@ -17875,7 +17875,14 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
 .focus-dots span { width: 6px; height: 6px; border-radius: 3px; background: var(--surface-hover); transition: width 0.2s ease, background 0.2s ease; }
 .focus-dots span.is-active { width: 16px; background: var(--accent); }
 @media (max-width: 959px) {
-  #panel-actual .focus-row { margin-right: calc(-1 * var(--page-x)); padding-right: var(--page-x); scroll-padding-left: 0; }
+  /* Лента — от края до края экрана: отступ страницы только перед первой карточкой и после последней. */
+  #panel-actual .focus-row {
+    margin-left: calc(-1 * var(--page-x));
+    margin-right: calc(-1 * var(--page-x));
+    padding-left: var(--page-x);
+    padding-right: var(--page-x);
+    scroll-padding-left: var(--page-x);
+  }
 }
 @media (min-width: 960px) {
   /* На десктопе — лента всех карточек: листается тачпадом и стрелками в заголовке. */
