@@ -17952,7 +17952,11 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
 }
 #panel-actual .cal-menu-seg button.is-active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 0.5px var(--overlay-3); }
 @media (min-width: 960px) {
-  #panel-actual .cal-strip { margin-bottom: 14px; padding: 6px 8px 0; border-radius: 22px; }
+  /* Ручка не занимает строку — дни стоят ровно по центру плашки. */
+  #panel-actual .cal-strip { margin-bottom: 14px; padding: 8px; border-radius: 22px; }
+  #panel-actual .cal-strip-handle { position: absolute; left: 50%; bottom: 0; width: 64px; height: 10px; transform: translateX(-50%); }
+  #panel-actual .cal-strip-handle span { margin: 3px auto; }
+  #panel-actual .cal-strip.is-expanded { padding-bottom: 14px; }
   #panel-actual .cal-strip-row { gap: 6px; }
   #panel-actual .cal-strip-menu-btn { width: 38px; height: 38px; }
   #panel-actual .cal-strip-month { display: block; }
