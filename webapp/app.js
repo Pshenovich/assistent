@@ -1314,7 +1314,6 @@
   var MEETINGS_VIEW_LS = "leo_meetings_view";
   var meetingsViewMode = "day";
   var lastMeetingsRange = null;
-  var meetingsViewMenuBound = false;
 
   function readMeetingsViewMode() {
     try {
@@ -1421,14 +1420,6 @@
     return today >= range.from && today <= range.to;
   }
 
-  function syncMeetingsTodayBtn() {
-    var btn = document.getElementById("meetings-today");
-    if (!btn) return;
-    var onToday = meetingsPageShowsToday();
-    setHidden(btn, onToday && !isDesktopLayout());
-    btn.disabled = onToday;
-  }
-
   function syncMeetingsViewSurfaces() {
     var board = document.getElementById("meetings-board");
     var week = document.getElementById("meetings-week");
@@ -1452,55 +1443,310 @@
     document.documentElement.setAttribute("data-meetings-view", mode);
   }
 
-  function syncMeetingsViewMenu() {
-    var menu = document.getElementById("meetings-view-menu");
-    var seg = document.getElementById("meetings-view-seg");
-    var label = document.getElementById("meetings-view-label");
-    if (label) label.textContent = { day: "День", week: "Неделя", month: "Месяц" }[meetingsViewMode] || "День";
-    if (seg) {
-      seg.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
-        var on = btn.getAttribute("data-meetings-view") === meetingsViewMode;
-        btn.classList.toggle("is-active", on);
-        btn.setAttribute("aria-pressed", on ? "true" : "false");
-      });
-    }
-    if (!menu) return;
-    menu.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
-      btn.classList.toggle("is-active", btn.getAttribute("data-meetings-view") === meetingsViewMode);
-    });
+  /* ——— Шапка календаря: плашка «☰ + неделя». Вид, «Мой / Поставленные» и «К сегодня» — в меню ☰.
+     Свайп по дням или ‹ › — соседняя неделя (в виде «Месяц» — месяц). Ручка снизу раскрывает месяц. ——— */
+  var CAL_STRIP_LETTERS = ["П", "В", "С", "Ч", "П", "С", "В"];
+  var CAL_STRIP_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
+  var calStripExpanded = false;
+  var calStripGridMonth = "";
+  var calStripSuppressClick = false;
+
+  function calStripMonthLabel(iso) {
+    var d = dateFromIso(iso);
+    if (isNaN(d.getTime())) return "";
+    var m = d.toLocaleDateString("ru-RU", { month: "long" });
+    return m.charAt(0).toUpperCase() + m.slice(1) + " " + d.getFullYear();
   }
 
-  function closeMeetingsViewMenu() {
-    var menu = document.getElementById("meetings-view-menu");
-    var btn = document.getElementById("meetings-view-btn");
+  function calStripDayButton(iso, opts) {
+    var d = dateFromIso(iso);
+    var wd = (d.getDay() + 6) % 7;
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "cal-strip-day";
+    if (opts.sel) b.classList.add("is-sel");
+    if (iso === todayIsoLocal()) b.classList.add("is-today");
+    if (opts.out) b.classList.add("is-out");
+    b.setAttribute("data-iso", iso);
+    if (opts.sel) b.setAttribute("aria-current", "date");
+    b.setAttribute(
+      "aria-label",
+      d.toLocaleDateString("ru-RU", { weekday: "long", day: "numeric", month: "long" })
+    );
+    var html = "";
+    if (opts.labels) {
+      html +=
+        '<span class="cal-strip-wd"><span class="cal-strip-wd-s">' +
+        CAL_STRIP_LETTERS[wd] +
+        '</span><span class="cal-strip-wd-l">' +
+        CAL_STRIP_SHORT[wd] +
+        "</span></span>";
+    }
+    html += '<span class="cal-strip-num">' + d.getDate() + "</span>";
+    b.innerHTML = html;
+    return b;
+  }
+
+  function paintCalStripGrid() {
+    var grid = document.getElementById("cal-strip-grid");
+    if (!grid) return;
+    if (!calStripExpanded) {
+      grid.classList.add("hidden");
+      grid.innerHTML = "";
+      return;
+    }
+    var anchor = meetingsPageDate || todayIsoLocal();
+    var monthIso = calStripGridMonth || startOfMonthIso(anchor);
+    var range = monthGridRange(monthIso);
+    var visible = meetingsVisibleRange();
+    var curMonth = dateFromIso(monthIso).getMonth();
+    grid.innerHTML =
+      '<div class="cal-strip-grid-head">' +
+      '<span class="cal-strip-grid-title">' + escapeHtml(calStripMonthLabel(monthIso)) + "</span>" +
+      '<button type="button" class="cal-strip-arrow" data-cal-grid-step="-1" aria-label="Предыдущий месяц">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>' +
+      '<button type="button" class="cal-strip-arrow" data-cal-grid-step="1" aria-label="Следующий месяц">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>' +
+      "</div>";
+    var cells = document.createElement("div");
+    cells.className = "cal-strip-grid-days";
+    eachIsoDay(range.from, range.to).forEach(function (iso) {
+      cells.appendChild(
+        calStripDayButton(iso, {
+          sel: meetingsViewMode === "day" && iso >= visible.from && iso <= visible.to,
+          out: dateFromIso(iso).getMonth() !== curMonth,
+        })
+      );
+    });
+    grid.appendChild(cells);
+    grid.classList.remove("hidden");
+    // Сетка месяца — ровно под колонками дней недели.
+    var strip = document.getElementById("cal-strip");
+    var days = document.getElementById("cal-strip-days");
+    if (strip && days) {
+      var sr = strip.getBoundingClientRect();
+      var dr = days.getBoundingClientRect();
+      var pad = parseFloat(getComputedStyle(strip).paddingLeft) || 0;
+      grid.style.marginLeft = Math.max(0, dr.left - sr.left - pad) + "px";
+      grid.style.marginRight = Math.max(0, sr.right - dr.right - pad) + "px";
+    }
+  }
+
+  function paintCalStrip() {
+    var strip = document.getElementById("cal-strip");
+    var days = document.getElementById("cal-strip-days");
+    if (!strip || !days) return;
+    var anchor = meetingsPageDate || todayIsoLocal();
+    var mode = meetingsViewMode;
+    var monthLabel = document.getElementById("cal-strip-month");
+    if (monthLabel) monthLabel.textContent = calStripMonthLabel(anchor);
+    strip.classList.toggle("cal-strip--month", mode === "month");
+    strip.classList.toggle("cal-strip--week", mode === "week");
+    strip.classList.toggle("is-posted", calShowPosted);
+    if (mode === "month") calStripExpanded = false;
+    strip.classList.toggle("is-expanded", calStripExpanded);
+    days.innerHTML = "";
+    if (mode !== "month") {
+      var mon = startOfWeekMonday(anchor);
+      var visible = meetingsVisibleRange();
+      eachIsoDay(mon, addDaysIso(mon, 6)).forEach(function (iso) {
+        days.appendChild(
+          calStripDayButton(iso, {
+            labels: true,
+            sel: mode === "day" && iso >= visible.from && iso <= visible.to,
+          })
+        );
+      });
+    }
+    var unit = mode === "month" ? "месяц" : "неделя";
+    var prev = document.getElementById("cal-strip-prev");
+    var next = document.getElementById("cal-strip-next");
+    if (prev) prev.setAttribute("aria-label", mode === "month" ? "Предыдущий месяц" : "Предыдущая неделя");
+    if (next) next.setAttribute("aria-label", mode === "month" ? "Следующий месяц" : "Следующая неделя");
+    strip.setAttribute("data-unit", unit);
+    var handle = document.getElementById("cal-strip-handle");
+    if (handle) {
+      setHidden(handle, mode === "month");
+      handle.setAttribute("aria-expanded", calStripExpanded ? "true" : "false");
+      handle.setAttribute("aria-label", calStripExpanded ? "Свернуть месяц" : "Показать месяц");
+    }
+    paintCalStripGrid();
+    syncCalMenu();
+  }
+
+  function setCalStripExpanded(on) {
+    var next = !!on && meetingsViewMode !== "month";
+    if (next === calStripExpanded) return;
+    calStripExpanded = next;
+    calStripGridMonth = startOfMonthIso(meetingsPageDate || todayIsoLocal());
+    paintCalStrip();
+  }
+
+  function goCalStripDay(iso) {
+    if (!iso) return;
+    calStripExpanded = false;
+    meetingsPageDate = iso;
+    timelineScrolledKey = "";
+    if (meetingsViewMode !== "day") {
+      setMeetingsViewMode("day");
+      return;
+    }
+    showMeetingsDaySkeleton();
+    loadActual();
+  }
+
+  function shiftCalStrip(dir) {
+    shiftMeetingsPage(meetingsViewMode === "month" ? dir : dir * 7);
+  }
+
+  function syncCalMenu() {
+    var menu = document.getElementById("cal-menu");
+    if (!menu) return;
+    menu.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
+      var on = btn.getAttribute("data-meetings-view") === meetingsViewMode;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-checked", on ? "true" : "false");
+    });
+    menu.querySelectorAll("[data-cal-posted]").forEach(function (btn) {
+      var on = (btn.getAttribute("data-cal-posted") === "1") === calShowPosted;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    var today = document.getElementById("cal-menu-today");
+    if (today) {
+      var onToday = meetingsPageShowsToday() && (meetingsViewMode !== "day" || (meetingsPageDate || todayIsoLocal()) === todayIsoLocal());
+      setHidden(today, onToday);
+      var sep = today.previousElementSibling;
+      if (sep && sep.classList.contains("cal-menu-sep")) setHidden(sep, onToday);
+    }
+  }
+
+  function closeCalMenu() {
+    var menu = document.getElementById("cal-menu");
+    var btn = document.getElementById("cal-menu-btn");
     if (menu) menu.classList.add("hidden");
     if (btn) btn.setAttribute("aria-expanded", "false");
   }
 
-  function toggleMeetingsViewMenu() {
-    var menu = document.getElementById("meetings-view-menu");
-    var btn = document.getElementById("meetings-view-btn");
+  function toggleCalMenu() {
+    var menu = document.getElementById("cal-menu");
+    var btn = document.getElementById("cal-menu-btn");
     if (!menu || !btn) return;
-    var open = menu.classList.contains("hidden");
-    if (open) {
-      syncMeetingsViewMenu();
+    if (menu.classList.contains("hidden")) {
+      syncCalMenu();
       menu.classList.remove("hidden");
       btn.setAttribute("aria-expanded", "true");
     } else {
-      closeMeetingsViewMenu();
+      closeCalMenu();
     }
   }
 
-  function bindMeetingsViewMenuOnce() {
-    if (meetingsViewMenuBound) return;
-    meetingsViewMenuBound = true;
+  // Свайп по плашке: вбок — соседняя неделя, вниз/вверх — раскрыть/свернуть месяц.
+  function bindCalStripGestures(strip) {
+    var start = null;
+    strip.addEventListener("pointerdown", function (e) {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      if (e.target && e.target.closest && e.target.closest(".cal-menu, .cal-strip-menu-btn, .cal-strip-arrow")) return;
+      start = { x: e.clientX, y: e.clientY, axis: null, id: e.pointerId };
+    });
+    strip.addEventListener("pointermove", function (e) {
+      if (!start || e.pointerId !== start.id || start.axis) return;
+      var dx = e.clientX - start.x;
+      var dy = e.clientY - start.y;
+      if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      start.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    });
+    function end(e) {
+      if (!start || e.pointerId !== start.id) return;
+      var s = start;
+      start = null;
+      if (e.type === "pointercancel" || !s.axis) return;
+      var dx = e.clientX - s.x;
+      var dy = e.clientY - s.y;
+      calStripSuppressClick = true;
+      setTimeout(function () {
+        calStripSuppressClick = false;
+      }, 0);
+      if (s.axis === "x" && Math.abs(dx) >= 40) {
+        if (calStripExpanded) {
+          calStripGridMonth = addMonthsIso(calStripGridMonth, dx < 0 ? 1 : -1);
+          paintCalStripGrid();
+        } else {
+          shiftCalStrip(dx < 0 ? 1 : -1);
+        }
+      } else if (s.axis === "y" && Math.abs(dy) >= 24) {
+        setCalStripExpanded(dy > 0);
+      }
+    }
+    strip.addEventListener("pointerup", end);
+    strip.addEventListener("pointercancel", end);
+    strip.addEventListener(
+      "click",
+      function (e) {
+        if (!calStripSuppressClick) return;
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true
+    );
+  }
+
+  function bindCalStripOnce() {
+    var strip = document.getElementById("cal-strip");
+    if (!strip || strip.dataset.bound) return;
+    strip.dataset.bound = "1";
+    bindCalStripGestures(strip);
+    strip.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest("#cal-menu-btn")) {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCalMenu();
+        return;
+      }
+      // Не просто [data-meetings-view]: такой же атрибут стоит на <html>.
+      var viewItem = t.closest(".cal-menu-item[data-meetings-view]");
+      if (viewItem) {
+        e.preventDefault();
+        setMeetingsViewMode(viewItem.getAttribute("data-meetings-view"));
+        return;
+      }
+      var postedItem = t.closest("[data-cal-posted]");
+      if (postedItem) {
+        e.preventDefault();
+        var want = postedItem.getAttribute("data-cal-posted") === "1";
+        if (want !== calShowPosted) toggleCalPosted();
+        closeCalMenu();
+        return;
+      }
+      if (t.closest("#cal-menu-today")) {
+        e.preventDefault();
+        closeCalMenu();
+        calStripExpanded = false;
+        goMeetingsToday();
+        return;
+      }
+      if (t.closest("#cal-strip-prev")) return shiftCalStrip(-1);
+      if (t.closest("#cal-strip-next")) return shiftCalStrip(1);
+      var step = t.closest("[data-cal-grid-step]");
+      if (step) {
+        calStripGridMonth = addMonthsIso(calStripGridMonth, Number(step.getAttribute("data-cal-grid-step")));
+        paintCalStripGrid();
+        return;
+      }
+      if (t.closest("#cal-strip-handle")) return setCalStripExpanded(!calStripExpanded);
+      var day = t.closest(".cal-strip-day");
+      if (day) goCalStripDay(day.getAttribute("data-iso"));
+    });
     document.addEventListener("click", function (e) {
-      var wrap = document.querySelector(".meetings-view-wrap");
-      if (!wrap || (e.target && wrap.contains(e.target))) return;
-      closeMeetingsViewMenu();
+      var menu = document.getElementById("cal-menu");
+      if (!menu || menu.classList.contains("hidden")) return;
+      if (e.target && menu.contains(e.target)) return;
+      closeCalMenu();
     });
     document.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") closeMeetingsViewMenu();
+      if (e.key === "Escape") closeCalMenu();
     });
   }
 
@@ -1508,13 +1754,13 @@
     opts = opts || {};
     var next = mode === "week" || mode === "month" ? mode : "day";
     if (meetingsViewMode === next && !opts.force) {
-      closeMeetingsViewMenu();
+      closeCalMenu();
       return;
     }
     meetingsViewMode = next;
     persistMeetingsViewMode(next);
-    syncMeetingsViewMenu();
-    closeMeetingsViewMenu();
+    closeCalMenu();
+    paintCalStrip();
     syncMeetingsViewSurfaces();
     timelineScrolledKey = "";
     showMeetingsDaySkeleton();
@@ -1593,7 +1839,7 @@
   function goMeetingsToday() {
     var today = todayIsoLocal();
     if (meetingsPageShowsToday() && (meetingsPageDate || today) === today) {
-      syncMeetingsTodayBtn();
+      paintCalStrip();
       return;
     }
     meetingsPageDate = today;
@@ -1774,34 +2020,6 @@
     }
   }
 
-  function formatMeetingsWeekHead(fromIso, toIso) {
-    try {
-      var a = dateFromIso(fromIso);
-      var b = dateFromIso(toIso || fromIso);
-      if (isNaN(a.getTime()) || isNaN(b.getTime())) return "";
-      var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
-      var left = a.toLocaleDateString("ru-RU", {
-        day: "numeric",
-        month: sameMonth ? undefined : "short",
-      });
-      var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-      return left + "–" + right;
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function formatMeetingsMonthHead(iso) {
-    try {
-      var d = dateFromIso(iso);
-      if (isNaN(d.getTime())) return "";
-      var label = d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
-      return label.charAt(0).toUpperCase() + label.slice(1);
-    } catch (_) {
-      return "";
-    }
-  }
-
   function eventStartMs(ev) {
     var raw = ev && ev.start && ev.start.dateTime;
     if (!raw) return null;
@@ -1975,7 +2193,7 @@
     return cls;
   }
 
-  /* ——— «Поручено другим» в календаре: переключатель в шапке календаря.
+  /* ——— «Поставленные» в календаре: выбор в меню ☰ над календарём.
      Делегированные задачи сервер в календарь автора не отдаёт — берём их из /calendar/tasks/posted
      (тот же запрос, что у чипа «у других») и подмешиваем в сетку дня / недели / месяца. ——— */
   var calShowPosted = false;
@@ -2006,8 +2224,10 @@
     return out;
   }
 
+  // «Поставленные» в меню ☰ — отдельный календарь: только задачи, поручённые другим.
   function withPostedEvents(events, fromIso, toIso) {
     var extra = postedCalendarEvents(fromIso, toIso);
+    if (calShowPosted) return extra;
     if (!extra.length) return events;
     var seen = {};
     (events || []).forEach(function (ev) {
@@ -2018,14 +2238,6 @@
         return !seen[String(ev.id)];
       })
     );
-  }
-
-  function syncCalPostedToggle() {
-    var b = document.getElementById("meetings-posted-toggle");
-    if (!b) return;
-    b.classList.toggle("is-active", calShowPosted);
-    b.setAttribute("aria-pressed", String(calShowPosted));
-    b.title = calShowPosted ? "Скрыть в календаре задачи, поставленные другим" : "Показать в календаре задачи, поставленные другим";
   }
 
   function repaintMeetingsFromState() {
@@ -2039,11 +2251,10 @@
     try {
       localStorage.setItem("cal_show_posted", calShowPosted ? "1" : "0");
     } catch (_) {}
-    syncCalPostedToggle();
+    paintCalStrip();
     repaintMeetingsFromState();
-    if (calShowPosted) {
-      var n = postedCalendarEvents("", "").length;
-      showNoteToast(n ? "Показаны задачи, поставленные другим" : "Нет текущих задач, поставленных другим");
+    if (calShowPosted && !postedCalendarEvents("", "").length) {
+      showNoteToast("Нет текущих задач, поставленных другим");
     }
   }
 
@@ -3176,7 +3387,7 @@
       return !meetingIsDeclined(ev);
     });
     if (calDate) evs = withPostedEvents(evs, calDate, calDate);
-    var dayReminders = calDate ? remindersForDate(reminders, calDate) : [];
+    var dayReminders = calDate && !calShowPosted ? remindersForDate(reminders, calDate) : [];
     var disconnected = calData && calData.connected === false;
     var loadFailed = !!(calData && calData.load_error);
     setHidden(emptyM, true);
@@ -3422,7 +3633,7 @@
       meetingsPageDate = calData.date;
     }
     paintMeetingsList(ui, calData, lastRemindersItems);
-    syncMeetingsTodayBtn();
+    paintCalStrip();
     return calData;
   }
 
@@ -3451,36 +3662,6 @@
     showNow: true,
   };
 
-  function formatMeetingsHead(iso) {
-    if (!iso) return "";
-    try {
-      var d = new Date(iso + "T12:00:00");
-      if (isNaN(d.getTime())) return "";
-      return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-    } catch (_) {
-      return "";
-    }
-  }
-
-  function formatMeetingsHeadRange(isoA, isoB) {
-    if (!isoA) return "";
-    if (!isoB || isoB === isoA) return formatMeetingsHead(isoA);
-    try {
-      var a = new Date(isoA + "T12:00:00");
-      var b = new Date(isoB + "T12:00:00");
-      if (isNaN(a.getTime()) || isNaN(b.getTime())) return formatMeetingsHead(isoA);
-      var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
-      var left = a.toLocaleDateString("ru-RU", {
-        day: "numeric",
-        month: sameMonth ? undefined : "short",
-      });
-      var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
-      return left + "–" + right;
-    } catch (_) {
-      return formatMeetingsHead(isoA);
-    }
-  }
-
   function formatMeetingsDayTitle(iso) {
     if (!iso) return "";
     try {
@@ -3498,79 +3679,12 @@
     }
   }
 
-  // Заголовок секции календаря: крупно — «Сегодня» / «Неделя» / месяц, рядом — дата.
-  function meetingsHeadTitles(leftIso, rightIso, dual) {
-    if (meetingsViewMode === "week") {
-      return { title: "Неделя", sub: formatMeetingsWeekHead(leftIso, rightIso || addDaysIso(leftIso, 6)) };
-    }
-    if (meetingsViewMode === "month") {
-      return { title: formatMeetingsMonthHead(leftIso), sub: "" };
-    }
-    if (dual && rightIso) {
-      return { title: "Календарь", sub: formatMeetingsHeadRange(leftIso, rightIso) };
-    }
-    if (!leftIso) return { title: "", sub: "" };
-    var today = todayIsoLocal();
-    var title = "";
-    if (leftIso === today) title = "Сегодня";
-    else if (leftIso === addDaysIso(today, 1)) title = "Завтра";
-    else if (leftIso === addDaysIso(today, -1)) title = "Вчера";
-    var sub = formatMeetingsHead(leftIso);
-    try {
-      var d = new Date(leftIso + "T12:00:00");
-      var wdShort = d.toLocaleDateString("ru-RU", { weekday: "short" });
-      if (title) {
-        sub = wdShort + ", " + sub;
-      } else {
-        var wd = d.toLocaleDateString("ru-RU", { weekday: "long" });
-        title = wd.charAt(0).toUpperCase() + wd.slice(1);
-      }
-    } catch (_) {}
-    return { title: title || sub, sub: title ? sub : "" };
-  }
-
   function syncMeetingsHead(leftIso, rightIso) {
     var dual = isDesktopLayout();
-    var head = document.getElementById("meetings-head-title");
-    var sub = document.getElementById("meetings-head-sub");
-    var prev = document.getElementById("meetings-prev");
-    var next = document.getElementById("meetings-next");
-    if (head) {
-      var t = meetingsHeadTitles(leftIso, rightIso, dual);
-      head.textContent = t.title;
-      if (sub) {
-        sub.textContent = t.sub;
-        setHidden(sub, !t.sub);
-      }
-    }
-    if (prev) {
-      prev.setAttribute(
-        "aria-label",
-        meetingsViewMode === "week"
-          ? "Предыдущая неделя"
-          : meetingsViewMode === "month"
-            ? "Предыдущий месяц"
-            : dual
-              ? "Предыдущие два дня"
-              : "Предыдущий день"
-      );
-    }
-    if (next) {
-      next.setAttribute(
-        "aria-label",
-        meetingsViewMode === "week"
-          ? "Следующая неделя"
-          : meetingsViewMode === "month"
-            ? "Следующий месяц"
-            : dual
-              ? "Следующие два дня"
-              : "Следующий день"
-      );
-    }
     var board = document.getElementById("meetings-board");
     if (board) board.classList.toggle("meetings-board--dual", dual && meetingsViewMode === "day");
     syncMeetingsViewSurfaces();
-    syncMeetingsTodayBtn();
+    paintCalStrip();
   }
 
   function updateMeetingsBadge(leftData, rightData) {
@@ -3742,7 +3856,7 @@
         if (!span || span.zone !== "grid") return;
         timed.push({ kind: "event", ev: ev, startMin: span.startMin, endMin: span.endMin });
       });
-      remindersForDate(lastRemindersItems, iso).forEach(function (r) {
+      (calShowPosted ? [] : remindersForDate(lastRemindersItems, iso)).forEach(function (r) {
         var startMs = Date.parse(r.when_iso || "");
         if (!isFinite(startMs)) return;
         var span = timelineSpanForRange(
@@ -3873,7 +3987,7 @@
       num.textContent = String(dateFromIso(iso).getDate());
       cell.appendChild(num);
       var dayEvs = eventsForDate(events, iso);
-      var dayRems = remindersForDate(lastRemindersItems, iso);
+      var dayRems = calShowPosted ? [] : remindersForDate(lastRemindersItems, iso);
       var monthCellAtPoint = function (x, y) {
         var nodes = host.querySelectorAll(".meetings-month-cell[data-date-iso]");
         for (var i = 0; i < nodes.length; i += 1) {
@@ -6886,6 +7000,8 @@
       if (t.closest("input, textarea, select, [contenteditable='true']")) return false;
       if (t.closest(".tabbar, .tabbar-wrap, .modal-overlay, .gpt-overlay, .note-discussion-overlay"))
         return false;
+      // Потянуть плашку недели вниз — раскрыть месяц, а не обновить экран.
+      if (t.closest(".cal-strip")) return false;
     }
     return true;
   }
@@ -56434,7 +56550,7 @@
 
     syncAppOverlay();
     meetingsViewMode = readMeetingsViewMode();
-    syncMeetingsViewMenu();
+    syncCalMenu();
     syncMeetingsViewSurfaces();
 
     if (listenersBound) {
@@ -56578,11 +56694,6 @@
       postedOpen.addEventListener("click", function () {
         setPostedTasksScreen(true);
       });
-    }
-    var calPostedToggle = document.getElementById("meetings-posted-toggle");
-    if (calPostedToggle) {
-      syncCalPostedToggle();
-      calPostedToggle.addEventListener("click", toggleCalPosted);
     }
     var postedBack = document.getElementById("posted-tasks-back");
     if (postedBack) {
@@ -56876,40 +56987,7 @@
       });
     }
 
-    onId("meetings-prev", "click", function () {
-      shiftMeetingsPage(-meetingsPageStep());
-    });
-    onId("meetings-next", "click", function () {
-      shiftMeetingsPage(meetingsPageStep());
-    });
-    onId("meetings-today", "click", function () {
-      goMeetingsToday();
-    });
-    onId("meetings-view-btn", "click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleMeetingsViewMenu();
-    });
-    var viewMenu = document.getElementById("meetings-view-menu");
-    if (viewMenu) {
-      viewMenu.addEventListener("click", function (e) {
-        var item = e.target && e.target.closest && e.target.closest("[data-meetings-view]");
-        if (!item) return;
-        e.preventDefault();
-        e.stopPropagation();
-        setMeetingsViewMode(item.getAttribute("data-meetings-view"));
-      });
-    }
-    var viewSeg = document.getElementById("meetings-view-seg");
-    if (viewSeg) {
-      viewSeg.addEventListener("click", function (e) {
-        var item = e.target && e.target.closest && e.target.closest("[data-meetings-view]");
-        if (!item) return;
-        e.preventDefault();
-        setMeetingsViewMode(item.getAttribute("data-meetings-view"));
-      });
-    }
-    bindMeetingsViewMenuOnce();
+    bindCalStripOnce();
 
     onId("gpt-close", "click", closeGptChat);
     onId("gpt-overlay-backdrop", "click", closeGptChat);

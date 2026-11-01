@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261101-focusbleed" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261101-calstrip" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261029-spktools" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261030-orgui1" />
@@ -221,39 +221,35 @@
           </div>
         </div>
         <div class="section">
-          <div class="meetings-head" data-tour="calendar">
-            <div class="meetings-head-titles">
-              <h2 class="section-head-inline" id="meetings-head-title"></h2>
-              <span class="meetings-head-sub" id="meetings-head-sub"></span>
-              <span id="meetings-badge" class="pill-badge hidden">0</span>
+          <div class="cal-strip" id="cal-strip" data-tour="calendar">
+            <div class="cal-strip-row">
+              <span class="cal-strip-menu-wrap" data-tour="posted-toggle">
+                <button type="button" class="cal-strip-menu-btn" id="cal-menu-btn" data-tour="calendar-view" aria-label="Вид и календарь" aria-haspopup="menu" aria-expanded="false" title="Вид и календарь"><i></i><i></i></button>
+              </span>
+              <span class="cal-strip-month" id="cal-strip-month"></span>
+              <button type="button" class="cal-strip-arrow" id="cal-strip-prev" aria-label="Предыдущая неделя">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
+              </button>
+              <div class="cal-strip-days" id="cal-strip-days" role="group" aria-label="Дни недели"></div>
+              <button type="button" class="cal-strip-arrow" id="cal-strip-next" aria-label="Следующая неделя">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+              </button>
             </div>
-            <div class="meetings-head-tools">
-              <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
-              <button type="button" class="cal-nav-btn meetings-posted-toggle" id="meetings-posted-toggle" data-tour="posted-toggle" aria-pressed="false" aria-label="Задачи, поставленные другим" title="Показать в календаре задачи, поставленные другим">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5"/></svg>
-              </button>
-              <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
-              </button>
-              <button type="button" class="cal-nav-btn" id="meetings-next" aria-label="Следующий день">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-              </button>
-              <div class="meetings-view-wrap">
-                <button type="button" class="meetings-view-btn" id="meetings-view-btn" data-tour="calendar-view" aria-label="Вид календаря" aria-haspopup="menu" aria-expanded="false" title="Вид">
-                  <span id="meetings-view-label">День</span>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-                </button>
-                <div id="meetings-view-menu" class="meetings-view-menu hidden" role="menu" aria-label="Вид календаря">
-                  <button type="button" class="meetings-view-menu-item is-active" role="menuitem" data-meetings-view="day">День</button>
-                  <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="week">Неделя</button>
-                  <button type="button" class="meetings-view-menu-item" role="menuitem" data-meetings-view="month">Месяц</button>
-                </div>
+            <div class="cal-strip-grid hidden" id="cal-strip-grid"></div>
+            <button type="button" class="cal-strip-handle" id="cal-strip-handle" aria-label="Показать месяц" aria-expanded="false"><span></span></button>
+            <div id="cal-menu" class="cal-menu hidden" role="menu" aria-label="Вид и календарь">
+              <div class="cal-menu-label">Вид</div>
+              <button type="button" class="cal-menu-item" role="menuitemradio" data-meetings-view="day">День</button>
+              <button type="button" class="cal-menu-item" role="menuitemradio" data-meetings-view="week">Неделя</button>
+              <button type="button" class="cal-menu-item" role="menuitemradio" data-meetings-view="month">Месяц</button>
+              <div class="cal-menu-sep" aria-hidden="true"></div>
+              <div class="cal-menu-label">Календарь</div>
+              <div class="cal-menu-seg" role="group" aria-label="Чей календарь">
+                <button type="button" data-cal-posted="0" aria-pressed="true">Мой</button>
+                <button type="button" data-cal-posted="1" data-tour="posted-toggle" aria-pressed="false" title="Задачи, которые вы поставили другим">Поставленные</button>
               </div>
-              <div class="meetings-view-seg" id="meetings-view-seg" data-tour="calendar-view" role="group" aria-label="Вид календаря">
-                <button type="button" class="meetings-view-seg-btn is-active" data-meetings-view="day" aria-pressed="true">День</button>
-                <button type="button" class="meetings-view-seg-btn" data-meetings-view="week" aria-pressed="false">Неделя</button>
-                <button type="button" class="meetings-view-seg-btn" data-meetings-view="month" aria-pressed="false">Месяц</button>
-              </div>
+              <div class="cal-menu-sep" aria-hidden="true"></div>
+              <button type="button" class="cal-menu-item" role="menuitem" id="cal-menu-today">К сегодня</button>
             </div>
           </div>
           <div id="meetings-board" class="meetings-board">
@@ -2457,7 +2453,7 @@
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board-geom.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261031-discuss1" defer></script>
+  <script src="/webapp/app.js?v=20261101-calstrip" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
