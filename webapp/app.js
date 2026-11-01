@@ -1314,6 +1314,7 @@
   var MEETINGS_VIEW_LS = "leo_meetings_view";
   var meetingsViewMode = "day";
   var lastMeetingsRange = null;
+  var meetingsViewMenuBound = false;
 
   function readMeetingsViewMode() {
     try {
@@ -1420,6 +1421,15 @@
     return today >= range.from && today <= range.to;
   }
 
+  // Десктоп: старая шапка календаря (заголовок, «Сегодня», ‹ ›, вид). На телефоне — плашка «☰ + неделя».
+  function syncMeetingsTodayBtn() {
+    var btn = document.getElementById("meetings-today");
+    if (!btn) return;
+    var onToday = meetingsPageShowsToday();
+    setHidden(btn, onToday && !isDesktopLayout());
+    btn.disabled = onToday;
+  }
+
   function syncMeetingsViewSurfaces() {
     var board = document.getElementById("meetings-board");
     var week = document.getElementById("meetings-week");
@@ -1441,6 +1451,58 @@
       else month.removeAttribute("hidden");
     }
     document.documentElement.setAttribute("data-meetings-view", mode);
+  }
+
+  function syncMeetingsViewMenu() {
+    var menu = document.getElementById("meetings-view-menu");
+    var seg = document.getElementById("meetings-view-seg");
+    var label = document.getElementById("meetings-view-label");
+    if (label) label.textContent = { day: "День", week: "Неделя", month: "Месяц" }[meetingsViewMode] || "День";
+    if (seg) {
+      seg.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
+        var on = btn.getAttribute("data-meetings-view") === meetingsViewMode;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    if (!menu) return;
+    menu.querySelectorAll("[data-meetings-view]").forEach(function (btn) {
+      btn.classList.toggle("is-active", btn.getAttribute("data-meetings-view") === meetingsViewMode);
+    });
+  }
+
+  function closeMeetingsViewMenu() {
+    var menu = document.getElementById("meetings-view-menu");
+    var btn = document.getElementById("meetings-view-btn");
+    if (menu) menu.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+
+  function toggleMeetingsViewMenu() {
+    var menu = document.getElementById("meetings-view-menu");
+    var btn = document.getElementById("meetings-view-btn");
+    if (!menu || !btn) return;
+    var open = menu.classList.contains("hidden");
+    if (open) {
+      syncMeetingsViewMenu();
+      menu.classList.remove("hidden");
+      btn.setAttribute("aria-expanded", "true");
+    } else {
+      closeMeetingsViewMenu();
+    }
+  }
+
+  function bindMeetingsViewMenuOnce() {
+    if (meetingsViewMenuBound) return;
+    meetingsViewMenuBound = true;
+    document.addEventListener("click", function (e) {
+      var wrap = document.querySelector(".meetings-view-wrap");
+      if (!wrap || (e.target && wrap.contains(e.target))) return;
+      closeMeetingsViewMenu();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeMeetingsViewMenu();
+    });
   }
 
   /* ——— Шапка календаря: плашка «☰ + неделя». Вид, «Мой / Поставленные» и «К сегодня» — в меню ☰.
@@ -1754,11 +1816,14 @@
     opts = opts || {};
     var next = mode === "week" || mode === "month" ? mode : "day";
     if (meetingsViewMode === next && !opts.force) {
+      closeMeetingsViewMenu();
       closeCalMenu();
       return;
     }
     meetingsViewMode = next;
     persistMeetingsViewMode(next);
+    syncMeetingsViewMenu();
+    closeMeetingsViewMenu();
     closeCalMenu();
     paintCalStrip();
     syncMeetingsViewSurfaces();
@@ -1839,6 +1904,7 @@
   function goMeetingsToday() {
     var today = todayIsoLocal();
     if (meetingsPageShowsToday() && (meetingsPageDate || today) === today) {
+      syncMeetingsTodayBtn();
       paintCalStrip();
       return;
     }
@@ -2015,6 +2081,34 @@
   function weekdayShort(iso) {
     try {
       return new Date(iso + "T12:00:00").toLocaleDateString("ru-RU", { weekday: "short" }).replace(".", "");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function formatMeetingsWeekHead(fromIso, toIso) {
+    try {
+      var a = dateFromIso(fromIso);
+      var b = dateFromIso(toIso || fromIso);
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return "";
+      var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+      var left = a.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: sameMonth ? undefined : "short",
+      });
+      var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      return left + "–" + right;
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function formatMeetingsMonthHead(iso) {
+    try {
+      var d = dateFromIso(iso);
+      if (isNaN(d.getTime())) return "";
+      var label = d.toLocaleDateString("ru-RU", { month: "long", year: "numeric" });
+      return label.charAt(0).toUpperCase() + label.slice(1);
     } catch (_) {
       return "";
     }
@@ -2224,10 +2318,15 @@
     return out;
   }
 
-  // «Поставленные» в меню ☰ — отдельный календарь: только задачи, поручённые другим.
+  // Телефон: «Поставленные» в меню ☰ — отдельный календарь, только задачи, поручённые другим.
+  // Десктоп: кнопка в шапке подмешивает их к своему календарю (как раньше).
+  function calPostedOnly() {
+    return calShowPosted && !isDesktopLayout();
+  }
+
   function withPostedEvents(events, fromIso, toIso) {
     var extra = postedCalendarEvents(fromIso, toIso);
-    if (calShowPosted) return extra;
+    if (calPostedOnly()) return extra;
     if (!extra.length) return events;
     var seen = {};
     (events || []).forEach(function (ev) {
@@ -2238,6 +2337,14 @@
         return !seen[String(ev.id)];
       })
     );
+  }
+
+  function syncCalPostedToggle() {
+    var b = document.getElementById("meetings-posted-toggle");
+    if (!b) return;
+    b.classList.toggle("is-active", calShowPosted);
+    b.setAttribute("aria-pressed", String(calShowPosted));
+    b.title = calShowPosted ? "Скрыть в календаре задачи, поставленные другим" : "Показать в календаре задачи, поставленные другим";
   }
 
   function repaintMeetingsFromState() {
@@ -2251,10 +2358,13 @@
     try {
       localStorage.setItem("cal_show_posted", calShowPosted ? "1" : "0");
     } catch (_) {}
+    syncCalPostedToggle();
     paintCalStrip();
     repaintMeetingsFromState();
-    if (calShowPosted && !postedCalendarEvents("", "").length) {
-      showNoteToast("Нет текущих задач, поставленных другим");
+    if (calShowPosted) {
+      var n = postedCalendarEvents("", "").length;
+      if (isDesktopLayout()) showNoteToast(n ? "Показаны задачи, поставленные другим" : "Нет текущих задач, поставленных другим");
+      else if (!n) showNoteToast("Нет текущих задач, поставленных другим");
     }
   }
 
@@ -3387,7 +3497,7 @@
       return !meetingIsDeclined(ev);
     });
     if (calDate) evs = withPostedEvents(evs, calDate, calDate);
-    var dayReminders = calDate && !calShowPosted ? remindersForDate(reminders, calDate) : [];
+    var dayReminders = calDate && !calPostedOnly() ? remindersForDate(reminders, calDate) : [];
     var disconnected = calData && calData.connected === false;
     var loadFailed = !!(calData && calData.load_error);
     setHidden(emptyM, true);
@@ -3633,6 +3743,7 @@
       meetingsPageDate = calData.date;
     }
     paintMeetingsList(ui, calData, lastRemindersItems);
+    syncMeetingsTodayBtn();
     paintCalStrip();
     return calData;
   }
@@ -3662,6 +3773,36 @@
     showNow: true,
   };
 
+  function formatMeetingsHead(iso) {
+    if (!iso) return "";
+    try {
+      var d = new Date(iso + "T12:00:00");
+      if (isNaN(d.getTime())) return "";
+      return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function formatMeetingsHeadRange(isoA, isoB) {
+    if (!isoA) return "";
+    if (!isoB || isoB === isoA) return formatMeetingsHead(isoA);
+    try {
+      var a = new Date(isoA + "T12:00:00");
+      var b = new Date(isoB + "T12:00:00");
+      if (isNaN(a.getTime()) || isNaN(b.getTime())) return formatMeetingsHead(isoA);
+      var sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+      var left = a.toLocaleDateString("ru-RU", {
+        day: "numeric",
+        month: sameMonth ? undefined : "short",
+      });
+      var right = b.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+      return left + "–" + right;
+    } catch (_) {
+      return formatMeetingsHead(isoA);
+    }
+  }
+
   function formatMeetingsDayTitle(iso) {
     if (!iso) return "";
     try {
@@ -3679,11 +3820,79 @@
     }
   }
 
+  // Заголовок секции календаря: крупно — «Сегодня» / «Неделя» / месяц, рядом — дата.
+  function meetingsHeadTitles(leftIso, rightIso, dual) {
+    if (meetingsViewMode === "week") {
+      return { title: "Неделя", sub: formatMeetingsWeekHead(leftIso, rightIso || addDaysIso(leftIso, 6)) };
+    }
+    if (meetingsViewMode === "month") {
+      return { title: formatMeetingsMonthHead(leftIso), sub: "" };
+    }
+    if (dual && rightIso) {
+      return { title: "Календарь", sub: formatMeetingsHeadRange(leftIso, rightIso) };
+    }
+    if (!leftIso) return { title: "", sub: "" };
+    var today = todayIsoLocal();
+    var title = "";
+    if (leftIso === today) title = "Сегодня";
+    else if (leftIso === addDaysIso(today, 1)) title = "Завтра";
+    else if (leftIso === addDaysIso(today, -1)) title = "Вчера";
+    var sub = formatMeetingsHead(leftIso);
+    try {
+      var d = new Date(leftIso + "T12:00:00");
+      var wdShort = d.toLocaleDateString("ru-RU", { weekday: "short" });
+      if (title) {
+        sub = wdShort + ", " + sub;
+      } else {
+        var wd = d.toLocaleDateString("ru-RU", { weekday: "long" });
+        title = wd.charAt(0).toUpperCase() + wd.slice(1);
+      }
+    } catch (_) {}
+    return { title: title || sub, sub: title ? sub : "" };
+  }
+
   function syncMeetingsHead(leftIso, rightIso) {
     var dual = isDesktopLayout();
+    var head = document.getElementById("meetings-head-title");
+    var sub = document.getElementById("meetings-head-sub");
+    var prev = document.getElementById("meetings-prev");
+    var next = document.getElementById("meetings-next");
+    if (head) {
+      var t = meetingsHeadTitles(leftIso, rightIso, dual);
+      head.textContent = t.title;
+      if (sub) {
+        sub.textContent = t.sub;
+        setHidden(sub, !t.sub);
+      }
+    }
+    if (prev) {
+      prev.setAttribute(
+        "aria-label",
+        meetingsViewMode === "week"
+          ? "Предыдущая неделя"
+          : meetingsViewMode === "month"
+            ? "Предыдущий месяц"
+            : dual
+              ? "Предыдущие два дня"
+              : "Предыдущий день"
+      );
+    }
+    if (next) {
+      next.setAttribute(
+        "aria-label",
+        meetingsViewMode === "week"
+          ? "Следующая неделя"
+          : meetingsViewMode === "month"
+            ? "Следующий месяц"
+            : dual
+              ? "Следующие два дня"
+              : "Следующий день"
+      );
+    }
     var board = document.getElementById("meetings-board");
     if (board) board.classList.toggle("meetings-board--dual", dual && meetingsViewMode === "day");
     syncMeetingsViewSurfaces();
+    syncMeetingsTodayBtn();
     paintCalStrip();
   }
 
@@ -3856,7 +4065,7 @@
         if (!span || span.zone !== "grid") return;
         timed.push({ kind: "event", ev: ev, startMin: span.startMin, endMin: span.endMin });
       });
-      (calShowPosted ? [] : remindersForDate(lastRemindersItems, iso)).forEach(function (r) {
+      (calPostedOnly() ? [] : remindersForDate(lastRemindersItems, iso)).forEach(function (r) {
         var startMs = Date.parse(r.when_iso || "");
         if (!isFinite(startMs)) return;
         var span = timelineSpanForRange(
@@ -3987,7 +4196,7 @@
       num.textContent = String(dateFromIso(iso).getDate());
       cell.appendChild(num);
       var dayEvs = eventsForDate(events, iso);
-      var dayRems = calShowPosted ? [] : remindersForDate(lastRemindersItems, iso);
+      var dayRems = calPostedOnly() ? [] : remindersForDate(lastRemindersItems, iso);
       var monthCellAtPoint = function (x, y) {
         var nodes = host.querySelectorAll(".meetings-month-cell[data-date-iso]");
         for (var i = 0; i < nodes.length; i += 1) {
@@ -56550,6 +56759,7 @@
 
     syncAppOverlay();
     meetingsViewMode = readMeetingsViewMode();
+    syncMeetingsViewMenu();
     syncCalMenu();
     syncMeetingsViewSurfaces();
 
@@ -56694,6 +56904,11 @@
       postedOpen.addEventListener("click", function () {
         setPostedTasksScreen(true);
       });
+    }
+    var calPostedToggle = document.getElementById("meetings-posted-toggle");
+    if (calPostedToggle) {
+      syncCalPostedToggle();
+      calPostedToggle.addEventListener("click", toggleCalPosted);
     }
     var postedBack = document.getElementById("posted-tasks-back");
     if (postedBack) {
@@ -56988,6 +57203,41 @@
     }
 
     bindCalStripOnce();
+    onId("meetings-prev", "click", function () {
+      shiftMeetingsPage(-meetingsPageStep());
+    });
+    onId("meetings-next", "click", function () {
+      shiftMeetingsPage(meetingsPageStep());
+    });
+    onId("meetings-today", "click", function () {
+      goMeetingsToday();
+    });
+    onId("meetings-view-btn", "click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMeetingsViewMenu();
+    });
+    var viewMenu = document.getElementById("meetings-view-menu");
+    if (viewMenu) {
+      viewMenu.addEventListener("click", function (e) {
+        var item = e.target && e.target.closest && e.target.closest("[data-meetings-view]");
+        if (!item) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setMeetingsViewMode(item.getAttribute("data-meetings-view"));
+      });
+    }
+    var viewSeg = document.getElementById("meetings-view-seg");
+    if (viewSeg) {
+      viewSeg.addEventListener("click", function (e) {
+        var item = e.target && e.target.closest && e.target.closest("[data-meetings-view]");
+        if (!item) return;
+        e.preventDefault();
+        setMeetingsViewMode(item.getAttribute("data-meetings-view"));
+      });
+    }
+    bindMeetingsViewMenuOnce();
+
 
     onId("gpt-close", "click", closeGptChat);
     onId("gpt-overlay-backdrop", "click", closeGptChat);

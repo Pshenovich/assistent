@@ -718,6 +718,21 @@ html.boot-open-app #app.hidden {
   opacity: 0.75;
 }
 
+.meetings-head {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.meetings-head-tools {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .section-head-row--meetings {
   display: flex;
   flex: 1 1 auto;
@@ -1977,6 +1992,32 @@ html.cal-gesture-active .meetings-week-scroll {
   background: var(--surface-muted);
 }
 
+.meetings-today-btn {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--accent);
+  background: var(--accent-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.meetings-today-btn:hover,
+.meetings-today-btn:active {
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+
+.meetings-today-btn.hidden {
+  display: none;
+}
+
 .meetings-skeleton {
   display: flex;
   flex-direction: column;
@@ -2031,6 +2072,76 @@ html.cal-gesture-active .meetings-week-scroll {
   .meetings-skeleton-row {
     animation: none;
   }
+}
+
+.meetings-view-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.meetings-view-btn {
+  font-size: 0;
+}
+
+.meetings-view-btn svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.meetings-view-btn[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--surface-muted);
+}
+
+.meetings-view-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: auto;
+  z-index: 40;
+  min-width: 10.5rem;
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface);
+  box-shadow: var(--shadow-md, 0 8px 24px color-mix(in srgb, var(--shadow-color) 28%, transparent));
+}
+
+.meetings-view-menu.hidden {
+  display: none !important;
+}
+
+.meetings-view-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0.65rem 0.75rem;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.meetings-view-menu-item:hover,
+.meetings-view-menu-item:focus-visible {
+  background: var(--surface-muted);
+}
+
+.meetings-view-menu-item.is-active::after {
+  content: "";
+  width: 0.45rem;
+  height: 0.8rem;
+  margin-left: 0.75rem;
+  border-right: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  transform: rotate(45deg) translateY(-1px);
 }
 
 .meetings-week,
@@ -17951,27 +18062,92 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
   cursor: pointer;
 }
 #panel-actual .cal-menu-seg button.is-active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 0 0 0.5px var(--overlay-3); }
+
+/* Телефон — плашка «☰ + неделя», десктоп — прежняя шапка календаря. */
+#panel-actual .meetings-head { display: none; }
 @media (min-width: 960px) {
-  /* Ручка не занимает строку — дни стоят ровно по центру плашки. */
-  #panel-actual .cal-strip { margin-bottom: 14px; padding: 8px; border-radius: 22px; }
-  #panel-actual .cal-strip-handle { position: absolute; left: 50%; bottom: 0; width: 64px; height: 10px; transform: translateX(-50%); }
-  #panel-actual .cal-strip-handle span { margin: 3px auto; }
-  #panel-actual .cal-strip.is-expanded { padding-bottom: 14px; }
-  #panel-actual .cal-strip-row { gap: 6px; }
-  #panel-actual .cal-strip-menu-btn { width: 38px; height: 38px; }
-  #panel-actual .cal-strip-month { display: block; }
-  #panel-actual .cal-strip-arrow { display: inline-flex; }
-  #panel-actual .cal-strip-days { gap: 4px; }
-  #panel-actual .cal-strip-day { flex-direction: row; align-items: baseline; gap: 6px; padding: 7px 0; }
-  #panel-actual .cal-strip-wd { font-size: 0.8125rem; }
-  #panel-actual .cal-strip-wd-s { display: none; }
-  #panel-actual .cal-strip-wd-l { display: inline; }
-  #panel-actual .cal-strip.is-expanded .cal-strip-days .cal-strip-day { justify-content: center; }
-  /* Раскрытый месяц: месяц и стрелки — в шапке сетки, в строке дней их прячем (место держим для выравнивания). */
-  #panel-actual .cal-strip.is-expanded .cal-strip-row .cal-strip-month,
-  #panel-actual .cal-strip.is-expanded .cal-strip-row .cal-strip-arrow { visibility: hidden; }
-  #panel-actual .cal-strip-grid-days { gap: 4px; }
-  #panel-actual .cal-menu { top: 50px; }
+  #panel-actual .cal-strip { display: none; }
+  #panel-actual .meetings-head { display: flex; }
+}
+
+/* Заголовок календаря: «Сегодня · вт, 20 окт» слева, навигация и вид справа */
+#panel-actual .meetings-head { gap: 8px; margin-bottom: 10px; min-height: 40px; }
+#panel-actual .meetings-head-titles { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+#panel-actual .meetings-head-titles .section-head-inline {
+  flex: 0 1 auto;
+  margin: 0;
+  text-align: left;
+  font-size: 1.0625rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#panel-actual .meetings-head-sub { flex: 0 1 auto; min-width: 0; font-size: 0.8125rem; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#panel-actual .meetings-head-sub.hidden { display: none; }
+#panel-actual #meetings-badge { display: none !important; }
+#panel-actual .meetings-head-tools { gap: 6px; }
+#panel-actual .meetings-head .cal-nav-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-soft);
+}
+#panel-actual .meetings-head .cal-nav-btn:hover { background: var(--surface-elevated); color: var(--text); }
+#panel-actual .meetings-view-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 10px 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 550;
+  cursor: pointer;
+}
+#panel-actual .meetings-view-btn svg { width: 14px; height: 14px; color: var(--text-secondary); }
+#panel-actual .meetings-view-btn[aria-expanded="true"] { background: var(--surface-elevated); }
+#panel-actual .meetings-view-menu { left: auto; right: 0; }
+#panel-actual .meetings-today-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent);
+}
+#panel-actual .meetings-today-btn:disabled { color: var(--text-tertiary); cursor: default; }
+#panel-actual .meetings-today-btn.hidden { display: none; }
+.meetings-view-seg { display: none; }
+@media (min-width: 960px) {
+  #panel-actual .meetings-head { margin-bottom: 14px; }
+  #panel-actual .meetings-head-titles { flex-direction: row; align-items: baseline; gap: 8px; }
+  #panel-actual .meetings-head-titles .section-head-inline { font-size: 1.125rem; }
+  #panel-actual .meetings-head-sub { font-size: 0.9375rem; }
+  #panel-actual .meetings-view-wrap { display: none; }
+  #panel-actual .meetings-view-seg { display: flex; gap: 2px; padding: 3px; margin-left: 6px; border-radius: 11px; background: var(--surface); }
+  .meetings-view-seg-btn {
+    height: 30px;
+    padding: 0 12px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .meetings-view-seg-btn:hover { color: var(--text); }
+  .meetings-view-seg-btn.is-active { background: var(--surface-raised); color: var(--text); font-weight: 600; }
   #panel-actual .meetings-day-title { font-size: 0.875rem; font-weight: 650; color: var(--text); margin-bottom: 8px; padding-left: var(--day-gutter, 2.75rem); }
   #panel-actual .meetings-day--today .meetings-day-title { color: var(--accent); }
 }
@@ -22861,7 +23037,9 @@ textarea.tracker-desc {
 .note-export-sheet .event-sheet-kind-btn { flex: 1; }
 .note-export-go { width: 100%; margin-top: 16px; }
 
-/* «Поставленные» в календаре (выбор в меню ☰ над календарём). */
+/* «Поставленные» в календаре: на десктопе — кнопка в шапке, на телефоне — выбор в меню ☰. */
+#panel-actual .meetings-head .meetings-posted-toggle.is-active,
+#panel-actual .meetings-head .meetings-posted-toggle.is-active:hover { color: var(--violet-text); background: var(--violet-muted); border-color: color-mix(in srgb, var(--violet-text) 45%, transparent); }
 .meetings-week-chip--posted,
 .meetings-month-chip--posted { background: var(--violet-muted); color: var(--violet-text); border-left-color: var(--violet-text); }
 .day-timeline-band-item--posted { border-color: color-mix(in srgb, var(--violet-text) 45%, transparent); border-left-color: var(--violet-text); background: var(--violet-muted); }
