@@ -50,10 +50,10 @@ html.vkui--vkIOS--dark {
   --text-subtle: #909499;
   --surface-raised: #2c2c2e;
   --surface-hover: #36363a;
-  /* Плашка недели над календарём: фон, выбранный день, кнопка ☰. */
-  --cal-strip-bg: #2c2c2e;
-  --cal-strip-sel: #3d3d40;
-  --cal-strip-btn: #48484b;
+  /* Плашка недели над календарём — в палитре карточек: фон карточки, выбранный день, кнопка ☰. */
+  --cal-strip-bg: var(--surface);
+  --cal-strip-sel: var(--surface-raised);
+  --cal-strip-btn: var(--surface-hover);
   --accent-soft: #8ec5ff;
   --slate: #9eaddb;
   --violet: #8b5cf6;
@@ -216,9 +216,6 @@ html[data-theme="light"] {
   --text-subtle: #535b66;
   --surface-raised: #e9ebee;
   --surface-hover: #dfe2e6;
-  --cal-strip-bg: #ffffff;
-  --cal-strip-sel: #eef0f3;
-  --cal-strip-btn: #eef0f3;
   --accent-soft: #1f6fc4;
   --slate: #5a6b9a;
   --violet: #7c4ddb;
@@ -17908,6 +17905,7 @@ html.actual-voice-open #actual-create-btn { visibility: hidden; }
   margin: 0 0 10px;
   padding: 8px 8px 0;
   border-radius: 24px;
+  border: 1px solid var(--border);
   background: var(--cal-strip-bg);
   touch-action: pan-y;
   user-select: none;
