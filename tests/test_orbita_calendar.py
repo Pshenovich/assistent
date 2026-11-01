@@ -54,6 +54,28 @@ class OrbitaCalendarTests(unittest.TestCase):
         self.assertTrue(event_is_invitation(anna_view[0]) and event_needs_rsvp(anna_view[0]))
         self.assertEqual(orbita_calendar.events_for(3, *win), [])  # Петра не звали
 
+    def test_zoom_follows_move_and_delete(self) -> None:
+        from assistant.lib import zoom_gcal
+
+        res = self._create()
+        n = store.parse_id(res["event_id"])
+        store.set_video(n, url="https://zoom.us/j/777", provider="zoom", ref="777")
+        calls = []
+        with mock.patch.object(zoom_gcal, "_zoom_access_token", lambda uid: "tok"), \
+             mock.patch.object(zoom_gcal.zoom_api, "update_scheduled_meeting",
+                               lambda tok, mid, **kw: calls.append(("patch", mid, kw["start_utc"]))), \
+             mock.patch.object(zoom_gcal.zoom_api, "delete_meeting", lambda tok, mid: calls.append(("delete", mid))), \
+             mock.patch.object(zoom_gcal.zrm, "remove_meeting", lambda uid, mid: None):
+            orbita_calendar.update(1, res["event_id"], {"title": "Планёрка 2"})  # без смены времени — Zoom не трогаем
+            self.assertEqual(calls, [])
+            new_start = self.day + timedelta(hours=1)
+            orbita_calendar.update(1, res["event_id"], {"start": new_start.isoformat(),
+                                                        "end": (new_start + timedelta(minutes=30)).isoformat()})
+            self.assertEqual(calls[0][:2], ("patch", "777"))
+            self.assertEqual(calls[0][2], new_start)
+            orbita_calendar.cancel(1, res["event_id"])
+            self.assertEqual(calls[1], ("delete", "777"))
+
     def test_respond_and_busy(self) -> None:
         res = self._create()
         orbita_calendar.respond(2, res["event_id"], "declined")

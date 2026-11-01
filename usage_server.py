@@ -8682,13 +8682,23 @@ async def miniapp_calendar_event_update(
     )
 
     def _run() -> dict[str, Any]:
-        return calendar_update_event(
+        res = calendar_update_event(
             event_id,
             parsed,
             telegram_user_id=int(principal.telegram_user_id),
             telegram_username=str(uname).strip() or None,
             calendar_id=body.calendar_id,
         )
+        if parsed.get("start"):  # перенос в приложении — переносим и встречу Zoom (как у Лео)
+            try:
+                from assistant.lib import zoom_gcal
+
+                if zoom_gcal.user_has_zoom(int(principal.telegram_user_id)):
+                    zoom_gcal.sync_zoom_after_calendar_update(
+                        int(principal.telegram_user_id), event_id, parsed, calendar_id=body.calendar_id)
+            except Exception as e:
+                print(f"[miniapp_calendar] zoom_sync_update err={e!r}")
+        return res
 
     try:
         ev = await run_in_threadpool(_run)

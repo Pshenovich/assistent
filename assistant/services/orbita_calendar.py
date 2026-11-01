@@ -193,6 +193,8 @@ def update(user_id: int, event_id: str, parsed: dict[str, Any]) -> dict[str, Any
         attendees=attendees,
         recurrence=rule,
     )
+    if start is not None:
+        _zoom_follow(user_id, ev, "move")
     return _result(ev, previous=prev, occurrence=occurrence if rule is None else None)
 
 
@@ -202,7 +204,36 @@ def cancel(user_id: int, event_id: str) -> dict[str, Any]:
     _, occ = store.parse_instance(event_id)
     if occ and ev.get("recurrence"):
         return store.skip_occurrence(ev["id"], occ)
+    _zoom_follow(user_id, ev, "delete")
     return store.cancel(ev["id"])
+
+
+def _zoom_follow(user_id: int, ev: dict[str, Any], action: str) -> None:
+    """Встреча Орбиты со ссылкой Zoom: перенос → PATCH, удаление → DELETE той же встречи в Zoom.
+
+    Сбой Zoom не мешает правке самой встречи — только пишем в журнал.
+    """
+    ref = str(ev.get("video_ref") or "").strip()
+    if ev.get("video_provider") != "zoom" or not ref:
+        return
+    from assistant.lib import zoom_gcal
+    from assistant.lib.user_timezone import resolve_user_tz_name
+
+    try:
+        token = zoom_gcal._zoom_access_token(int(user_id))
+        if action == "move":
+            zoom_gcal.zoom_api.update_scheduled_meeting(
+                token, ref,
+                start_utc=datetime.fromisoformat(ev["start_utc"]),
+                end_utc=datetime.fromisoformat(ev["end_utc"]),
+                timezone_str=resolve_user_tz_name(int(user_id)),
+            )
+        else:
+            zoom_gcal.zoom_api.delete_meeting(token, ref)
+            zoom_gcal.zrm.remove_meeting(int(user_id), ref)
+        print(f"[orbita_calendar] zoom {action} meeting_id={ref} user={user_id}")
+    except Exception as e:
+        print(f"[orbita_calendar] zoom {action} meeting_id={ref} user={user_id} err={e!r}")
 
 
 def respond(user_id: int, event_id: str, response: str) -> dict[str, Any]:
