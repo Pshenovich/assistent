@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Подготовка чистого сервера под Орбиту (Ubuntu 24.04), запуск от root. Повторный запуск безопасен.
+# Подготовка чистого сервера под Орбиту (Ubuntu 24.04 или 26.04), запуск от root. Повторный запуск безопасен.
 #
 #   scp scripts/provision_server.sh root@NEW:/root/ && ssh root@NEW 'bash /root/provision_server.sh'
 #
@@ -28,6 +28,18 @@ apt-get install -y -q \
   docker.io sqlite3 ffmpeg rsync git curl jq \
   fail2ban ufw unattended-upgrades
 systemctl enable --now docker nginx fail2ban
+
+# Код проверен на Python 3.12. На Ubuntu 26.04 системный — 3.14, поэтому ставим 3.12 рядом (uv,
+# сборка python-build-standalone) и кладём python3.12 в PATH: deploy_prod_replace.sh берёт его для .venv.
+echo "==> Python 3.12"
+if ! command -v python3.12 >/dev/null 2>&1; then
+  if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin UV_NO_MODIFY_PATH=1 sh
+  fi
+  UV_PYTHON_INSTALL_DIR=/opt/python uv python install 3.12
+  ln -sf "$(UV_PYTHON_INSTALL_DIR=/opt/python uv python find 3.12)" /usr/local/bin/python3.12
+fi
+python3.12 --version
 
 echo "==> Swap 2 ГБ"
 if ! swapon --show | grep -q '/swapfile'; then
