@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -33,8 +34,13 @@ from backup_s3 import S3, _env, fetch  # noqa: E402
 
 
 def litestream_dbs(s3: S3, host: str) -> list[str]:
+    # Litestream 0.5: <путь реплики>/<уровень 0000…0009>/<txid>-<txid>.ltx
     keys, _ = s3.list(f"litestream/{host}/")
-    rels = {k[len(f"litestream/{host}/"):].split("/ltx/", 1)[0] for k in keys if "/ltx/" in k}
+    rels = set()
+    for k in keys:
+        m = re.match(rf"litestream/{re.escape(host)}/(.+)/[0-9a-f]{{4}}/[0-9a-f-]+\.ltx$", k)
+        if m:
+            rels.add(m.group(1))
     return sorted(rels)
 
 
