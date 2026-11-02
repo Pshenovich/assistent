@@ -7,7 +7,7 @@
 #   пакеты (python, nginx, certbot, docker, sqlite3, ffmpeg, fail2ban, ufw, unattended-upgrades);
 #   swap 2 ГБ; файрвол (только 22/80/443); SSH только по ключу (если ключ уже лежит у root);
 #   автоустановка обновлений безопасности; каталоги /opt/assistant, /root/leo-backups, /root/leo-deploy;
-#   ночной бэкап баз (cron 03:30); nginx-сайт из deploy/nginx-*.conf (если код уже на месте).
+#   Litestream; ночной бэкап баз (cron 03:30, копия и в S3); nginx-сайт из deploy/nginx-*.conf (если код уже на месте).
 # Код и данные переносит docs/migration-runbook.md; сервисы ставит scripts/deploy_prod_replace.sh.
 #
 # LEO_NONROOT=1 — сервисы бота/воркера/веба от пользователя leo, а не от root (включаем после репетиции).
@@ -93,7 +93,18 @@ EOF
 echo "==> Каталоги"
 mkdir -p "$APP" /root/leo-backups /root/leo-deploy /var/www/certbot
 
-echo "==> Ночной бэкап баз (03:30)"
+echo "==> Litestream (непрерывная копия баз в S3; настраивает и запускает деплой)"
+LITESTREAM_VERSION=0.5.17
+if ! litestream version 2>/dev/null | grep -q "$LITESTREAM_VERSION"; then
+  deb="/tmp/litestream-${LITESTREAM_VERSION}.deb"
+  curl -fsSL -o "$deb" \
+    "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.deb"
+  dpkg -i "$deb"
+  rm -f "$deb"
+fi
+litestream version
+
+echo "==> Ночной бэкап баз (03:30; с ключами S3_BACKUP_* — ещё и в S3)"
 cat > /etc/cron.d/leo-backup <<'EOF'
 30 3 * * * root /usr/bin/python3 /opt/assistant/scripts/backup_dbs.py daily >> /var/log/leo-backup.log 2>&1
 EOF

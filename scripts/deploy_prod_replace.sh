@@ -47,7 +47,8 @@ _env_get() {
 }
 
 # Прод (assistent.networ.ru) — только DEPLOY_SSH_*; старый сервер больше не используется.
-SSH_HOST="$(_env_get DEPLOY_SSH_HOST)"
+# DEPLOY_SSH_HOST_OVERRIDE — разовая выкатка на другой сервер (репетиция переезда), .env не трогаем.
+SSH_HOST="${DEPLOY_SSH_HOST_OVERRIDE:-$(_env_get DEPLOY_SSH_HOST)}"
 SSH_USER="$(_env_get DEPLOY_SSH_USER)"
 SSH_USER="${SSH_USER:-root}"
 SSH_PASS="$(_env_get DEPLOY_SSH_PASSWORD)"
@@ -187,7 +188,8 @@ rm -f "$_DASH_SYNC_FILE"
 _ssh_retry "python3 /opt/assistant/scripts/sync_dashboard_token.py"
 
 # Настройки, которые ведём в локальном .env и переносим на сервер (пустые/отсутствующие не трогаем).
-ENV_SYNC_KEYS=(REVIEW_LOGIN_CODE ZOOM_OAUTH_SCOPE GOOGLE_OAUTH_REDIRECT_URI ZOOM_OAUTH_REDIRECT_URI ZOOM_CLIENT_ID ZOOM_CLIENT_SECRET ZOOM_WEBHOOK_SECRET)
+ENV_SYNC_KEYS=(REVIEW_LOGIN_CODE ZOOM_OAUTH_SCOPE GOOGLE_OAUTH_REDIRECT_URI ZOOM_OAUTH_REDIRECT_URI ZOOM_CLIENT_ID ZOOM_CLIENT_SECRET ZOOM_WEBHOOK_SECRET
+  S3_BACKUP_ACCESS_KEY S3_BACKUP_SECRET_KEY S3_BACKUP_BUCKET S3_BACKUP_ENDPOINT S3_BACKUP_REGION)
 _ENV_SYNC_FILE="$(mktemp)"
 for _k in "${ENV_SYNC_KEYS[@]}"; do
   _v="$(_env_get "$_k")"
@@ -355,6 +357,23 @@ fi
 
 echo "==> Восстановление контактов из legacy-путей"
 ./.venv/bin/python scripts/restore_contacts.py || true
+
+# Чистый сервер (переезд): сайт assistent.networ.ru из шаблона. Сертификат certbot возьмёт из
+# перенесённого /etc/letsencrypt или выпустит, когда DNS уже смотрит сюда; иначе — пока только http.
+if [[ -f deploy/nginx-assistent.networ.ru.conf && ! -e /etc/nginx/sites-available/assistent.networ.ru ]]; then
+  cp deploy/nginx-assistent.networ.ru.conf /etc/nginx/sites-available/assistent.networ.ru
+  ln -sf /etc/nginx/sites-available/assistent.networ.ru /etc/nginx/sites-enabled/assistent.networ.ru
+  rm -f /etc/nginx/sites-enabled/default
+  if nginx -t; then
+    systemctl reload nginx
+    certbot --nginx --non-interactive --redirect -d assistent.networ.ru \
+      || echo "WARN: certbot не поставил сертификат assistent.networ.ru — сайт пока только по http" >&2
+    nginx -t && systemctl reload nginx
+  else
+    rm -f /etc/nginx/sites-enabled/assistent.networ.ru /etc/nginx/sites-available/assistent.networ.ru
+    echo "WARN: nginx assistent.networ.ru: nginx -t failed, сайт снят" >&2
+  fi
+fi
 
 # nginx: раньше смотрел на 8766, uvicorn — 8080
 if [[ -f /etc/nginx/sites-available/assistant.obuchat.me ]]; then
@@ -556,6 +575,23 @@ systemctl enable assistant-bot assistant-worker assistant-usage executive-board-
 systemctl restart assistant-bot assistant-worker assistant-usage executive-board-bot
 sleep 2
 systemctl is-active assistant-bot assistant-worker assistant-usage executive-board-bot
+
+# Litestream — непрерывная копия баз в S3 (ставит provision_server.sh). Список баз и ключи —
+# scripts/litestream_config.py; без ключей S3_BACKUP_* или без litestream — пропуск.
+if command -v litestream >/dev/null 2>&1; then
+  _ls_state="$(python3 scripts/litestream_config.py 2>&1 || echo failed)"
+  echo "litestream config: ${_ls_state}"
+  if [[ "$_ls_state" == changed || "$_ls_state" == unchanged ]]; then
+    mkdir -p /etc/systemd/system/litestream.service.d
+    printf '[Service]\nEnvironmentFile=/etc/litestream.env\n' > /etc/systemd/system/litestream.service.d/10-leo.conf
+    systemctl daemon-reload
+    systemctl enable litestream >/dev/null 2>&1 || true
+    if [[ "$_ls_state" == changed ]] || ! systemctl is-active --quiet litestream; then
+      systemctl restart litestream || echo "WARN: litestream не запустился — journalctl -u litestream" >&2
+    fi
+    systemctl is-active litestream || true
+  fi
+fi
 
 python3 - <<'PY'
 from pathlib import Path

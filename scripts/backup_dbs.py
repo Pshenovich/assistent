@@ -6,6 +6,8 @@
   backup_dbs.py predeploy  — копия перед выкаткой, хранится 10 последних
 
 Копирует через sqlite backup API (согласованная копия даже при работающем сервере).
+Если заданы ключи S3_BACKUP_*, ежедневная копия сразу уходит и в S3 (scripts/backup_s3.py);
+predeploy — нет: сервисы в это время стоят, а базы между выкатками и так копирует Litestream.
 """
 
 from __future__ import annotations
@@ -70,6 +72,14 @@ def main() -> int:
     for old in runs[: max(0, len(runs) - KEEP[kind])]:
         shutil.rmtree(old, ignore_errors=True)
     print(f"[backup] {kind} {stamp}: {len(done)} db -> {dst}")
+    if done and kind == "daily":
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            import backup_s3
+
+            backup_s3.upload(dst, kind)
+        except Exception as e:  # локальная копия уже есть; ошибку S3 видно в /var/log/leo-backup.log
+            print(f"[backup] S3: {e!r}")
     return 0 if done else 1
 
 
