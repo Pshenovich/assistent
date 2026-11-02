@@ -185,7 +185,7 @@ _DASH_SYNC_FILE="$(mktemp)"
 printf '%s' "$(_env_get USAGE_DASHBOARD_TOKEN)" > "$_DASH_SYNC_FILE"
 "${SCP[@]}" "$_DASH_SYNC_FILE" "${SSH_USER}@${SSH_HOST}:${ASSISTANT_ROOT}/.dash_token_sync"
 rm -f "$_DASH_SYNC_FILE"
-_ssh_retry "python3 /opt/assistant/scripts/sync_dashboard_token.py"
+_ssh_retry "python3 ${STAGE_ROOT}/scripts/sync_dashboard_token.py"
 
 # Настройки, которые ведём в локальном .env и переносим на сервер (пустые/отсутствующие не трогаем).
 ENV_SYNC_KEYS=(REVIEW_LOGIN_CODE ZOOM_OAUTH_SCOPE GOOGLE_OAUTH_REDIRECT_URI ZOOM_OAUTH_REDIRECT_URI ZOOM_CLIENT_ID ZOOM_CLIENT_SECRET ZOOM_WEBHOOK_SECRET
