@@ -116,6 +116,19 @@ async def build_resolved_route(
     return resolve_route(regex, llm)
 
 
+def _track_skill(update: Update, skill: str) -> None:
+    """Аналитика: в какой навык бота ушёл текст (только личный чат)."""
+    try:
+        from assistant.stores import analytics_store
+
+        chat = update.effective_chat
+        user = update.effective_user
+        if user is not None and chat is not None and chat.type == "private":
+            analytics_store.track(user.id, "bot.skill", platform="tg_bot", skill=str(skill or "other"))
+    except Exception:
+        pass
+
+
 async def dispatch_route(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
@@ -128,6 +141,7 @@ async def dispatch_route(
     text = (route.body or "").strip()
     full = (msg.text or msg.caption or route.body or "").strip()
     uid = update.effective_user.id if update.effective_user else 0
+    _track_skill(update, route.skill)
 
     if extras.agent and goes_to_agent(route):
         from assistant.skills import leo_chat as leo_chat_skill
@@ -358,25 +372,31 @@ async def route_text(
                 from assistant.stores import knowledge_base_store as kb_store
 
                 if uid and kb_store.user_has_accessible_kbs(uid):
+                    _track_skill(update, "knowledge_qa")
                     await knowledge_qa_skill.handle(update, context, cleaned)
                     return True
             if journal_qa_likely_user_text(cleaned):
+                _track_skill(update, "journal_qa")
                 await journal_qa_skill.handle(update, context, cleaned)
                 return True
             from assistant.skills import leo_chat as leo_chat_skill
 
+            _track_skill(update, "leo_chat")
             await leo_chat_skill.handle(update, context, cleaned, extras=extras)
             return True
         if replied and cleaned:
+            _track_skill(update, "ask")
             await ask_skill.handle(update, context, cleaned, replied=replied)
             return True
         if knowledge_qa_likely_user_text(cleaned):
             from assistant.stores import knowledge_base_store as kb_store
 
             if uid and kb_store.user_has_accessible_kbs(uid):
+                _track_skill(update, "knowledge_qa")
                 await knowledge_qa_skill.handle(update, context, cleaned)
                 return True
         if journal_qa_likely_user_text(cleaned):
+            _track_skill(update, "journal_qa")
             await journal_qa_skill.handle(update, context, cleaned)
             return True
         return False

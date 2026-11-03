@@ -183,6 +183,10 @@ def _save_summary_note(
         meta=payload,
         segments=segments,
     )
+    from assistant.stores import analytics_store as _an
+
+    _an.track(user_id, "transcription.create", platform="tg_bot", source="tg_bot")
+    _an.track(user_id, "summary.create", platform="tg_bot", source="auto")
     return int(note["id"])
 
 

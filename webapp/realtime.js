@@ -9,6 +9,18 @@
   var HIDDEN_CLOSE_MS = 30000;
   var BACKOFF_MS = [1000, 2000, 5000, 10000, 20000, 30000];
   var AUTH_FAIL_RETRY_MS = 60000;
+  var ACTIVE_WINDOW_MS = 60000;
+  var lastInteractionAt = Date.now();
+
+  ["pointerdown", "keydown", "wheel", "touchstart", "scroll"].forEach(function (t) {
+    window.addEventListener(
+      t,
+      function () {
+        lastInteractionAt = Date.now();
+      },
+      { capture: true, passive: true }
+    );
+  });
 
   var opts = null;
   var ws = null;
@@ -106,7 +118,14 @@
         attempt = 0;
         userId = String(msg.user_id || "");
         pingTimer = setInterval(function () {
-          send({ type: "ping" });
+          // active — было ли действие человека за минуту: открытая и забытая вкладка
+          // не считается временем в продукте (аналитика).
+          var h = (opts && opts.getHeaders && opts.getHeaders()) || {};
+          send({
+            type: "ping",
+            active: !document.hidden && Date.now() - lastInteractionAt < ACTIVE_WINDOW_MS,
+            client: h["X-Leo-Client"] || "",
+          });
         }, PING_MS);
         Object.keys(wanted).forEach(function (id) {
           send({ type: "sub", note_id: Number(id) });

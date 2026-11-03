@@ -11,6 +11,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from assistant.bot.access_gate import is_user_allowed
+from assistant.stores import analytics_store
 
 
 def brief_enabled() -> bool:
@@ -128,6 +129,7 @@ async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                 # Кнопка — сразу на заметку с итогами, а не на «Актуальное».
                 url = note_webapp_url(note_id) if note_id else webapp_entry_url()
                 kb_w = InlineKeyboardMarkup([[InlineKeyboardButton("Открыть итоги", web_app=WebAppInfo(url=url))]])
+                analytics_store.track(uid, "digest.delivered", platform="server", kind="weekly")
                 await context.bot.send_message(chat_id=uid, text=f"<b>{title}</b> — готово: встречи, решения, что висит и что на следующую неделю. Заметка в проекте «От ассистента».", parse_mode=ParseMode.HTML, reply_markup=kb_w)
         except Exception as e:
             print(f"[weekly] uid={uid} err={e!r}")
@@ -142,6 +144,7 @@ async def proactive_brief_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await context.bot.send_message(chat_id=uid, text=res[0], parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
             print(f"[brief] sent uid={uid}")
+            analytics_store.track(uid, "digest.delivered", platform="server", kind="brief")
         except Exception as e:
             print(f"[brief] send uid={uid} err={e!r}")
     await _send_inbox_digests(context)
@@ -171,6 +174,7 @@ async def _send_inbox_digests(context: ContextTypes.DEFAULT_TYPE) -> None:
         try:
             await context.bot.send_message(chat_id=uid, text=text, parse_mode=ParseMode.HTML, reply_markup=kb, disable_web_page_preview=True)
             print(f"[inbox] sent uid={uid}")
+            analytics_store.track(uid, "digest.delivered", platform="server", kind="inbox")
         except Exception as e:
             print(f"[inbox] send uid={uid} err={e!r}")
 

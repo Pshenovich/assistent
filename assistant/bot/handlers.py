@@ -74,9 +74,31 @@ async def _bind_usage_telegram_user(
         )
     else:
         set_openrouter_usage_telegram_user(telegram_user_id=None)
+    from assistant.stores import analytics_store
+
+    analytics_store.set_platform("tg_bot")
+    # Активность — только личный чат с ботом и нажатия кнопок; сообщения людей
+    # в группах (сбор дайджеста) использованием продукта не считаются.
+    from assistant.bot.analytics_hooks import is_user_action
+
+    if user and is_user_action(update):
+        analytics_store.touch(user.id)
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user is not None:
+        import re as _re
+
+        from assistant.stores import analytics_store
+
+        # Источник прихода: t.me/<бот>?start=<метка> (до проверки доступа — считаем и заявки).
+        ref = str((context.args or [""])[0] or "")[:40]
+        analytics_store.track(
+            update.effective_user.id,
+            "bot.start",
+            platform="tg_bot",
+            ref=ref if _re.fullmatch(r"[A-Za-z0-9_\-]*", ref) else "other",
+        )
     if not await ensure_access(update, context):
         return
     user = update.effective_user

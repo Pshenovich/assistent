@@ -33,6 +33,7 @@ from assistant.bot.market_digest_job import register_market_digest_jobs
 from assistant.bot.gcal_push_job import register_gcal_push_jobs
 from assistant.bot.heartbeat_job import register_heartbeat_jobs
 from assistant.bot.spend_alert_job import register_spend_alert_jobs
+from assistant.bot.analytics_snapshot_job import register_analytics_snapshot_jobs
 
 
 def jobs_in_worker() -> bool:
@@ -91,6 +92,7 @@ def register_background_jobs(app: Application) -> None:
     register_chat_alert_jobs(app)
     register_spend_alert_jobs(app)
     register_gcal_push_jobs(app)
+    register_analytics_snapshot_jobs(app)
 
 
 def build_application() -> Application:
@@ -115,6 +117,9 @@ def build_application() -> Application:
     register_handlers(app)
     register_meeting_followup_handlers(app)
     register_chat_alert_handlers(app)
+    from assistant.bot.analytics_hooks import instrument
+
+    instrument(app)  # после всех add_handler: какие функции бота используют
     # Напоминания пользователя планирует обработчик сообщения в job_queue бота — остаются здесь.
     register_reminder_jobs(app)
     register_heartbeat_jobs(app, name="bot")

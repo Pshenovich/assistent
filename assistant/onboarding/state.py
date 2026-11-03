@@ -62,6 +62,15 @@ def _save(user_id: int, st: dict[str, Any]) -> dict[str, Any]:
     return st
 
 
+def _track(user_id: int, event: str, **props: Any) -> None:
+    try:
+        from assistant.stores import analytics_store
+
+        analytics_store.track(user_id, event, **props)
+    except Exception:
+        pass
+
+
 def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
     kind = str(kind or "").strip()
     if kind not in EVENT_KINDS:
@@ -70,6 +79,8 @@ def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
     now = time.time()
     if kind in ("intro_done", "team_done", "tour_done"):
         flag = {"intro_done": "intro_done_at", "team_done": "team_step_done_at", "tour_done": "tour_done_at"}[kind]
+        if not st.get(flag):
+            _track(user_id, "onboarding.step", step=kind)
         st[flag] = st.get(flag) or now
         if kind == "tour_done":
             # Тур завершает онбординг: и предыдущие шаги считаем пройденными (например, после «Пропустить»).
@@ -88,6 +99,7 @@ def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
         if fid in st["used"]:
             return st
         st["used"][fid] = now
+        _track(user_id, "feature.first_use", feature=fid)
     elif kind == "hint_shown":
         st["hint_shown"][fid] = int(st["hint_shown"].get(fid) or 0) + 1
     elif kind == "snooze":

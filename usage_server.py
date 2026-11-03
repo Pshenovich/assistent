@@ -94,6 +94,16 @@ async def _bind_realtime_hub() -> None:
 
 
 @app.on_event("startup")
+def _start_analytics_forward() -> None:
+    try:
+        from assistant.lib import analytics_forward
+
+        analytics_forward.start()
+    except Exception as exc:
+        print(f"[analytics] forward_start_fail err={exc!r}")
+
+
+@app.on_event("startup")
 def _recover_note_paei_jobs() -> None:
     try:
         from assistant.board.note_paei import recover_jobs_after_restart
@@ -420,6 +430,7 @@ async def google_calendar_oauth_callback(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
         )
+    _track(uid, "integration.connect", platform="web", provider="google_calendar")
     return _oauth_done_page("Google Calendar")
 
 
@@ -648,6 +659,7 @@ async def zoom_oauth_callback(request: Request) -> HTMLResponse:
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
             status_code=500,
         )
+    _track(uid, "integration.connect", platform="web", provider="zoom")
     return _oauth_done_page("Zoom")
 
 
@@ -2312,7 +2324,42 @@ async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
         )
     except Exception:
         pass
+    try:
+        from assistant.stores import analytics_store
+
+        # Платформа (web/pwa/tma-*) из заголовка клиента. Минута активности — за действие
+        # (не GET) или открытие приложения (/me); фоновый опрос GET-ами время не накручивает,
+        # чтение считает пинг вебсокета с флагом active.
+        if analytics_store.set_platform(request.headers.get("x-leo-client")) and (
+            request.method != "GET" or request.url.path.endswith("/me")
+        ):
+            analytics_store.touch(principal.telegram_user_id)
+    except Exception:
+        pass
     return principal
+
+
+def _edit_source_is_ai() -> bool:
+    """Правку прислал ИИ (заголовок X-Leo-Edit-Source из require_miniapp_user)."""
+    try:
+        from assistant.stores import note_versions
+
+        return note_versions._EDIT_CTX.get()[1] == "ai"
+    except Exception:
+        return False
+
+
+def _track(user_id: Any, event: str, *, throttle_key: str = "", throttle_sec: float = 0, **props: Any) -> None:
+    """Продуктовая аналитика: событие с платформой текущего запроса. Не бросает."""
+    try:
+        from assistant.stores import analytics_store
+
+        if throttle_key:
+            analytics_store.track_throttled(throttle_key, throttle_sec, user_id, event, **props)
+        else:
+            analytics_store.track(user_id, event, **props)
+    except Exception:
+        pass
 
 
 async def require_share_commenter(request: Request) -> _MiniappPrincipal:
@@ -5575,6 +5622,7 @@ async def miniapp_reminders_create(
     body: _MiniappReminderCreate,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "reminder.create")
     task = str(body.task or "").strip()
     when_iso = str(body.when_iso or "").strip()
     if not task:
@@ -5938,6 +5986,7 @@ async def miniapp_calendar_tasks_triage(
     body: _MiniappTaskTriageBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "task.triage", action=str(getattr(body, "action", "") or "")[:20])
     from assistant.lib import task_notify
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks as calendar_tasks_store
@@ -6230,6 +6279,7 @@ async def miniapp_calendar_tasks_accept(
     task_id: int,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "task.triage", action="accept")
     return await _owner_task_action(task_id, principal, "accept")
 
 
@@ -6239,6 +6289,7 @@ async def miniapp_calendar_tasks_return(
     body: _MiniappTaskMessageBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "task.triage", action="return")
     return await _owner_task_action(task_id, principal, "return", body.text)
 
 
@@ -6388,6 +6439,7 @@ async def miniapp_calendar_tasks_create(
     body: _MiniappCalendarTaskBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "task.create", source="manual")
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
@@ -6785,6 +6837,7 @@ async def miniapp_contacts_create(
     body: _MiniappContactBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "contact.create", count=1)
     from assistant.stores import contacts_store
 
     item, status = await run_in_threadpool(
@@ -6816,6 +6869,7 @@ async def miniapp_contacts_bulk_telegram(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Добавить контакты списком ников: имя из профиля Leo, почта Google — если человек подключал календарь."""
+    _track(principal.telegram_user_id, "contact.create", count=len([x for x in str(body.text or "").replace(",", " ").split() if x]), bulk=True)
     from assistant.stores import contacts_store, note_members, telegram_registry
 
     def _resolve(nick: str) -> tuple[Optional[int], str, str]:
@@ -7215,6 +7269,7 @@ async def miniapp_orgs_list(principal: _MiniappPrincipal = Depends(require_minia
 async def miniapp_orgs_create(
     body: _MiniappOrgCreate, principal: _MiniappPrincipal = Depends(require_miniapp_user)
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "org.create")
     from assistant.stores import orgs_store
 
     uid = int(principal.telegram_user_id)
@@ -7255,6 +7310,7 @@ async def miniapp_orgs_invite_preview(
 async def miniapp_orgs_invite_accept(
     token: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "org.join", via="invite")
     from assistant.stores import orgs_store
 
     uid = int(principal.telegram_user_id)
@@ -7379,6 +7435,7 @@ async def miniapp_digest_market_page(
     date: str = Query(""), principal: _MiniappPrincipal = Depends(require_miniapp_user)
 ) -> dict[str, Any]:
     """Свой выпуск «Рынок» организации пользователя (HTML). personal=false — показывать общий /news/."""
+    _track(principal.telegram_user_id, "digest.view", throttle_key="digest.view:market", throttle_sec=1800, kind="market")
     from assistant.services import market_news
 
     day = date.strip()[:10] or None
@@ -7424,6 +7481,7 @@ async def miniapp_orgs_domain_remove(
 async def miniapp_orgs_member_add(
     org_id: int, body: _MiniappOrgMemberAdd, principal: _MiniappPrincipal = Depends(require_miniapp_user)
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "org.invite")
     from assistant.stores import orgs_store
 
     uid = int(principal.telegram_user_id)
@@ -7546,6 +7604,7 @@ async def miniapp_orgs_approve(
 
 @miniapp_router.post("/orgs/{org_id}/join")
 async def miniapp_orgs_join(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "org.join", via="domain")
     from assistant.stores import orgs_store
 
     uid = int(principal.telegram_user_id)
@@ -7834,6 +7893,7 @@ async def miniapp_push_subscribe(
     body: _MiniappPushSubscribeBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "push.enable")
     from assistant.stores import push_subscriptions
 
     keys = body.keys or _MiniappPushSubscribeKeys()
@@ -7873,6 +7933,7 @@ async def miniapp_push_unsubscribe(
 async def miniapp_digest_chats(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "digest.view", throttle_key="digest.view:chats", throttle_sec=1800, kind="chats")
     from assistant.stores import chat_digest as digest_store
     from assistant.stores import user_prefs
 
@@ -8530,6 +8591,7 @@ async def miniapp_calendar_event_create(
     body: _MiniappCalendarEventUpdate,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "calendar.event_create")
     from assistant.compat.miniapp_shims import calendar_create_event
 
     title = str(body.title or "").strip()
@@ -9036,6 +9098,35 @@ async def miniapp_gpt_bulk_cancel(
     from assistant.services import bulk_links
 
     return {"ok": bulk_links.cancel_job(job_id, int(principal.telegram_user_id))}
+
+
+def _track_ai_answer(
+    uid: int, body: Any, *, agent_id: str, run_model: str, used_model: str, canvas: list[Any]
+) -> None:
+    """Аналитика ответа ИИ: где спросили, какая модель выбрана и какая ответила,
+    что ИИ сделал с презентацией или доской."""
+    ctx = str(getattr(body, "item_kind", "") or "") or "standalone"
+    if ctx == "local":
+        ctx = "note"
+    _track(
+        uid,
+        "ai.ask",
+        context=ctx,
+        agent="gpt" if agent_id == "gpt" else "custom",
+        model_requested=str(run_model or ""),
+        model_used=used_model,
+        with_files=bool(getattr(body, "file_ids", None)),
+        board_open=bool(str(getattr(body, "board_sheet_id", "") or "").strip()),
+    )
+    theme = str(getattr(body, "canvas_theme", "") or "").strip()[:20] or "default"
+    for c in canvas:
+        if not isinstance(c, dict):
+            continue
+        action = str(c.get("action") or "create")
+        if str(c.get("kind") or "") == "board":
+            _track(uid, "board.ai_apply", action=action)
+        else:
+            _track(uid, "presentation.generate", action=action, theme=theme)
 
 
 @miniapp_router.post("/gpt/chat")
@@ -9734,6 +9825,7 @@ async def miniapp_gpt_chat(
     if gate["notice"]:
         answer_text = f"_{gate['notice']}_\n\n{answer_text}" if answer_text else gate["notice"]
     credits_now = await run_in_threadpool(billing_store.credits_status, uid)
+    _track_ai_answer(uid, body, agent_id=agent_id, run_model=run_model, used_model=used_model, canvas=canvas)
     return {
         "answer": answer_text,
         "credits": credits_now,
@@ -9910,6 +10002,7 @@ async def miniapp_voice_transcribe(
     purpose: str = Form(""),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "voice.dictate")
     from assistant.integrations import transcribe as obu
     from assistant.lib.usage_store import insert_usage_event
     from assistant.stores import voice_prefs
@@ -10370,6 +10463,7 @@ async def miniapp_chats_create(
     body: Optional[_MiniappChatCreate] = Body(default=None),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "chat.create")
     from assistant.stores import chat_threads as chat_threads_store
 
     uid = int(principal.telegram_user_id)
@@ -10446,6 +10540,7 @@ async def miniapp_chat_members_add(
     body: _MiniappNoteMemberAdd,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "chat.share")
     from assistant.stores import chat_threads as chat_threads_store
     from assistant.stores import note_members
 
@@ -11307,6 +11402,7 @@ async def miniapp_proactive_feed(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """«Фокус»: подсказки с готовыми действиями (правила по задачам, встречам и саммари)."""
+    _track(principal.telegram_user_id, "focus.view", throttle_key="focus.view", throttle_sec=1800)
     from assistant.services import proactive_ai
 
     uid = int(principal.telegram_user_id)
@@ -11391,6 +11487,7 @@ async def miniapp_proactive_dismiss(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """✕ на карточке Фокуса: больше не показывать эту подсказку."""
+    _track(principal.telegram_user_id, "focus.dismiss", item_type=str(getattr(body, "key", "") or "").split(":", 1)[0][:30])
     from assistant.services import proactive
 
     uid = int(principal.telegram_user_id)
@@ -11569,6 +11666,7 @@ async def miniapp_proactive_done(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """«Уже есть» на карточке Фокуса: задачи заведены в другом сервисе. Возвращает обновлённую карточку или null."""
+    _track(principal.telegram_user_id, "focus.done", item_type=str(getattr(body, "key", "") or "").split(":", 1)[0][:30])
     from assistant.services import proactive
 
     uid = int(principal.telegram_user_id)
@@ -12298,6 +12396,7 @@ async def miniapp_knowledge_note_create(
     body: _MiniappLocalNoteCreate,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "kb.add_doc", source="new_note")
     from assistant.stores import notes as notes_store
 
     title = (body.title or "").strip()
@@ -12335,6 +12434,7 @@ async def miniapp_local_note_create(
         return _sync_local_note_hashtags(uid, created)
 
     item = await run_in_threadpool(_local)
+    _track(uid, "note.create", source="manual")
     return {"ok": True, "id": item["id"], "item": item}
 
 
@@ -12434,6 +12534,15 @@ async def miniapp_local_note_patch(
         from assistant.realtime.yrooms import rooms as yjs_rooms
 
         yjs_rooms().mark_saved(int(note_id), *yjs_saved[-1])
+    if body.description is not None:
+        _track(
+            principal.telegram_user_id,
+            "sheet.edit",
+            throttle_key=f"sheet.edit:{note_id}:main",
+            throttle_sec=600,
+            kind="note",
+            source="ai" if _edit_source_is_ai() else "manual",
+        )
     return {"ok": True, "item": item}
 
 
@@ -12468,6 +12577,7 @@ async def miniapp_local_note_copy_to_knowledge(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Копия заметки в Базу знаний: текст и листы, без участников, команд и ссылок исходной заметки."""
+    _track(principal.telegram_user_id, "kb.add_doc", source="copy_note")
     from assistant.stores import notes as notes_store
 
     uid = int(principal.telegram_user_id)
@@ -12560,6 +12670,13 @@ async def miniapp_local_note_get(
         from assistant.stores import teams_store
 
         item["teams"] = (await run_in_threadpool(teams_store.teams_for_notes, [int(note_id)])).get(int(note_id), [])
+    _track(
+        uid,
+        "note.open",
+        throttle_key=f"note.open:{note_id}",
+        throttle_sec=1800,
+        kind="transcription" if tnotes.is_transcription_note(item) else ("knowledge" if item.get("is_knowledge") else "note"),
+    )
     return {"ok": True, "item": item}
 
 
@@ -12644,6 +12761,7 @@ async def miniapp_note_sheet_create(
     if item is None:
         raise HTTPException(status_code=404, detail="Заметка не найдена")
     await run_in_threadpool(_memory_sheet_changed, uid, note_id)
+    _track(uid, "sheet.create", kind=str(item.get("kind") or "doc"), source="manual")
     return {"ok": True, "item": item}
 
 
@@ -12665,6 +12783,7 @@ async def miniapp_note_make_summary(
     except tnotes.TranscriptionNoteError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     background_tasks.add_task(tnotes.generate_summary_for_note, uid, note_id)
+    _track(uid, "summary.create", source="manual")
     return {"ok": True, "item": item}
 
 
@@ -12778,6 +12897,7 @@ async def miniapp_transcription_upload(
     meeting — JSON встречи (из окна встречи «Добавить запись»): транскрипция получает
     её тему и сразу привязывается к встрече.
     """
+    _track(principal.telegram_user_id, "transcription.create", source="upload")
     from assistant.integrations import transcribe as obu
     from assistant.lib.usage_store import insert_usage_event
     from assistant.services import transcription_notes as tnotes
@@ -13200,6 +13320,15 @@ async def miniapp_note_sheet_patch(
         note_updated_at = (fresh or {}).get("updated_at")
     except Exception:
         note_updated_at = None
+    if body.description is not None:
+        _track(
+            uid,
+            "sheet.edit",
+            throttle_key=f"sheet.edit:{note_id}:{sheet_id}",
+            throttle_sec=600,
+            kind=str(item.get("kind") or "doc"),
+            source="ai" if _edit_source_is_ai() else "manual",
+        )
     return {"ok": True, "item": item, "note_updated_at": note_updated_at}
 
 
@@ -13336,6 +13465,7 @@ async def miniapp_note_members_add(
     body: _MiniappNoteMemberAdd,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "note.share", via="member")
     from assistant.stores import note_members
     from assistant.stores import notes as notes_store
 
@@ -13814,6 +13944,10 @@ async def miniapp_realtime_ws(websocket: WebSocket) -> None:
             kind = msg.get("type")
             if kind == "ping":
                 conn.push('{"type":"pong"}')
+                if msg.get("active") is True:
+                    from assistant.stores import analytics_store
+
+                    analytics_store.touch(uid, analytics_store.normalize_platform(msg.get("client")) or "web")
                 continue
             try:
                 note_id = int(msg.get("note_id"))
@@ -14065,6 +14199,7 @@ async def miniapp_share_create(
     body: Optional[_MiniappShareCreate] = None,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "note.share", via="link")
     from assistant.stores import share_links as share_links_store
 
     uid = str(int(principal.telegram_user_id))
@@ -14553,6 +14688,7 @@ async def miniapp_note_ai_edit(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Окно ИИ: правки открытого листа по просьбе пользователя. В обсуждение не пишется."""
+    _track(principal.telegram_user_id, "ai.edit")
     from assistant.lib import note_edits as note_edits_lib
     from assistant.stores import notes as notes_store
 
@@ -14622,6 +14758,7 @@ async def miniapp_note_board_ai(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Доска: «ИИ» у выделенных блоков — переписать их текст. Применяет клиент (одним шагом отмены)."""
+    _track(principal.telegram_user_id, "board.ai_apply", action="rewrite")
     from assistant.lib import board_ai as board_ai_lib
     from assistant.stores import notes as notes_store
 
@@ -14814,6 +14951,7 @@ async def miniapp_canvas_op(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Layout edits on a template deck: switch variant, add/remove items, move/delete slides."""
+    _track(principal.telegram_user_id, "presentation.edit", throttle_key=f"canvas-op:{note_id}:{sheet_id}", throttle_sec=600, op="manual_op")
     from assistant.lib import canvas_templates
     from assistant.stores import note_sheets as note_sheets_store
 
@@ -14873,6 +15011,7 @@ async def miniapp_canvas_restyle_images(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Перерисовать картинки презентации в её текущем стиле (по их описаниям); свои картинки пользователя не трогаем."""
+    _track(principal.telegram_user_id, "presentation.edit", op="restyle_images")
     from concurrent.futures import ThreadPoolExecutor
 
     from assistant.integrations.openrouter_client import (
@@ -15002,6 +15141,7 @@ async def miniapp_canvas_revise(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Apply per-slide edit comments (edit mode) with one model call."""
+    _track(principal.telegram_user_id, "presentation.edit", op="ai_revise")
     from assistant.compat.miniapp_shims import gpt_openrouter_answer_with_context
     from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
     from assistant.lib import canvas_revise, canvas_templates
@@ -15167,6 +15307,7 @@ async def miniapp_note_paei_start(
     body: Optional[_MiniappNotePaeiStart] = Body(default=None),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "ai.paei")
     import asyncio
 
     from assistant.board.note_paei import begin_job, get_job, run_note_paei_job
@@ -15352,6 +15493,7 @@ async def miniapp_note_research_start(
     body: Optional[_MiniappNoteResearchStart] = Body(default=None),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "ai.research")
     import asyncio
 
     from assistant.board.note_research import begin_job, get_job, run_note_research_job
@@ -15793,9 +15935,11 @@ async def miniapp_mail_connect(body: dict[str, Any], principal: _MiniappPrincipa
     from assistant.services import mail_connect
 
     try:
-        return await run_in_threadpool(mail_connect.connect, int(principal.telegram_user_id), body or {})
+        res = await run_in_threadpool(mail_connect.connect, int(principal.telegram_user_id), body or {})
     except Exception as e:
         raise _mail_error(e) from e
+    _track(principal.telegram_user_id, "integration.connect", provider="mail")
+    return res
 
 
 @miniapp_router.post("/mail/yandex/start")
@@ -15959,6 +16103,7 @@ async def miniapp_mail_threads(
     filter: str = "all", account: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)
 ) -> dict[str, Any]:
     """Раздел «Почта»: ветки переписки с людьми (как список чатов) с метками Лео."""
+    _track(principal.telegram_user_id, "digest.view", throttle_key="digest.view:mail", throttle_sec=1800, kind="mail")
     from assistant.services import mail_inbox
 
     return {"ok": True, **await run_in_threadpool(partial(mail_inbox.threads, int(principal.telegram_user_id),
@@ -16273,6 +16418,7 @@ async def miniapp_bitrix_mcp_connect(
         save_user_token(int(principal.telegram_user_id), token)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    _track(principal.telegram_user_id, "integration.connect", provider="bitrix")
     return {"connected": True}
 
 
@@ -16657,6 +16803,7 @@ async def miniapp_knowledge_bases_create(
     body: dict[str, Any],
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
+    _track(principal.telegram_user_id, "kb.create")
     import asyncio
 
     from assistant.services import knowledge_sync

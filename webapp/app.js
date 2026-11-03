@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261029-spktools";
+  var WEBAPP_BUILD = "20261103-analytics";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -5901,7 +5901,23 @@
     }
   }
 
+  // Платформа для продуктовой аналитики: web | pwa | tma-<платформа Telegram>.
+  function leoClientKind() {
+    if (getInitDataRaw()) {
+      var tg = getTelegramWebApp();
+      var p = String((tg && tg.platform) || "unknown").toLowerCase();
+      return "tma-" + p;
+    }
+    return isStandalonePwa() ? "pwa" : "web";
+  }
+
   function authHeaders() {
+    var h = authHeadersBase();
+    h["X-Leo-Client"] = leoClientKind();
+    return h;
+  }
+
+  function authHeadersBase() {
     var initData = getInitDataRaw();
     if (initData) {
       // tma-b64: сырой initData с UTF-8/& не ломается в Authorization.

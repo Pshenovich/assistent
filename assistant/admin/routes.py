@@ -103,6 +103,18 @@ def make_router(
         d = await run_in_threadpool(data.overview)
         return _html(views.overview_page(_ctx(actor), d, **_flash(request)))
 
+    @r.get("/product", response_class=HTMLResponse)
+    async def admin_product(request: Request) -> Response:
+        actor = _actor(request)
+        if not isinstance(actor, Actor):
+            return actor
+        from assistant.admin import product_data
+        from assistant.lib import analytics_forward
+
+        days = _days(request)
+        d = await run_in_threadpool(product_data.product, days)
+        return _html(views.product_page(_ctx(actor), d, posthog=analytics_forward.enabled(), **_flash(request)))
+
     @r.get("/users", response_class=HTMLResponse)
     async def admin_users(request: Request) -> Response:
         actor = _actor(request)
@@ -125,7 +137,14 @@ def make_router(
         if not card:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
         hist = await run_in_threadpool(lambda: data.label_targets(audit.recent(limit=50, target="user:" + uid)))
-        return _html(views.user_page(_ctx(actor), card, days=days, audit=hist, **_flash(request)))
+        from assistant.admin import product_data
+
+        try:
+            activity = await run_in_threadpool(product_data.user_activity, uid)
+        except Exception as e:
+            print(f"[admin] user_activity uid={uid} err={e!r}")
+            activity = None
+        return _html(views.user_page(_ctx(actor), card, days=days, audit=hist, activity=activity, **_flash(request)))
 
     @r.post("/user/{uid}/access")
     async def admin_user_access(uid: str, request: Request, action: str = Form(...), back: str = Form("/users")) -> Response:

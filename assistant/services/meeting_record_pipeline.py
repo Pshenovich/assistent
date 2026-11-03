@@ -241,6 +241,10 @@ def persist_meeting_artifacts_for_user(
         meta=meta,
         segments=getattr(processed.get("result"), "segments", None),
     )
+    from assistant.stores import analytics_store as _an
+
+    _an.track(user_id, "transcription.create", platform="server", source="meeting_bot")
+    _an.track(user_id, "summary.create", platform="server", source="auto")
     if note and note.get("id") is not None:
         from assistant.services import meeting_autolink
 

@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261101-zoomrec";
+var CACHE_VERSION = "miniapp-v1-20261103-analytics";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -16,9 +16,9 @@ var PRECACHE_URLS = [
   "./board.css?v=20261029-spktools",
   "./board-geom.js?v=20261029-spktools",
   "./board.js?v=20261029-spktools",
-  "./realtime.js?v=20261029-spktools",
+  "./realtime.js?v=20261103-analytics",
   "./note-yjs.js?v=20261029-spktools",
-  "./app.js?v=20261031-discuss1",
+  "./app.js?v=20261103-analytics",
   "./mail.js?v=20261023-mail6",
   "./mail-inbox.js?v=20261023-reply1",
   "./digest-chats.js?v=20261025-mobfix",

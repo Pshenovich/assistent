@@ -192,6 +192,9 @@ def _save_transcription_note(
         meta=meta,
         segments=getattr(result, "segments", None),
     )
+    from assistant.stores import analytics_store as _an
+
+    _an.track(user_id, "transcription.create", platform="tg_bot", source="tg_file")
     return int(note["id"])
 
 

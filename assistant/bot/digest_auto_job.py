@@ -13,6 +13,7 @@ import time
 from telegram.ext import ContextTypes
 
 from assistant.bot.access_gate import is_user_allowed
+from assistant.stores import analytics_store
 
 _LAST_TODAY: dict[int, float] = {}
 TODAY_EVERY_SEC = 3 * 3600
@@ -81,6 +82,7 @@ async def digest_auto_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             n = await asyncio.to_thread(refresh_user, uid)
             if n:
                 print(f"[digest_auto] uid={uid} reports={n}")
+                analytics_store.track(uid, "digest.delivered", platform="server", kind="chats", reports=n)
         except Exception as e:
             print(f"[digest_auto] uid={uid} err={e!r}")
 

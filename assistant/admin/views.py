@@ -11,6 +11,7 @@ from assistant.admin.data import STATUS_LABEL
 
 NAV = (
     ("overview", "Обзор", "/"),
+    ("product", "Продукт", "/product"),
     ("users", "Пользователи", "/users"),
     ("orgs", "Организации", "/orgs"),
     ("spend", "Расход", "/spend"),
@@ -340,7 +341,8 @@ def users_page(ctx: Ctx, users: list[dict[str, Any]], *, q: str, status: str, da
     return page(ctx, active="users", title="Пользователи", body=body, **flash)
 
 
-def user_page(ctx: Ctx, u: dict[str, Any], *, days: int, audit: list[dict[str, Any]], **flash: str) -> str:
+def user_page(ctx: Ctx, u: dict[str, Any], *, days: int, audit: list[dict[str, Any]],
+              activity: dict[str, Any] | None = None, **flash: str) -> str:
     orgs_rows = [
         f"<tr><td><a href=\"{esc(ctx.url('/org/' + str(o['id'])))}\">{esc(o['name'])}</a></td>"
         f"<td>{esc(ROLE_LABEL.get(o['role'], o['role']))}</td><td>{esc(MEMBER_STATUS.get(o['status'], o['status'])) or badge('active', 'В организации')}</td>"
@@ -366,9 +368,115 @@ def user_page(ctx: Ctx, u: dict[str, Any], *, days: int, audit: list[dict[str, A
         f'<div><h2>На что тратит</h2>{table((("Операция", ""), ("Вызовов", "n"), ("₽", "n")), ops_rows(ctx, u["ops"]), "Нет расхода")}</div>'
         f'<div><h2>По дням</h2>{table((("День", ""), ("Вызовов", "n"), ("₽", "n")), day_rows, "Нет расхода")}</div>'
         "</div>"
-        f'<h2>Действия операторов</h2>{audit_table(ctx, audit, "Пока ничего")}'
+        + (activity_block(activity) if activity else "")
+        + f'<h2>Действия операторов</h2>{audit_table(ctx, audit, "Пока ничего")}'
     )
     return page(ctx, active="users", title=u["name"], body=body, **flash)
+
+
+def pct(v: float) -> str:
+    return f"{100 * float(v or 0):.0f}%"
+
+
+def dec(v: float) -> str:
+    v = float(v or 0)
+    return (f"{v:.1f}" if v < 10 else f"{v:.0f}").replace(".", ",")
+
+
+def share_cell(v: float) -> str:
+    return f'{pct(v)}<div class="bar" style="width:{max(2, 100 * float(v or 0)):.0f}%"></div>'
+
+
+def product_page(ctx: Ctx, d: dict[str, Any], *, posthog: bool, **flash: str) -> str:
+    kpis = (
+        f'<div class="kpi"><div class="l">DAU сегодня</div><div class="v">{num(d["dau"])}</div>'
+        f'<div class="d">DAU/MAU — {pct(d["stickiness"])}</div></div>'
+        f'<div class="kpi"><div class="l">WAU</div><div class="v">{num(d["wau"])}</div><div class="d">за 7 дней</div></div>'
+        f'<div class="kpi"><div class="l">MAU</div><div class="v">{num(d["mau"])}</div><div class="d">за 30 дней</div></div>'
+        f'<div class="kpi"><div class="l">Минут в день</div><div class="v">{dec(d["minutes_median"])}</div>'
+        f'<div class="d">медиана на активного · p75 {dec(d["minutes_p75"])}</div></div>'
+        f'<div class="kpi"><div class="l">Сессий в день</div><div class="v">{dec(d["sessions_per_day"])}</div>'
+        f'<div class="d">медиана длины — {dec(d["session_median"])} мин</div></div>'
+    )
+    plat_rows = [
+        f'<tr><td>{esc(p["label"])}</td><td class="n">{num(p["users"])}</td><td class="n">{num(p["minutes"])}</td>'
+        f'<td class="n" style="width:160px">{share_cell(p["share"])}</td></tr>' for p in d["platforms"]
+    ]
+    act_rows = [
+        f'<tr><td>{esc(p["label"])}</td><td class="n">{num(p["n"])}</td><td class="n" style="width:160px">{share_cell(p["share"])}</td></tr>'
+        for p in d["action_platforms"]
+    ]
+    feat_rows = [
+        f'<tr><td>{esc(f["label"])}</td><td class="n">{num(f["users"])}</td><td class="n" style="width:160px">{share_cell(f["share"])}</td>'
+        f'<td class="n">{num(f["events"])}</td><td class="n">{dec(f["per_user"])}</td></tr>' for f in d["features"]
+    ]
+    ent = d["entities"]
+    ent_rows = [
+        f'<tr><td>{esc(e["label"])}</td><td class="n">{num(e["users_with"])} из {num(e["users"])}</td>'
+        f'<td class="n">{dec(e["median"])}</td><td class="n">{dec(e["p75"])}</td><td class="n">{dec(e["mean"])}</td>'
+        f'<td class="n">{num(e["total"])}</td></tr>' for e in ent["rows"]
+    ]
+    theme_rows = [f'<tr><td>{esc(t)}</td><td class="n">{num(n)}</td></tr>' for t, n in d["themes"]]
+    model_rows = [
+        f'<tr><td>{esc(m["requested"] or "—")}</td><td>{esc(m["used"] or "—")}</td><td class="n">{num(m["n"])}</td></tr>'
+        for m in d["models"]
+    ]
+    bot_rows = [f'<tr><td>{esc(k)}</td><td class="n">{num(n)}</td></tr>' for k, n in d["bot"]]
+    weeks = max((len(c["retention"]) for c in d["cohorts"]), default=0)
+    coh_head = [("Неделя прихода", ""), ("Людей", "n")] + [(f"W{i}", "n") for i in range(weeks)]
+    coh_rows = [
+        f'<tr><td>{c["week"][8:10]}.{c["week"][5:7]}</td><td class="n">{num(c["size"])}</td>'
+        + "".join(f'<td class="n">{"" if v is None else pct(v)}</td>' for v in c["retention"]) + "</tr>"
+        for c in d["cohorts"]
+    ]
+    churn_rows = [
+        f'<tr><td>{user_link(ctx, u)}</td><td class="muted">{ago(u["last_seen"])}</td><td class="n">{num(u["minutes"])}</td></tr>'
+        for u in d["churn"]
+    ]
+    ph = ("Воронки, сегменты и Retention с фильтрами — в PostHog." if posthog
+          else "Пересылка в PostHog выключена (ANALYTICS_FORWARD) — данные только здесь.")
+    body = (
+        f'<h1>Продукт</h1><p class="sub">Свои аккаунты не считаются. Время — UTC. {esc(ph)}</p>'
+        f'{period_chips(ctx, "/product", d["days"])}'
+        f'<div class="kpis">{kpis}</div>'
+        f'<div class="card"><h2>Активные пользователи по дням</h2>{bars_svg(d["series"], key="users")}</div>'
+        '<div class="grid2">'
+        f'<div><h2>Платформы: время</h2>{table((("Платформа", ""), ("Людей", "n"), ("Минут", "n"), ("Доля", "n")), plat_rows, "Нет активности")}</div>'
+        f'<div><h2>Платформы: действия</h2>{table((("Платформа", ""), ("Действий", "n"), ("Доля", "n")), act_rows, "Нет действий")}</div>'
+        "</div>"
+        f'<h2>Функции</h2><p class="sub small">Доля — от MAU. «На человека» — событий на пользователя функции за период.</p>'
+        f'{table((("Функция", ""), ("Людей", "n"), ("Доля", "n"), ("Событий", "n"), ("На человека", "n")), feat_rows)}'
+        f'<h2>Удержание по неделям</h2><p class="sub small">Доля когорты, активная на N-й неделе после первой.</p>'
+        f'{table(coh_head, coh_rows, "Пока мало данных")}'
+        f'<h2>Сколько чего у пользователя</h2><p class="sub small">Снимок за {esc(ent["day"] or "—")}.</p>'
+        f'{table((("Что", ""), ("Есть у", "n"), ("Медиана", "n"), ("p75", "n"), ("Среднее", "n"), ("Всего", "n")), ent_rows, "Снимок ещё не делался")}'
+        '<div class="grid2">'
+        f'<div><h2>Стили презентаций</h2>{table((("Стиль", ""), ("Создано", "n")), theme_rows, "Презентаций не было")}</div>'
+        f'<div><h2>Функции бота</h2>{table((("Что", ""), ("Раз", "n")), bot_rows, "Действий в боте не было")}</div>'
+        "</div>"
+        f'<h2>Модели ИИ</h2>{table((("Выбрана", ""), ("Ответила", ""), ("Ответов", "n")), model_rows, "Вопросов к ИИ не было")}'
+        f'<h2>Уходят</h2><p class="sub small">Были активны в предыдущие 30 дней и молчат последние 14 — можно написать.</p>'
+        f'{table((("Кто", ""), ("Был", ""), ("Минут за 44 дня", "n")), churn_rows, "Никто не пропал")}'
+    )
+    return page(ctx, active="product", title="Продукт", body=body, **flash)
+
+
+def activity_block(a: dict[str, Any]) -> str:
+    mins = " · ".join(f'{esc(m["label"])}: {num(m["n"])} мин' for m in a["minutes"]) or "нет"
+    ents = " · ".join(f'{esc(e["label"])}: {num(e["value"])}' for e in a["entities"]) or "нет снимка"
+    ev_rows = [
+        f'<tr><td class="muted small">{a_ts(e["ts"])}</td><td>{esc(e["event"])}</td><td class="muted">{esc(e["platform"])}</td>'
+        f'<td class="small muted">{esc(e["props"])}</td></tr>' for e in a["events"]
+    ]
+    return (
+        f'<h2>Как пользуется</h2><div class="card"><div class="kv"><div>Активность за 30 дней</div><div>{mins}</div>'
+        f'<div>Создано</div><div>{ents}</div></div></div>'
+        f'<h2>Последние действия</h2>{table((("Когда", ""), ("Событие", ""), ("Где", ""), ("Детали", "")), ev_rows, "Пока ничего")}'
+    )
+
+
+def a_ts(dt: datetime) -> str:
+    return dt.strftime("%d.%m %H:%M")
 
 
 def orgs_page(ctx: Ctx, orgs: list[dict[str, Any]], *, q: str, **flash: str) -> str:

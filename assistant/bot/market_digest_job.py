@@ -10,6 +10,7 @@ from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
 from assistant.bot.access_gate import is_user_allowed
+from assistant.stores import analytics_store
 from assistant.config import ROOT
 
 TICK_SEC = 600
@@ -62,6 +63,7 @@ async def market_digest_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             day = datetime.now(user_prefs.get_user_tz(uid)).date().isoformat()
             await asyncio.to_thread(market_settings.mark_sent, uid, day)
             print(f"[market_tg] sent uid={uid}")
+            analytics_store.track(uid, "digest.delivered", platform="server", kind="market")
         except Exception as e:
             print(f"[market_tg] send uid={uid} err={e!r}")
 

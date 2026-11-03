@@ -153,6 +153,9 @@ def transcribe_url_to_note(
         },
         segments=getattr(result, "segments", None),
     )
+    from assistant.stores import analytics_store as _an
+
+    _an.track(uid, "transcription.create", source="link")
     if with_summary:
         note = tnotes.begin_make_summary(uid, int(note["id"]))
     return note
