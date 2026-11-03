@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261031-bulk1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261103-boardtpl"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -31951,12 +31951,24 @@
       blockActions: boardBlockActions(sid),
       // Панель заметки с «Обсуждением» на доске скрыта — кнопка чата в тулбаре доски.
       onOpenChat: openNoteDiscussionFromToolbar,
+      // Шаблон «На моих данных» — Лео собирает его в чате по листам заметки.
+      onTemplateAsk: askBoardTemplate,
       // Автор новых стикеров (подпись внизу стикера) и его фото — как в комментариях.
       me: boardAuthorMe(),
       decorateAvatar: function (img, author) {
         applyTelegramAvatar(img, { userId: author && author.id });
       },
     };
+  }
+
+  /** Таблицы доски — редактор таблиц заметки; бандл грузится лениво — после загрузки доска их переподключит. */
+  function refreshBoardTablesWhenEditorReady(board) {
+    if (!board || typeof board.refreshBlocks !== "function") return;
+    loadNoteEditorScripts()
+      .then(function () {
+        board.refreshBlocks();
+      })
+      .catch(function () {});
   }
 
   function boardAuthorMe() {
@@ -32069,6 +32081,7 @@
     noteSheetState.leftBoard = null;
     if (!b) return;
     if (b.destroy) b.destroy();
+    rerenderDiscussionFeed();
     var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
     if (pad) pad.classList.remove("is-board-mode", "is-web-canvas-mode");
     var overlay = document.getElementById("note-editor-overlay");
@@ -32100,6 +32113,8 @@
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     if (toolbarWrap) setHidden(toolbarWrap, true);
     noteSheetState.leftBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
+    refreshBoardTablesWhenEditorReady(noteSheetState.leftBoard);
+    rerenderDiscussionFeed();
     syncNoteDiscussBadge();
     startBoardYjs();
   }
@@ -32113,6 +32128,8 @@
     host.innerHTML = "";
     if (bar) bar.innerHTML = "";
     noteSheetState.rightBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
+    refreshBoardTablesWhenEditorReady(noteSheetState.rightBoard);
+    rerenderDiscussionFeed();
     syncNoteDiscussBadge();
     noteSheetState.rightEditor = null;
     startBoardYjs();
@@ -38135,6 +38152,7 @@
     if (!ed) return { text: "", quotes: [] };
     var quotes = [];
     var parts = [];
+    var boardTemplate = "";
     // То же по порядку: цитата — строками «> …», за ней свой текст (для нескольких реплаев).
     var threaded = [];
     function push(t) {
@@ -38154,6 +38172,12 @@
           quotes.push(q);
           threaded.push("\n\n" + q.split("\n").map(function (l) { return "> " + l; }).join("\n") + "\n");
         }
+        return;
+      }
+      if (node.classList && node.classList.contains("note-gpt-template-chip")) {
+        // Шаблон доски: «Гант по заметке» уходит текстом, вид шаблона — полем board_template.
+        boardTemplate = String(node.getAttribute("data-template") || "");
+        push(String(node.textContent || "").trim() + " ");
         return;
       }
       if (node.classList && node.classList.contains("note-discuss-mention")) {
@@ -38211,8 +38235,8 @@
     }
     // Несколько цитат с комментариями между ними — отправляем по порядку («> цитата», под ней комментарий),
     // и в сообщении, и для модели; раньше все цитаты слипались в начале, а комментарии — после.
-    if (quotes.length > 1) return { text: tidy(threaded), quotes: [], threaded: true };
-    return { text: tidy(parts), quotes: quotes };
+    if (quotes.length > 1) return { text: tidy(threaded), quotes: [], threaded: true, boardTemplate: boardTemplate };
+    return { text: tidy(parts), quotes: quotes, boardTemplate: boardTemplate };
   }
 
   // Тело с реплаями по порядку: строки «> …» — блок цитаты, за ним свой текст.
@@ -38356,6 +38380,54 @@
     return true;
   }
 
+  /** Чип шаблона доски в поле ввода («Гант по заметке»): один на сообщение, отправка — Лео собирает шаблон. */
+  function insertGptTemplateChip(tplId, label) {
+    var ed = noteGptEditor();
+    if (!ed || !tplId) return false;
+    ed.querySelectorAll(".note-gpt-template-chip").forEach(function (c) {
+      c.remove();
+    });
+    var chip = document.createElement("span");
+    chip.className = "note-gpt-template-chip";
+    chip.setAttribute("data-template", tplId);
+    chip.setAttribute("contenteditable", "false");
+    chip.textContent = label;
+    var space = document.createTextNode("\u00a0");
+    ed.insertBefore(space, ed.firstChild);
+    ed.insertBefore(chip, space);
+    try {
+      ed.focus();
+      var caret = document.createRange();
+      caret.selectNodeContents(ed);
+      caret.collapse(false);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(caret);
+      ed._savedRange = caret.cloneRange();
+    } catch (_) {}
+    syncGptEditorEmpty(ed);
+    autosizeNoteComposer(ed);
+    syncNotePaieReplyForm();
+    return true;
+  }
+
+  var BOARD_TEMPLATE_ASK = {
+    scheme: "Схема по заметке",
+    gantt: "Гант по заметке",
+    org: "Оргструктура по заметке",
+    table: "Таблица по заметке",
+  };
+
+  /** «На моих данных»: чат с Лео и чип шаблона в поле ввода; отправит сам человек (можно добавить заметку «+»). */
+  function askBoardTemplate(tplId) {
+    var label = BOARD_TEMPLATE_ASK[tplId];
+    if (!label) return;
+    openNoteDiscussion({ mode: "gpt", focus: true });
+    setTimeout(function () {
+      if (insertGptTemplateChip(tplId, label)) showNoteToast("Отправьте — Лео соберёт по листам заметки. Другую заметку добавьте через «+»");
+    }, 60);
+  }
+
   function adjacentGptChip(ed, dir) {
     var sel = window.getSelection();
     if (!ed || !sel || !sel.isCollapsed || !sel.rangeCount) return null;
@@ -38367,7 +38439,7 @@
         n &&
         n.nodeType === 1 &&
         n.classList &&
-        (n.classList.contains("note-gpt-quote-chip") || n.classList.contains("note-discuss-mention"))
+        (n.classList.contains("note-gpt-quote-chip") || n.classList.contains("note-gpt-template-chip") || n.classList.contains("note-discuss-mention"))
       );
     }
     function isBlankText(n) {
@@ -38415,7 +38487,7 @@
     var el = node && (node.nodeType === 1 ? node : node.parentElement);
     var chip =
       el && el.closest
-        ? el.closest(".note-gpt-quote-chip, .note-discuss-mention")
+        ? el.closest(".note-gpt-quote-chip, .note-gpt-template-chip, .note-discuss-mention")
         : null;
     return chip && ed.contains(chip) ? chip : null;
   }
@@ -47984,9 +48056,25 @@
     var sugg = ["Сделай саммари", "Найди задачи и сроки", "Что упущено?"];
     if (/<table/i.test(html)) sugg.push("Проверь цифры в таблице");
     else sugg.push("Предложи следующие шаги");
-    sugg.push("Нарисуй схему на доске");
+    // На открытой доске — шаблоны «по заметке»: чип шаблона в поле ввода, Лео соберёт по листам.
+    var boardOpen = !!openBoardForYjs();
+    if (!boardOpen) sugg.push("Нарисуй схему на доске");
     var chips = document.createElement("div");
     chips.className = "note-discuss-sugg";
+    if (boardOpen) {
+      Object.keys(BOARD_TEMPLATE_ASK).forEach(function (id) {
+        var tb = document.createElement("button");
+        tb.type = "button";
+        tb.className = "is-template";
+        tb.textContent = BOARD_TEMPLATE_ASK[id];
+        tb.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          insertGptTemplateChip(id, BOARD_TEMPLATE_ASK[id]);
+        });
+        chips.appendChild(tb);
+      });
+    }
     sugg.forEach(function (t) {
       var b = document.createElement("button");
       b.type = "button";
@@ -48041,6 +48129,8 @@
     var fp =
       "chat:" +
       String(chatNow) +
+      // Пустой чат на доске — другие подсказки (шаблоны «по заметке»).
+      (openBoardForYjs() ? "|board" : "") +
       "|" +
       String(kind || "") +
       ":" +
@@ -50188,6 +50278,7 @@
           canvas_sheet_id: openCanvasSheetId || undefined,
           canvas_theme: preferredDeckTheme() || undefined,
           board_sheet_id: openBoard ? openBoard.sheetId : undefined,
+          board_template: openBoard && packed.boardTemplate ? packed.boardTemplate : undefined,
           doc_view: docView ? docView.view : undefined,
           doc_sheet_id: docView ? docView.sheet_id : undefined,
           // Ответ сервер сам сохранит в обсуждение — не пропадёт, если человек вышел из него или закрыл приложение.

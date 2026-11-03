@@ -5800,10 +5800,120 @@ function mount(container, options) {
   };
 }
 
+/** Таблица доски (webapp/board.js): документ — ровно одна таблица, те же узлы, меню и стили, что в заметке. */
+var BoardTableDoc = Node.create({ name: "doc", topNode: true, content: "table" });
+
+function mountTable(container, options) {
+  options = options || {};
+  var shell = document.createElement("div");
+  shell.className = "note-rich-editor note-rich-editor--board-table";
+  var content = document.createElement("div");
+  content.className = "note-rich-editor-surface";
+  shell.appendChild(content);
+  container.innerHTML = "";
+  container.appendChild(shell);
+  var clickPos = { pos: null };
+  var html = String(options.html || "").trim();
+  if (!/<table[\s>]/i.test(html)) html = "";
+  var editor = new Editor({
+    element: content,
+    editable: !!options.editable,
+    extensions: [
+      BoardTableDoc,
+      StarterKit.configure({
+        document: false,
+        heading: false,
+        bulletList: false,
+        orderedList: false,
+        listItem: false,
+        blockquote: false,
+        codeBlock: false,
+        horizontalRule: false,
+      }),
+      Underline,
+      NoteTextStyle,
+      NoteFontStyle,
+      NoteHighlight,
+      Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
+      ManagedTable.configure({ resizable: false, cellMinWidth: 48, HTMLAttributes: { class: "note-editor-table" } }),
+      ManagedTableRow,
+      ManagedTableHeader,
+      ManagedTableCell,
+    ],
+    content: html || "<table><tbody><tr><th><p></p></th><th><p></p></th><th><p></p></th></tr>" +
+      "<tr><td><p></p></td><td><p></p></td><td><p></p></td></tr><tr><td><p></p></td><td><p></p></td><td><p></p></td></tr></tbody></table>",
+    editorProps: {
+      attributes: { class: "note-rich-editor-body ProseMirror", spellcheck: "true" },
+      handlePaste: function (view, event) {
+        if (pasteUrlAsLink(view, event)) return true;
+        return pastePlainTextInTableCell(view, event, clickPos.pos);
+      },
+      handleTripleClick: function (view, pos) {
+        return selectAllTextInTableCell(view, pos);
+      },
+      handleDOMEvents: {
+        copy: function (view, event) {
+          return fillRichClipboard(view, event);
+        },
+        mousedown: function (view, event) {
+          rememberTableClickPos(view, event.clientX, event.clientY, clickPos);
+          return false;
+        },
+      },
+    },
+    onUpdate: function (props) {
+      if (typeof options.onUpdate === "function") options.onUpdate({ html: editor.getHTML(), tr: props && props.transaction });
+    },
+  });
+  editor.storage.leoBoardTable = { onDelete: options.onDelete };
+  return {
+    editor: editor,
+    getHtml: function () {
+      return editor.getHTML();
+    },
+    setHtml: function (next) {
+      var v = String(next || "");
+      if (!v || v === editor.getHTML()) return;
+      editor.commands.setContent(v, false);
+    },
+    setEditable: function (on) {
+      editor.setEditable(!!on, false);
+    },
+    isEditable: function () {
+      return editor.isEditable;
+    },
+    // Фокус сразу, без кадра задержки (commands.focus ждёт requestAnimationFrame — доска успевала
+    // вернуть фокус себе, и первый набор уходил мимо ячейки).
+    focusCellAt: function (clientX, clientY) {
+      var view = editor.view;
+      var hit = view.posAtCoords({ left: clientX, top: clientY });
+      view.focus();
+      var pos = hit ? hit.pos : 1;
+      try {
+        view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos))));
+      } catch (_) {}
+    },
+    focus: function () {
+      var view = editor.view;
+      view.focus();
+      try {
+        view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(1))));
+      } catch (_) {}
+    },
+    blur: function () {
+      editor.commands.blur();
+    },
+    destroy: function () {
+      editor.destroy();
+    },
+  };
+}
+
 var noteRichEditorApi = {
-  assetVersion: "20261031-bulk1",
+  assetVersion: "20261103-boardtpl",
   Y: Y,
   mount: mount,
+  mountTable: mountTable,
   importBody: importBody,
   exportBody: exportBody,
   canonicalBody: canonicalBody,

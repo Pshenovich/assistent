@@ -839,3 +839,458 @@ html[data-theme="light"] .leo-board {
 .lb-av-img.has-photo {
   display: block;
 }
+
+/* ---- составные блоки: таблица (как в заметке), оргкарточка, Гант ---- */
+.lb-t-table,
+.lb-t-card,
+.lb-t-gantt {
+  pointer-events: auto;
+  cursor: move;
+}
+
+.lb-stage:not([data-tool="select"]) .lb-t-table,
+.lb-stage:not([data-tool="select"]) .lb-t-card,
+.lb-stage:not([data-tool="select"]) .lb-t-gantt {
+  cursor: inherit;
+}
+
+.lb-el.is-editing.lb-t-table,
+.lb-el.is-editing.lb-t-card,
+.lb-el.is-editing.lb-t-gantt {
+  cursor: auto;
+}
+
+.lb-table {
+  color: var(--text, var(--lb-text));
+}
+
+.lb-table .note-rich-editor,
+.lb-table .note-rich-editor-surface,
+.lb-table .note-rich-editor-body {
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lb-table .note-rich-editor-body {
+  outline: none;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.lb-table .note-table-manage-wrap,
+.lb-table .note-table-manage-wrap.is-managing,
+.lb-table .note-editor-table {
+  margin: 0;
+  padding: 0;
+}
+
+.lb-table .note-editor-table {
+  background: var(--lb-fill-white);
+}
+
+.lb-table .note-editor-table p {
+  margin: 0;
+}
+
+.lb-el:not(.is-editing) .lb-table .note-rich-editor-body {
+  cursor: move;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lb-block {
+  position: relative;
+}
+
+/* Оргкарточка: шапка с должностью, фото, имя, обязанности. */
+.lb-card {
+  overflow: hidden;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 10px;
+  background: var(--lb-fill-white);
+  color: var(--lb-ink-ink);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--shadow-color, #000) 14%, transparent);
+}
+
+.lb-card-head {
+  padding: 9px 12px;
+  background: var(--head);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  word-break: break-word;
+}
+
+.lb-card-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px 14px;
+  text-align: center;
+}
+
+.lb-card-photo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--lb-fill-gray);
+  color: var(--lb-muted);
+  font-size: 12px;
+}
+
+.lb-card-photo.is-empty {
+  border: 1.5px dashed var(--lb-panel-border);
+  cursor: pointer;
+}
+
+.lb-card-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.lb-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.lb-card-about {
+  color: var(--lb-muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.lb-card [data-f].is-empty::before,
+.lb-g-cell.is-empty::before {
+  content: attr(data-ph);
+  color: var(--lb-muted);
+  opacity: 0.7;
+}
+
+.lb-card [data-f][contenteditable] {
+  outline: 2px solid var(--lb-accent);
+  outline-offset: 1px;
+  border-radius: 4px;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Гант: колонки слева, шкала дней/недель, полосы задач. */
+.lb-g {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 8px;
+  background: var(--lb-fill-white);
+  color: var(--lb-ink-ink);
+  font-size: 12.5px;
+}
+
+.lb-g-head {
+  position: relative;
+  border-bottom: 1px solid var(--lb-panel-border);
+}
+
+.lb-g-hcell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  box-sizing: border-box;
+  color: var(--lb-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.lb-g-month {
+  position: absolute;
+  top: 3px;
+  padding-left: 4px;
+  color: var(--lb-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.lb-g-tick {
+  position: absolute;
+  bottom: 0;
+  height: 22px;
+  border-left: 1px solid var(--lb-panel-border);
+  color: var(--lb-muted);
+  font-size: 11px;
+  line-height: 22px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.lb-g-tick.is-off {
+  color: var(--lb-ink-red);
+}
+
+.lb-g-body {
+  position: absolute;
+  left: 0;
+  right: 0;
+}
+
+.lb-g-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid var(--lb-panel-border);
+}
+
+.lb-g-col.is-off {
+  background: var(--lb-fill-gray);
+}
+
+.lb-g-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--lb-ink-red);
+  opacity: 0.8;
+}
+
+.lb-g-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-bottom: 1px solid var(--lb-panel-border);
+}
+
+.lb-g-row.is-sel {
+  background: var(--lb-accent-soft);
+}
+
+.lb-g-cell {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  overflow: hidden;
+  padding: 0 8px;
+  box-sizing: border-box;
+  background: var(--lb-fill-white);
+  line-height: 34px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.lb-g-row.is-sel .lb-g-cell {
+  background: color-mix(in srgb, var(--lb-accent) 10%, var(--lb-fill-white));
+}
+
+.lb-g-c-start,
+.lb-g-c-end {
+  color: var(--lb-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-g-c-owner {
+  border-right: 1px solid var(--lb-panel-border);
+}
+
+.lb-g-cell[contenteditable] {
+  z-index: 2;
+  overflow: visible;
+  outline: 2px solid var(--lb-accent);
+  outline-offset: -2px;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.lb-g-bar {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  border-radius: 5px;
+  background: var(--c);
+  opacity: 0.85;
+}
+
+.lb-g-bar.is-sel {
+  opacity: 1;
+  outline: 2px solid var(--lb-accent);
+  outline-offset: 1px;
+}
+
+.lb-el.is-selected .lb-g-bar,
+.lb-t-gantt .lb-g-bar {
+  cursor: grab;
+}
+
+.lb-g-edge {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.lb-g-edge.is-start {
+  left: -3px;
+}
+
+.lb-g-edge.is-end {
+  right: -3px;
+}
+
+.lb-g-add {
+  position: absolute;
+  left: 0;
+  width: 150px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  color: var(--lb-accent);
+  line-height: 34px;
+  cursor: pointer;
+}
+
+/* Пустая доска: выбор шаблона. */
+.lb-empty-hint.has-start {
+  max-width: min(560px, calc(100% - 24px));
+  width: 100%;
+  pointer-events: auto;
+}
+
+.lb-start-title {
+  margin-bottom: 14px;
+  color: var(--lb-text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.lb-start-cards,
+.lb-tpl-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.lb-tpl-list {
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 2px;
+}
+
+.lb-start-hint {
+  margin-top: 14px;
+  font-size: 13px;
+}
+
+.lb-tpl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 160px;
+  padding: 10px;
+  box-sizing: border-box;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 12px;
+  background: var(--lb-panel);
+  color: var(--lb-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lb-tpl-list .lb-tpl {
+  width: 132px;
+}
+
+.lb-tpl:hover {
+  border-color: var(--lb-accent);
+}
+
+.lb-tpl-pre {
+  display: block;
+  width: 100%;
+  height: 62px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--lb-bg);
+}
+
+.lb-tpl-pre svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: var(--lb-muted);
+  stroke-width: 1.5;
+}
+
+.lb-tpl-pre svg .is-bar {
+  stroke: none;
+}
+
+.lb-tpl-pre svg .b1 {
+  fill: var(--lb-ink-blue);
+}
+
+.lb-tpl-pre svg .b2 {
+  fill: var(--lb-ink-green);
+}
+
+.lb-tpl-pre svg .b3 {
+  fill: var(--lb-ink-orange);
+}
+
+.lb-tpl-t {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lb-tpl-h {
+  color: var(--lb-muted);
+  font-size: 12px;
+}
+
+.lb-txt {
+  padding: 0 10px;
+}
+
+.lb-tools .lb-sep {
+  width: 22px;
+  height: 1px;
+  margin: 3px auto;
+}
+
+@container (max-width: 640px) {
+  .lb-tools .lb-sep {
+    width: 1px;
+    height: 22px;
+    margin: auto 3px;
+  }
+
+  .lb-tpl {
+    width: calc(50% - 5px);
+  }
+}
+
+/* Только просмотр — без подсказок пустых полей. */
+.leo-board.is-readonly .lb-card [data-f].is-empty::before {
+  content: none;
+}

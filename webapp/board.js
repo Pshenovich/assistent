@@ -15,6 +15,8 @@
   "use strict";
 
   var G = window.LeoBoardGeom;
+  var BL = window.LeoBoardBlocks;
+  var TPL = window.LeoBoardTemplates;
   var INK = ["ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink"];
   var FILLS = ["none", "white", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink"];
   var STICKY = ["yellow", "orange", "pink", "green", "blue", "purple", "gray"];
@@ -28,7 +30,9 @@
   var MAX_Z = 4;
   var GRID = 20;
   var SHAPES = { rect: 1, diamond: 1, ellipse: 1 };
-  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1 };
+  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1 };
+  // Составные блоки: свой HTML внутри узла и своя правка (таблица — редактор таблиц заметки).
+  var BLOCKS = { table: 1, card: 1, gantt: 1 };
   var ALIGN_ICON = { left: "alignLeft", center: "alignCenter", right: "alignRight" };
 
   // Действия с выделенными блоками — те же иконки и подписи, что у плашки выделения в заметке
@@ -72,6 +76,12 @@
   var STROKED = { rect: 1, diamond: 1, ellipse: 1, line: 1, pen: 1 };
   var IMAGE_MAX_SIDE = 1400;
   var CLIP_MIME = "application/x-leo-board";
+  var CARD_PHOTO_SIDE = 400;
+  // Новая таблица — как «Таблица» в заметке: 3×3 с шапкой.
+  var TABLE_HTML = '<table class="note-editor-table"><tbody>' +
+    "<tr>" + new Array(4).join('<th colspan="1" rowspan="1"><p></p></th>') + "</tr>" +
+    new Array(3).join("<tr>" + new Array(4).join('<td colspan="1" rowspan="1"><p></p></td>') + "</tr>") +
+    "</tbody></table>";
 
   var DEFAULTS = {
     text: { w: 240, h: 26, style: { fontSize: 16, textColor: "ink", align: "left" } },
@@ -81,6 +91,8 @@
     sticky: { w: 200, h: 200, style: { fill: "yellow", fontSize: 16 } },
     line: { style: { stroke: "ink", strokeWidth: 2 } },
     pen: { style: { stroke: "ink", strokeWidth: 3 } },
+    table: { w: 420, h: 130 },
+    card: { w: 220, h: 230, style: { fill: "purple" } },
   };
 
   var TOOLS = [
@@ -95,6 +107,7 @@
     { id: "arrow", key: "a", title: "Стрелка (A)", icon: "arrow" },
     { id: "pen", key: "p", title: "Карандаш (P)", icon: "pen" },
     { id: "image", key: "", title: "Картинка", icon: "image" },
+    { id: "table", key: "", title: "Таблица", icon: "table" },
   ];
 
   var ICONS = {
@@ -133,6 +146,13 @@
     alignCenter: '<path d="M3 5h14M5.5 10h9M4 15h12"/>',
     alignRight: '<path d="M3 5h14M8 10h9M5 15h12"/>',
     more: '<circle cx="5" cy="10" r="1.2"/><circle cx="10" cy="10" r="1.2"/><circle cx="15" cy="10" r="1.2"/>',
+    table: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 8h14M3 12h14M8 4v12M12.5 4v12"/>',
+    templates: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><path d="M14 11v6M11 14h6"/>',
+    photo: '<rect x="3" y="5" width="14" height="11" rx="1.5"/><circle cx="10" cy="10.5" r="2.8"/><path d="M7.5 5l1-1.6h3l1 1.6"/>',
+    noPhoto: '<rect x="3" y="5" width="14" height="11" rx="1.5"/><path d="M4 4l12 13"/>',
+    child: '<rect x="6.5" y="2.5" width="7" height="5" rx="1"/><rect x="6.5" y="12.5" width="7" height="5" rx="1"/><path d="M10 7.5v5"/>',
+    taskAdd: '<path d="M3 6h8M3 10h11M3 14h6"/><path d="M15 12v6M12 15h6"/>',
+    taskDel: '<path d="M3 6h8M3 10h11M3 14h6"/><path d="M13 13l4 4M17 13l-4 4"/>',
   };
 
   function icon(name) {
@@ -222,9 +242,47 @@
       });
     } else if (el.type === "image") {
       o.src = el.src;
+    } else if (el.type === "table") {
+      o.html = String(el.html || "");
+    } else if (el.type === "card") {
+      if (el.title) o.title = String(el.title);
+      if (el.name) o.name = String(el.name);
+      if (el.photo) o.photo = el.photo;
+    } else if (el.type === "gantt") {
+      o.start = el.start;
+      o.unit = el.unit === "week" ? "week" : "day";
+      o.span = el.span;
+      o.tasks = clone(el.tasks || []);
     }
     if (el.type === "sticky" && el.author && (el.author.id || el.author.name)) o.author = el.author;
     return o;
+  }
+
+  /** Текст элемента для ИИ, ссылок и буфера: у блоков — их поля. */
+  function elText(el) {
+    if (!el) return "";
+    if (el.type === "card") {
+      var head = [el.title, el.name].filter(Boolean).join(" — ");
+      return head && el.text ? head + ": " + el.text : head || String(el.text || "");
+    }
+    if (el.type === "gantt") {
+      return (el.tasks || []).map(function (t) {
+        return (t.name || "Задача") + (t.owner ? " (" + t.owner + ")" : "") + ": " + BL.fmtDay(t.start) + "–" + BL.fmtDay(t.end);
+      }).join("\n");
+    }
+    if (el.type === "table") {
+      try {
+        var doc = new DOMParser().parseFromString(String(el.html || ""), "text/html");
+        return Array.prototype.map.call(doc.querySelectorAll("tr"), function (tr) {
+          return Array.prototype.map.call(tr.querySelectorAll("th, td"), function (c) {
+            return c.textContent.trim();
+          }).join(" | ");
+        }).join("\n");
+      } catch (_) {
+        return "";
+      }
+    }
+    return String(el.text || "");
   }
 
   function parseBoard(json) {
@@ -285,13 +343,13 @@
   }
 
   /** Картинка в документе — data URL: ужимаем длинную сторону и в JPEG (PNG с прозрачностью — PNG). */
-  function compressImage(src) {
+  function compressImage(src, maxSide) {
     return loadImage(src).then(function (img) {
       if (!img) return null;
       var w = img.naturalWidth || img.width;
       var h = img.naturalHeight || img.height;
       if (!w || !h) return null;
-      var k = Math.min(1, IMAGE_MAX_SIDE / Math.max(w, h));
+      var k = Math.min(1, (maxSide || IMAGE_MAX_SIDE) / Math.max(w, h));
       var cw = Math.max(1, Math.round(w * k));
       var ch = Math.max(1, Math.round(h * k));
       var out = src;
@@ -370,6 +428,9 @@
     var autoFit = false;
     var pendingY = new Set();
     var yFlushHandle = 0;
+    var tables = new Map(); // id → редактор таблицы (NoteRichEditor.mountTable)
+    var gSel = null; // выбранная задача Ганта: {id, task}
+    var ganttOn = new Map(); // id Ганта → был ли он единственным выделенным (тогда видна строка «+ Задача»)
 
     function getEl(id) {
       return els.get(id) || null;
@@ -411,8 +472,13 @@
       '<div class="lb-pop hidden"></div>' +
       '<canvas class="lb-minimap" width="180" height="120"></canvas>' +
       '<div class="lb-zoom"></div>' +
-      '<div class="lb-empty-hint hidden">' +
-      (readOnly ? "Доска пуста" : "Выберите инструмент или дважды нажмите на доску, чтобы добавить текст") +
+      '<div class="lb-empty-hint hidden' + (readOnly || !TPL ? "" : " has-start") + '">' +
+      (readOnly
+        ? "Доска пуста"
+        : TPL
+          ? '<div class="lb-start-title">С чего начнём?</div><div class="lb-start-cards"></div>' +
+            '<div class="lb-start-hint">или выберите инструмент и начните рисовать</div>'
+          : "Выберите инструмент или дважды нажмите на доску, чтобы добавить текст") +
       "</div>";
     host.appendChild(root);
     var stage = root.querySelector(".lb-stage");
@@ -425,6 +491,7 @@
     var minimap = root.querySelector(".lb-minimap");
     var zoomBar = root.querySelector(".lb-zoom");
     var emptyHint = root.querySelector(".lb-empty-hint");
+    var startCards = emptyHint.querySelector(".lb-start-cards");
 
     function stageRect() {
       return stage.getBoundingClientRect();
@@ -577,6 +644,18 @@
           dirty.add(id);
         });
       }
+      if (gSel && !(selected.size === 1 && selected.has(gSel.id))) {
+        dirty.add(gSel.id);
+        gSel = null;
+      }
+      els.forEach(function (el) {
+        if (el.type !== "gantt") return;
+        var on = selected.size === 1 && selected.has(el.id);
+        if (!!ganttOn.get(el.id) !== on) {
+          ganttOn.set(el.id, on);
+          dirty.add(el.id);
+        }
+      });
       dirty.forEach(renderNode);
       dirty.clear();
       if (orderDirty) {
@@ -756,6 +835,7 @@
         if (node) node.remove();
         nodes.delete(id);
         if (editing && editing.id === id) editing = null;
+        dropTable(id);
         return;
       }
       if (!node) {
@@ -782,6 +862,9 @@
         node.style.cssText = "left:0;top:0;width:0;height:0";
         replaceShape(node, penSvg(el));
         return;
+      } else if (BLOCKS[el.type]) {
+        renderBlock(node, el, isEditing);
+        return;
       } else {
         node.style.cssText =
           "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;" +
@@ -794,6 +877,125 @@
       textStyle(el, textEl);
       if (!isEditing && textEl.textContent !== String(el.text || "")) textEl.textContent = String(el.text || "");
       if (el.type === "text" && !isEditing) fitTextHeight(el, textEl);
+    }
+
+    // ---- составные блоки: таблица, оргкарточка, Гант ----
+    function renderBlock(node, el, isEditing) {
+      var auto = el.type !== "gantt";
+      node.style.cssText =
+        "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;" +
+        (auto ? "min-height:20px" : "height:" + Math.max(1, el.h) + "px");
+      var old = node.querySelector(":scope > .lb-shape");
+      if (old) old.remove();
+      if (el.type === "table") renderTable(node, el, isEditing);
+      else if (!isEditing) {
+        var html = el.type === "card"
+          ? BL.cardHtml(el, { editable: !readOnly })
+          : BL.ganttHtml(el, { selTask: gSel && gSel.id === el.id ? gSel.task : "", editable: !readOnly && selected.size === 1 && selected.has(el.id) });
+        var box = node.querySelector(":scope > .lb-block");
+        if (!box) {
+          box = document.createElement("div");
+          box.className = "lb-block";
+          node.appendChild(box);
+        }
+        if (box.getAttribute("data-src") !== html) {
+          box.setAttribute("data-src", html);
+          box.innerHTML = html;
+        }
+      }
+      if (auto && !isEditing) fitBlockHeight(el, node);
+    }
+
+    /** Таблица доски — таблица заметки: тот же редактор, меню и стили. */
+    function renderTable(node, el, isEditing) {
+      var host = node.querySelector(":scope > .lb-table");
+      if (!host) {
+        host = document.createElement("div");
+        host.className = "lb-table";
+        node.appendChild(host);
+      }
+      var tb = tables.get(el.id);
+      var NRE = window.NoteRichEditor;
+      if (!tb && NRE && typeof NRE.mountTable === "function") {
+        var id = el.id;
+        tb = NRE.mountTable(host, {
+          html: el.html,
+          editable: false,
+          onUpdate: function (info) {
+            onTableInput(id, info.html);
+          },
+          onDelete: function () {
+            finishEdit();
+            setSelection([id]);
+            deleteSel();
+          },
+        });
+        tables.set(el.id, tb);
+      } else if (!tb) {
+        // Без редактора (публичная страница) — только текст ячеек, разметку не доверяем.
+        if (host.getAttribute("data-src") !== el.html) {
+          host.setAttribute("data-src", el.html || "");
+          host.innerHTML = "";
+          host.appendChild(staticTable(el.html));
+        }
+      } else if (!isEditing && tb.getHtml() !== el.html) {
+        tb.setHtml(el.html);
+      }
+    }
+
+    function staticTable(html) {
+      var t = document.createElement("table");
+      t.className = "note-editor-table";
+      var body = document.createElement("tbody");
+      t.appendChild(body);
+      try {
+        var doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+        doc.querySelectorAll("tr").forEach(function (tr) {
+          var row = document.createElement("tr");
+          tr.querySelectorAll("th, td").forEach(function (c) {
+            var cell = document.createElement(c.tagName === "TH" ? "th" : "td");
+            cell.textContent = c.textContent;
+            var span = parseInt(c.getAttribute("colspan"), 10);
+            if (span > 1) cell.colSpan = span;
+            row.appendChild(cell);
+          });
+          body.appendChild(row);
+        });
+      } catch (_) {}
+      return t;
+    }
+
+    function dropTable(id) {
+      var tb = tables.get(id);
+      if (!tb) return;
+      tables.delete(id);
+      try {
+        tb.destroy();
+      } catch (_) {}
+    }
+
+    /** Правка таблицы на месте: тело — в элемент сразу (для соавторов), шаг отмены — по выходу из правки. */
+    function onTableInput(id, html) {
+      var el = els.get(id);
+      if (!el || readOnly || el.html === html) return;
+      els.set(id, Object.assign({}, el, { html: html }));
+      localChanged(id);
+      var node = nodes.get(id);
+      if (node) fitBlockHeight(els.get(id), node);
+      renderOverlay();
+      positionProps();
+    }
+
+    /** Таблица и карточка растут по высоте под содержимое (без шага отмены). */
+    function fitBlockHeight(el, node) {
+      if (!node.isConnected || !root.offsetWidth) return;
+      var h = Math.max(20, Math.ceil(node.offsetHeight));
+      var w = el.type === "table" ? Math.max(el.w, Math.ceil(node.scrollWidth)) : el.w;
+      if (Math.abs(h - el.h) > 1 || Math.abs(w - el.w) > 1) {
+        els.set(el.id, Object.assign({}, el, { h: h, w: w }));
+        localChanged(el.id);
+        renderOverlay();
+      }
     }
 
     /** Подпись автора внизу стикера: аватар (фото или инициалы) и имя; у Лео — ✨. */
@@ -949,15 +1151,19 @@
           ];
           var names = [["nw", c[0]], ["n", mids[0]], ["ne", c[1]], ["e", mids[1]], ["se", c[2]], ["s", mids[2]], ["sw", c[3]], ["w", mids[3]]];
           if (single.type === "text") names = [["w", mids[3]], ["e", mids[1]], ["nw", c[0]], ["se", c[2]]];
+          // Таблица и карточка растут по высоте сами — тянутся только вширь; Гант — по данным.
+          if (BLOCKS[single.type]) names = single.type === "gantt" ? [] : [["w", mids[3]], ["e", mids[1]]];
           names.forEach(function (n) {
             var s = toScreen(n[1]);
             h.push('<rect class="lb-handle" data-h="' + n[0] + '" x="' + (s.x - hs / 2) + '" y="' + (s.y - hs / 2) + '" width="' + hs + '" height="' + hs + '" rx="2"/>');
           });
-          var top = toScreen(mids[0]);
-          var up = G.rot(G.pt(0, -1), G.pt(0, 0), single.rot || 0);
-          var rp = G.add(top, G.mul(up, 24));
-          h.push('<line class="lb-rot-stem" x1="' + top.x + '" y1="' + top.y + '" x2="' + rp.x + '" y2="' + rp.y + '"/>');
-          h.push('<circle class="lb-handle lb-rot" data-h="rot" cx="' + rp.x + '" cy="' + rp.y + '" r="6"/>');
+          if (!BLOCKS[single.type]) {
+            var top = toScreen(mids[0]);
+            var up = G.rot(G.pt(0, -1), G.pt(0, 0), single.rot || 0);
+            var rp = G.add(top, G.mul(up, 24));
+            h.push('<line class="lb-rot-stem" x1="' + top.x + '" y1="' + top.y + '" x2="' + rp.x + '" y2="' + rp.y + '"/>');
+            h.push('<circle class="lb-handle lb-rot" data-h="rot" cx="' + rp.x + '" cy="' + rp.y + '" r="6"/>');
+          }
           if (single.type !== "image" || true) {
             G.SIDES.forEach(function (side) {
               var p = G.sidePoint(single, side);
@@ -1105,6 +1311,10 @@
     function startEdit(id, opts2) {
       if (readOnly) return;
       var el = els.get(id);
+      if (el && BLOCKS[el.type]) {
+        startBlockEdit(id, opts2);
+        return;
+      }
       if (!el || !TEXTUAL[el.type]) return;
       finishEdit();
       setSelection([id]);
@@ -1172,6 +1382,10 @@
       if (!editing) return;
       var ed = editing;
       editing = null;
+      if (ed.kind) {
+        finishBlockEdit(ed);
+        return;
+      }
       ed.text.removeEventListener("input", onEditInput);
       ed.text.removeEventListener("keydown", onEditKey);
       ed.text.removeEventListener("blur", onEditBlur);
@@ -1205,6 +1419,216 @@
       }
       commit();
       schedule();
+    }
+
+    // ---- правка блоков ----
+    /** Двойное нажатие / Enter по блоку: таблица — курсор в ячейку, карточка и Гант — правка поля. */
+    function startBlockEdit(id, opts2) {
+      var el = els.get(id);
+      if (!el) return;
+      finishEdit();
+      setSelection([id]);
+      flushNow();
+      var node = nodes.get(id);
+      if (!node) return;
+      var at = opts2 && opts2.at;
+      var target = at ? document.elementFromPoint(at.clientX, at.clientY) : null;
+      if (target && !node.contains(target)) target = null;
+      if (el.type === "table") {
+        var tb = tables.get(id);
+        var host = node.querySelector(":scope > .lb-table");
+        if (!tb || !host) return;
+        tb.setEditable(true);
+        editing = { id: id, kind: "table", node: node, text: host, before: clone(el) };
+        node.classList.add("is-editing");
+        if (at) tb.focusCellAt(at.clientX, at.clientY);
+        else tb.focus();
+        host.addEventListener("keydown", onBlockKey);
+        host.addEventListener("focusout", onBlockBlur);
+        renderOverlay();
+        renderProps();
+        return;
+      }
+      if (el.type === "card") {
+        var f = target && target.closest ? target.closest("[data-f]") : null;
+        startFieldEdit(id, f ? f.getAttribute("data-f") : "title");
+        return;
+      }
+      if (el.type === "gantt") {
+        var tasks = el.tasks || [];
+        var cell = target && target.closest ? target.closest(".lb-g-cell") : null;
+        var bar = target && target.closest ? target.closest(".lb-g-bar") : null;
+        var task = cell ? cell.getAttribute("data-task") : bar ? bar.getAttribute("data-task") : tasks.length ? tasks[0].id : "";
+        if (task) startFieldEdit(id, cell ? cell.getAttribute("data-col") : "name", task);
+      }
+    }
+
+    /** Поле карточки (должность / имя / обязанности) или ячейка Ганта (task) — текст на месте. */
+    function startFieldEdit(id, field, task) {
+      var node = nodes.get(id);
+      if (!node) return;
+      var sel = task
+        ? '.lb-g-cell[data-task="' + cssEsc(task) + '"][data-col="' + field + '"]'
+        : '[data-f="' + field + '"]';
+      var t = node.querySelector(sel);
+      if (!t) return;
+      var el = els.get(id);
+      if (task) {
+        gSel = { id: id, task: task };
+        var tk = (el.tasks || []).filter(function (x) {
+          return x.id === task;
+        })[0];
+        // В ячейке даты — полная дата, чтобы можно было сменить и год.
+        if (tk && (field === "start" || field === "end")) t.textContent = BL.fmtDay(tk[field]);
+      }
+      t.classList.remove("is-empty");
+      t.contentEditable = "plaintext-only";
+      if (t.contentEditable !== "plaintext-only") t.contentEditable = "true";
+      t.spellcheck = true;
+      editing = { id: id, kind: task ? "gcell" : "field", field: field, task: task || "", node: node, text: t, before: clone(el) };
+      node.classList.add("is-editing");
+      t.focus({ preventScroll: true });
+      var range = document.createRange();
+      range.selectNodeContents(t);
+      // Ячейка Ганта — текст выделен целиком (набор заменяет), поле карточки — курсор в конец.
+      if (!task) range.collapse(false);
+      var ws = window.getSelection();
+      ws.removeAllRanges();
+      ws.addRange(range);
+      t.addEventListener("keydown", onBlockKey);
+      t.addEventListener("blur", onBlockBlur);
+      renderOverlay();
+      renderProps();
+    }
+
+    function cssEsc(v) {
+      return String(v).replace(/["\\]/g, "\\$&");
+    }
+
+    var FIELD_ORDER = { field: ["title", "name", "text"], gcell: ["name", "start", "end", "owner"] };
+
+    function onBlockKey(e) {
+      if (!editing) return;
+      var ed = editing;
+      var multi = ed.kind === "table" || (ed.kind === "field" && ed.field === "text");
+      if (e.key === "Escape" || (e.key === "Enter" && (e.metaKey || e.ctrlKey || !multi))) {
+        e.preventDefault();
+        e.stopPropagation();
+        finishEdit();
+        stage.focus({ preventScroll: true });
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "a" || e.key === "ф") && ed.kind !== "table") {
+        // ⌘A — весь текст поля, а не вся страница.
+        e.preventDefault();
+        e.stopPropagation();
+        var all = document.createRange();
+        all.selectNodeContents(ed.text);
+        var ws = window.getSelection();
+        ws.removeAllRanges();
+        ws.addRange(all);
+        return;
+      }
+      if (e.key === "Tab" && ed.kind !== "table") {
+        // Tab — следующее поле (Shift — предыдущее), как по ячейкам таблицы.
+        e.preventDefault();
+        var order = FIELD_ORDER[ed.kind];
+        var i = order.indexOf(ed.field) + (e.shiftKey ? -1 : 1);
+        finishEdit();
+        flushNow();
+        if (i >= 0 && i < order.length) startFieldEdit(ed.id, order[i], ed.task || undefined);
+        else stage.focus({ preventScroll: true });
+      }
+      e.stopPropagation();
+    }
+
+    function onBlockBlur() {
+      setTimeout(function () {
+        if (!editing || !editing.kind) return;
+        var a = document.activeElement;
+        if (a && editing.text.contains(a)) return;
+        // Подтверждение «Удалить всю таблицу?» — поверх, правку не закрываем.
+        if (editing.kind === "table" && document.querySelector(".note-table-confirm-overlay")) return;
+        finishEdit();
+      }, 0);
+    }
+
+    function finishBlockEdit(ed) {
+      ed.text.removeEventListener("keydown", onBlockKey);
+      ed.text.removeEventListener("blur", onBlockBlur);
+      ed.text.removeEventListener("focusout", onBlockBlur);
+      ed.node.classList.remove("is-editing");
+      var el = els.get(ed.id);
+      if (ed.kind === "table") {
+        var tb = tables.get(ed.id);
+        if (tb) {
+          tb.setEditable(false);
+          if (el) el = Object.assign({}, el, { html: tb.getHtml() });
+        }
+      } else {
+        ed.text.contentEditable = "false";
+        ed.text.removeAttribute("contenteditable");
+      }
+      if (!el) return;
+      var text = ed.kind === "table" ? "" : String(ed.text.innerText || "").replace(/\u00a0/g, " ").replace(/\n+$/, "");
+      begin();
+      if (!tx.before.has(ed.id)) tx.before.set(ed.id, clone(ed.before));
+      if (ed.kind === "table") {
+        put(el);
+      } else if (ed.kind === "field") {
+        var f = {};
+        f[ed.field] = ed.field === "text" ? text : text.replace(/\s*\n\s*/g, " ").trim();
+        patch(ed.id, f);
+      } else {
+        patchTask(ed.id, ed.task, function (tk) {
+          if (ed.field === "start" || ed.field === "end") {
+            var d = BL.parseDay(text, tk[ed.field]);
+            if (!d) {
+              notify("Дата — в виде 05.11 или 05.11.2026");
+              return null;
+            }
+            var len = BL.diffDays(tk.start, tk.end);
+            var next = Object.assign({}, tk);
+            next[ed.field] = d;
+            // Новое начало сдвигает задачу целиком; конец раньше начала — начало подтягивается.
+            if (ed.field === "start") next.end = BL.addDays(d, len);
+            else if (next.end < next.start) next.start = next.end;
+            return next;
+          }
+          var v = text.replace(/\s*\n\s*/g, " ").trim();
+          var nt = Object.assign({}, tk);
+          if (v) nt[ed.field] = v;
+          else delete nt[ed.field];
+          return nt;
+        });
+      }
+      commit();
+      // Блок перерисуется заново (поля правки — обычный текст).
+      var box = ed.node.querySelector(":scope > .lb-block");
+      if (box) box.removeAttribute("data-src");
+      markDirty(ed.id);
+    }
+
+    /** Правка одной задачи Ганта (fn → новая задача или null — без изменений); шкала подстраивается. */
+    function patchTask(id, taskId, fn) {
+      var el = els.get(id);
+      if (!el || el.type !== "gantt") return;
+      var changed = false;
+      var tasks = (el.tasks || []).map(function (t) {
+        if (t.id !== taskId) return t;
+        var n = fn(clone(t));
+        if (!n || same(n, t)) return t;
+        changed = true;
+        return n;
+      });
+      if (changed) put(BL.ganttFit(Object.assign({}, el, { tasks: tasks })));
+      else markDirty(id);
+    }
+
+    function setTasks(id, tasks) {
+      var el = els.get(id);
+      if (!el) return;
+      put(BL.ganttFit(Object.assign({}, el, { tasks: tasks })));
     }
 
     function flushNow() {
@@ -1253,6 +1677,211 @@
       commit();
       setSelection([el.id]);
       return el;
+    }
+
+    function pickFile(accept, cb) {
+      var input = document.createElement("input");
+      input.type = "file";
+      input.accept = accept;
+      input.style.display = "none";
+      document.body.appendChild(input);
+      input.addEventListener("change", function () {
+        var f = input.files && input.files[0];
+        input.remove();
+        if (f) cb(f);
+      });
+      input.click();
+    }
+
+    /** Фото в карточку: квадрат до 400 px (в карточке — круг). */
+    function pickCardPhoto(id) {
+      if (readOnly) return;
+      pickFile("image/*", function (file) {
+        if (!/^image\//i.test(String(file.type || ""))) return;
+        if (file.size > 25 * 1024 * 1024) {
+          notify("Картинка больше 25 МБ");
+          return;
+        }
+        readFileAsDataUrl(file).then(function (src) {
+          return compressImage(src, CARD_PHOTO_SIDE);
+        }).then(function (img) {
+          if (!img) {
+            notify("Не удалось открыть картинку");
+            return;
+          }
+          if (!getEl(id)) return;
+          begin();
+          patch(id, { photo: img.src });
+          commit();
+        });
+      });
+    }
+
+    /** «Подчинённый»: пустая карточка под этой, со связью-ломаной. */
+    function addSubordinate(id) {
+      var from = getEl(id);
+      if (!from || readOnly) return;
+      var kids = [];
+      els.forEach(function (ln) {
+        if (ln.type === "line" && ln.start && ln.start.el === id && ln.end) {
+          var k = getEl(ln.end.el);
+          if (k && k.type === "card") kids.push(k);
+        }
+      });
+      var gap = 60;
+      var x = kids.length ? Math.max.apply(null, kids.map(function (k) {
+        return k.x + k.w;
+      })) + gap : from.x;
+      var y = kids.length ? kids[0].y : from.y + from.h + 100;
+      var fill = (from.style && from.style.fill) === "purple" ? "green" : (from.style && from.style.fill) || "green";
+      begin();
+      var card = newEl("card", G.pt(x, y), { w: from.w, h: DEFAULTS.card.h, style: { fill: fill } });
+      put(card);
+      put(newEl("line", G.pt(0, 0), {
+        points: [[0, 0], [1, 1]], start: { el: id, side: "bottom" }, end: { el: card.id, side: "top" }, route: "elbow",
+        style: styleFor("line"),
+      }));
+      commit();
+      flushNow();
+      revealElement(card.id);
+      startFieldEdit(card.id, "title");
+    }
+
+    function addTask(id) {
+      var el = getEl(id);
+      if (!el || el.type !== "gantt" || readOnly) return;
+      var t = BL.newTask(el, uid());
+      begin();
+      setTasks(id, (el.tasks || []).concat([t]));
+      commit();
+      gSel = { id: id, task: t.id };
+      setSelection([id]);
+      flushNow();
+      startFieldEdit(id, "name", t.id);
+    }
+
+    /** Свободное место под блок: центр экрана, а если там уже что-то есть — под всем содержимым. */
+    function freeSpot(w, h) {
+      var r = stageRect();
+      var c = toWorld(r.left + r.width / 2, r.top + r.height / 2, r);
+      var box = { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h };
+      var busy = false;
+      els.forEach(function (el) {
+        if (busy || !BOXED[el.type]) return;
+        var b = G.elBounds(el, getEl);
+        if (b && G.intersects(b, box)) busy = true;
+      });
+      if (!busy) return G.pt(box.x, box.y);
+      var cb = contentBounds();
+      return G.pt(cb.x, cb.y + cb.h + 60);
+    }
+
+    function insertTable() {
+      finishEdit();
+      var d = DEFAULTS.table;
+      var at = freeSpot(d.w, d.h);
+      begin();
+      var el = newEl("table", at, { html: TABLE_HTML });
+      delete el.style;
+      put(el);
+      commit();
+      setSelection([el.id]);
+      flushNow();
+      revealElement(el.id);
+      setTool("select");
+      flushNow();
+      startBlockEdit(el.id);
+    }
+
+    // ---- шаблоны ----
+    function boundsOfList(list) {
+      return G.unionBounds(list.filter(function (e) {
+        return e.type !== "line";
+      }).map(function (e) {
+        return { x: e.x, y: e.y, w: e.w, h: e.h };
+      }));
+    }
+
+    /** Шаблон на мок-данных: в центр пустой доски или справа от того, что уже есть; один шаг отмены. */
+    function insertTemplate(id) {
+      if (readOnly || !TPL) return;
+      finishEdit();
+      closePop();
+      var list = TPL.build(id, { uid: uid, today: BL.today() });
+      var b = boundsOfList(list);
+      if (!b) return;
+      var cb = contentBounds();
+      var dx;
+      var dy;
+      if (cb) {
+        dx = cb.x + cb.w + 160 - b.x;
+        dy = cb.y - b.y;
+      } else {
+        var r = stageRect();
+        var c = toWorld(r.left + r.width / 2, r.top + r.height / 2, r);
+        dx = Math.round(c.x - b.w / 2 - b.x);
+        dy = Math.round(c.y - b.h / 2 - b.y);
+      }
+      var z = topZ();
+      begin();
+      list.forEach(function (el, i) {
+        el.x += dx;
+        el.y += dy;
+        if (el.type === "line") el.points = el.points.map(function (q) {
+          return [q[0] + dx, q[1] + dy];
+        });
+        el.z = z + i;
+        put(el);
+      });
+      commit();
+      setTool("select");
+      flushNow();
+      autoFit = false;
+      fitBounds(G.unionBounds([cb, { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h }].filter(Boolean)));
+      setSelection(list.filter(function (e) {
+        return e.type !== "line";
+      }).map(function (e) {
+        return e.id;
+      }));
+    }
+
+    /** Меню шаблона: «Пустой шаблон» — мок-данные, «На моих данных» — Лео соберёт по заметке. */
+    function openTemplateMenu(anchor, id) {
+      openPop(anchor, function (box) {
+        box.innerHTML =
+          '<button type="button" class="lb-menu-item" data-tm="empty">' + icon("templates") + "Пустой шаблон</button>" +
+          (o.onTemplateAsk
+            ? '<button type="button" class="lb-menu-item" data-tm="ask">' + NOTE_ACTS[0].svg + "На моих данных</button>"
+            : "");
+        box.onclick = function (ev) {
+          var m = ev.target.closest("[data-tm]");
+          if (!m) return;
+          closePop();
+          if (m.getAttribute("data-tm") === "empty") insertTemplate(id);
+          else if (o.onTemplateAsk) o.onTemplateAsk(id);
+        };
+      });
+    }
+
+    function templateCards() {
+      return (TPL ? TPL.LIST : []).map(function (t) {
+        return '<button type="button" class="lb-tpl" data-tpl="' + t.id + '"><span class="lb-tpl-pre">' + (TPL.PREVIEW[t.id] || "") + "</span>" +
+          '<span class="lb-tpl-t">' + esc(t.title) + '</span><span class="lb-tpl-h">' + esc(t.hint) + "</span></button>";
+      }).join("");
+    }
+
+    function openTemplatesPop(anchor) {
+      openPop(anchor, function (box) {
+        box.innerHTML = '<div class="lb-tpl-list">' + templateCards() + "</div>";
+        box.onclick = function (ev) {
+          var c = ev.target.closest("[data-tpl]");
+          if (!c) return;
+          var tid = c.getAttribute("data-tpl");
+          // Второй шаг — то же меню у кнопки «Шаблоны».
+          closePop();
+          openTemplateMenu(anchor, tid);
+        };
+      });
     }
 
     function pickImage() {
@@ -1317,19 +1946,29 @@
       if (!toolsBar) return;
       toolsBar.innerHTML = TOOLS.map(function (t) {
         return '<button type="button" class="lb-btn" data-tool="' + t.id + '" title="' + esc(t.title) + '" aria-label="' + esc(t.title) + '">' + icon(t.icon) + "</button>";
-      }).join("");
+      }).join("") + (TPL ? '<span class="lb-sep"></span><button type="button" class="lb-btn" data-act="templates" title="Шаблоны" aria-label="Шаблоны">' + icon("templates") + "</button>" : "");
       var syncToolsEnd = function () {
         toolsBar.classList.toggle("is-scrolled-end", toolsBar.scrollLeft + toolsBar.clientWidth >= toolsBar.scrollWidth - 4);
       };
       toolsBar.addEventListener("scroll", syncToolsEnd, { passive: true });
       setTimeout(syncToolsEnd, 0);
       toolsBar.addEventListener("click", function (e) {
+        var ta = e.target.closest("[data-act=templates]");
+        if (ta) {
+          finishEdit();
+          openTemplatesPop(ta);
+          return;
+        }
         var b = e.target.closest("[data-tool]");
         if (!b) return;
         var t = b.getAttribute("data-tool");
         finishEdit();
         if (t === "image") {
           pickImage();
+          return;
+        }
+        if (t === "table") {
+          insertTable();
           return;
         }
         setTool(t);
@@ -1429,7 +2068,7 @@
       var acts = o.blockActions;
       if (!acts || readOnly) return [];
       var hasText = list.some(function (e) {
-        return String(e.text || "").trim();
+        return elText(e).trim();
       });
       return NOTE_ACTS.filter(function (a) {
         if (!acts[a.id]) return false;
@@ -1447,7 +2086,7 @@
         return a.y - b.y || a.x - b.x;
       }).map(function (el) {
         var label = el.type === "line" ? labelOfLine(el) : "";
-        return { id: el.id, type: el.type, text: String(el.text || "").trim(), label: label };
+        return { id: el.id, type: el.type, text: elText(el).trim(), label: label };
       });
     }
 
@@ -1455,7 +2094,7 @@
       var a = ln.start && getEl(ln.start.el);
       var b = ln.end && getEl(ln.end.el);
       if (!a || !b) return "";
-      return oneLine(a.text || "…") + " → " + oneLine(b.text || "…");
+      return oneLine(elText(a).split("\n")[0] || "…") + " → " + oneLine(elText(b).split("\n")[0] || "…");
     }
 
     /** По ссылке: показать элемент — в центр экрана, выделить и мигнуть. */
@@ -1518,7 +2157,8 @@
 
     function renderProps() {
       var list = selList();
-      if (readOnly || !list.length || (gesture && gesture.kind !== "none")) {
+      // Правка таблицы — у неё своё меню (как в заметке), панель доски ему мешает.
+      if (readOnly || !list.length || (gesture && gesture.kind !== "none") || (editing && editing.kind === "table")) {
         propsBar.classList.add("hidden");
         return;
       }
@@ -1543,8 +2183,30 @@
         }
       }
       var key = JSON.stringify([Object.keys(types).sort(), list.map(function (e) {
-        return [e.style, e.route, e.arrowStart, e.arrowEnd, e.group, e.type, !!(e.bend || (e.waypoints && e.waypoints.length)), !!String(e.text || "").trim(), acts ? e.id : ""];
+        return [e.style, e.route, e.arrowStart, e.arrowEnd, e.group, e.type, !!(e.bend || (e.waypoints && e.waypoints.length)), !!String(e.text || "").trim(), acts ? e.id : "",
+          !!e.photo, e.unit, gSel && gSel.id === e.id ? gSel.task : ""];
       }), list.length]);
+      if (list.length === 1 && list[0].type === "card") {
+        var cd = list[0];
+        h.push(swatchBtn("cardFill", fillVar((cd.style && cd.style.fill) || "purple"), "Цвет шапки"));
+        h.push('<button type="button" class="lb-btn lb-pbtn" data-p="photo" title="' + (cd.photo ? "Заменить фото" : "Добавить фото") + '">' + icon("photo") + "</button>");
+        if (cd.photo) h.push('<button type="button" class="lb-btn lb-pbtn" data-p="nophoto" title="Убрать фото">' + icon("noPhoto") + "</button>");
+        h.push('<button type="button" class="lb-btn lb-pbtn" data-p="child" title="Добавить подчинённого">' + icon("child") + "</button>");
+      }
+      if (list.length === 1 && list[0].type === "gantt") {
+        var gt = list[0];
+        var task = gSel && gSel.id === gt.id ? (gt.tasks || []).filter(function (t) {
+          return t.id === gSel.task;
+        })[0] : null;
+        h.push('<button type="button" class="lb-btn lb-pbtn" data-p="gadd" title="Добавить задачу">' + icon("taskAdd") + "</button>");
+        if (task) {
+          h.push(swatchBtn("gcolor", inkVar(task.color || "blue"), "Цвет задачи"));
+          h.push('<button type="button" class="lb-btn lb-pbtn" data-p="gdel" title="Удалить задачу">' + icon("taskDel") + "</button>");
+        }
+        h.push('<span class="lb-sep"></span>');
+        h.push('<button type="button" class="lb-btn lb-pbtn lb-txt' + (gt.unit !== "week" ? " is-on" : "") + '" data-p="gunit" data-v="day" title="Шкала по дням">Дни</button>');
+        h.push('<button type="button" class="lb-btn lb-pbtn lb-txt' + (gt.unit === "week" ? " is-on" : "") + '" data-p="gunit" data-v="week" title="Шкала по неделям">Недели</button>');
+      }
       if (types.sticky) h.push(swatchBtn("sticky", stickyVar(commonStyle(list.filter(isType("sticky")), "fill") || "yellow"), "Цвет стикера"));
       if (anyStroke) h.push(swatchBtn("stroke", inkVar(commonStyle(list.filter(isStroked), "stroke") || "ink"), "Цвет линии", true));
       if (anyShape) h.push(swatchBtn("fill", fillVar(commonStyle(list.filter(isShape), "fill") || "none"), "Заливка"));
@@ -1821,6 +2483,67 @@
             closePop();
           };
         });
+      } else if (p === "cardFill") {
+        openPop(b, function (box) {
+          box.innerHTML = '<div class="lb-swatches">' + FILLS.filter(function (k) {
+            return k !== "none";
+          }).map(function (k) {
+            return '<button type="button" class="lb-sw" data-v="' + k + '" title="' + esc(COLOR_NAMES[k] || k) + '" style="--c:' + fillVar(k) + '"></button>';
+          }).join("") + "</div>";
+          box.onclick = function (ev) {
+            var s2 = ev.target.closest("[data-v]");
+            if (!s2) return;
+            applyStyle(isType("card"), { fill: s2.getAttribute("data-v") });
+            closePop();
+          };
+        });
+      } else if (p === "photo") {
+        pickCardPhoto(selList()[0].id);
+      } else if (p === "nophoto") {
+        applyFields(isType("card"), function () {
+          return { photo: undefined };
+        });
+      } else if (p === "child") {
+        addSubordinate(selList()[0].id);
+      } else if (p === "gadd") {
+        addTask(selList()[0].id);
+      } else if (p === "gdel") {
+        if (gSel) {
+          var gid = gSel.id;
+          var gtask = gSel.task;
+          var gel = getEl(gid);
+          gSel = null;
+          if (gel) {
+            begin();
+            setTasks(gid, (gel.tasks || []).filter(function (t) {
+              return t.id !== gtask;
+            }));
+            commit();
+          }
+        }
+      } else if (p === "gunit") {
+        var unit = b.getAttribute("data-v");
+        applyFields(isType("gantt"), function (el) {
+          return BL.ganttFit(Object.assign({}, el, { unit: unit, start: unit === "week" ? BL.weekStart(el.start) : el.start }));
+        });
+      } else if (p === "gcolor") {
+        openPop(b, function (box) {
+          box.innerHTML = '<div class="lb-swatches">' + BL.BAR_COLORS.map(function (k) {
+            return '<button type="button" class="lb-sw" data-v="' + k + '" title="' + esc(COLOR_NAMES[k] || k) + '" style="--c:' + inkVar(k) + '"></button>';
+          }).join("") + "</div>";
+          box.onclick = function (ev) {
+            var s3 = ev.target.closest("[data-v]");
+            if (!s3 || !gSel) return;
+            var color = s3.getAttribute("data-v");
+            begin();
+            patchTask(gSel.id, gSel.task, function (t) {
+              t.color = color;
+              return t;
+            });
+            commit();
+            closePop();
+          };
+        });
       } else if (p === "group") groupSel();
       else if (p === "ungroup") ungroupSel();
       else if (p === "delete") deleteSel();
@@ -2008,7 +2731,7 @@
         return serializeEl(el, getEl, pathOptsOf);
       }) });
       var text = list.map(function (el) {
-        return el.text || "";
+        return elText(el);
       }).filter(Boolean).join("\n");
       try {
         e.clipboardData.setData(CLIP_MIME, payload);
@@ -2167,6 +2890,18 @@
         e.preventDefault();
         startGesture(Object.assign(base, { kind: "pen", pts: [p], live: null }));
         drawPenPreview();
+        return;
+      }
+      // Полоса Ганта (Гант уже выделен): тянуть — сдвиг задачи, за край — срок.
+      var gbar = tool === "select" && e.target.closest ? e.target.closest(".lb-g-bar") : null;
+      var gbId = gbar ? hitId(gbar) : "";
+      if (gbId && selected.size === 1 && selected.has(gbId) && !(e.shiftKey || e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        var edge = e.target.closest("[data-edge]");
+        gSel = { id: gbId, task: gbar.getAttribute("data-task") };
+        markDirty(gbId);
+        begin();
+        startGesture(Object.assign(base, { kind: "gbar", id: gbId, task: gSel.task, edge: edge ? edge.getAttribute("data-edge") : "", el0: clone(getEl(gbId)) }));
         return;
       }
       // Подпись стрелки тянется вдоль линии; щелчок — как по самой стрелке (двойной — правка текста).
@@ -2495,6 +3230,8 @@
         ang = ((ang % 360) + 360) % 360;
         if (ang > 180) ang -= 360;
         patch(g.id, { rot: Math.round(ang * 10) / 10 || undefined });
+      } else if (g.kind === "gbar") {
+        doGanttBar(g, p);
       } else if (g.kind === "resize") {
         doResize(g, p, e.shiftKey);
       } else if (g.kind === "gscale") {
@@ -2698,6 +3435,28 @@
       put(Object.assign({}, ln, f));
     }
 
+    function doGanttBar(g, p) {
+      var el0 = g.el0;
+      var t0 = (el0.tasks || []).filter(function (t) {
+        return t.id === g.task;
+      })[0];
+      if (!t0) return;
+      var days = Math.round((p.x - g.p0.x) / BL.unitW(el0)) * BL.stepOf(el0);
+      var t = Object.assign({}, t0);
+      if (g.edge === "start") t.start = BL.addDays(t0.start, Math.min(days, BL.diffDays(t0.start, t0.end)));
+      else if (g.edge === "end") t.end = BL.addDays(t0.end, Math.max(days, -BL.diffDays(t0.start, t0.end)));
+      else {
+        t.start = BL.addDays(t0.start, days);
+        t.end = BL.addDays(t0.end, days);
+      }
+      var tasks = el0.tasks.map(function (x) {
+        return x.id === g.task ? t : x;
+      });
+      // Шкала начинается не раньше, чем была при нажатии: полосы не «уезжают» под пальцем.
+      var next = BL.ganttFit(Object.assign({}, el0, { tasks: tasks }));
+      put(Object.assign({}, getEl(g.id) || el0, next));
+    }
+
     var RESIZE = {
       nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0],
     };
@@ -2725,9 +3484,14 @@
         if (dir[0] < 0) x0 = el0.w - w;
         if (dir[1] < 0) y0 = el0.h - h;
       }
-      if (el0.type === "text") {
+      if (el0.type === "text" || BLOCKS[el0.type]) {
         h = el0.h;
         y0 = 0;
+      }
+      if (BLOCKS[el0.type] && w < (el0.type === "card" ? 160 : 120)) {
+        var minW = el0.type === "card" ? 160 : 120;
+        if (dir[0] < 0) x0 = el0.w - minW;
+        w = minW;
       }
       var cLocal = G.pt(x0 + w / 2, y0 + h / 2);
       var cWorld = G.toWorld(el0, cLocal);
@@ -2771,6 +3535,8 @@
               return [q[0] * k, q[1] * k];
             }),
           };
+        } else if (BLOCKS[el0.type]) {
+          f = { x: sx(el0.x), y: sy(el0.y) };
         } else {
           f = { x: sx(el0.x), y: sy(el0.y), w: el0.w * k, h: el0.h * k };
           if (TEXTUAL[el0.type] && el0.style && el0.style.fontSize) f.style = Object.assign({}, el0.style, { fontSize: Math.max(6, Math.round(el0.style.fontSize * k)) });
@@ -2883,6 +3649,9 @@
         if (!g.moved && g.inserted) patch(g.id, { waypoints: g.before, bend: g.bend0 });
         else tidyWaypoints(g.id);
         commit();
+      } else if (g.kind === "gbar") {
+        commit();
+        if (!g.moved && e && !cancelled) onTap(g.id, p, e);
       } else if (g.kind === "move" || g.kind === "resize" || g.kind === "rotate" || g.kind === "bend" || g.kind === "gscale") {
         commit();
         if (g.kind === "move" && !g.moved && e && !cancelled) {
@@ -2905,6 +3674,23 @@
 
     /** Двойное нажатие: по элементу — правка текста, по пустому месту — новый текст. */
     function onTap(id, p, e) {
+      var blk = id && !readOnly && e && BLOCKS[(getEl(id) || {}).type] ? document.elementFromPoint(e.clientX, e.clientY) : null;
+      var bnode = blk ? nodes.get(id) : null;
+      if (blk && bnode && bnode.contains(blk)) {
+        if (blk.closest(".lb-card-photo.is-empty")) {
+          pickCardPhoto(id);
+          return;
+        }
+        if (blk.closest("[data-gadd]")) {
+          addTask(id);
+          return;
+        }
+        var gcell = blk.closest(".lb-g-cell, .lb-g-bar");
+        if (gcell) {
+          gSel = { id: id, task: gcell.getAttribute("data-task") };
+          markDirty(id);
+        }
+      }
       var now = Date.now();
       var dbl = now - lastTap.t < 380 && lastTap.id === id && Math.abs(e.clientX - lastTap.x) < 12 && Math.abs(e.clientY - lastTap.y) < 12;
       lastTap = { id: id, t: dbl ? 0 : now, x: e.clientX, y: e.clientY };
@@ -2912,6 +3698,7 @@
       if (id) {
         var el = getEl(id);
         if (el && TEXTUAL[el.type]) startEdit(id, { selectAll: false });
+        else if (el && BLOCKS[el.type]) startEdit(id, { at: e });
         return;
       }
       begin();
@@ -2933,13 +3720,13 @@
       var opp = { top: "bottom", bottom: "top", left: "right", right: "left" }[side];
       begin();
       var copy = {
-        id: uid(), type: from.type === "text" || from.type === "image" ? "rect" : from.type,
+        id: uid(), type: from.type === "text" || from.type === "image" || from.type === "table" || from.type === "gantt" ? "rect" : from.type,
         x: c.x - from.w / 2, y: c.y - from.h / 2, w: from.w, h: from.h, z: topZ(),
         style: clone(from.style || styleFor("rect")),
       };
       if (from.rot) copy.rot = from.rot;
       if (copy.type === "sticky" && meAuthor()) copy.author = meAuthor();
-      if (from.type === "text" || from.type === "image") {
+      if (from.type === "text" || from.type === "image" || from.type === "table" || from.type === "gantt") {
         copy.w = DEFAULTS.rect.w;
         copy.h = DEFAULTS.rect.h;
         copy.x = c.x - copy.w / 2;
@@ -3010,8 +3797,11 @@
     }
 
     function fitAll() {
+      fitBounds(contentBounds());
+    }
+
+    function fitBounds(b) {
       var r = stage.getBoundingClientRect();
-      var b = contentBounds();
       if (!b || !r.width || !r.height) {
         view = { x: r.width / 2, y: r.height / 2, z: 1 };
         applyView();
@@ -3288,8 +4078,168 @@
       return { lines: lines, x: cx, y: top, lh: lh, align: align, fs: fs };
     }
 
+    /** Блок для экспорта: прямоугольники, тексты и фото по тому, как он нарисован сейчас (координаты холста). */
+    function blockPrims(el, colors, measure) {
+      var node = nodes.get(el.id);
+      var out = [];
+      if (!node) return out;
+      var nr = node.getBoundingClientRect();
+      var z = view.z || 1;
+      var line = "#d0d5dd";
+      function box(c) {
+        var r = c.getBoundingClientRect();
+        return { x: el.x + (r.left - nr.left) / z, y: el.y + (r.top - nr.top) / z, w: r.width / z, h: r.height / z };
+      }
+      function text(c, b, opt) {
+        var t = String(c.innerText || c.textContent || "").trim();
+        if (!t || c.classList.contains("is-empty")) return;
+        var cs = getComputedStyle(c);
+        var fs = parseFloat(cs.fontSize) || 14;
+        var weight = parseInt(cs.fontWeight, 10) >= 600 ? "600" : "";
+        var align = opt && opt.align ? opt.align : cs.textAlign === "center" ? "center" : cs.textAlign === "right" ? "right" : "left";
+        var pad = opt && opt.pad != null ? opt.pad : 8;
+        measure.font = (weight ? "600 " : "") + fs + "px " + colors.font;
+        var lines = wrapLines(measure, t, Math.max(10, b.w - pad * 2));
+        var lh = fs * 1.3;
+        var x = align === "center" ? b.x + b.w / 2 : align === "right" ? b.x + b.w - pad : b.x + pad;
+        var y0 = opt && opt.middle ? b.y + b.h / 2 - ((lines.length - 1) * lh) / 2 : b.y + pad / 2 + lh / 2 + 2;
+        out.push({ k: "text", lines: lines, x: x, y: y0, lh: lh, fs: fs, weight: weight, align: align, color: (opt && opt.color) || colors.ink("ink") });
+      }
+      if (el.type === "table") {
+        node.querySelectorAll(".note-editor-table th, .note-editor-table td").forEach(function (c) {
+          var b = box(c);
+          var fill = c.tagName === "TH" ? colors.fill("gray") : c.hasAttribute("data-highlight") ? colors.fill("yellow") : colors.fill("white");
+          out.push({ k: "rect", x: b.x, y: b.y, w: b.w, h: b.h, fill: fill, stroke: line });
+          text(c, b);
+        });
+      } else if (el.type === "card") {
+        var st = el.style || {};
+        out.push({ k: "rect", x: el.x, y: el.y, w: el.w, h: el.h, r: 10, fill: colors.fill("white"), stroke: line });
+        var head = node.querySelector(".lb-card-head");
+        if (head) {
+          var hb = box(head);
+          out.push({ k: "rect", x: hb.x, y: hb.y, w: hb.w, h: hb.h, r: 10, rTop: true, fill: colors.fill(st.fill || "purple") });
+          text(head, hb, { align: "center", middle: true });
+        }
+        var ph = node.querySelector(".lb-card-photo");
+        if (ph) {
+          var pb = box(ph);
+          if (el.photo) out.push({ k: "img", x: pb.x, y: pb.y, w: pb.w, h: pb.h, src: el.photo, circle: true, key: el.id + ":photo" });
+          else out.push({ k: "rect", x: pb.x, y: pb.y, w: pb.w, h: pb.h, r: pb.w / 2, fill: colors.fill("gray") });
+        }
+        [".lb-card-name", ".lb-card-about"].forEach(function (sel, i) {
+          var c = node.querySelector(sel);
+          if (c) text(c, box(c), { align: "center", pad: 4, color: i ? colors.ink("gray") : colors.ink("ink") });
+        });
+      } else if (el.type === "gantt") {
+        out.push({ k: "rect", x: el.x, y: el.y, w: el.w, h: el.h, r: 8, fill: colors.fill("white"), stroke: line });
+        node.querySelectorAll(".lb-g-col.is-off").forEach(function (c) {
+          var b = box(c);
+          out.push({ k: "rect", x: b.x, y: b.y, w: b.w, h: b.h, fill: colors.fill("gray") });
+        });
+        node.querySelectorAll(".lb-g-row").forEach(function (c) {
+          var b = box(c);
+          out.push({ k: "rect", x: el.x, y: b.y + b.h - 0.5, w: el.w, h: 0.5, fill: line });
+        });
+        var hd = node.querySelector(".lb-g-head");
+        if (hd) {
+          var hdb = box(hd);
+          out.push({ k: "rect", x: el.x, y: hdb.y + hdb.h - 0.5, w: el.w, h: 0.5, fill: line });
+        }
+        node.querySelectorAll(".lb-g-hcell, .lb-g-month, .lb-g-tick, .lb-g-cell").forEach(function (c) {
+          var b = box(c);
+          var tick = c.classList.contains("lb-g-tick");
+          text(c, b, { pad: tick ? 0 : 8, align: tick ? "center" : "left", middle: !c.classList.contains("lb-g-month"), color: c.classList.contains("lb-g-cell") ? colors.ink("ink") : colors.ink("gray") });
+        });
+        node.querySelectorAll(".lb-g-bar").forEach(function (c) {
+          var b = box(c);
+          var t = (el.tasks || []).filter(function (x) {
+            return x.id === c.getAttribute("data-task");
+          })[0];
+          out.push({ k: "rect", x: b.x, y: b.y, w: b.w, h: b.h, r: 4, fill: colors.ink((t && t.color) || "blue"), alpha: 0.8 });
+        });
+        var now = node.querySelector(".lb-g-now");
+        if (now) {
+          var nb = box(now);
+          out.push({ k: "rect", x: nb.x, y: nb.y, w: Math.max(1.5, nb.w), h: nb.h, fill: colors.ink("red") });
+        }
+      }
+      return out;
+    }
+
+    function drawPrims(ctx, prims, images) {
+      prims.forEach(function (q) {
+        ctx.save();
+        if (q.k === "rect") {
+          var path = new Path2D();
+          if (q.r && path.roundRect) path.roundRect(q.x, q.y, q.w, q.h, q.rTop ? [q.r, q.r, 0, 0] : q.r);
+          else path.rect(q.x, q.y, q.w, q.h);
+          if (q.alpha) ctx.globalAlpha = q.alpha;
+          if (q.fill) {
+            ctx.fillStyle = q.fill;
+            ctx.fill(path);
+          }
+          ctx.globalAlpha = 1;
+          if (q.stroke) {
+            ctx.strokeStyle = q.stroke;
+            ctx.lineWidth = 1;
+            ctx.stroke(path);
+          }
+        } else if (q.k === "img") {
+          var img = images[q.key];
+          if (img) {
+            if (q.circle) {
+              ctx.beginPath();
+              ctx.arc(q.x + q.w / 2, q.y + q.h / 2, Math.min(q.w, q.h) / 2, 0, Math.PI * 2);
+              ctx.clip();
+            }
+            var s = Math.max(q.w / img.width, q.h / img.height);
+            ctx.drawImage(img, q.x + (q.w - img.width * s) / 2, q.y + (q.h - img.height * s) / 2, img.width * s, img.height * s);
+          }
+        } else if (q.k === "text") {
+          ctx.fillStyle = q.color;
+          ctx.font = (q.weight ? "600 " : "") + q.fs + "px " + exportFont;
+          ctx.textAlign = q.align;
+          ctx.textBaseline = "middle";
+          q.lines.forEach(function (l, i) {
+            ctx.fillText(l, q.x, q.y + i * q.lh);
+          });
+        }
+        ctx.restore();
+      });
+    }
+
+    function primsSvg(prims, uidBase) {
+      return prims.map(function (q, i) {
+        if (q.k === "rect") {
+          var rx = q.r ? ' rx="' + q.r + '"' : "";
+          var body = q.rTop && q.r
+            ? '<path d="M' + q.x + "," + (q.y + q.h) + "V" + (q.y + q.r) + "a" + q.r + "," + q.r + " 0 0 1 " + q.r + ",-" + q.r + "h" + (q.w - 2 * q.r) + "a" + q.r + "," + q.r + " 0 0 1 " + q.r + "," + q.r + "V" + (q.y + q.h) + 'Z"'
+            : '<rect x="' + q.x + '" y="' + q.y + '" width="' + q.w + '" height="' + q.h + '"' + rx;
+          return body + ' fill="' + (q.fill || "none") + '"' + (q.alpha ? ' fill-opacity="' + q.alpha + '"' : "") + (q.stroke ? ' stroke="' + q.stroke + '"' : "") + "/>";
+        }
+        if (q.k === "img") {
+          var cid = uidBase + "c" + i;
+          return (q.circle ? '<clipPath id="' + cid + '"><circle cx="' + (q.x + q.w / 2) + '" cy="' + (q.y + q.h / 2) + '" r="' + Math.min(q.w, q.h) / 2 + '"/></clipPath>' : "") +
+            '<image x="' + q.x + '" y="' + q.y + '" width="' + q.w + '" height="' + q.h + '" preserveAspectRatio="xMidYMid slice" href="' + esc(q.src) + '"' + (q.circle ? ' clip-path="url(#' + cid + ')"' : "") + "/>";
+        }
+        return '<text font-size="' + q.fs + '"' + (q.weight ? ' font-weight="600"' : "") + ' fill="' + q.color + '" text-anchor="' + (q.align === "center" ? "middle" : q.align === "right" ? "end" : "start") + '" dominant-baseline="central">' +
+          q.lines.map(function (l, j) {
+            return '<tspan x="' + q.x + '" y="' + (q.y + j * q.lh) + '">' + esc(l) + "</tspan>";
+          }).join("") + "</text>";
+      }).join("");
+    }
+
+    var exportFont = "system-ui, sans-serif";
+
     function drawScene(ctx, colors, images) {
+      exportFont = colors.font;
+      var measure = document.createElement("canvas").getContext("2d");
       sortedEls().forEach(function (el) {
+        if (BLOCKS[el.type]) {
+          drawPrims(ctx, blockPrims(el, colors, measure), images);
+          return;
+        }
         var st = el.style || {};
         var sw = Number(st.strokeWidth) || 2;
         ctx.save();
@@ -3403,6 +4353,11 @@
             out[el.id] = img;
           }));
         }
+        if (el.type === "card" && el.photo) {
+          jobs.push(loadImage(el.photo).then(function (img) {
+            out[el.id + ":photo"] = img;
+          }));
+        }
       });
       return Promise.all(jobs).then(function () {
         return out;
@@ -3458,6 +4413,10 @@
         '<rect x="' + (b.x - pad) + '" y="' + (b.y - pad) + '" width="' + (b.w + pad * 2) + '" height="' + (b.h + pad * 2) + '" fill="' + colors.bg + '"/>',
       ];
       sortedEls().forEach(function (el) {
+        if (BLOCKS[el.type]) {
+          out.push("<g>" + primsSvg(blockPrims(el, colors, measure), "b" + el.id) + "</g>");
+          return;
+        }
         var st = el.style || {};
         var sw = Number(st.strokeWidth) || 2;
         var stroke = colors.ink(st.stroke);
@@ -3709,6 +4668,13 @@
       if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !(pop._anchor && pop._anchor.contains(e.target))) closePop();
     }
 
+    if (startCards) {
+      startCards.innerHTML = templateCards();
+      startCards.addEventListener("click", function (e) {
+        var c = e.target.closest("[data-tpl]");
+        if (c) openTemplateMenu(c, c.getAttribute("data-tpl"));
+      });
+    }
     renderTools();
     renderHistoryBar();
     loadElements(parseBoard(o.json));
@@ -3732,6 +4698,19 @@
         setJson(json, true);
       },
       fitAll: fitAll,
+      insertTemplate: insertTemplate,
+      // Редактор таблиц заметки догрузился — таблицы доски переподключаются к нему.
+      refreshBlocks: function () {
+        els.forEach(function (el) {
+          if (el.type === "table" && !tables.has(el.id)) {
+            var n = nodes.get(el.id);
+            var host = n && n.querySelector(":scope > .lb-table");
+            if (host) host.removeAttribute("data-src");
+            dirty.add(el.id);
+          }
+        });
+        schedule();
+      },
       exportPng: exportPng,
       exportSvg: exportSvg,
       attachYjs: attachYjs,
@@ -3772,6 +4751,7 @@
         document.removeEventListener("pointerdown", onDocPointer, true);
         window.removeEventListener("blur", onWinBlur);
         if (saveViewTimer) clearTimeout(saveViewTimer);
+        Array.from(tables.keys()).forEach(dropTable);
         root.remove();
       },
     };

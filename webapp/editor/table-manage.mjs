@@ -550,6 +550,9 @@ function syncActiveTable(view) {
   var info = selectionCell(view.state);
   var focused = view.hasFocus() || allViewsHaveInteraction();
   allViews.forEach(function (v) {
+    // Только таблицы этого редактора: у второго редактора (лист рядом, таблица на доске) — свои
+    // выделение и фокус, иначе отпускание мыши в одном гасило меню таблицы в другом.
+    if (v.editor && v.editor.view && v.editor.view !== view) return;
     var mine = info && focused && v.tablePos() === info.tablePos ? info : null;
     v.setActive(mine);
   });
@@ -1098,6 +1101,12 @@ TableManageView.prototype.runAction = function (act) {
     this.dismissMenu();
     confirmTableDelete("Удалить всю таблицу?").then(function (ok) {
       if (!ok) return;
+      // Таблица доски — это элемент доски: удаляет его доска (webapp/board.js).
+      var onDelete = editor.storage && editor.storage.leoBoardTable && editor.storage.leoBoardTable.onDelete;
+      if (typeof onDelete === "function") {
+        onDelete();
+        return;
+      }
       var p = self.tablePos();
       if (p == null) return;
       runTableCommand(editor, p, 0, 0, deleteTable);
@@ -1228,14 +1237,14 @@ TableManageView.prototype.measureColWidths = function () {
   var out = [];
   if (!row) return out;
   for (var i = 0; i < row.cells.length; i += 1) {
-    out.push(row.cells[i].getBoundingClientRect().width);
+    out.push(row.cells[i].getBoundingClientRect().width / this.zoom());
   }
   return out;
 };
 
 TableManageView.prototype.measureRowHeight = function (index) {
   var row = this.table.rows[index];
-  return row ? row.getBoundingClientRect().height : MIN_ROW;
+  return row ? row.getBoundingClientRect().height / this.zoom() : MIN_ROW;
 };
 
 
@@ -1333,8 +1342,8 @@ TableManageView.prototype.colWidthsFromGrid = function () {
   var out = [];
   var prev = g.left;
   for (var c = 0; c < g.cols.length; c += 1) {
-    var x = g.cols[c] != null ? g.cols[c] : prev + this.cellMinWidth;
-    out.push(Math.max(this.cellMinWidth, x - prev));
+    var x = g.cols[c] != null ? g.cols[c] : prev + this.cellMinWidth * this.zoom();
+    out.push(Math.max(this.cellMinWidth, (x - prev) / this.zoom()));
     prev = x;
   }
   return out;
@@ -1370,7 +1379,7 @@ TableManageView.prototype.startResize = function (kind, index, e, target) {
     startX: e.clientX,
     startY: e.clientY,
     startWidths: kind === "col" ? this.colWidthsFromGrid() : null,
-    startH: kind === "row" && row ? row.getBoundingClientRect().height : 0,
+    startH: kind === "row" && row ? row.getBoundingClientRect().height / this.zoom() : 0,
     moved: false,
     pointerId: e.pointerId,
     target: target,
@@ -1404,8 +1413,24 @@ TableManageView.prototype.selectionRect = function () {
   return r;
 };
 
+// Таблица на доске (webapp/board.js) лежит в «мире» с CSS-масштабом: экранные пиксели → свои.
+TableManageView.prototype.zoom = function () {
+  var w = this.dom.offsetWidth;
+  var b = this.dom.getBoundingClientRect();
+  var z = w && b.width ? b.width / w : 1;
+  return Math.abs(z - 1) < 0.001 ? 1 : z;
+};
+
+var placeZoom = 1;
+
 function place(el, left, top, width, height) {
   if (!el) return;
+  if (placeZoom !== 1) {
+    left /= placeZoom;
+    top /= placeZoom;
+    if (width != null) width /= placeZoom;
+    if (height != null) height /= placeZoom;
+  }
   el.style.left = Math.round(left) + "px";
   el.style.top = Math.round(top) + "px";
   if (width != null) el.style.width = Math.round(width) + "px";
@@ -1415,6 +1440,16 @@ function place(el, left, top, width, height) {
 TableManageView.prototype.layoutHandles = function () {
   var a = this.active;
   if (!a || this.overlay.hidden) return;
+  placeZoom = this.zoom();
+  try {
+    this.layoutHandlesAt();
+  } finally {
+    placeZoom = 1;
+  }
+};
+
+TableManageView.prototype.layoutHandlesAt = function () {
+  var a = this.active;
   var box = this.dom.getBoundingClientRect();
   var sb = this.scroll.getBoundingClientRect();
   var tb = this.table.getBoundingClientRect();
@@ -1521,8 +1556,9 @@ TableManageView.prototype.layoutMenu = function (r) {
   var vw = document.documentElement.clientWidth || window.innerWidth;
   var left = Math.max(r.left, 8);
   left = Math.min(left, vw - menuW - 8);
-  this.menu.style.top = Math.round(top - box.top) + "px";
-  this.menu.style.left = Math.round(left - box.left) + "px";
+  var z = this.zoom();
+  this.menu.style.top = Math.round((top - box.top) / z) + "px";
+  this.menu.style.left = Math.round((left - box.left) / z) + "px";
 };
 
 TableManageView.prototype.handleOverlayPointerDown = function (e) {
@@ -1604,7 +1640,7 @@ TableManageView.prototype.dragExtend = function (e) {
 
 TableManageView.prototype.dragResizeCol = function (e) {
   var widths = this.drag.startWidths.slice();
-  var dx = e.clientX - this.drag.startX;
+  var dx = (e.clientX - this.drag.startX) / this.zoom();
   widths[this.drag.index] = Math.max(this.cellMinWidth, this.drag.startWidths[this.drag.index] + dx);
   this.drag.currentWidths = widths;
   applyPreviewWidths(this.colgroup, this.table, widths, this.cellMinWidth);
@@ -1612,7 +1648,7 @@ TableManageView.prototype.dragResizeCol = function (e) {
 };
 
 TableManageView.prototype.dragResizeRow = function (e) {
-  var h = Math.max(MIN_ROW, Math.round(this.drag.startH + (e.clientY - this.drag.startY)));
+  var h = Math.max(MIN_ROW, Math.round(this.drag.startH + (e.clientY - this.drag.startY) / this.zoom()));
   this.drag.currentH = h;
   var row = this.table.rows[this.drag.index];
   if (row) row.style.height = h + "px";

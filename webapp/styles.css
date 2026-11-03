@@ -6727,6 +6727,35 @@ html.note-editor-open #note-editor-overlay {
   opacity: 0.6;
 }
 
+/* Чип шаблона доски («Гант по заметке») — Лео соберёт шаблон по листам заметки. */
+.note-gpt-template-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  margin: 0 3px 0 1px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  user-select: none;
+  -webkit-user-select: none;
+  vertical-align: middle;
+}
+
+.note-gpt-template-chip::before {
+  content: "✦";
+  font-size: 11px;
+}
+
+.note-discuss-sugg button.is-template {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  color: var(--accent);
+}
+
 .note-gpt-quote-chip {
   display: inline-flex;
   align-items: center;
