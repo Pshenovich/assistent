@@ -14,8 +14,20 @@
   var MIRO_RE = /\(miro-data-v1\)([A-Za-z0-9+/=]+)/;
 
   function hex(n) {
+    var h = exact(n);
+    return h ? themed(h) : null;
+  }
+
+  /** Точный цвет без подмены на цвет темы — для текста на заливке или подсветке. */
+  function exact(n) {
     if (typeof n !== "number" || n < 0 || !isFinite(n)) return null;
-    return themed("#" + ("000000" + Math.round(n).toString(16)).slice(-6));
+    return "#" + ("000000" + Math.round(n).toString(16)).slice(-6);
+  }
+
+  /** Цвет текста: на пустом фоне — с подменой на цвет темы (виден и в тёмной), на цветном — как есть. */
+  function textColor(n, onColor) {
+    if (onColor) return exact(n) || "#1a1a1a";
+    return hex(n) || "ink";
   }
 
   /** Почти чёрный и белый — цвета темы доски («ink» / «white»): в светлой теме как в оригинале,
@@ -34,9 +46,9 @@
   function rgbHex(css) {
     var m = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i.exec(String(css || ""));
     if (!m || (m[4] != null && Number(m[4]) === 0)) return null;
-    return themed("#" + [m[1], m[2], m[3]].map(function (v) {
+    return "#" + [m[1], m[2], m[3]].map(function (v) {
       return ("0" + Math.min(255, Number(v)).toString(16)).slice(-2);
-    }).join(""));
+    }).join("");
   }
 
   function json(v) {
@@ -137,14 +149,16 @@
       var el = null;
       if (w.type === "shape") {
         var kind = MIRO_SHAPES[j.shape] || MIRO_SHAPES[String(j.shape).toLowerCase()] || "rect";
+        var fill = hex(st.bc) || "none";
         var style = {
-          fill: hex(st.bc) || "none",
+          fill: fill,
           stroke: hex(st.brc) || "ink",
           strokeWidth: st.brc != null && st.brc < 0 ? 0 : Number(st.brw) >= 0 ? Number(st.brw) : 2,
           fontSize: Math.round((Number(st.fs) || 14) * k),
-          textColor: hex(st.tc) || "ink",
+          textColor: textColor(st.tc, fill !== "none" || !!t.bg),
           align: st.ta === "l" ? "left" : st.ta === "r" ? "right" : "center",
         };
+        if (t.bg) style.highlight = t.bg;
         if (st.brs === 1) style.dash = "dashed";
         else if (st.brs === 0) style.dash = "dotted";
         if (Number(st.b) || t.bold) style.bold = true;
@@ -152,16 +166,18 @@
         else if (kind === "rect") style.radius = 0;
         el = Object.assign(base, { type: kind === "round" ? "rect" : kind, text: t.text, style: style });
       } else if (w.type === "text") {
-        var bg = t.bg || hex(st.bc);
+        var box = hex(st.bc);
         el = Object.assign(base, {
           type: "text", text: t.text,
           style: {
             fontSize: Math.round((Number(st.fs) || 14) * k),
-            textColor: hex(st.tc) || "ink",
+            textColor: textColor(st.tc, !!(t.bg || box)),
             align: st.ta === "c" ? "center" : st.ta === "r" ? "right" : "left",
           },
         });
-        if (bg) el.style.fill = bg;
+        // Фон виджета — заливка блока, фон в разметке текста — подсветка под словами (как в Miro).
+        if (box) el.style.fill = box;
+        if (t.bg) el.style.highlight = t.bg;
         if (Number(st.b) || t.bold) el.style.bold = true;
       } else if (w.type === "sticker" || w.type === "sticky_note") {
         el = Object.assign(base, {

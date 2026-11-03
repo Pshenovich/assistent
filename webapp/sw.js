@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261103-boardimp1";
+var CACHE_VERSION = "miniapp-v1-20261103-boardimp2";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -13,12 +13,12 @@ var PRECACHE_URLS = [
   "./index.html",
   "./theme.js?v=20261029-spktools",
   "./styles.css?v=20261103-boardtpl",
-  "./board.css?v=20261103-boardtpl",
+  "./board.css?v=20261103-boardimp2",
   "./board-geom.js?v=20261029-spktools",
   "./board-blocks.js?v=20261103-boardtpl",
   "./board-templates.js?v=20261103-boardtpl",
-  "./board-import.js?v=20261103-boardimp1",
-  "./board.js?v=20261103-boardimp1",
+  "./board-import.js?v=20261103-boardimp2",
+  "./board.js?v=20261103-boardimp2",
   "./realtime.js?v=20261103-analytics",
   "./note-yjs.js?v=20261029-spktools",
   "./app.js?v=20261103-boardtpl3",

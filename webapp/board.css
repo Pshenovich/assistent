@@ -1294,3 +1294,15 @@ html[data-theme="light"] .leo-board {
 .leo-board.is-readonly .lb-card [data-f].is-empty::before {
   content: none;
 }
+
+/* Подсветка текста (из Miro): фон только под словами. */
+.lb-hl-wrap {
+  width: 100%;
+}
+
+.lb-hl {
+  padding: 0 2px;
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}

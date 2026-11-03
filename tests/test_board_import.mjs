@@ -41,11 +41,13 @@ assert.equal(res.source, "Miro");
 assert.equal(res.skipped, 2); // линия к чужому блоку и embed
 const [a, b, t, ln] = res.elements;
 assert.deepEqual([a.type, a.x, a.y, a.w, a.h, a.text], ["rect", -100, -50, 200, 100, "Старт"]);
-assert.deepEqual(a.style, { fill: "#305bab", stroke: "ink", strokeWidth: 2, fontSize: 26, textColor: "ink", align: "center", radius: 40 });
+// Текст на синей заливке — точный чёрный (в тёмной теме не должен стать белым).
+assert.deepEqual(a.style, { fill: "#305bab", stroke: "ink", strokeWidth: 2, fontSize: 26, textColor: "#000000", align: "center", radius: 40 });
 assert.equal(b.style.fill, "none");
 assert.equal(b.style.stroke, "#4264ff");
 assert.equal(b.style.align, "left");
-assert.deepEqual([t.type, t.text, t.style.fill], ["text", "Подпись", "#fe9f4d"]);
+assert.equal(b.style.textColor, "ink"); // на пустом фоне — цвет темы
+assert.deepEqual([t.type, t.text, t.style.highlight, t.style.fill, t.style.textColor], ["text", "Подпись", "#fe9f4d", undefined, "#1a1a1a"]);
 assert.equal(ln.type, "line");
 assert.deepEqual(ln.start, { el: a.id, side: "bottom" });
 assert.deepEqual(ln.end, { el: b.id, anchor: [0.25, 0] });

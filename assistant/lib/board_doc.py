@@ -27,8 +27,8 @@ GANTT_UNITS = ("day", "week")
 PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "white")
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
-_STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius")
-_COLOR_KEYS = ("fill", "stroke", "textColor")
+_STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight")
+_COLOR_KEYS = ("fill", "stroke", "textColor", "highlight")
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -794,6 +794,13 @@ def render_board_svg(body: Any) -> str:
             # Поля как в редакторе: у текста без отступа, у ромба — 22% ширины, у остальных 10px.
             pad = 0 if t == "text" else ew * 0.22 if t == "diamond" else 10
             tx = x + pad if align == "left" else x + ew - pad if align == "right" else x + ew / 2
+            hl = st.get("highlight")
+            if isinstance(hl, str) and _HEX_RE.match(hl):
+                # Подсветка под словами (из Miro): ширина по числу символов — для статичного SVG хватает.
+                for i, line in enumerate(lines):
+                    lw = len(line) * fs * 0.55
+                    lx = tx if align == "left" else tx - lw if align == "right" else tx - lw / 2
+                    out.append(f'<rect x="{lx - 2:.1f}" y="{cy + i * lh - lh / 2:.1f}" width="{lw + 4:.1f}" height="{lh:.1f}" fill="{hl}"/>')
             spans = "".join(
                 f'<tspan x="{tx}" y="{cy + i * lh:.1f}">{html.escape(line)}</tspan>' for i, line in enumerate(lines)
             )

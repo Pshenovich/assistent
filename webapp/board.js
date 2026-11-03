@@ -237,7 +237,7 @@
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
-      ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius"].forEach(function (k) {
+      ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight"].forEach(function (k) {
         if (el.style[k] != null) st[k] = el.style[k];
       });
       if (Object.keys(st).length) o.style = st;
@@ -903,7 +903,7 @@
         if (el.type === "sticky") renderAuthor(node, el.author);
       }
       textStyle(el, textEl);
-      if (!isEditing && textEl.textContent !== String(el.text || "")) textEl.textContent = String(el.text || "");
+      if (!isEditing) renderTextBody(textEl, el);
       if (el.type === "text" && !isEditing) fitTextHeight(el, textEl);
     }
 
@@ -1023,6 +1023,20 @@
         els.set(el.id, Object.assign({}, el, { h: h, w: w }));
         localChanged(el.id);
         renderOverlay();
+      }
+    }
+
+    /** Текст блока; с подсветкой (style.highlight, из Miro) — фон только под словами, как маркером. */
+    function renderTextBody(textEl, el) {
+      var text = String(el.text || "");
+      var hl = el.style && isHex(el.style.highlight) ? el.style.highlight : "";
+      var key = hl + "|" + text;
+      if (textEl.getAttribute("data-k") === key && (hl || textEl.textContent === text)) return;
+      textEl.setAttribute("data-k", key);
+      if (hl && text) {
+        textEl.innerHTML = '<div class="lb-hl-wrap"><span class="lb-hl" style="background:' + hl + '">' + esc(text) + "</span></div>";
+      } else {
+        textEl.textContent = text;
       }
     }
 
@@ -1351,6 +1365,9 @@
       if (!node) return;
       var t = ensureText(node);
       t.classList.remove("is-empty");
+      // Подсветка — разметка вокруг текста; на время правки — просто текст.
+      t.removeAttribute("data-k");
+      if (t.querySelector(".lb-hl")) t.textContent = String(el.text || "");
       t.contentEditable = "plaintext-only";
       if (t.contentEditable !== "plaintext-only") t.contentEditable = "true";
       t.spellcheck = true;
@@ -2233,6 +2250,7 @@
             tEl.textContent = t;
             var need = growToText(el, tEl);
             tEl.textContent = old;
+            tEl.removeAttribute("data-k");
             if (need) f.h = need;
           }
         }
@@ -4441,6 +4459,16 @@
             ctx.fillRect(tl.x - wmax / 2 - 4, tl.y - tl.lh / 2, wmax + 8, tl.lh * tl.lines.length);
             ctx.restore();
           }
+          if (isHex(st.highlight)) {
+            ctx.save();
+            ctx.fillStyle = st.highlight;
+            tl.lines.forEach(function (l, i) {
+              var lw = ctx.measureText(l).width;
+              var lx = tl.align === "center" ? tl.x - lw / 2 : tl.align === "right" ? tl.x - lw : tl.x;
+              ctx.fillRect(lx - 2, tl.y + i * tl.lh - tl.lh / 2, lw + 4, tl.lh);
+            });
+            ctx.restore();
+          }
           tl.lines.forEach(function (l, i) {
             ctx.fillText(l, tl.x, tl.y + i * tl.lh);
           });
@@ -4559,6 +4587,14 @@
               wmax = Math.max(wmax, measure.measureText(l).width);
             });
             out.push('<rect x="' + (tl.x - wmax / 2 - 4) + '" y="' + (tl.y - tl.lh / 2) + '" width="' + (wmax + 8) + '" height="' + tl.lh * tl.lines.length + '" fill="' + colors.bg + '"/>');
+          }
+          if (isHex(st.highlight)) {
+            measure.font = (st.bold ? "600 " : "") + tl.fs + "px " + colors.font;
+            tl.lines.forEach(function (l, i) {
+              var lw = measure.measureText(l).width;
+              var lx = tl.align === "center" ? tl.x - lw / 2 : tl.align === "right" ? tl.x - lw : tl.x;
+              out.push('<rect x="' + (lx - 2) + '" y="' + (tl.y + i * tl.lh - tl.lh / 2) + '" width="' + (lw + 4) + '" height="' + tl.lh + '" fill="' + st.highlight + '"/>');
+            });
           }
           out.push(
             '<text font-size="' + tl.fs + '"' + (st.bold ? ' font-weight="600"' : "") + ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") + '" dominant-baseline="central">' +
