@@ -27,7 +27,9 @@ GANTT_UNITS = ("day", "week")
 PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "white")
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
-_STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold")
+_STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius")
+_COLOR_KEYS = ("fill", "stroke", "textColor")
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class BoardError(ValueError):
@@ -323,6 +325,13 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         for k in _STYLE_KEYS:
             v = style.get(k)
             if v is None:
+                continue
+            if k in _COLOR_KEYS:
+                # Цвет — ключ палитры или точный #rrggbb (вставка из Miro / FigJam); остальное — в атрибуты не пускаем.
+                v = str(v).strip()
+                if not (_HEX_RE.match(v) or re.match(r"^[a-z]{2,10}$", v)):
+                    continue
+                st[k] = v.lower()
                 continue
             st[k] = v if isinstance(v, (int, float, bool)) else _str(v, 32)
         if st:
@@ -725,6 +734,8 @@ def render_board_svg(body: Any) -> str:
         st = el.get("style") or {}
         stroke = _attr(_ink(st.get("stroke")))
         sw = _num(st.get("strokeWidth"), 2, 0, 40)
+        if sw == 0:
+            stroke = "none"
         dash = ' stroke-dasharray="8 6"' if st.get("dash") == "dashed" else (' stroke-dasharray="2 5"' if st.get("dash") == "dotted" else "")
         t = el["type"]
         x, y, ew, eh = el["x"], el["y"], el["w"], el["h"]
@@ -752,10 +763,14 @@ def render_board_svg(body: Any) -> str:
             continue
         fill = _fill(st.get("fill"))
         if t == "sticky":
-            fill = _STICKY.get(str(st.get("fill") or "yellow"), _STICKY["yellow"])
+            sf = str(st.get("fill") or "yellow")
+            fill = sf if _HEX_RE.match(sf) else _STICKY.get(sf, _STICKY["yellow"])
         fill_attr = _attr(fill) if fill else "none"
         if t == "rect":
-            out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="8" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
+            rx = min(_num(st.get("radius"), 8, 0, 1e4), ew / 2, eh / 2)
+            out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
+        elif t == "text" and fill:
+            out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="2" fill="{fill_attr}"/>')
         elif t == "sticky":
             out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="4" fill="{fill_attr}"/>')
         elif t == "ellipse":

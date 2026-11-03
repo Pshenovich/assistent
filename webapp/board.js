@@ -188,17 +188,39 @@
     return Math.max(a, Math.min(b, v));
   }
 
+  // Цвет — ключ палитры (красится под тему) или точный «#rrggbb» (из Miro / FigJam — как в оригинале).
+  var HEX_RE = /^#[0-9a-f]{6}$/i;
+
+  function isHex(key) {
+    return typeof key === "string" && HEX_RE.test(key);
+  }
+
   function inkVar(key) {
+    if (isHex(key)) return key;
     return "var(--lb-ink-" + (INK.indexOf(key) >= 0 || key === "white" ? key : "ink") + ")";
   }
 
   function fillVar(key) {
     if (!key || key === "none") return "none";
+    if (isHex(key)) return key;
     return "var(--lb-fill-" + (FILLS.indexOf(key) >= 0 ? key : "white") + ")";
   }
 
   function stickyVar(key) {
+    if (isHex(key)) return key;
     return "var(--lb-sticky-" + (STICKY.indexOf(key) >= 0 ? key : "yellow") + ")";
+  }
+
+  /** Толщина рамки фигуры: 0 — без рамки (у блоков из Miro бывает). */
+  function strokeW(st, def) {
+    var v = Number(st && st.strokeWidth);
+    return st && st.strokeWidth != null && isFinite(v) ? v : def;
+  }
+
+  /** Скругление прямоугольника: своё (style.radius) или по умолчанию. */
+  function rectRadius(st, w, h) {
+    var r = st && st.radius != null ? Number(st.radius) : NaN;
+    return isFinite(r) ? Math.max(0, Math.min(r, w / 2, h / 2)) : Math.min(10, w / 4, h / 4);
   }
 
   function dashArray(dash, sw) {
@@ -215,7 +237,7 @@
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
-      ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold"].forEach(function (k) {
+      ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius"].forEach(function (k) {
         if (el.style[k] != null) st[k] = el.style[k];
       });
       if (Object.keys(st).length) o.style = st;
@@ -728,19 +750,19 @@
 
     function shapeSvg(el) {
       var st = el.style || {};
-      var sw = Number(st.strokeWidth) || 2;
+      var sw = strokeW(st, 2);
       var w = Math.max(1, el.w);
       var h = Math.max(1, el.h);
       var stroke = inkVar(st.stroke || "ink");
       var fill = fillVar(st.fill);
       var dash = dashArray(st.dash, sw);
       var common =
-        ' fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + sw + '"' +
+        ' fill="' + fill + '" stroke="' + (sw > 0 ? stroke : "none") + '" stroke-width="' + sw + '"' +
         (dash ? ' stroke-dasharray="' + dash + '" stroke-linecap="round"' : "") +
         ' pointer-events="all" class="lb-hit"';
       var inner = "";
       if (el.type === "rect") {
-        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="' + Math.min(10, w / 4, h / 4) + '"' + common + "/>";
+        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="' + rectRadius(st, w, h) + '"' + common + "/>";
       } else if (el.type === "ellipse") {
         inner = '<ellipse cx="' + w / 2 + '" cy="' + h / 2 + '" rx="' + w / 2 + '" ry="' + h / 2 + '"' + common + "/>";
       } else if (el.type === "diamond") {
@@ -750,7 +772,8 @@
       } else if (el.type === "image") {
         inner = '<image x="0" y="0" width="' + w + '" height="' + h + '" preserveAspectRatio="none" href="' + esc(el.src || "") + '" pointer-events="all" class="lb-hit"/>';
       } else {
-        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="transparent" pointer-events="all" class="lb-hit"/>';
+        // Текст: прозрачный, а с заливкой — плашка под текстом (подсветка из Miro).
+        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="2" fill="' + (st.fill && st.fill !== "none" ? fillVar(st.fill) : "transparent") + '" pointer-events="all" class="lb-hit"/>';
       }
       return '<svg class="lb-shape" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" overflow="visible">' + inner + "</svg>";
     }
@@ -1870,6 +1893,46 @@
       }));
     }
 
+    function pluralBlocks(n) {
+      var m10 = n % 10;
+      var m100 = n % 100;
+      if (m10 === 1 && m100 !== 11) return "блок";
+      if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return "блока";
+      return "блоков";
+    }
+
+    /** Вставленная схема (Miro): в центр экрана, одним шагом отмены, видна целиком и выделена. */
+    function placeImported(list) {
+      finishEdit();
+      var b = boundsOfList(list);
+      if (!b) return;
+      var r = stageRect();
+      var c = toWorld(r.left + r.width / 2, r.top + r.height / 2, r);
+      var dx = Math.round(c.x - (b.x + b.w / 2));
+      var dy = Math.round(c.y - (b.y + b.h / 2));
+      var z = topZ();
+      begin();
+      list.forEach(function (el, i) {
+        el.x += dx;
+        el.y += dy;
+        el.z = z + i;
+        put(el);
+      });
+      commit();
+      setTool("select");
+      flushNow();
+      autoFit = false;
+      var nb = { x: b.x + dx, y: b.y + dy, w: b.w, h: b.h };
+      var tl = toScreen(G.pt(nb.x, nb.y));
+      var br = toScreen(G.pt(nb.x + nb.w, nb.y + nb.h));
+      if (tl.x < 0 || tl.y < 0 || br.x > r.width || br.y > r.height) fitBounds(nb);
+      setSelection(list.filter(function (e) {
+        return e.type !== "line";
+      }).map(function (e) {
+        return e.id;
+      }));
+    }
+
     /** Меню шаблона: «Пустой шаблон» — мок-данные, «На моих данных» — Лео соберёт по заметке. */
     function openTemplateMenu(anchor, id) {
       openPop(anchor, function (box) {
@@ -2828,6 +2891,16 @@
             return;
           }
         } catch (_) {}
+      }
+      // Схема из Miro — как в оригинале (webapp/board-import.js); не разобрали — как раньше.
+      var imp = window.LeoBoardImport ? window.LeoBoardImport.fromHtml(cd.getData("text/html") || "", uid) : null;
+      if (imp && imp.elements.length) {
+        placeImported(imp.elements);
+        var nBoxes = imp.elements.filter(function (x) {
+          return x.type !== "line";
+        }).length;
+        notify("Вставлено из " + imp.source + ": " + nBoxes + " " + pluralBlocks(nBoxes) + (imp.skipped ? " · не перенеслось: " + imp.skipped : ""));
+        return;
       }
       if (files.length) {
         insertImageFile(files[0]);
@@ -4045,13 +4118,13 @@
       return {
         bg: get("--lb-bg", "#ffffff"),
         ink: function (k) {
-          return get("--lb-ink-" + (k || "ink"), "#222");
+          return isHex(k) ? k : get("--lb-ink-" + (k || "ink"), "#222");
         },
         fill: function (k) {
-          return !k || k === "none" ? null : get("--lb-fill-" + k, "#fff");
+          return !k || k === "none" ? null : isHex(k) ? k : get("--lb-fill-" + k, "#fff");
         },
         sticky: function (k) {
-          return get("--lb-sticky-" + (k || "yellow"), "#fff3a3");
+          return isHex(k) ? k : get("--lb-sticky-" + (k || "yellow"), "#fff3a3");
         },
         font: get("--lb-font", "system-ui, sans-serif"),
       };
@@ -4271,7 +4344,7 @@
           return;
         }
         var st = el.style || {};
-        var sw = Number(st.strokeWidth) || 2;
+        var sw = el.type === "line" || el.type === "pen" ? Number(st.strokeWidth) || 2 : strokeW(st, 2);
         ctx.save();
         if (el.rot && BOXED[el.type]) {
           var c = G.center(el);
@@ -4327,8 +4400,8 @@
             path.lineTo(el.x + el.w / 2, el.y + el.h);
             path.lineTo(el.x, el.y + el.h / 2);
             path.closePath();
-          } else if (el.type === "rect" || el.type === "sticky") {
-            var rr = el.type === "sticky" ? 3 : Math.min(10, el.w / 4, el.h / 4);
+          } else if (el.type === "rect" || el.type === "sticky" || el.type === "text") {
+            var rr = el.type === "sticky" ? 3 : el.type === "text" ? 2 : rectRadius(st, el.w, el.h);
             if (path.roundRect) path.roundRect(el.x, el.y, el.w, el.h, rr);
             else path.rect(el.x, el.y, el.w, el.h);
           }
@@ -4339,15 +4412,17 @@
             ctx.fillStyle = colors.sticky(st.fill);
             ctx.fill(path);
             ctx.shadowColor = "transparent";
-          } else if (el.type !== "text") {
+          } else {
             var fill = colors.fill(st.fill);
             if (fill) {
               ctx.fillStyle = fill;
               ctx.fill(path);
             }
-            ctx.strokeStyle = colors.ink(st.stroke);
-            ctx.lineWidth = sw;
-            ctx.stroke(path);
+            if (el.type !== "text" && sw > 0) {
+              ctx.strokeStyle = colors.ink(st.stroke);
+              ctx.lineWidth = sw;
+              ctx.stroke(path);
+            }
           }
         }
         ctx.setLineDash([]);
@@ -4448,7 +4523,7 @@
           return;
         }
         var st = el.style || {};
-        var sw = Number(st.strokeWidth) || 2;
+        var sw = el.type === "line" || el.type === "pen" ? Number(st.strokeWidth) || 2 : strokeW(st, 2);
         var stroke = colors.ink(st.stroke);
         var dash = dashArray(st.dash, sw);
         var da = dash ? ' stroke-dasharray="' + dash + '"' : "";
@@ -4470,10 +4545,10 @@
           out.push('<image x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" preserveAspectRatio="none" href="' + esc(el.src || "") + '"/>');
         } else {
           var fill = el.type === "sticky" ? colors.sticky(st.fill) : colors.fill(st.fill) || "none";
-          var strokeAttr = el.type === "sticky" || el.type === "text" ? ' stroke="none"' : ' stroke="' + stroke + '" stroke-width="' + sw + '"' + da;
+          var strokeAttr = el.type === "sticky" || el.type === "text" || sw <= 0 ? ' stroke="none"' : ' stroke="' + stroke + '" stroke-width="' + sw + '"' + da;
           if (el.type === "ellipse") out.push('<ellipse cx="' + (el.x + el.w / 2) + '" cy="' + (el.y + el.h / 2) + '" rx="' + el.w / 2 + '" ry="' + el.h / 2 + '" fill="' + fill + '"' + strokeAttr + "/>");
           else if (el.type === "diamond") out.push('<polygon points="' + (el.x + el.w / 2) + "," + el.y + " " + (el.x + el.w) + "," + (el.y + el.h / 2) + " " + (el.x + el.w / 2) + "," + (el.y + el.h) + " " + el.x + "," + (el.y + el.h / 2) + '" fill="' + fill + '"' + strokeAttr + ' stroke-linejoin="round"/>');
-          else if (el.type !== "text") out.push('<rect x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" rx="' + (el.type === "sticky" ? 3 : Math.min(10, el.w / 4, el.h / 4)) + '" fill="' + fill + '"' + strokeAttr + "/>");
+          else if (el.type !== "text" || fill !== "none") out.push('<rect x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" rx="' + (el.type === "sticky" ? 3 : el.type === "text" ? 2 : rectRadius(st, el.w, el.h)) + '" fill="' + fill + '"' + strokeAttr + "/>");
         }
         var tl = textLayout(measure, el, colors);
         if (tl) {

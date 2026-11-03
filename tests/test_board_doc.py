@@ -195,3 +195,23 @@ class BoardBlocksTests(unittest.TestCase):
         self.assertEqual(board_doc.table_rows(html), [["A", "B <i>"], ["1", ""]])
         self.assertIn("<th", html)
         self.assertEqual(board_doc.clean_table_html(html), html)
+
+
+class BoardExactColorsTests(unittest.TestCase):
+    """Точные цвета (#rrggbb) и скругление — вставка из Miro / FigJam как в оригинале."""
+
+    def test_hex_and_palette_kept_garbage_dropped(self) -> None:
+        el = board_doc._clean_element("a", dict(A, style={
+            "fill": "#305BAB", "stroke": "ink", "textColor": 'red" onload="x', "radius": 55, "strokeWidth": 0,
+        }))
+        self.assertEqual(el["style"], {"fill": "#305bab", "stroke": "ink", "strokeWidth": 0, "radius": 55})
+
+    def test_svg_uses_hex_radius_and_no_border(self) -> None:
+        body = _board(dict(A, style={"fill": "#305bab", "strokeWidth": 0, "radius": 30}),
+                      dict(C, style={"fill": "#fff3a3"}),
+                      {"id": "t", "type": "text", "x": 0, "y": 500, "w": 100, "h": 20, "text": "x", "style": {"fill": "#fe9f4d"}})
+        svg = board_doc.render_board_svg(body)
+        self.assertIn('rx="30"', svg)
+        self.assertIn('fill="#305bab" stroke="none"', svg)
+        self.assertIn('fill="#fff3a3"', svg)
+        self.assertIn('fill="#fe9f4d"', svg)
