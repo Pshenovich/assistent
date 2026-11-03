@@ -7,18 +7,24 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import html
 import json
 import math
 import re
+from html.parser import HTMLParser
 from typing import Any, Optional
 
 BOARD_VERSION = 1
 MAX_BOARD_BYTES = 12 * 1024 * 1024
 MAX_ELEMENTS = 5000
 MAX_TEXT = 20000
-ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image")
-SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image")
+ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image", "table", "card", "gantt")
+SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image", "table", "card", "gantt")
+MAX_TABLE_HTML = 400_000
+MAX_GANTT_TASKS = 200
+GANTT_UNITS = ("day", "week")
+PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "white")
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
 _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold")
@@ -90,6 +96,206 @@ def _points(raw: Any, limit: int = 20000) -> list[list[float]]:
     return out
 
 
+# ---- таблица: разметка таблицы заметок (webapp/editor/table-manage.mjs), только белый список ----
+
+_TABLE_TAGS = {
+    "table", "colgroup", "col", "tbody", "thead", "tr", "td", "th", "p", "br", "strong", "b", "em", "i",
+    "u", "s", "span", "mark", "a", "code",
+}
+_VOID_TAGS = {"col", "br"}
+_STYLE_OK = re.compile(
+    r"^\s*(width|min-width|height|text-align|vertical-align)\s*:\s*[a-z0-9.%\s-]{1,24}\s*$", re.IGNORECASE
+)
+_ATTRS_OK = {
+    "colspan", "rowspan", "colwidth", "data-row-height", "data-highlight", "data-color", "data-leo-color",
+    "class", "style", "href",
+}
+
+
+def _clean_style(raw: str) -> str:
+    parts = [p.strip() for p in str(raw or "").split(";") if p.strip()]
+    return "; ".join(p for p in parts if _STYLE_OK.match(p))
+
+
+class _TableCleaner(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.out: list[str] = []
+        self.stack: list[str] = []
+        self.tables = 0
+        self.skip = 0  # внутри <script> / <style> — текст выбрасываем
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, Optional[str]]]) -> None:
+        tag = tag.lower()
+        if tag in ("script", "style"):
+            self.skip += 1
+            return
+        if tag not in _TABLE_TAGS:
+            return
+        if tag == "table":
+            if self.tables:
+                return  # вложенные таблицы не нужны
+            self.tables += 1
+        kept: list[str] = []
+        for k, v in attrs:
+            k = (k or "").lower()
+            if k not in _ATTRS_OK or v is None:
+                continue
+            if k == "href":
+                if tag != "a" or not re.match(r"^(https?:|mailto:)", v.strip(), re.IGNORECASE):
+                    continue
+            elif k == "style":
+                v = _clean_style(v)
+                if not v:
+                    continue
+            elif k in ("colspan", "rowspan", "data-row-height"):
+                if not re.match(r"^\d{1,4}$", v.strip()):
+                    continue
+            elif k == "colwidth":
+                if not re.match(r"^[\d,\s]{1,200}$", v):
+                    continue
+            else:
+                v = v[:64]
+            kept.append(f' {k}="{_attr(v)}"')
+        self.out.append(f"<{tag}{''.join(kept)}>")
+        if tag not in _VOID_TAGS:
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in ("script", "style"):
+            self.skip = max(0, self.skip - 1)
+            return
+        if tag not in self.stack:
+            return
+        while self.stack:
+            top = self.stack.pop()
+            self.out.append(f"</{top}>")
+            if top == tag:
+                break
+
+    def handle_data(self, data: str) -> None:
+        if self.stack and not self.skip:
+            self.out.append(html.escape(data, quote=False))
+
+
+def clean_table_html(raw: Any) -> str:
+    """HTML таблицы доски: только таблица и простые отметки текста, без скриптов и чужих атрибутов."""
+    src = str(raw or "")[:MAX_TABLE_HTML]
+    if "<table" not in src.lower():
+        return ""
+    p = _TableCleaner()
+    try:
+        p.feed(src)
+        p.close()
+    except Exception:
+        return ""
+    while p.stack:
+        p.out.append(f"</{p.stack.pop()}>")
+    out = "".join(p.out)
+    return out if out.startswith("<table") or "<table" in out else ""
+
+
+class _TableText(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self.cell: Optional[list[str]] = None
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        if tag == "tr":
+            self.rows.append([])
+        elif tag in ("td", "th"):
+            self.cell = []
+        elif tag in ("br", "p") and self.cell is not None and self.cell:
+            self.cell.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("td", "th") and self.cell is not None:
+            if not self.rows:
+                self.rows.append([])
+            self.rows[-1].append(" ".join("".join(self.cell).split()))
+            self.cell = None
+
+    def handle_data(self, data: str) -> None:
+        if self.cell is not None:
+            self.cell.append(data)
+
+
+def table_rows(raw_html: Any) -> list[list[str]]:
+    """Текст ячеек таблицы по строкам."""
+    p = _TableText()
+    try:
+        p.feed(str(raw_html or ""))
+        p.close()
+    except Exception:
+        return []
+    return [r for r in p.rows if r]
+
+
+def table_html_from_rows(rows: list[list[Any]], header: bool = True) -> str:
+    """Таблица из строк текста — в той же разметке, что в заметках (первая строка — шапка)."""
+    clean = [[_str(c, 2000) for c in (r or [])] for r in rows if isinstance(r, (list, tuple))]
+    clean = [r for r in clean if r][:100]
+    if not clean:
+        clean = [["", "", ""], ["", "", ""], ["", "", ""]]
+    cols = min(30, max(len(r) for r in clean))
+    out = ['<table class="note-editor-table"><tbody>']
+    for i, r in enumerate(clean):
+        tag = "th" if header and i == 0 else "td"
+        cells = (r + [""] * cols)[:cols]
+        out.append("<tr>" + "".join(
+            f'<{tag} colspan="1" rowspan="1"><p>{html.escape(c, quote=False)}</p></{tag}>' for c in cells
+        ) + "</tr>")
+    out.append("</tbody></table>")
+    return "".join(out)
+
+
+def _date(raw: Any) -> Optional[str]:
+    s = str(raw or "").strip()[:10]
+    try:
+        return dt.date.fromisoformat(s).isoformat()
+    except ValueError:
+        return None
+
+
+def _color(raw: Any, default: str = "") -> str:
+    v = str(raw or "").strip().lower()
+    return v if v in PALETTE else default
+
+
+def _gantt_tasks(raw: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return out
+    for i, t in enumerate(raw[:MAX_GANTT_TASKS]):
+        if not isinstance(t, dict):
+            continue
+        start = _date(t.get("start"))
+        end = _date(t.get("end")) or start
+        if not start:
+            continue
+        if end < start:
+            start, end = end, start
+        task: dict[str, Any] = {"id": _str(t.get("id") or f"t{i + 1}", 32), "name": _str(t.get("name"), 300), "start": start, "end": end}
+        owner = _str(t.get("owner"), 120).strip()
+        if owner:
+            task["owner"] = owner
+        color = _color(t.get("color"))
+        if color:
+            task["color"] = color
+        out.append(task)
+    return out
+
+
+def _fmt_day(iso: str) -> str:
+    try:
+        d = dt.date.fromisoformat(iso)
+    except ValueError:
+        return iso
+    return f"{d.day:02d}.{d.month:02d}"
+
+
 def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
     if not isinstance(raw, dict):
         return None
@@ -153,6 +359,21 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         if not src.lower().startswith(_IMAGE_PREFIXES):
             return None
         el["src"] = src
+    elif etype == "table":
+        el["html"] = clean_table_html(raw.get("html")) or table_html_from_rows([])
+    elif etype == "card":
+        for k, lim in (("title", 200), ("name", 200)):
+            v = _str(raw.get(k), lim)
+            if v:
+                el[k] = v
+        photo = str(raw.get("photo") or "")
+        if photo and photo.lower().startswith(_IMAGE_PREFIXES):
+            el["photo"] = photo
+    elif etype == "gantt":
+        el["start"] = _date(raw.get("start")) or dt.date.today().isoformat()
+        el["unit"] = raw.get("unit") if raw.get("unit") in GANTT_UNITS else "day"
+        el["span"] = int(_num(raw.get("span"), 14, 1, 520))
+        el["tasks"] = _gantt_tasks(raw.get("tasks"))
     return el
 
 
@@ -215,20 +436,38 @@ def _one_line(text: str) -> str:
     return " ".join(str(text or "").split())
 
 
+def _el_text(el: dict[str, Any]) -> str:
+    """Текст элемента: у таблицы — строки «a | b», у карточки — «Должность — Имя: обязанности», у Ганта — задачи."""
+    t = el.get("type")
+    if t == "table":
+        return "\n".join(" | ".join(r) for r in table_rows(el.get("html")))
+    if t == "card":
+        head = " — ".join(x for x in (_one_line(el.get("title") or ""), _one_line(el.get("name") or "")) if x)
+        about = _one_line(el.get("text") or "")
+        return f"{head}: {about}" if head and about else (head or about)
+    if t == "gantt":
+        rows = []
+        for task in el.get("tasks") or []:
+            who = f" ({task['owner']})" if task.get("owner") else ""
+            rows.append(f"{task.get('name') or 'Задача'}{who}: {_fmt_day(task['start'])}–{_fmt_day(task['end'])}")
+        return "\n".join(rows)
+    return str(el.get("text") or "")
+
+
 def board_plain_text(body: Any) -> str:
     """Текст холста: подписи блоков по порядку и связи «А → Б» — для поиска и ИИ."""
     elements = parse_board(body)["elements"]
     lines: list[str] = []
     for el in _sorted_shapes(elements):
-        text = str(el.get("text") or "").strip()
+        text = _el_text(el).strip()
         if text:
             lines.append(text)
     links: list[str] = []
     for el in elements.values():
         if el.get("type") != "line":
             continue
-        a = (elements.get((el.get("start") or {}).get("el") or "") or {}).get("text")
-        b = (elements.get((el.get("end") or {}).get("el") or "") or {}).get("text")
+        a = _el_text(elements.get((el.get("start") or {}).get("el") or "") or {}).split("\n")[0]
+        b = _el_text(elements.get((el.get("end") or {}).get("el") or "") or {}).split("\n")[0]
         label = _one_line(el.get("text") or "")
         if a and b:
             arrow = "↔" if el.get("arrowStart") and el.get("arrowEnd") else ("→" if el.get("arrowEnd") else ("←" if el.get("arrowStart") else "—"))
@@ -243,6 +482,7 @@ def board_plain_text(body: Any) -> str:
 
 _SHAPE_RU = {
     "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "sticky": "стикер", "text": "текст", "image": "картинка",
+    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта",
 }
 _COLOR_RU = {
     "red": "красный", "orange": "оранжевый", "yellow": "жёлтый", "green": "зелёный", "blue": "синий",
@@ -260,7 +500,7 @@ def board_describe(body: Any, title: str = "") -> str:
 
     def name(eid: str) -> str:
         el = elements.get(eid) or {}
-        text = _one_line(el.get("text") or "")
+        text = _one_line(_el_text(el).split("\n")[0])
         return f"#{num[eid]} «{text}»" if eid in num and text else (f"#{num[eid]}" if eid in num else "?")
 
     out = [f"Доска «{title}»:" if title else "Доска:", "Блоки (сверху вниз, слева направо):"]
@@ -270,10 +510,14 @@ def board_describe(body: Any, title: str = "") -> str:
         kind = _SHAPE_RU.get(el["type"], el["type"])
         if color in _COLOR_RU:
             kind += ", " + _COLOR_RU[str(color)]
-        text = _one_line(el.get("text") or "")
         author = el.get("author") or {}
         if el["type"] == "sticky" and author.get("name"):
             kind += ", автор " + str(author["name"])  # кто что предложил — Лео отвечает и на это
+        if el["type"] in ("table", "gantt"):
+            body_lines = [ln for ln in _el_text(el).split("\n") if ln.strip()]
+            out.append(f"- #{num[el['id']]} [{kind}]" + ("".join(f"\n    {ln}" for ln in body_lines[:60]) or " пустая"))
+            continue
+        text = _one_line(_el_text(el))
         out.append(f"- #{num[el['id']]} [{kind}] {text}".rstrip())
     links = []
     free_lines = 0
@@ -375,6 +619,97 @@ def _attr(v: Any) -> str:
     return html.escape(str(v), quote=True)
 
 
+def _svg_text(x: float, y: float, text: str, fs: float = 13, color: str = "#111827", anchor: str = "start", weight: str = "") -> str:
+    w = f' font-weight="{weight}"' if weight else ""
+    return (f'<text x="{x:.1f}" y="{y:.1f}" font-size="{fs}" fill="{color}" text-anchor="{anchor}" '
+            f'dominant-baseline="middle"{w}>{html.escape(text)}</text>')
+
+
+def _gantt_geom(el: dict[str, Any]) -> dict[str, Any]:
+    """Размеры Ганта — те же, что рисует клиент (webapp/board.js ganttLayout)."""
+    cols = {"name": 150, "start": 64, "end": 64, "owner": 110}
+    label_w = sum(cols.values())
+    unit_w = 34 if el.get("unit") != "week" else 64
+    return {"cols": cols, "label_w": label_w, "unit_w": unit_w, "head": 44, "row": 34}
+
+
+def _svg_composite(el: dict[str, Any]) -> str:
+    t = el["type"]
+    x, y, w, h = float(el["x"]), float(el["y"]), float(el["w"]), float(el["h"])
+    out: list[str] = []
+    line = "#d0d5dd"
+    if t == "table":
+        rows = table_rows(el.get("html")) or [[""]]
+        ncols = max(len(r) for r in rows) or 1
+        rh = h / len(rows)
+        cw = w / ncols
+        head = "<th" in str(el.get("html") or "")
+        if head:
+            out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{rh:.1f}" fill="#f1f3f5"/>')
+        out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" fill="none" stroke="{line}"/>')
+        for i in range(1, len(rows)):
+            out.append(f'<line x1="{x}" y1="{y + i * rh:.1f}" x2="{x + w}" y2="{y + i * rh:.1f}" stroke="{line}"/>')
+        for j in range(1, ncols):
+            out.append(f'<line x1="{x + j * cw:.1f}" y1="{y}" x2="{x + j * cw:.1f}" y2="{y + h}" stroke="{line}"/>')
+        for i, r in enumerate(rows):
+            for j, cell in enumerate(r[:ncols]):
+                if cell:
+                    out.append(_svg_text(x + j * cw + 8, y + i * rh + rh / 2, cell[:60], 13, "#111827", "start", "600" if head and i == 0 else ""))
+        return "".join(out)
+    if t == "card":
+        st = el.get("style") or {}
+        head_fill = _FILL.get(str(st.get("fill") or "purple"), _FILL["purple"])
+        out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="10" fill="#ffffff" stroke="{line}"/>')
+        out.append(f'<path d="M{x},{y + 10}a10,10 0 0 1 10,-10h{w - 20}a10,10 0 0 1 10,10v26h-{w}z" fill="{head_fill}"/>')
+        out.append(_svg_text(x + w / 2, y + 18, str(el.get("title") or "")[:60], 13, "#1f2937", "middle", "600"))
+        cx, cy = x + w / 2, y + 36 + 40
+        if el.get("photo"):
+            out.append(f'<clipPath id="ph-{_attr(el["id"])}"><circle cx="{cx}" cy="{cy}" r="30"/></clipPath>')
+            out.append(f'<image x="{cx - 30}" y="{cy - 30}" width="60" height="60" preserveAspectRatio="xMidYMid slice" '
+                       f'clip-path="url(#ph-{_attr(el["id"])})" href="{_attr(el["photo"])}"/>')
+        else:
+            out.append(f'<circle cx="{cx}" cy="{cy}" r="30" fill="#f1f3f5" stroke="{line}" stroke-dasharray="3 3"/>')
+        out.append(_svg_text(cx, cy + 46, str(el.get("name") or "")[:60], 14, "#111827", "middle", "600"))
+        about = _one_line(el.get("text") or "")
+        if about:
+            out.append(_svg_text(cx, cy + 68, about[:70], 12, "#6b7280", "middle"))
+        return "".join(out)
+    g = _gantt_geom(el)
+    try:
+        start = dt.date.fromisoformat(str(el.get("start")))
+    except ValueError:
+        start = dt.date.today()
+    step = 7 if el.get("unit") == "week" else 1
+    out.append(f'<rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="#ffffff" stroke="{line}"/>')
+    out.append(f'<line x1="{x}" y1="{y + g["head"]}" x2="{x + w}" y2="{y + g["head"]}" stroke="{line}"/>')
+    cx = x
+    for key, label in (("name", "Задача"), ("start", "Начало"), ("end", "Конец"), ("owner", "Ответственный")):
+        out.append(_svg_text(cx + 8, y + g["head"] / 2, label, 12, "#6b7280"))
+        cx += g["cols"][key]
+    gx = x + g["label_w"]
+    for i in range(int(el.get("span") or 14)):
+        d = start + dt.timedelta(days=i * step)
+        out.append(_svg_text(gx + i * g["unit_w"] + g["unit_w"] / 2, y + g["head"] / 2, f"{d.day}", 11, "#6b7280", "middle"))
+    for i, task in enumerate(el.get("tasks") or []):
+        ry = y + g["head"] + i * g["row"]
+        cx = x
+        for key in ("name", "start", "end", "owner"):
+            val = task.get(key) or ""
+            if key in ("start", "end"):
+                val = _fmt_day(val)
+            out.append(_svg_text(cx + 8, ry + g["row"] / 2, str(val)[:40], 12))
+            cx += g["cols"][key]
+        try:
+            a = (dt.date.fromisoformat(task["start"]) - start).days / step
+            b = ((dt.date.fromisoformat(task["end"]) - start).days + 1) / step
+        except ValueError:
+            continue
+        fill = _INK.get(str(task.get("color") or "blue"), _INK["blue"])
+        out.append(f'<rect x="{gx + a * g["unit_w"]:.1f}" y="{ry + 8}" width="{max(4.0, (b - a) * g["unit_w"]):.1f}" '
+                   f'height="{g["row"] - 16}" rx="4" fill="{fill}" fill-opacity="0.75"/>')
+    return "".join(out)
+
+
 def render_board_svg(body: Any) -> str:
     """Статичный SVG доски (без правки): фигуры, подписи, линии по сохранённым точкам."""
     elements = parse_board(body)["elements"]
@@ -411,6 +746,9 @@ def render_board_svg(body: Any) -> str:
                 continue
             d = "M" + "L".join(f"{p[0] + x:.1f},{p[1] + y:.1f}" for p in pts)
             out.append(f'<path d="{d}" fill="none" stroke="{stroke}" stroke-width="{sw}" stroke-linecap="round" stroke-linejoin="round"/>')
+            continue
+        if t in ("table", "card", "gantt"):
+            out.append(_svg_composite(el))
             continue
         fill = _fill(st.get("fill"))
         if t == "sticky":

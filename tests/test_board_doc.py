@@ -135,3 +135,63 @@ class BoardDescribeTests(unittest.TestCase):
         self.assertIn("#1 «Заявка» → #2 «Одобрить?» («да», пунктир)", text)
         self.assertIn("рисунков карандашом: 1", text)
         self.assertEqual(board_doc.board_describe(""), "Доска пустая.")
+
+
+class BoardBlocksTests(unittest.TestCase):
+    """Таблица (разметка таблицы заметки), оргкарточка и Гант."""
+
+    TABLE = {
+        "id": "t", "type": "table", "x": 0, "y": 0, "w": 300, "h": 100,
+        "html": '<table class="note-editor-table" onclick="x"><colgroup><col style="width: 120px; background: url(x)"></colgroup>'
+                '<tbody><tr><th colspan="1" style="text-align: center"><p>Этап<script>alert(1)</script></p></th><th><p>Кто</p></th></tr>'
+                '<tr><td data-highlight="1"><p>Бриф</p></td><td><p><a href="javascript:alert(1)">Аня</a> <a href="https://x.ru">сайт</a></p></td></tr>'
+                "</tbody></table><img src=x onerror=alert(1)>",
+    }
+    CARD = {"id": "c", "type": "card", "x": 0, "y": 300, "w": 220, "h": 230, "title": "CEO", "name": "Иван", "text": "Стратегия",
+            "photo": "https://evil/x.png", "style": {"fill": "purple"}}
+    GANTT = {"id": "g", "type": "gantt", "x": 0, "y": 700, "w": 900, "h": 200, "start": "2026-11-03", "unit": "day", "span": 14,
+             "tasks": [{"id": "t1", "name": "Дизайн", "start": "2026-11-07", "end": "2026-11-05", "owner": "Аня", "color": "green"},
+                       {"id": "t2", "name": "плохая дата", "start": "завтра"}]}
+
+    def test_table_html_whitelisted(self) -> None:
+        html = board_doc.parse_board(_board(self.TABLE))["elements"]["t"]["html"]
+        self.assertTrue(html.startswith('<table class="note-editor-table">'))
+        for bad in ("onclick", "script", "alert", "img", "javascript", "url("):
+            self.assertNotIn(bad, html)
+        self.assertIn('style="width: 120px"', html)
+        self.assertIn('data-highlight="1"', html)
+        self.assertIn('href="https://x.ru"', html)
+        self.assertEqual(board_doc.table_rows(html), [["Этап", "Кто"], ["Бриф", "Аня сайт"]])
+
+    def test_table_without_markup_gets_empty_grid(self) -> None:
+        el = board_doc._clean_element("t", {"type": "table", "html": "<b>нет таблицы</b>"})
+        self.assertEqual(board_doc.table_rows(el["html"]), [["", "", ""]] * 3)
+
+    def test_card_and_gantt_cleaned(self) -> None:
+        els = board_doc.parse_board(_board(self.CARD, self.GANTT))["elements"]
+        self.assertNotIn("photo", els["c"])
+        self.assertEqual((els["c"]["title"], els["c"]["name"], els["c"]["text"]), ("CEO", "Иван", "Стратегия"))
+        g = els["g"]
+        self.assertEqual(len(g["tasks"]), 1)
+        self.assertEqual((g["tasks"][0]["start"], g["tasks"][0]["end"]), ("2026-11-05", "2026-11-07"))
+        self.assertEqual(board_doc._clean_element("g", dict(self.GANTT, unit="month"))["unit"], "day")
+
+    def test_blocks_text_describe_and_svg(self) -> None:
+        body = _board(self.TABLE, self.CARD, self.GANTT)
+        text = board_doc.board_plain_text(body)
+        self.assertIn("Этап | Кто", text)
+        self.assertIn("CEO — Иван: Стратегия", text)
+        self.assertIn("Дизайн (Аня): 05.11–07.11", text)
+        desc = board_doc.board_describe(body)
+        self.assertIn("[таблица]", desc)
+        self.assertIn("[диаграмма Ганта]", desc)
+        svg = board_doc.render_board_svg(body)
+        self.assertIn("Ответственный", svg)
+        self.assertIn("Этап", svg)
+        self.assertNotIn("<script", svg)
+
+    def test_table_from_rows(self) -> None:
+        html = board_doc.table_html_from_rows([["A", "B <i>"], ["1"]])
+        self.assertEqual(board_doc.table_rows(html), [["A", "B <i>"], ["1", ""]])
+        self.assertIn("<th", html)
+        self.assertEqual(board_doc.clean_table_html(html), html)

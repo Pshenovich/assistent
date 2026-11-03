@@ -189,3 +189,68 @@ class BoardStickyAuthorTests(unittest.TestCase):
         els = json.loads(board_ai.build_board({"layout": "grid", "nodes": [{"id": "n1", "text": "Идея", "shape": "sticky"}]}))["elements"]
         sticky = next(e for e in els.values() if e["type"] == "sticky")
         self.assertEqual(sticky["author"], {"name": "Лео", "ai": True})
+
+
+class BoardTemplateBlocksTests(unittest.TestCase):
+    """Лео собирает таблицу, Гант и оргструктуру (шаблоны «На моих данных»)."""
+
+    def test_create_table_and_gantt_without_nodes(self):
+        act = {"action": "create", "title": "План",
+               "table": {"rows": [["Этап", "Кто"], ["Бриф", "Аня"]]},
+               "gantt": {"tasks": [{"name": "Дизайн", "start": "2026-11-03", "end": "2026-11-06", "owner": "Олег"},
+                                   {"name": "Без даты"}]}}
+        self.assertTrue(board_ai.has_blocks(act))
+        els = json.loads(board_ai.build_board(act))["elements"]
+        table = next(e for e in els.values() if e["type"] == "table")
+        gantt = next(e for e in els.values() if e["type"] == "gantt")
+        self.assertEqual(board_doc.table_rows(table["html"]), [["Этап", "Кто"], ["Бриф", "Аня"]])
+        self.assertEqual([t["name"] for t in gantt["tasks"]], ["Дизайн"])
+        self.assertEqual(gantt["tasks"][0]["owner"], "Олег")
+        self.assertEqual(gantt["start"], "2026-11-03")
+        self.assertEqual(gantt["w"], 388 + gantt["span"] * 34)
+        self.assertFalse(_overlap(table, gantt))
+
+    def test_org_cards_tree(self):
+        act = {"action": "create", "layout": "tree", "nodes": [
+            {"id": "a", "shape": "card", "role": "CEO", "name": "Иван", "text": "Стратегия"},
+            {"id": "b", "role": "CTO", "name": "", "text": "Разработка"},
+            {"id": "c", "role": "CMO", "text": "Маркетинг"}],
+            "edges": [{"from": "a", "to": "b", "arrow": "none"}, {"from": "a", "to": "c", "arrow": "none"}]}
+        els = json.loads(board_ai.build_board(act))["elements"]
+        cards = [e for e in els.values() if e["type"] == "card"]
+        self.assertEqual(sorted(c["title"] for c in cards), ["CEO", "CMO", "CTO"])
+        boss = next(c for c in cards if c["title"] == "CEO")
+        for c in cards:
+            if c is not boss:
+                self.assertGreater(c["y"], boss["y"] + boss["h"])
+        for i, a in enumerate(cards):
+            for b in cards[i + 1:]:
+                self.assertFalse(_overlap(a, b))
+        lines = [e for e in els.values() if e["type"] == "line"]
+        self.assertTrue(all(not ln.get("arrowEnd") for ln in lines))
+
+    def test_update_replaces_table_and_edits_card(self):
+        body = board_ai.build_board({"action": "create", "nodes": [{"id": "a", "shape": "card", "role": "CEO"}],
+                                     "table": {"rows": [["A"], ["1"]]}})
+        els = json.loads(body)["elements"]
+        tid = next(k for k, e in els.items() if e["type"] == "table")
+        cid = next(k for k, e in els.items() if e["type"] == "card")
+        upd = json.loads(board_ai.update_board(body, {
+            "action": "update", "nodes": [{"id": cid, "name": "Иван"}, {"id": tid, "text": "мимо"}],
+            "table": {"id": tid, "rows": [["A", "B"], ["1", "2"]]},
+        }))["elements"]
+        self.assertEqual(board_doc.table_rows(upd[tid]["html"]), [["A", "B"], ["1", "2"]])
+        self.assertEqual((upd[cid]["title"], upd[cid]["name"]), ("CEO", "Иван"))
+        self.assertEqual(sum(1 for e in upd.values() if e["type"] == "table"), 1)
+
+    def test_open_board_lists_blocks_and_template_prompt(self):
+        body = board_ai.build_board({"action": "create", "table": {"rows": [["Этап", "Кто"]]},
+                                     "gantt": {"unit": "week", "tasks": [{"name": "Запуск", "start": "2026-11-04", "end": "2026-11-20"}]}})
+        block = board_ai.open_board_prompt_block("5", "План", body)
+        self.assertIn("table (1 строк)", block)
+        self.assertIn("| Этап | Кто |", block)
+        self.assertIn('gantt unit=week', block)
+        self.assertIn('"Запуск" 2026-11-04..2026-11-20', block)
+        self.assertIn("action=update", board_ai.template_prompt("gantt", True))
+        self.assertIn("action=create", board_ai.template_prompt("org", False))
+        self.assertEqual(board_ai.template_prompt("chart", False), "")

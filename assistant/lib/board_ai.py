@@ -11,6 +11,7 @@ action=update — новые узлы и связи, правки текста �
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import math
 import re
@@ -21,7 +22,11 @@ from assistant.lib import board_doc
 
 MAX_NODES = 80
 MAX_EDGES = 160
-SHAPES = ("rect", "diamond", "ellipse", "sticky", "text")
+SHAPES = ("rect", "diamond", "ellipse", "sticky", "text", "card")
+FILLS = ("gray", "red", "orange", "yellow", "green", "blue", "purple", "pink")
+BAR_COLORS = ("blue", "green", "purple", "orange", "pink", "red", "yellow", "gray")
+MAX_TABLE_ROWS = 60
+MAX_TABLE_COLS = 12
 LAYOUTS = ("flow", "flow-right", "tree", "mindmap", "grid")
 INK = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink")
 STICKY = ("yellow", "orange", "pink", "green", "blue", "purple", "gray")
@@ -65,6 +70,20 @@ def system_addon() -> str:
   "both" или "none"; "dashed": true — пунктир.
 - Текст узла короткий (до ~60 символов), без markdown. До 40 узлов. Только из заметки и разговора.
 
+Оргструктура — layout "tree" и узлы-карточки: {"id":"n1","shape":"card","role":"Должность","name":"Имя Фамилия",
+"text":"Обязанности коротко","color":"purple"}; связи — от руководителя к подчинённому, "arrow":"none".
+Имени нет в контексте — "name":"" (не выдумывай людей).
+
+Таблица — ключ "table" рядом с nodes (nodes можно не давать):
+{"action":"create","title":"Бюджет","table":{"rows":[["Статья","Сумма"],["Реклама","120 000"]]}}
+- Первая строка — шапка. До 60 строк и 12 столбцов, ячейки — коротко, без markdown.
+
+Диаграмма Ганта — ключ "gantt":
+{"action":"create","title":"План запуска","gantt":{"unit":"day","tasks":[
+  {"name":"Исследование","start":"2026-11-03","end":"2026-11-06","owner":"Аня"}]}}
+- Даты ISO YYYY-MM-DD (start и end включительно), owner — ответственный, если известен; unit "week" — для планов
+  на месяцы. Даты бери из контекста; нет дат — начни с сегодняшней и оцени длительности.
+
 Изменить открытую доску (её узлы и связи даны ниже с id):
 ```leo-board
 {"action":"update","sheet_id":"123",
@@ -77,6 +96,9 @@ def system_addon() -> str:
 - Вставить шаг между A и B: удали старую стрелку A→B (её id есть в «Связи») через remove и добавь A→новый, новый→B.
 - remove — удалить блоки и стрелки по id. "relayout": true — заново разложить всю доску (layout можно сменить).
 - Не делай action=create для правки открытой доски, если пользователь не просит новую отдельную доску.
+- Таблицу и Гант на открытой доске правь так же: "table":{"id":"существующий_id","rows":[...]} или
+  "gantt":{"id":"существующий_id","tasks":[...]} — содержимое заменится целиком; без id — новый блок рядом.
+  Карточку — узлом с её id и полями role / name / text.
 
 Никогда не вставляй JSON доски вне блока ```leo-board.
 """.strip()
@@ -98,6 +120,18 @@ def open_board_prompt_block(sheet_id: str, title: str, body: Any) -> str:
             nodes.append(f'- id={el["id"]} {t}' + (f" color={color}" if color and color not in ("ink", "none") else "") + f' "{text}"')
         elif t == "image":
             nodes.append(f'- id={el["id"]} image')
+        elif t == "card":
+            one = lambda v: " ".join(str(v or "").split())[:120]  # noqa: E731
+            nodes.append(f'- id={el["id"]} card role="{one(el.get("title"))}" name="{one(el.get("name"))}" "{one(el.get("text"))}"')
+        elif t == "table":
+            rows = board_doc.table_rows(el.get("html"))
+            nodes.append(f'- id={el["id"]} table ({len(rows)} строк):')
+            nodes += ["    | " + " | ".join(c[:60] for c in r) + " |" for r in rows[:30]]
+        elif t == "gantt":
+            nodes.append(f'- id={el["id"]} gantt unit={el.get("unit") or "day"}:')
+            for task in (el.get("tasks") or [])[:60]:
+                who = f' owner="{task["owner"]}"' if task.get("owner") else ""
+                nodes.append(f'    "{task.get("name") or ""}" {task["start"]}..{task["end"]}{who}')
     for el in elements.values():
         if el.get("type") != "line":
             continue
@@ -224,6 +258,9 @@ def _lines(text: str, width: float) -> int:
 def _size(shape: str, text: str) -> tuple[float, float]:
     """Размер блока под текст: ширина растёт до предела, потом — переносы."""
     longest = max((len(p) for p in text.split("\n")), default=0)
+    if shape == "card":
+        # Шапка, фото, имя, обязанности (12.5px) — как рисует webapp/board-blocks.js; клиент подгонит высоту.
+        return 220.0, float(196 + _lines(text, 196) * 18)
     if shape == "sticky":
         w = 200.0
         h = max(200.0, _lines(text, w - 28) * LINE_H + 40)
@@ -243,6 +280,8 @@ def _size(shape: str, text: str) -> tuple[float, float]:
 
 
 def _node_style(shape: str, color: str) -> dict[str, Any]:
+    if shape == "card":
+        return {"fill": color if color in FILLS else "purple"}
     if shape == "sticky":
         return {"fill": color if color in STICKY else "yellow", "fontSize": FONT}
     if shape == "text":
@@ -273,6 +312,11 @@ def _norm_node(raw: Any) -> Optional[dict[str, Any]]:
     color = str(raw.get("color") or "").strip().lower()
     if color:
         out["color"] = color
+    for k in ("role", "name"):
+        if k in raw:
+            out[k] = _clean_text(raw.get(k), 120).replace("\n", " ")
+    if out.get("shape") is None and ("role" in out or "name" in out):
+        out["shape"] = "card"
     return out
 
 
@@ -596,6 +640,11 @@ def _shape_el(node: dict[str, Any], pos: tuple[float, float], z: float) -> dict[
         el["text"] = node["text"]
     if shape == "sticky":
         el["author"] = {"name": "Лео", "ai": True}  # подпись внизу стикера, как у людей
+    if shape == "card":
+        if node.get("role"):
+            el["title"] = node["role"]
+        if node.get("name"):
+            el["name"] = node["name"]
     return el
 
 
@@ -612,6 +661,151 @@ def _prepare(nodes_raw: list[Any], default_shape: str) -> list[dict[str, Any]]:
         n["w"], n["h"] = _size(n["shape"], n["text"])
         out.append(n)
     return out
+
+
+# ---- таблица и Гант ----
+
+def _table_rows(raw: Any) -> list[list[str]]:
+    rows = raw.get("rows") if isinstance(raw, dict) else raw
+    if not isinstance(rows, list):
+        return []
+    out = []
+    for r in rows[:MAX_TABLE_ROWS]:
+        if isinstance(r, (list, tuple)):
+            out.append([_clean_text(c, 300).replace("\n", " ") for c in list(r)[:MAX_TABLE_COLS]])
+    return [r for r in out if any(c for c in r)]
+
+
+def _table_el(raw: Any, x: float, y: float, z: float, eid: str = "") -> Optional[dict[str, Any]]:
+    rows = _table_rows(raw)
+    if not rows:
+        return None
+    cols = max(len(r) for r in rows)
+    return {
+        "id": eid or _uid(), "type": "table", "x": round(x, 1), "y": round(y, 1),
+        "w": float(max(360, min(1100, cols * 160))), "h": float(len(rows) * 38 + 2), "z": z,
+        "html": board_doc.table_html_from_rows(rows),
+    }
+
+
+def _iso(raw: Any) -> Optional[str]:
+    try:
+        return dt.date.fromisoformat(str(raw or "").strip()[:10]).isoformat()
+    except ValueError:
+        return None
+
+
+def _gantt_tasks(raw: Any) -> list[dict[str, Any]]:
+    tasks = raw.get("tasks") if isinstance(raw, dict) else raw
+    if not isinstance(tasks, list):
+        return []
+    out = []
+    for i, t in enumerate(tasks[:board_doc.MAX_GANTT_TASKS]):
+        if not isinstance(t, dict):
+            continue
+        start = _iso(t.get("start"))
+        end = _iso(t.get("end")) or start
+        if not start:
+            continue
+        if end < start:
+            start, end = end, start
+        task: dict[str, Any] = {"id": "t" + secrets.token_hex(4), "name": _clean_text(t.get("name") or t.get("title"), 200).replace("\n", " "),
+                                "start": start, "end": end, "color": BAR_COLORS[i % len(BAR_COLORS)]}
+        owner = _clean_text(t.get("owner") or t.get("assignee"), 80).replace("\n", " ")
+        if owner:
+            task["owner"] = owner
+        color = str(t.get("color") or "").strip().lower()
+        if color in BAR_COLORS:
+            task["color"] = color
+        out.append(task)
+    return out
+
+
+def gantt_fit(el: dict[str, Any]) -> dict[str, Any]:
+    """Шкала и размеры Ганта — как ganttFit в webapp/board-blocks.js."""
+    g = board_doc._gantt_geom(el)
+    tasks = el.get("tasks") or []
+    week = el.get("unit") == "week"
+    step = 7 if week else 1
+    start = _iso(el.get("start")) or dt.date.today().isoformat()
+    if tasks:
+        start = min([start] + [t["start"] for t in tasks]) if el.get("start") else min(t["start"] for t in tasks)
+    d0 = dt.date.fromisoformat(start)
+    if week:
+        d0 = d0 - dt.timedelta(days=d0.weekday())
+    need = 0
+    if tasks:
+        last = max(dt.date.fromisoformat(t["end"]) for t in tasks)
+        need = math.ceil(((last - d0).days + 1) / step) + 1
+    span = max(8 if week else 14, need, 1)
+    rows = max(1, len(tasks))
+    return {**el, "start": d0.isoformat(), "span": span, "w": float(g["label_w"] + span * g["unit_w"]),
+            "h": float(g["head"] + rows * g["row"] + g["row"])}
+
+
+def _gantt_el(raw: Any, x: float, y: float, z: float, eid: str = "") -> Optional[dict[str, Any]]:
+    tasks = _gantt_tasks(raw)
+    if not tasks:
+        return None
+    unit = str((raw.get("unit") if isinstance(raw, dict) else "") or "").strip().lower()
+    if unit not in board_doc.GANTT_UNITS:
+        days = (max(dt.date.fromisoformat(t["end"]) for t in tasks) - min(dt.date.fromisoformat(t["start"]) for t in tasks)).days
+        unit = "week" if days > 60 else "day"
+    el = {"id": eid or _uid(), "type": "gantt", "x": round(x, 1), "y": round(y, 1), "z": z, "unit": unit, "tasks": tasks}
+    return gantt_fit(el)
+
+
+def _as_list(raw: Any) -> list[Any]:
+    if isinstance(raw, list):
+        return raw
+    return [raw] if isinstance(raw, dict) else []
+
+
+def _add_blocks(elements: dict[str, dict[str, Any]], action: dict[str, Any], replace: bool) -> None:
+    """Таблицы и Ганты действия: с id существующего — замена содержимого, иначе — новый блок справа от доски."""
+    z = max([float(e.get("z") or 0) for e in elements.values()] + [0]) + 1
+    for key, make in (("table", _table_el), ("gantt", _gantt_el)):
+        for raw in _as_list(action.get(key))[:4]:
+            cur = elements.get(str((raw or {}).get("id") or "")) if replace and isinstance(raw, dict) else None
+            if cur is not None and cur.get("type") == key:
+                el = make(raw, float(cur["x"]), float(cur["y"]), float(cur.get("z") or z), cur["id"])
+                if el:
+                    elements[cur["id"]] = el
+                continue
+            bx = _bounds(elements)
+            x, y = (bx[2] + 140, bx[1]) if bx else (0.0, 0.0)
+            el = make(raw, x, y, z)
+            if el:
+                elements[el["id"]] = el
+                z += 1
+
+
+def has_blocks(action: dict[str, Any]) -> bool:
+    return bool(_as_list(action.get("table")) or _as_list(action.get("gantt")))
+
+
+TEMPLATES = ("scheme", "gantt", "org", "table")
+
+
+def template_prompt(template: str, board_open: bool) -> str:
+    """Шаблон «На моих данных» (кнопка на доске): что собрать и из чего."""
+    what = {
+        "scheme": "схему процесса (блок-схему: layout \"flow\", старт и финиш — ellipse, решения — diamond)",
+        "gantt": "диаграмму Ганта (ключ \"gantt\": задачи, даты, ответственные)",
+        "org": "оргструктуру (layout \"tree\", узлы shape \"card\" с role, name и text — обязанности)",
+        "table": "таблицу (ключ \"table\": первая строка — шапка)",
+    }.get(template)
+    if not what:
+        return ""
+    where = (
+        "Добавь на открытую доску (action=update с её sheet_id) новыми блоками рядом с тем, что уже есть."
+        if board_open else "Создай доску (action=create)."
+    )
+    return (
+        f"Шаблон доски «На моих данных»: собери {what} по контексту — листы заметки, прикреплённые заметки "
+        f"и обсуждение. Бери только то, что есть в контексте; не хватает данных — оставь поля пустыми, "
+        f"не выдумывай людей и цифры. {where} Ответь блоком ```leo-board и одним коротким предложением."
+    )
 
 
 def _layout(layout: str, nodes: list[dict[str, Any]], edges: list[tuple[str, str]]) -> tuple[dict[str, tuple[float, float]], dict[str, str]]:
@@ -659,6 +853,7 @@ def build_board(action: dict[str, Any]) -> str:
     for k, e in enumerate(edges):
         ln = _line(placed[e["from"]], placed[e["to"]], e, layout, side_of, 1 + k * 0.01)
         elements[ln["id"]] = ln
+    _add_blocks(elements, action, replace=False)
     return board_doc.normalize_board_body(json.dumps({"v": 1, "elements": elements}, ensure_ascii=False))
 
 
@@ -700,12 +895,21 @@ def update_board(body: Any, action: dict[str, Any]) -> str:
         if not n:
             continue
         cur = elements.get(n["id"])
+        if cur is not None and cur.get("type") in ("table", "gantt"):
+            continue  # их правят ключи "table" / "gantt"
+        if cur is not None and cur.get("type") == "card":
+            for src, dst in (("role", "title"), ("name", "name"), ("text", "text")):
+                if src in n:
+                    cur[dst] = n[src]
+            if n.get("color") in FILLS:
+                cur["style"] = {"fill": n["color"]}
+            continue
         if cur is not None and cur.get("type") in board_doc.SHAPE_TYPES:
             # Правка существующего блока.
             if "text" in n:
                 cur["text"] = n["text"]
             shape = n.get("shape")
-            if shape and shape != cur["type"] and cur["type"] != "image":
+            if shape and shape != cur["type"] and cur["type"] != "image" and shape != "card":
                 cur["type"] = shape
             if shape or n.get("color"):
                 cur["style"] = _node_style(cur["type"], n.get("color") or (cur.get("style") or {}).get("stroke") or "")
@@ -840,6 +1044,7 @@ def update_board(body: Any, action: dict[str, Any]) -> str:
             continue
         ln = _line(a, b, e, layout, side_of, 1 + k * 0.01)
         elements[ln["id"]] = ln
+    _add_blocks(elements, action, replace=True)
     return board_doc.normalize_board_body(json.dumps({"v": 1, "elements": elements}, ensure_ascii=False))
 
 
@@ -857,10 +1062,10 @@ def apply_action(note: dict[str, Any], action: dict[str, Any], note_sheets_mod: 
             return note_sheets_mod.update_sheet(
                 int(note["id"]), int(sid_raw), title=title or None, body=body,
             )
-        if not (action.get("nodes")):
+        if not (action.get("nodes")) and not has_blocks(action):
             return None
     nodes = action.get("nodes") if isinstance(action.get("nodes"), list) else []
-    if not nodes:
+    if not nodes and not has_blocks(action):
         return None
     body = build_board(action)
     return note_sheets_mod.create_sheet(note, title or "Доска", body=body, kind=note_sheets_mod.SHEET_KIND_BOARD)

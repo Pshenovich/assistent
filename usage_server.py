@@ -2794,6 +2794,8 @@ class _MiniappGptChatBody(BaseModel):
     canvas_theme: Optional[str] = None
     # Открытая доска (лист kind=board): модель видит её узлы и может её дорисовать.
     board_sheet_id: Optional[str] = None
+    # Шаблон доски «На моих данных» (scheme / gantt / org / table): Лео собирает его по листам заметки.
+    board_template: Optional[str] = None
     # Второй шаг после обработки больших данных по ссылке частями (assistant/services/bulk_links.py).
     bulk_job_id: Optional[str] = None
     # Ответ в обсуждение сервер сохраняет сам: человек мог уйти из обсуждения или закрыть приложение.
@@ -9583,8 +9585,13 @@ async def miniapp_gpt_chat(
             if sel_block:
                 prompt = (prompt.rstrip() + "\n\n" + sel_block).strip()
             open_board_id = str(body.board_sheet_id or "").strip()
-            if open_board_id or board_ai_lib.looks_like_board_request(q):
+            board_tpl = str(body.board_template or "").strip().lower()
+            if board_tpl not in board_ai_lib.TEMPLATES:
+                board_tpl = ""
+            if open_board_id or board_tpl or board_ai_lib.looks_like_board_request(q):
                 system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
+            if board_tpl:
+                prompt = (prompt.rstrip() + "\n\n" + board_ai_lib.template_prompt(board_tpl, open_board_id.isdigit())).strip()
             if open_board_id.isdigit():
                 try:
                     from assistant.stores import note_sheets as note_sheets_store
@@ -9600,9 +9607,11 @@ async def miniapp_gpt_chat(
                     ).strip()
 
         def board_intent_text(text: str) -> str:
-            # Просьба нарисовать доску — не повод генерировать картинку.
+            # Просьба нарисовать доску (и шаблон доски) — не повод генерировать картинку.
             from assistant.lib import board_ai as board_ai_lib
 
+            if str(getattr(body, "board_template", "") or "").strip():
+                return ""
             return "" if board_ai_lib.looks_like_board_request(text) else text
 
         system_text = leo_agent.append_system(system_text, auto_hint)
