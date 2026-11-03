@@ -126,6 +126,7 @@
     var els = [];
     var byId = {};
     var skipped = 0;
+    var imageSlots = 0;
     var boxes = {};
     // Сначала блоки (у линий ссылки на них), потом линии.
     objects.forEach(function (o) {
@@ -184,6 +185,19 @@
           type: "sticky", text: t.text,
           style: { fill: hex(st.sc) || hex(st.bc) || "yellow", fontSize: Math.round((Number(st.fs) || 14) * k) },
         });
+      } else if (w.type === "image") {
+        // Сам файл в буфер не попадает (только id в Miro) — заглушка того же размера: выделить
+        // её и вставить картинку («Копировать как изображение» в Miro), и та встанет на место.
+        var res = j.resource || {};
+        var crop = j.crop || {};
+        var iw = (Number(crop.width) || Number(res.width) || 200) * k;
+        var ih = (Number(crop.height) || Number(res.height) || 150) * k;
+        el = Object.assign(base, {
+          x: pos.x - iw / 2, y: pos.y - ih / 2, w: iw, h: ih, type: "rect",
+          text: "Картинка из Miro\nвыделите и вставьте её сюда (в Miro: «Копировать как изображение»)",
+          style: { fill: "gray", stroke: "gray", strokeWidth: 2, dash: "dashed", radius: 8, fontSize: Math.max(14, Math.round(iw / 22)), textColor: "gray" },
+        });
+        imageSlots++;
       } else if (w.type === "frame") {
         el = Object.assign(base, {
           type: "rect", text: "",
@@ -215,16 +229,22 @@
         if (!e || byId[e.widgetIndex] == null) return null;
         return Object.assign({ el: byId[e.widgetIndex] }, side(e.point) || {});
       });
-      if (!ends[0] || !ends[1]) {
-        skipped++;
-        return;
-      }
+      // Связь с блоком вне выделения (второй конец — точка на доске Miro) или петля — не переносим,
+      // и это не ошибка: в выделение попал только один её конец.
+      if (!ends[0] || !ends[1] || ends[0].el === ends[1].el) return;
       var ln = {
         id: uid(), type: "line", x: 0, y: 0, w: 0, h: 0, points: [[0, 0], [1, 1]],
         start: ends[0], end: ends[1],
         route: st.t === 2 ? "elbow" : st.t === 1 ? "curve" : "straight",
         style: { stroke: hex(st.lc) || "ink", strokeWidth: Math.max(1, Number(st.ls) || 2) },
       };
+      // Изломы ломаной — точки на доске Miro (та же система координат, что у блоков).
+      var wps = (Array.isArray(j.points) ? j.points : []).filter(function (q) {
+        return q && isFinite(q.x) && isFinite(q.y);
+      }).slice(0, 32).map(function (q) {
+        return [Math.round(q.x * 10) / 10, Math.round(q.y * 10) / 10];
+      });
+      if (wps.length) ln.waypoints = wps;
       if (Number(st.a_start)) ln.arrowStart = true;
       if (Number(st.a_end)) ln.arrowEnd = true;
       if (Number(st.lt) === 2) ln.style.dash = "dashed";
@@ -243,7 +263,7 @@
     els.forEach(function (e) {
       delete e._back;
     });
-    return els.length ? { source: "Miro", elements: els, skipped: skipped } : null;
+    return els.length ? { source: "Miro", elements: els, skipped: skipped, imageSlots: imageSlots } : null;
   }
 
   function fromHtml(html, uid) {

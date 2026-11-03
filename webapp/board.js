@@ -77,6 +77,8 @@
   var IMAGE_MAX_SIDE = 1400;
   var CLIP_MIME = "application/x-leo-board";
   var CARD_PHOTO_SIDE = 400;
+  // Заглушка картинки при вставке из Miro (файл картинки в буфер не попадает) — webapp/board-import.js.
+  var IMAGE_SLOT_TEXT = "Картинка из Miro";
   // Новая таблица — как «Таблица» в заметке: 3×3 с шапкой.
   var TABLE_HTML = '<table class="note-editor-table"><tbody>' +
     "<tr>" + new Array(4).join('<th colspan="1" rowspan="1"><p></p></th>') + "</tr>" +
@@ -1932,6 +1934,7 @@
       list.forEach(function (el, i) {
         el.x += dx;
         el.y += dy;
+        if (el.waypoints) el.waypoints = shiftWaypoints(el.waypoints, dx, dy);
         el.z = z + i;
         put(el);
       });
@@ -2009,9 +2012,24 @@
         notify("Картинка больше 25 МБ");
         return Promise.resolve();
       }
+      // Выделена заглушка картинки (из Miro) — картинка встаёт на её место и в её размер.
+      var slot = selList().length === 1 ? selList()[0] : null;
+      if (!(slot && slot.type === "rect" && String(slot.text || "").indexOf(IMAGE_SLOT_TEXT) === 0)) slot = null;
       return readFileAsDataUrl(file).then(compressImage).then(function (img) {
         if (!img) {
           notify("Не удалось открыть картинку");
+          return;
+        }
+        if (slot && getEl(slot.id)) {
+          begin();
+          remove(slot.id);
+          var pic = newEl("image", G.pt(slot.x, slot.y), { w: slot.w, h: slot.h, src: img.src, z: slot.z, style: undefined });
+          delete pic.style;
+          if (slot.rot) pic.rot = slot.rot;
+          put(pic);
+          commit();
+          setSelection([pic.id]);
+          setTool("select");
           return;
         }
         var k = Math.min(1, 480 / Math.max(img.w, img.h));
@@ -2910,6 +2928,12 @@
           }
         } catch (_) {}
       }
+      // Выделена заглушка картинки и в буфере есть картинка — она и вставляется (на место заглушки).
+      var one = selList().length === 1 ? selList()[0] : null;
+      if (files.length && one && one.type === "rect" && String(one.text || "").indexOf(IMAGE_SLOT_TEXT) === 0) {
+        insertImageFile(files[0]);
+        return;
+      }
       // Схема из Miro — как в оригинале (webapp/board-import.js); не разобрали — как раньше.
       var imp = window.LeoBoardImport ? window.LeoBoardImport.fromHtml(cd.getData("text/html") || "", uid) : null;
       if (imp && imp.elements.length) {
@@ -2917,7 +2941,8 @@
         var nBoxes = imp.elements.filter(function (x) {
           return x.type !== "line";
         }).length;
-        notify("Вставлено из " + imp.source + ": " + nBoxes + " " + pluralBlocks(nBoxes) + (imp.skipped ? " · не перенеслось: " + imp.skipped : ""));
+        notify("Вставлено из " + imp.source + ": " + nBoxes + " " + pluralBlocks(nBoxes) + (imp.skipped ? " · не перенеслось: " + imp.skipped : "") +
+          (imp.imageSlots ? " · картинки — заглушки: выделите и вставьте картинку" : ""));
         return;
       }
       if (files.length) {

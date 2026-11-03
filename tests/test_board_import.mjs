@@ -33,13 +33,17 @@ const html = miroHtml([
   } } },
   { id: 4, widgetData: { type: "line", json: { primary: { widgetIndex: 0 }, secondary: { widgetIndex: 99 }, style: "{}" } } },
   { id: 5, widgetData: { type: "embed", json: { _position: { offsetPx: { x: 0, y: 0 } } } } },
+  { id: 6, widgetData: { type: "image", json: {
+    _position: { offsetPx: { x: 500, y: 0 } }, scale: { scale: 2 }, crop: { width: 100, height: 50 }, resource: { id: "1", width: 100, height: 50 },
+  } } },
 ]);
 
 let n = 0;
 const res = IMP.fromHtml(html, () => "e" + ++n);
 assert.equal(res.source, "Miro");
-assert.equal(res.skipped, 2); // линия к чужому блоку и embed
-const [a, b, t, ln] = res.elements;
+assert.equal(res.skipped, 1); // embed; связь к блоку вне выделения — не ошибка
+const [a, b, t] = res.elements;
+const ln = res.elements.find((e) => e.type === "line");
 assert.deepEqual([a.type, a.x, a.y, a.w, a.h, a.text], ["rect", -100, -50, 200, 100, "Старт"]);
 // Текст на синей заливке — точный чёрный (в тёмной теме не должен стать белым).
 assert.deepEqual(a.style, { fill: "#305bab", stroke: "ink", strokeWidth: 2, fontSize: 26, textColor: "#000000", align: "center", radius: 40 });
@@ -54,6 +58,9 @@ assert.deepEqual(ln.end, { el: b.id, anchor: [0.25, 0] });
 assert.equal(ln.route, "elbow");
 assert.equal(ln.arrowEnd, true);
 assert.equal(ln.text, "да");
+const slot = res.elements.find((e) => String(e.text || "").startsWith("Картинка из Miro"));
+assert.deepEqual([slot.type, slot.x, slot.y, slot.w, slot.h], ["rect", 400, -50, 200, 100]);
+assert.equal(res.imageSlots, 1);
 assert.equal(IMP.fromHtml("<p>просто текст</p>", () => "x"), null);
 assert.equal(IMP.fromHtml('<span data-meta="<--(miro-data-v1)!!!(/miro-data-v1)-->">', () => "x"), null);
 console.log("board import ok");
