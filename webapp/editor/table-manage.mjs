@@ -569,6 +569,14 @@ export function resetTableUi(editorView) {
   });
 }
 
+/** Доску приблизили или отдалили — меню и ручки таблиц этого редактора пересчитываются под масштаб. */
+export function relayoutTableUi(editorView) {
+  allViews.forEach(function (v) {
+    if (!v.editor || v.editor.view !== editorView || !v.active) return;
+    v.layoutHandles();
+  });
+}
+
 function allViewsHaveInteraction() {
   var now = Date.now();
   var busy = false;

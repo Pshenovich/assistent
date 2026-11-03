@@ -682,6 +682,11 @@
         stage.classList.remove("has-grid");
       }
       stage.style.setProperty("--lb-zoom", String(view.z));
+      // Меню открытой таблицы — обычного размера при любом масштабе.
+      if (editing && editing.kind === "table") {
+        var etb = tables.get(editing.id);
+        if (etb && typeof etb.relayout === "function") etb.relayout();
+      }
       renderZoomBar();
       renderOverlay();
       renderProps();

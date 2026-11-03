@@ -7,7 +7,7 @@ import Underline from "@tiptap/extension-underline";
 import TextStyle from "@tiptap/extension-text-style";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
-import { ManagedTable, ManagedTableCell, ManagedTableHeader, ManagedTableRow, resetTableUi } from "./table-manage.mjs";
+import { ManagedTable, ManagedTableCell, ManagedTableHeader, ManagedTableRow, relayoutTableUi, resetTableUi } from "./table-manage.mjs";
 import { DOMSerializer, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -5895,6 +5895,9 @@ function mountTable(container, options) {
       editor.setEditable(!!on, false);
     },
     resetUi: resetUi,
+    relayout: function () {
+      relayoutTableUi(editor.view);
+    },
     isEditable: function () {
       return editor.isEditable;
     },
@@ -5926,7 +5929,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261103-boardtpl2",
+  assetVersion: "20261103-boardtpl3",
   Y: Y,
   mount: mount,
   mountTable: mountTable,
