@@ -1912,6 +1912,14 @@
       }));
     }
 
+    function notifyImported(imp) {
+      var nBoxes = imp.elements.filter(function (x) {
+        return x.type !== "line";
+      }).length;
+      notify("Вставлено из " + imp.source + ": " + nBoxes + " " + pluralBlocks(nBoxes) + (imp.skipped ? " · не перенеслось: " + imp.skipped : "") +
+        (imp.imageSlots ? " · картинки — заглушки: выделите и вставьте картинку" : ""));
+    }
+
     function pluralBlocks(n) {
       var m10 = n % 10;
       var m100 = n % 100;
@@ -2934,15 +2942,27 @@
         insertImageFile(files[0]);
         return;
       }
+      // Схема из FigJam (webapp/board-figma.js): разбор асинхронный; не разобрали — текст как раньше.
+      var htmlAll = cd.getData("text/html") || "";
+      var plain = cd.getData("text/plain") || "";
+      if (window.LeoBoardFigma && window.LeoBoardFigma.isFigma(htmlAll)) {
+        window.LeoBoardFigma.fromHtml(htmlAll, uid).then(function (fig) {
+          if (destroyed) return;
+          if (fig && fig.elements.length) {
+            placeImported(fig.elements);
+            notifyImported(fig);
+          } else if (plain.trim()) {
+            notify("Не удалось разобрать схему FigJam — вставлен текст");
+            setSelection([createAtCenter("text", { text: plain.trim().slice(0, 20000) }).id]);
+          }
+        });
+        return;
+      }
       // Схема из Miro — как в оригинале (webapp/board-import.js); не разобрали — как раньше.
       var imp = window.LeoBoardImport ? window.LeoBoardImport.fromHtml(cd.getData("text/html") || "", uid) : null;
       if (imp && imp.elements.length) {
         placeImported(imp.elements);
-        var nBoxes = imp.elements.filter(function (x) {
-          return x.type !== "line";
-        }).length;
-        notify("Вставлено из " + imp.source + ": " + nBoxes + " " + pluralBlocks(nBoxes) + (imp.skipped ? " · не перенеслось: " + imp.skipped : "") +
-          (imp.imageSlots ? " · картинки — заглушки: выделите и вставьте картинку" : ""));
+        notifyImported(imp);
         return;
       }
       if (files.length) {

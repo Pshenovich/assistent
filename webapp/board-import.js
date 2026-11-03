@@ -156,7 +156,8 @@
           stroke: hex(st.brc) || "ink",
           strokeWidth: st.brc != null && st.brc < 0 ? 0 : Number(st.brw) >= 0 ? Number(st.brw) : 2,
           fontSize: Math.round((Number(st.fs) || 14) * k),
-          textColor: textColor(st.tc, fill !== "none" || !!t.bg),
+          // Точный цвет — на точной заливке или подсветке; на «белой» (цвет темы) текст тоже цвет темы.
+          textColor: textColor(st.tc, /^#/.test(fill) || !!t.bg),
           align: st.ta === "l" ? "left" : st.ta === "r" ? "right" : "center",
         };
         if (t.bg) style.highlight = t.bg;
@@ -172,7 +173,7 @@
           type: "text", text: t.text,
           style: {
             fontSize: Math.round((Number(st.fs) || 14) * k),
-            textColor: textColor(st.tc, !!(t.bg || box)),
+            textColor: textColor(st.tc, !!(t.bg || /^#/.test(box || ""))),
             align: st.ta === "c" ? "center" : st.ta === "r" ? "right" : "left",
           },
         });
