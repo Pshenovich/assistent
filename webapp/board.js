@@ -1336,11 +1336,30 @@
       var sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
+      keepCaret(t);
       t.addEventListener("input", onEditInput);
       t.addEventListener("keydown", onEditKey);
       t.addEventListener("blur", onEditBlur);
       renderOverlay();
       renderProps();
+    }
+
+    /** Курсор остаётся в новом блоке: после нажатия браузер своим действием по умолчанию (клик,
+     * двойной клик — выделение слова) переставлял выделение мимо блока, и набор шёл в никуда. */
+    function keepCaret(t) {
+      var fix = function () {
+        if (!editing || editing.text !== t || !t.isConnected) return;
+        if (document.activeElement !== t) t.focus({ preventScroll: true });
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount && t.contains(sel.anchorNode)) return;
+        var r = document.createRange();
+        r.selectNodeContents(t);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      };
+      setTimeout(fix, 0);
+      setTimeout(fix, 160);
     }
 
     function onEditInput() {
@@ -1496,6 +1515,7 @@
       ws.removeAllRanges();
       ws.addRange(range);
       t.addEventListener("keydown", onBlockKey);
+      keepCaret(t);
       t.addEventListener("blur", onBlockBlur);
       renderOverlay();
       renderProps();
@@ -4638,6 +4658,14 @@
       if (!readOnly) e.preventDefault();
     });
     stage.addEventListener("drop", onDrop);
+    // Мышь по доске не выделяет текст страницы (иначе двойной клик выделял слово и уводил курсор
+    // из только что созданного блока); внутри правки — как обычно.
+    function keepNativeSelection(e) {
+      if (editing && editing.text.contains(e.target)) return;
+      e.preventDefault();
+    }
+    stage.addEventListener("mousedown", keepNativeSelection);
+    stage.addEventListener("dblclick", keepNativeSelection);
     stage.addEventListener("contextmenu", function (e) {
       if (!editing) e.preventDefault();
     });

@@ -558,6 +558,17 @@ function syncActiveTable(view) {
   });
 }
 
+/** Погасить рамку, ручки и меню таблиц этого редактора (таблица на доске: ушли из правки). */
+export function resetTableUi(editorView) {
+  allViews.forEach(function (v) {
+    if (!v.editor || v.editor.view !== editorView) return;
+    v.interactUntil = 0;
+    v.drag = null;
+    v.menuOpen = false;
+    v.setActive(null);
+  });
+}
+
 function allViewsHaveInteraction() {
   var now = Date.now();
   var busy = false;

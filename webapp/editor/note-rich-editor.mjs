@@ -7,7 +7,7 @@ import Underline from "@tiptap/extension-underline";
 import TextStyle from "@tiptap/extension-text-style";
 import Link from "@tiptap/extension-link";
 import Image from "@tiptap/extension-image";
-import { ManagedTable, ManagedTableCell, ManagedTableHeader, ManagedTableRow } from "./table-manage.mjs";
+import { ManagedTable, ManagedTableCell, ManagedTableHeader, ManagedTableRow, resetTableUi } from "./table-manage.mjs";
 import { DOMSerializer, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -5877,6 +5877,15 @@ function mountTable(container, options) {
       editor.commands.setContent(v, false);
     },
     setEditable: function (on) {
+      if (!on) {
+        // Ушли из таблицы: снять выделение ячеек и закрыть её меню, иначе они висели поверх доски.
+        var view = editor.view;
+        try {
+          view.dispatch(view.state.tr.setSelection(TextSelection.atStart(view.state.doc)));
+        } catch (_) {}
+        resetTableUi(view);
+        if (view.hasFocus()) view.dom.blur();
+      }
       editor.setEditable(!!on, false);
     },
     isEditable: function () {
