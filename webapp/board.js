@@ -2846,6 +2846,11 @@
       if (destroyed) return;
       autoFit = false;
       if (editing && editing.text.contains(e.target)) return;
+      // Нажатие мимо таблицы — гасим её меню и выделение ячеек, даже если правка уже закрыта.
+      tables.forEach(function (tb, tid) {
+        var n = nodes.get(tid);
+        if (!(n && n.contains(e.target)) && typeof tb.resetUi === "function") tb.resetUi();
+      });
       if (e.button === 2) return;
       if (editing) finishEdit();
       closePop();

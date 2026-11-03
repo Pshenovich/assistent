@@ -5856,6 +5856,8 @@ function mountTable(container, options) {
           return fillRichClipboard(view, event);
         },
         mousedown: function (view, event) {
+          // Вне правки таблица на доске — просто блок: ячейки мышью не выделяются (их меню потом некому закрыть).
+          if (!view.editable) return true;
           rememberTableClickPos(view, event.clientX, event.clientY, clickPos);
           return false;
         },
@@ -5866,6 +5868,18 @@ function mountTable(container, options) {
     },
   });
   editor.storage.leoBoardTable = { onDelete: options.onDelete };
+  // Ушли из таблицы: снять выделение ячеек и закрыть её меню, иначе они висели поверх доски.
+  function resetUi() {
+    var view = editor.view;
+    var sel = view.state.selection;
+    if (sel instanceof CellSelection || sel.from !== sel.to || sel.from > 3) {
+      try {
+        view.dispatch(view.state.tr.setSelection(TextSelection.atStart(view.state.doc)));
+      } catch (_) {}
+    }
+    resetTableUi(view);
+    if (view.hasFocus()) view.dom.blur();
+  }
   return {
     editor: editor,
     getHtml: function () {
@@ -5877,17 +5891,10 @@ function mountTable(container, options) {
       editor.commands.setContent(v, false);
     },
     setEditable: function (on) {
-      if (!on) {
-        // Ушли из таблицы: снять выделение ячеек и закрыть её меню, иначе они висели поверх доски.
-        var view = editor.view;
-        try {
-          view.dispatch(view.state.tr.setSelection(TextSelection.atStart(view.state.doc)));
-        } catch (_) {}
-        resetTableUi(view);
-        if (view.hasFocus()) view.dom.blur();
-      }
+      if (!on) resetUi();
       editor.setEditable(!!on, false);
     },
+    resetUi: resetUi,
     isEditable: function () {
       return editor.isEditable;
     },
@@ -5919,7 +5926,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261103-boardtpl",
+  assetVersion: "20261103-boardtpl2",
   Y: Y,
   mount: mount,
   mountTable: mountTable,

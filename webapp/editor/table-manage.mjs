@@ -1568,6 +1568,10 @@ TableManageView.prototype.layoutMenu = function (r) {
   var left = Math.max(r.left, 8);
   left = Math.min(left, vw - menuW - 8);
   var z = this.zoom();
+  // На доске (масштаб «мира») меню — обычного размера: обратный масштаб от левого верхнего угла.
+  // Размеры меню выше (offsetWidth/Height) при этом совпадают с экранными.
+  this.menu.style.transformOrigin = z !== 1 ? "0 0" : "";
+  this.menu.style.transform = z !== 1 ? "scale(" + 1 / z + ")" : "";
   this.menu.style.top = Math.round((top - box.top) / z) + "px";
   this.menu.style.left = Math.round((left - box.left) / z) + "px";
 };
