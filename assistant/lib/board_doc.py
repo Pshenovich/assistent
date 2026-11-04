@@ -19,8 +19,10 @@ BOARD_VERSION = 1
 MAX_BOARD_BYTES = 12 * 1024 * 1024
 MAX_ELEMENTS = 5000
 MAX_TEXT = 20000
-ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image", "table", "card", "gantt", "vector")
-SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image", "table", "card", "gantt", "vector")
+ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image", "table", "card", "gantt", "vector", "frame")
+SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image", "table", "card", "gantt", "vector", "frame")
+# Режим листа-доски: «board» — доска, «design» — макет экранов (те же элементы, другие инструменты).
+BOARD_MODES = ("board", "design")
 MAX_VECTOR_PATHS = 200
 MAX_TABLE_HTML = 400_000
 MAX_GANTT_TASKS = 200
@@ -37,8 +39,11 @@ class BoardError(ValueError):
     pass
 
 
-def empty_board() -> str:
-    return json.dumps({"v": BOARD_VERSION, "elements": {}}, ensure_ascii=False, separators=(",", ":"))
+def empty_board(mode: str = "board") -> str:
+    data: dict[str, Any] = {"v": BOARD_VERSION, "elements": {}}
+    if mode == "design":
+        data["mode"] = "design"
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
 
 
 def _num(raw: Any, default: float = 0.0, lo: float = -1e7, hi: float = 1e7) -> float:
@@ -359,6 +364,8 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["rot"] = _num(raw.get("rot"), 0, -360, 360)
     if raw.get("group"):
         el["group"] = _str(raw.get("group"))
+    if raw.get("frame") and etype not in ("frame", "line"):
+        el["frame"] = _str(raw.get("frame"))  # экран, в котором лежит элемент (макет)
     if raw.get("text"):
         el["text"] = _str(raw.get("text"), MAX_TEXT)
     style = raw.get("style")
@@ -420,6 +427,13 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         photo = str(raw.get("photo") or "")
         if photo and photo.lower().startswith(_IMAGE_PREFIXES):
             el["photo"] = photo
+    elif etype == "frame":
+        name = _str(raw.get("name"), 120).strip()
+        if name:
+            el["name"] = name
+        device = _str(raw.get("device"), 24).strip()
+        if device:
+            el["device"] = device
     elif etype == "vector":
         vec = _clean_vector(raw)
         if not vec:
@@ -462,7 +476,10 @@ def parse_board(body: Any) -> dict[str, Any]:
         el = _clean_element(eid, raw_el)
         if el is not None:
             out[eid] = el
-    return {"v": BOARD_VERSION, "elements": out}
+    board: dict[str, Any] = {"v": BOARD_VERSION, "elements": out}
+    if data.get("mode") == "design":
+        board["mode"] = "design"
+    return board
 
 
 def normalize_board_body(body: Any) -> str:
@@ -501,6 +518,8 @@ def _el_text(el: dict[str, Any]) -> str:
         head = " — ".join(x for x in (_one_line(el.get("title") or ""), _one_line(el.get("name") or "")) if x)
         about = _one_line(el.get("text") or "")
         return f"{head}: {about}" if head and about else (head or about)
+    if t == "frame":
+        return str(el.get("name") or "")
     if t == "gantt":
         rows = []
         for task in el.get("tasks") or []:
@@ -538,7 +557,7 @@ def board_plain_text(body: Any) -> str:
 
 _SHAPE_RU = {
     "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "sticky": "стикер", "text": "текст", "image": "картинка",
-    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта", "vector": "иконка",
+    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта", "vector": "иконка", "frame": "экран",
 }
 _COLOR_RU = {
     "red": "красный", "orange": "оранжевый", "yellow": "жёлтый", "green": "зелёный", "blue": "синий",
@@ -840,6 +859,11 @@ def render_board_svg(body: Any) -> str:
         if t == "rect":
             rx = min(_num(st.get("radius"), 8, 0, 1e4), ew / 2, eh / 2)
             out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
+        elif t == "frame":
+            rx = min(_num(st.get("radius"), 0, 0, 1e4), ew / 2, eh / 2)
+            out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{_attr(fill or "#ffffff")}" stroke="#d0d5dd" stroke-width="1"/>')
+            if el.get("name"):
+                out.append(f'<text x="{x}" y="{y - 10}" font-size="14" fill="#6b7280">{html.escape(str(el["name"]))}</text>')
         elif t == "text" and fill:
             out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="2" fill="{fill_attr}"/>')
         elif t == "sticky":

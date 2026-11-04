@@ -30,7 +30,7 @@
   var MAX_Z = 4;
   var GRID = 20;
   var SHAPES = { rect: 1, diamond: 1, ellipse: 1 };
-  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1, vector: 1 };
+  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1, vector: 1, frame: 1 };
   // Составные блоки: свой HTML внутри узла и своя правка (таблица — редактор таблиц заметки).
   var BLOCKS = { table: 1, card: 1, gantt: 1 };
   var ALIGN_ICON = { left: "alignLeft", center: "alignCenter", right: "alignRight" };
@@ -94,6 +94,7 @@
     line: { style: { stroke: "ink", strokeWidth: 2 } },
     pen: { style: { stroke: "ink", strokeWidth: 3 } },
     table: { w: 420, h: 130 },
+    frame: { w: 393, h: 852, style: { fill: "#ffffff", radius: 0 } },
     card: { w: 220, h: 230, style: { fill: "purple" } },
   };
 
@@ -111,6 +112,42 @@
     { id: "image", key: "", title: "Картинка", icon: "image" },
     { id: "table", key: "", title: "Таблица", icon: "table" },
   ];
+
+  // Режим «Макет»: экраны приложения для разработки — свои инструменты, те же элементы.
+  var TOOLS_DESIGN = [
+    { id: "select", key: "v", title: "Выделение (V)", icon: "cursor" },
+    { id: "hand", key: "h", title: "Рука (H, пробел)", icon: "hand" },
+    { id: "frame", key: "f", title: "Экран (F)", icon: "frame" },
+    { id: "text", key: "t", title: "Текст (T)", icon: "text" },
+    { id: "rect", key: "r", title: "Прямоугольник (R)", icon: "rect" },
+    { id: "ellipse", key: "o", title: "Эллипс (O)", icon: "ellipse" },
+    { id: "line", key: "l", title: "Линия (L)", icon: "line" },
+    { id: "arrow", key: "a", title: "Стрелка — переход между экранами (A)", icon: "arrow" },
+    { id: "image", key: "", title: "Картинка", icon: "image" },
+    { id: "table", key: "", title: "Таблица", icon: "table" },
+  ];
+
+  // Размеры экранов (логические точки, как в Figma).
+  var DEVICES = [
+    { id: "iphone", title: "iPhone 16", w: 393, h: 852 },
+    { id: "iphone-pro-max", title: "iPhone 16 Pro Max", w: 440, h: 956 },
+    { id: "android", title: "Android", w: 412, h: 915 },
+    { id: "ipad", title: "iPad", w: 820, h: 1180 },
+    { id: "laptop", title: "Ноутбук", w: 1280, h: 800 },
+    { id: "desktop", title: "Десктоп", w: 1440, h: 1024 },
+  ];
+
+  function modeOf(json) {
+    var data = json;
+    if (!data || typeof data !== "object") {
+      try {
+        data = JSON.parse(String(json || "").trim() || "{}");
+      } catch (_) {
+        data = {};
+      }
+    }
+    return data && data.mode === "design" ? "design" : "board";
+  }
 
   var ICONS = {
     cursor: '<path d="M5 3l12 7-5.2 1.3L9.5 17z"/>',
@@ -155,6 +192,9 @@
     child: '<rect x="6.5" y="2.5" width="7" height="5" rx="1"/><rect x="6.5" y="12.5" width="7" height="5" rx="1"/><path d="M10 7.5v5"/>',
     taskAdd: '<path d="M3 6h8M3 10h11M3 14h6"/><path d="M15 12v6M12 15h6"/>',
     taskDel: '<path d="M3 6h8M3 10h11M3 14h6"/><path d="M13 13l4 4M17 13l-4 4"/>',
+    frame: '<path d="M6 3v14M14 3v14M3 6h14M3 14h14"/>',
+    modeBoard: '<rect x="3" y="4" width="6" height="5" rx="1"/><rect x="11" y="11" width="6" height="5" rx="1"/><path d="M9 6.5h2.5v4.5"/>',
+    modeDesign: '<rect x="5.5" y="2.5" width="9" height="15" rx="2"/><path d="M9 15h2"/>',
   };
 
   function icon(name) {
@@ -253,6 +293,7 @@
     var o = { id: el.id, type: el.type, x: r2(el.x), y: r2(el.y), w: r2(el.w), h: r2(el.h), z: r2(el.z) };
     if (el.rot) o.rot = r2(el.rot);
     if (el.group) o.group = el.group;
+    if (el.frame && el.type !== "frame" && el.type !== "line") o.frame = el.frame;
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
@@ -286,6 +327,9 @@
     } else if (el.type === "vector") {
       o.vb = el.vb;
       o.paths = clone(el.paths || []);
+    } else if (el.type === "frame") {
+      if (el.name) o.name = String(el.name);
+      if (el.device) o.device = el.device;
     } else if (el.type === "table") {
       o.html = String(el.html || "");
     } else if (el.type === "card") {
@@ -473,6 +517,7 @@
     var pendingY = new Set();
     var yFlushHandle = 0;
     var tables = new Map(); // id → редактор таблицы (NoteRichEditor.mountTable)
+    var mode = modeOf(o.json); // «board» — доска, «design» — макет экранов
     var gSel = null; // выбранная задача Ганта: {id, task}
     var ganttOn = new Map(); // id Ганта → был ли он единственным выделенным (тогда видна строка «+ Задача»)
 
@@ -535,7 +580,6 @@
     var minimap = root.querySelector(".lb-minimap");
     var zoomBar = root.querySelector(".lb-zoom");
     var emptyHint = root.querySelector(".lb-empty-hint");
-    var startCards = emptyHint.querySelector(".lb-start-cards");
 
     function stageRect() {
       return stage.getBoundingClientRect();
@@ -686,6 +730,17 @@
         });
         extra.forEach(function (id) {
           dirty.add(id);
+        });
+      }
+      // Экран сдвинули или растянули — обрезка его содержимого пересчитывается.
+      var framesDirty = {};
+      dirty.forEach(function (id) {
+        var d = els.get(id);
+        if (d && d.type === "frame") framesDirty[id] = 1;
+      });
+      if (Object.keys(framesDirty).length) {
+        els.forEach(function (el) {
+          if (el.frame && framesDirty[el.frame]) dirty.add(el.id);
         });
       }
       if (gSel && !(selected.size === 1 && selected.has(gSel.id))) {
@@ -884,6 +939,48 @@
     }
 
     function renderNode(id) {
+      renderNodeInner(id);
+      var el = els.get(id);
+      var node = nodes.get(id);
+      if (el && node && el.type !== "line" && el.type !== "pen" && el.type !== "frame") clipToFrame(node, el);
+    }
+
+    /** Элемент экрана обрезается по краю экрана (как во Figma); вне экрана — как есть. */
+    function clipToFrame(node, el) {
+      var f = el.frame ? els.get(el.frame) : null;
+      if (!f || f.type !== "frame" || el.rot) {
+        if (node.style.clipPath) node.style.clipPath = "";
+        return;
+      }
+      var t = Math.max(0, f.y - el.y);
+      var l = Math.max(0, f.x - el.x);
+      var r = Math.max(0, el.x + el.w - (f.x + f.w));
+      var b = Math.max(0, el.y + el.h - (f.y + f.h));
+      node.style.clipPath = t || l || r || b ? "inset(" + t + "px " + r + "px " + b + "px " + l + "px)" : "";
+    }
+
+    function renderFrame(node, el, isEditing) {
+      var st = el.style || {};
+      node.style.cssText = "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;";
+      var r = rectRadius({ radius: st.radius != null ? st.radius : 0 }, el.w, el.h);
+      replaceShape(node, '<svg class="lb-shape" width="' + el.w + '" height="' + el.h + '" viewBox="0 0 ' + el.w + " " + el.h + '" overflow="visible">' +
+        '<rect x="0" y="0" width="' + el.w + '" height="' + el.h + '" rx="' + r + '" fill="' + fillVar(st.fill || "#ffffff") + '" class="lb-frame-bg"/></svg>');
+      var head = node.querySelector(":scope > .lb-frame-head");
+      if (!head) {
+        head = document.createElement("div");
+        head.className = "lb-frame-head";
+        head.innerHTML = '<span class="lb-frame-name" data-f="name" data-ph="Экран"></span><span class="lb-frame-size"></span>';
+        node.appendChild(head);
+      }
+      var nm = head.querySelector("[data-f=name]");
+      if (!isEditing) {
+        nm.textContent = String(el.name || "");
+        nm.classList.toggle("is-empty", !el.name);
+      }
+      head.querySelector(".lb-frame-size").textContent = Math.round(el.w) + " × " + Math.round(el.h);
+    }
+
+    function renderNodeInner(id) {
       var el = els.get(id);
       var node = nodes.get(id);
       if (!el) {
@@ -919,6 +1016,9 @@
         return;
       } else if (BLOCKS[el.type]) {
         renderBlock(node, el, isEditing);
+        return;
+      } else if (el.type === "frame") {
+        renderFrame(node, el, isEditing);
         return;
       } else {
         node.style.cssText =
@@ -1226,7 +1326,7 @@
             var s = toScreen(n[1]);
             h.push('<rect class="lb-handle" data-h="' + n[0] + '" x="' + (s.x - hs / 2) + '" y="' + (s.y - hs / 2) + '" width="' + hs + '" height="' + hs + '" rx="2"/>');
           });
-          if (!BLOCKS[single.type]) {
+          if (!BLOCKS[single.type] && single.type !== "frame") {
             var top = toScreen(mids[0]);
             var up = G.rot(G.pt(0, -1), G.pt(0, 0), single.rot || 0);
             var rp = G.add(top, G.mul(up, 24));
@@ -1382,6 +1482,12 @@
       var el = els.get(id);
       if (el && BLOCKS[el.type]) {
         startBlockEdit(id, opts2);
+        return;
+      }
+      if (el && el.type === "frame") {
+        setSelection([id]);
+        flushNow();
+        startFieldEdit(id, "name");
         return;
       }
       if (!el || !TEXTUAL[el.type]) return;
@@ -1732,9 +1838,17 @@
     }
 
     // ---- создание ----
+    // Макет: как во Figma — серая заливка без рамки, чёрный текст (экраны белые, цвет темы тут не к месту).
+    var DESIGN_STYLE = {
+      rect: { fill: "#d9d9d9", stroke: "#000000", strokeWidth: 0, fontSize: 16, textColor: "#000000", radius: 0 },
+      ellipse: { fill: "#d9d9d9", stroke: "#000000", strokeWidth: 0, fontSize: 16, textColor: "#000000" },
+      text: { fontSize: 16, textColor: "#000000", align: "left" },
+      line: { stroke: "#000000", strokeWidth: 1 },
+    };
+
     function styleFor(type) {
-      var base = clone((DEFAULTS[type] || {}).style || {});
-      return Object.assign(base, lastStyle[type] || {});
+      var base = clone((mode === "design" && DESIGN_STYLE[type]) || (DEFAULTS[type] || {}).style || {});
+      return Object.assign(base, lastStyle[mode + ":" + type] || {});
     }
 
     function newEl(type, p, extra) {
@@ -1876,6 +1990,7 @@
       var el = newEl("table", at, { html: TABLE_HTML });
       delete el.style;
       put(el);
+      syncFrames();
       commit();
       setSelection([el.id]);
       flushNow();
@@ -1971,6 +2086,7 @@
         el.z = z + i;
         put(el);
       });
+      syncFrames();
       commit();
       setTool("select");
       flushNow();
@@ -2002,6 +2118,22 @@
           else if (o.onTemplateAsk) o.onTemplateAsk(id);
         };
       });
+    }
+
+    /** Пустая доска: шаблоны; пустой макет — экраны по размерам устройств. */
+    function renderEmptyHint() {
+      if (readOnly || !emptyHint.classList.contains("has-start")) return;
+      if (mode === "design") {
+        emptyHint.innerHTML = '<div class="lb-start-title">Добавьте экран</div><div class="lb-start-devices">' +
+          DEVICES.map(function (d) {
+            return '<button type="button" class="lb-device" data-device="' + d.id + '"><span class="lb-device-pre" style="--ar:' + d.w / d.h + '"></span>' +
+              '<span class="lb-tpl-t">' + esc(d.title) + '</span><span class="lb-tpl-h">' + d.w + " × " + d.h + "</span></button>";
+          }).join("") +
+          '</div><div class="lb-start-hint">или вставьте макет из Figma (⌘V) · инструмент «Экран» (F) — свой размер</div>';
+      } else {
+        emptyHint.innerHTML = '<div class="lb-start-title">С чего начнём?</div><div class="lb-start-cards">' + templateCards() + "</div>" +
+          '<div class="lb-start-hint">или выберите инструмент и начните рисовать</div>';
+      }
     }
 
     function templateCards() {
@@ -2098,11 +2230,23 @@
       }
     }
 
+    function toolList() {
+      return mode === "design" ? TOOLS_DESIGN : TOOLS;
+    }
+
+    function drawTools() {
+      if (!toolsBar) return;
+      toolsBar.innerHTML = toolList().map(function (t) {
+        return '<button type="button" class="lb-btn" data-tool="' + t.id + '" title="' + esc(t.title) + '" aria-label="' + esc(t.title) + '">' + icon(t.icon) + "</button>";
+      }).join("") + (TPL && mode !== "design" ? '<span class="lb-sep"></span><button type="button" class="lb-btn" data-act="templates" title="Шаблоны" aria-label="Шаблоны">' + icon("templates") + "</button>" : "");
+      setTool(toolList().some(function (t) {
+        return t.id === tool;
+      }) ? tool : "select");
+    }
+
     function renderTools() {
       if (!toolsBar) return;
-      toolsBar.innerHTML = TOOLS.map(function (t) {
-        return '<button type="button" class="lb-btn" data-tool="' + t.id + '" title="' + esc(t.title) + '" aria-label="' + esc(t.title) + '">' + icon(t.icon) + "</button>";
-      }).join("") + (TPL ? '<span class="lb-sep"></span><button type="button" class="lb-btn" data-act="templates" title="Шаблоны" aria-label="Шаблоны">' + icon("templates") + "</button>" : "");
+      drawTools();
       var syncToolsEnd = function () {
         toolsBar.classList.toggle("is-scrolled-end", toolsBar.scrollLeft + toolsBar.clientWidth >= toolsBar.scrollWidth - 4);
       };
@@ -2130,7 +2274,35 @@
         setTool(t);
         stage.focus({ preventScroll: true });
       });
-      setTool("select");
+    }
+
+    // ---- режим «Доска» / «Макет» ----
+    /** Режим — общий для всех участников (Yjs meta) и в теле листа; отменой не откатывается. */
+    function applyMode(m) {
+      m = m === "design" ? "design" : "board";
+      if (m === mode && root.classList.contains("is-mode-" + m)) return;
+      mode = m;
+      root.classList.toggle("is-mode-design", m === "design");
+      root.classList.toggle("is-mode-board", m !== "design");
+      drawTools();
+      renderEmptyHint();
+      zoomBar.removeAttribute("data-pct");
+      renderZoomBar();
+      schedule();
+    }
+
+    function setMode(m) {
+      if (readOnly || m === mode) return;
+      finishEdit();
+      applyMode(m);
+      if (yjs) {
+        yjs.doc.transact(function () {
+          yjs.doc.getMap("meta").set("mode", mode);
+        }, "leo-board-local");
+      }
+      if (changeTimer) clearTimeout(changeTimer);
+      changeTimer = setTimeout(emitChange, 250);
+      notify(mode === "design" ? "Режим «Макет»: экраны, точные размеры, передача в разработку" : "Режим «Доска»");
     }
 
     function renderHistoryBar() {
@@ -2147,10 +2319,14 @@
 
     function renderZoomBar() {
       var pct = Math.round(view.z * 100) + "%";
-      var stateKey = pct + showGrid + showMap + "|" + chatBadge;
+      var stateKey = pct + showGrid + showMap + "|" + chatBadge + "|" + mode;
       if (zoomBar.getAttribute("data-pct") === stateKey) return;
       zoomBar.setAttribute("data-pct", stateKey);
       zoomBar.innerHTML =
+        (readOnly ? "" : '<span class="lb-mode" role="group" aria-label="Режим">' +
+          '<button type="button" class="lb-btn' + (mode !== "design" ? " is-on" : "") + '" data-act="mode-board" title="Режим «Доска»: схемы, стикеры, шаблоны">' + icon("modeBoard") + "</button>" +
+          '<button type="button" class="lb-btn' + (mode === "design" ? " is-on" : "") + '" data-act="mode-design" title="Режим «Макет»: экраны для разработки">' + icon("modeDesign") + "</button>" +
+          '</span><span class="lb-sep"></span>') +
         '<button type="button" class="lb-btn" data-act="zoom-out" title="Отдалить (−)">' + icon("minus") + "</button>" +
         '<button type="button" class="lb-btn lb-pct" data-act="zoom-100" title="Масштаб 100%">' + pct + "</button>" +
         '<button type="button" class="lb-btn" data-act="zoom-in" title="Приблизить (+)">' + icon("plus") + "</button>" +
@@ -2176,6 +2352,10 @@
       if (act === "chat") {
         if (editing) finishEdit();
         if (o.onOpenChat) o.onOpenChat();
+        return;
+      }
+      if (act === "mode-board" || act === "mode-design") {
+        setMode(act === "mode-design" ? "design" : "board");
         return;
       }
       if (act === "undo") undo();
@@ -2366,7 +2546,14 @@
       }
       if (types.sticky) h.push(swatchBtn("sticky", stickyVar(commonStyle(list.filter(isType("sticky")), "fill") || "yellow"), "Цвет стикера"));
       if (anyStroke) h.push(swatchBtn("stroke", inkVar(commonStyle(list.filter(isStroked), "stroke") || "ink"), "Цвет линии", true));
-      if (anyShape || types.vector) h.push(swatchBtn("fill", fillVar(commonStyle(list.filter(isPaintable), "fill") || "none"), "Заливка"));
+      if (list.length === 1 && list[0].type === "frame") {
+        var fr = list[0];
+        var dv = DEVICES.filter(function (d) {
+          return d.id === fr.device && d.w === Math.round(fr.w) && d.h === Math.round(fr.h);
+        })[0];
+        h.push('<button type="button" class="lb-btn lb-pbtn lb-txt" data-p="device" title="Размер экрана">' + icon("modeDesign") + "&nbsp;" + esc(dv ? dv.title : Math.round(fr.w) + " × " + Math.round(fr.h)) + "</button>");
+      }
+      if (anyShape || types.vector || types.frame) h.push(swatchBtn("fill", fillVar(commonStyle(list.filter(isPaintable), "fill") || "none"), "Заливка"));
       if (types.text) h.push(swatchBtn("textColor", inkVar(commonStyle(list.filter(isType("text")), "textColor") || "ink"), "Цвет текста", false, true));
       if (anyStroke) h.push('<button type="button" class="lb-btn lb-pbtn" data-p="width" title="Толщина и пунктир">' + widthIcon(commonStyle(list.filter(isStroked), "strokeWidth") || 2, commonStyle(list.filter(isStroked), "dash")) + "</button>");
       if (anyText) {
@@ -2457,7 +2644,7 @@
 
     /** Заливку меняют фигуры и векторы (у вектора — всех контуров с заливкой). */
     function isPaintable(e) {
-      return !!SHAPES[e.type] || e.type === "vector";
+      return !!SHAPES[e.type] || e.type === "vector" || e.type === "frame";
     }
 
     function isTextual(e) {
@@ -2487,7 +2674,7 @@
       begin();
       list.forEach(function (el) {
         patch(el.id, { style: fields });
-        lastStyle[el.type] = Object.assign({}, lastStyle[el.type] || {}, fields);
+        lastStyle[mode + ":" + el.type] = Object.assign({}, lastStyle[mode + ":" + el.type] || {}, fields);
       });
       commit();
     }
@@ -2645,6 +2832,26 @@
             closePop();
           };
         });
+      } else if (p === "device") {
+        openPop(b, function (box) {
+          box.innerHTML = DEVICES.map(function (d) {
+            return '<button type="button" class="lb-menu-item" data-dev="' + d.id + '">' + esc(d.title) + "<kbd>" + d.w + " × " + d.h + "</kbd></button>";
+          }).join("");
+          box.onclick = function (ev) {
+            var m = ev.target.closest("[data-dev]");
+            if (!m) return;
+            var dev = DEVICES.filter(function (d) {
+              return d.id === m.getAttribute("data-dev");
+            })[0];
+            closePop();
+            begin();
+            applyFields(isType("frame"), function () {
+              return { w: dev.w, h: dev.h, device: dev.id };
+            });
+            syncFrames();
+            commit();
+          };
+        });
       } else if (p === "cardFill") {
         openPop(b, function (box) {
           box.innerHTML = '<div class="lb-swatches">' + FILLS.filter(function (k) {
@@ -2758,7 +2965,7 @@
 
     // ---- действия с выделением ----
     function deleteSel() {
-      var ids = Array.from(selected);
+      var ids = withFrameKids(Array.from(selected));
       if (!ids.length) return;
       var gone = {};
       ids.forEach(function (id) {
@@ -2795,6 +3002,7 @@
           if (!groups[c.group]) groups[c.group] = uid();
           c.group = groups[c.group];
         }
+        if (c.frame && map[c.frame]) c.frame = map[c.frame];
         if (c.type === "line") {
           var res = G.resolveLine(el, function (id) {
             return getEl(id) || null;
@@ -2812,11 +3020,17 @@
     }
 
     function duplicateSel() {
-      var list = selList();
+      var list = withFrameKids(Array.from(selected)).map(getEl).filter(Boolean);
       if (!list.length) return;
-      var copies = copyEls(list, 24, 24);
+      // Экран копируется рядом справа, остальное — со сдвигом.
+      var onlyFrames = list.filter(function (e) {
+        return e.type === "frame" && selected.has(e.id);
+      });
+      var dxDup = onlyFrames.length === 1 && selected.size === 1 ? onlyFrames[0].w + 80 : 24;
+      var copies = copyEls(list, dxDup, dxDup === 24 ? 24 : 0);
       begin();
       copies.forEach(put);
+      syncFrames();
       commit();
       setSelection(copies.map(function (c) {
         return c.id;
@@ -2888,7 +3102,7 @@
     // ---- буфер обмена ----
     function onCopy(e) {
       if (editing || !selected.size) return;
-      var list = selList();
+      var list = withFrameKids(Array.from(selected)).map(getEl).filter(Boolean);
       var payload = JSON.stringify({ leoBoard: 1, elements: list.map(function (el) {
         return serializeEl(el, getEl, pathOptsOf);
       }) });
@@ -2958,8 +3172,13 @@
             }
             begin();
             copies.forEach(put);
+            syncFrames();
             commit();
-            setSelection(copies.map(function (x) {
+            setSelection(copies.filter(function (x) {
+              return !x.frame || !copies.some(function (f) {
+                return f.id === x.frame;
+              });
+            }).map(function (x) {
               return x.id;
             }));
             return;
@@ -3059,10 +3278,10 @@
         startHandle(hEl.getAttribute("data-h"), base, e);
         return;
       }
-      if (tool === "rect" || tool === "diamond" || tool === "ellipse" || tool === "sticky" || tool === "text") {
+      if (tool === "rect" || tool === "diamond" || tool === "ellipse" || tool === "sticky" || tool === "text" || tool === "frame") {
         e.preventDefault();
         begin();
-        var el = newEl(tool, p, { w: 1, h: 1 });
+        var el = newEl(tool, p, tool === "frame" ? { w: 1, h: 1, name: nextFrameName(), z: bottomZ() } : { w: 1, h: 1 });
         if (tool === "text") el.h = DEFAULTS.text.h;
         put(el);
         startGesture(Object.assign(base, { kind: "create", id: el.id, type: tool }));
@@ -3147,7 +3366,105 @@
       schedule();
     }
 
+    // ---- экраны (режим «Макет») ----
+    /** Выделение + содержимое выделенных экранов (их переносят, копируют и удаляют вместе). */
+    function withFrameKids(ids) {
+      var out = new Set(ids);
+      var frames = {};
+      ids.forEach(function (id) {
+        var el = els.get(id);
+        if (el && el.type === "frame") frames[id] = 1;
+      });
+      if (Object.keys(frames).length) {
+        els.forEach(function (el) {
+          if (el.frame && frames[el.frame]) out.add(el.id);
+        });
+      }
+      return Array.from(out);
+    }
+
+    function framesByZ() {
+      var list = [];
+      els.forEach(function (el) {
+        if (el.type === "frame") list.push(el);
+      });
+      return list.sort(function (a, b) {
+        return (b.z || 0) - (a.z || 0);
+      });
+    }
+
+    /** Кто в каком экране: по центру элемента; попавший в экран — над ним. Внутри шага отмены. */
+    function syncFrames() {
+      var frames = framesByZ();
+      if (!frames.length && !Array.from(els.values()).some(function (e) {
+        return e.frame;
+      })) return;
+      els.forEach(function (el) {
+        if (el.type === "frame" || el.type === "line" || el.type === "pen") return;
+        var b = G.elBounds(el, getEl);
+        if (!b) return;
+        var cx = b.x + b.w / 2;
+        var cy = b.y + b.h / 2;
+        var f = null;
+        for (var i = 0; i < frames.length; i++) {
+          var fr = frames[i];
+          if (cx >= fr.x && cx <= fr.x + fr.w && cy >= fr.y && cy <= fr.y + fr.h) {
+            f = fr;
+            break;
+          }
+        }
+        var fid = f ? f.id : undefined;
+        if ((el.frame || undefined) === fid && (!f || (el.z || 0) > (f.z || 0))) return;
+        var fields = { frame: fid };
+        if (f && (el.z || 0) <= (f.z || 0)) fields.z = topZ();
+        patch(el.id, fields);
+      });
+    }
+
+    function nextFrameName() {
+      var n = 0;
+      els.forEach(function (el) {
+        if (el.type === "frame") n++;
+      });
+      return "Экран " + (n + 1);
+    }
+
+    /** Новый экран по размеру устройства — справа от последнего экрана (или в центре вида). */
+    function insertFrame(deviceId) {
+      if (readOnly) return;
+      finishEdit();
+      closePop();
+      var dev = DEVICES.filter(function (d) {
+        return d.id === deviceId;
+      })[0] || DEVICES[0];
+      var frames = framesByZ();
+      var at;
+      if (frames.length) {
+        var right = frames.reduce(function (m, f) {
+          return f.x + f.w > m.x + m.w ? f : m;
+        }, frames[0]);
+        at = G.pt(right.x + right.w + 80, right.y);
+      } else {
+        var r = stageRect();
+        var c = toWorld(r.left + r.width / 2, r.top + r.height / 2, r);
+        at = G.pt(Math.round(c.x - dev.w / 2), Math.round(c.y - dev.h / 2));
+      }
+      begin();
+      var f = newEl("frame", at, { w: dev.w, h: dev.h, name: nextFrameName(), device: dev.id, z: bottomZ() });
+      put(f);
+      syncFrames();
+      commit();
+      setTool("select");
+      flushNow();
+      autoFit = false;
+      fitBounds(G.unionBounds(framesByZ().map(function (x) {
+        return { x: x.x, y: x.y, w: x.w, h: x.h };
+      })));
+      setSelection([f.id]);
+    }
+
     function startMove(base, ids, hit) {
+      ids = withFrameKids(ids);
       var list = ids.map(getEl).filter(Boolean);
       begin();
       var moving = {};
@@ -3397,7 +3714,11 @@
         var hit = new Set(g.keep);
         els.forEach(function (el) {
           var b = G.elBounds(el, getEl);
-          if (b && G.intersects(b, marquee)) hit.add(el.id);
+          if (!b) return;
+          // Экран — только если рамка накрыла его целиком (иначе рамкой внутри экрана не выделить содержимое).
+          if (el.type === "frame") {
+            if (b.x >= marquee.x && b.y >= marquee.y && b.x + b.w <= marquee.x + marquee.w && b.y + b.h <= marquee.y + marquee.h) hit.add(el.id);
+          } else if (G.intersects(b, marquee)) hit.add(el.id);
         });
         selected = expandGroups(Array.from(hit));
         schedule();
@@ -3841,16 +4162,19 @@
         var el = getEl(g.id);
         if (el && !g.moved) {
           var d = DEFAULTS[g.type];
-          put(Object.assign({}, el, { x: g.p0.x - d.w / 2, y: g.p0.y - (g.type === "text" ? d.h / 2 : d.h / 2), w: d.w, h: d.h }));
+          // Текст — от точки клика (как во Figma), фигура — по центру клика.
+          put(Object.assign({}, el, { x: g.type === "text" ? g.p0.x : g.p0.x - d.w / 2, y: g.p0.y - d.h / 2, w: d.w, h: d.h }));
         } else if (el && (el.w < 12 || el.h < 12) && g.type !== "text") {
           var d2 = DEFAULTS[g.type];
           put(Object.assign({}, el, { w: Math.max(el.w, d2.w / 3), h: Math.max(el.h, d2.h / 3) }));
         }
+        syncFrames();
         commit();
         setTool("select");
         if (el) {
           setSelection([g.id]);
-          if (!cancelled && (g.type === "text" || g.type === "sticky" || SHAPES[g.type])) {
+          // В макете фигура — просто фигура (подпись не нужна); на доске блок сразу ждёт текст.
+          if (!cancelled && (g.type === "text" || (mode !== "design" && (g.type === "sticky" || SHAPES[g.type])))) {
             // Новый блок сразу готов к вводу текста — без лишнего нажатия.
             startEdit(g.id, { isNew: true });
           }
@@ -3897,6 +4221,7 @@
         commit();
         if (!g.moved && e && !cancelled) onTap(g.id, p, e);
       } else if (g.kind === "move" || g.kind === "resize" || g.kind === "rotate" || g.kind === "bend" || g.kind === "gscale") {
+        if (g.kind !== "bend") syncFrames();
         commit();
         if (g.kind === "move" && !g.moved && e && !cancelled) {
           if (g.toggleOff) {
@@ -3942,12 +4267,13 @@
       if (id) {
         var el = getEl(id);
         if (el && TEXTUAL[el.type]) startEdit(id, { selectAll: false });
-        else if (el && BLOCKS[el.type]) startEdit(id, { at: e });
+        else if (el && (BLOCKS[el.type] || el.type === "frame")) startEdit(id, { at: e });
         return;
       }
       begin();
       var t = newEl("text", G.pt(p.x - 8, p.y - DEFAULTS.text.h / 2));
       put(t);
+      syncFrames();
       commit();
       startEdit(t.id, { isNew: true });
     }
@@ -4764,7 +5090,7 @@
       sortedEls().forEach(function (el) {
         elements[el.id] = serializeEl(el, getEl, pathOptsOf);
       });
-      return JSON.stringify({ v: 1, elements: elements });
+      return JSON.stringify(mode === "design" ? { v: 1, mode: "design", elements: elements } : { v: 1, elements: elements });
     }
 
     function loadElements(list) {
@@ -4792,6 +5118,7 @@
       // В совместном режиме источник — документ Yjs: чужой JSON с сервера его не заменяет.
       if (yjs && keepView) return;
       if (!keepView) autoFit = true;
+      applyMode(modeOf(json));
       loadElements(parseBoard(json));
       undoStack = [];
       redoStack = [];
@@ -4839,7 +5166,17 @@
         schedule();
       };
       map.observeDeep(observer);
-      yjs = { doc: doc, map: map, Y: Y, observer: observer };
+      var meta = doc.getMap("meta");
+      var metaObserver = function (ev, tr) {
+        if (tr.origin === "leo-board-local") return;
+        if (ev.keysChanged.has("mode")) applyMode(meta.get("mode"));
+      };
+      meta.observe(metaObserver);
+      if (meta.has("mode")) applyMode(meta.get("mode"));
+      else if (mode === "design") doc.transact(function () {
+        meta.set("mode", "design");
+      }, "leo-board-local");
+      yjs = { doc: doc, map: map, Y: Y, observer: observer, meta: meta, metaObserver: metaObserver };
       root.classList.add("is-live");
       // Документ уже есть — показываем его; пустой — заполняем своим.
       if (map.size) {
@@ -4864,6 +5201,7 @@
       if (!yjs) return;
       try {
         yjs.map.unobserveDeep(yjs.observer);
+        if (yjs.meta) yjs.meta.unobserve(yjs.metaObserver);
       } catch (_) {}
       yjs = null;
       pendingY.clear();
@@ -4966,13 +5304,14 @@
       if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !(pop._anchor && pop._anchor.contains(e.target))) closePop();
     }
 
-    if (startCards) {
-      startCards.innerHTML = templateCards();
-      startCards.addEventListener("click", function (e) {
-        var c = e.target.closest("[data-tpl]");
-        if (c) openTemplateMenu(c, c.getAttribute("data-tpl"));
-      });
-    }
+    root.classList.add(mode === "design" ? "is-mode-design" : "is-mode-board");
+    renderEmptyHint();
+    emptyHint.addEventListener("click", function (e) {
+      var c = e.target.closest("[data-tpl]");
+      if (c) openTemplateMenu(c, c.getAttribute("data-tpl"));
+      var d = e.target.closest("[data-device]");
+      if (d) insertFrame(d.getAttribute("data-device"));
+    });
     renderTools();
     renderHistoryBar();
     loadElements(parseBoard(o.json));
@@ -5087,6 +5426,7 @@
       parseBoard(json).forEach(function (el) {
         writeEl(Y, map, el.id, docFields(el));
       });
+      if (modeOf(json) === "design") doc.getMap("meta").set("mode", "design");
     }, origin);
   }
 
@@ -5123,6 +5463,9 @@
           if (!(k in a)) ym.delete(k);
         });
       });
+      var m0 = modeOf(oldJson);
+      var m1 = modeOf(newJson);
+      if (m0 !== m1) doc.getMap("meta").set("mode", m1);
     }, origin);
   }
 

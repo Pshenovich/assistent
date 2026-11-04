@@ -31667,6 +31667,11 @@
   }
 
   // Холст (kind=board): доска с блоками и стрелками — webapp/board.js, тело листа — JSON.
+  /** Макет — та же доска (kind=board) в режиме «design»: экраны для разработки. */
+  function isDesignSheet(sheet) {
+    return isBoardSheet(sheet) && /"mode"\s*:\s*"design"/.test(String(sheet.body || sheet.description || ""));
+  }
+
   function isBoardSheet(sheet) {
     if (!sheet) return false;
     return String(sheet.kind || "").toLowerCase() === "board";
@@ -42498,7 +42503,7 @@
         chip.className =
           "note-sheet-chip" +
           (isWebSheet(s) ? " is-web" : "") +
-          (isBoardSheet(s) ? " is-board" : "") +
+          (isBoardSheet(s) ? " is-board" : "") + (isDesignSheet(s) ? " is-design" : "") +
           (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
         var label = document.createElement("span");
         label.className = "note-sheet-chip-label";
@@ -42554,7 +42559,7 @@
       chip.className =
         "note-sheet-chip" +
         (isWebSheet(s) ? " is-web" : "") +
-        (isBoardSheet(s) ? " is-board" : "") +
+        (isBoardSheet(s) ? " is-board" : "") + (isDesignSheet(s) ? " is-design" : "") +
         (String(s.id) === String(noteSheetState.leftId) ? " is-active" : "");
       chip.setAttribute("data-sheet-id", String(s.id));
       var label = document.createElement("span");
@@ -43834,6 +43839,7 @@
 
     addItem("Лист", "Текст и правки", "doc");
     addItem("Доска", "Схемы, блоки и стрелки", "board");
+    addItem("Макет", "Экраны приложения для разработки", "design");
     addItem("Презентация", "Слайды по заметке", "web");
     // В body: панель обсуждения — отдельный слой (z-index 220) поверх окна заметки (100),
     // внутри окна заметки меню уходило под неё.
@@ -43864,12 +43870,17 @@
       return;
     }
     var kindRaw = String(opts.kind || "doc").toLowerCase();
-    var kind = kindRaw === "web" || kindRaw === "board" ? kindRaw : "doc";
+    // «Макет» — доска в режиме экранов (тело {mode: "design"}).
+    var design = kindRaw === "design";
+    var kind = kindRaw === "web" || kindRaw === "board" || design ? (design ? "board" : kindRaw) : "doc";
+    var initialBody = design ? '{"v":1,"mode":"design","elements":{}}' : "";
     var title =
       opts.title ||
       (kind === "web"
         ? "Презентация"
-        : kind === "board"
+        : design
+          ? "Макет"
+          : kind === "board"
           ? "Доска"
           : "Лист " + (extraNoteSheets().length + 2));
     if (isAppOffline() || String(noteId).indexOf("tmp_") === 0) {
@@ -43878,8 +43889,8 @@
         id: tmpId,
         note_id: noteId,
         title: title,
-        body: "",
-        description: "",
+        body: initialBody,
+        description: initialBody,
         kind: kind,
         revision: 1,
         is_primary: false,
@@ -43891,7 +43902,7 @@
         noteId: String(noteId),
         path: "/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets",
         method: "POST",
-        body: { title: local.title, kind: kind },
+        body: initialBody ? { title: local.title, kind: kind, description: initialBody } : { title: local.title, kind: kind },
       });
       renderNoteSheetChips();
       if (opts.openOn === "right") setRightPaneMode("sheet", tmpId);
@@ -43902,7 +43913,7 @@
     try {
       var res = await apiFetch(
         "/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets",
-        { method: "POST", body: JSON.stringify({ title: title, kind: kind }) }
+        { method: "POST", body: JSON.stringify(initialBody ? { title: title, kind: kind, description: initialBody } : { title: title, kind: kind }) }
       );
       var item = res && res.item;
       if (!item) return;
@@ -51512,7 +51523,7 @@
     sheets.forEach(function (s) {
       var id = String(s.id);
       var label = document.createElement("label");
-      label.className = "ns-chip" + (isWebSheet(s) ? " is-web" : "") + (isBoardSheet(s) ? " is-board" : "");
+      label.className = "ns-chip" + (isWebSheet(s) ? " is-web" : "") + (isBoardSheet(s) ? " is-board" : "") + (isDesignSheet(s) ? " is-design" : "");
       var input = document.createElement("input");
       input.type = "checkbox";
       input.name = "note-share-sheet";

@@ -1306,3 +1306,104 @@ html[data-theme="light"] .leo-board {
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
 }
+
+/* ---- режим «Макет»: экраны ---- */
+.lb-t-frame {
+  pointer-events: none; /* по фону экрана — рамка выделения, как во Figma; экран берут за подпись */
+}
+
+.lb-t-frame .lb-frame-bg {
+  stroke: var(--lb-panel-border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.lb-frame-head {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  padding-bottom: calc(6px / var(--lb-zoom, 1));
+  color: var(--lb-muted);
+  font-size: calc(13px / var(--lb-zoom, 1));
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: move;
+}
+
+.lb-frame-name {
+  overflow: hidden;
+  color: var(--lb-text);
+  text-overflow: ellipsis;
+}
+
+.lb-frame-name.is-empty::before {
+  content: attr(data-ph);
+  color: var(--lb-muted);
+}
+
+.lb-frame-name[contenteditable] {
+  overflow: visible;
+  outline: 2px solid var(--lb-accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.lb-frame-size {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-el.is-selected .lb-frame-name,
+.lb-t-frame:hover .lb-frame-name {
+  color: var(--lb-accent);
+}
+
+.lb-mode {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.lb-start-devices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+.lb-device {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  width: 116px;
+  padding: 10px 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 12px;
+  background: var(--lb-panel);
+  color: var(--lb-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lb-device:hover {
+  border-color: var(--lb-accent);
+}
+
+.lb-device-pre {
+  display: block;
+  height: 54px;
+  aspect-ratio: var(--ar);
+  max-width: 90px;
+  margin-bottom: 6px;
+  border: 1.5px solid var(--lb-muted);
+  border-radius: 6px;
+}

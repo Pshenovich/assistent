@@ -242,3 +242,27 @@ class BoardVectorTests(unittest.TestCase):
         self.assertIn('viewBox="0 0 24 24"', svg)
         self.assertIn('<path d="M0 0L24 24Z" fill="#1b2559" fill-rule="evenodd"/>', svg)
         self.assertNotIn("script", svg)
+
+
+class BoardDesignModeTests(unittest.TestCase):
+    """Лист «Макет» — доска в режиме design: экраны (frame) и их содержимое."""
+
+    def test_mode_and_frames_kept(self) -> None:
+        body = json.dumps({"v": 1, "mode": "design", "elements": {
+            "f": {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 393, "h": 852, "name": "Главная", "device": "iphone",
+                  "style": {"fill": "#ffffff", "radius": 0}},
+            "t": {"id": "t", "type": "text", "x": 10, "y": 10, "w": 100, "h": 20, "text": "Привет", "frame": "f"},
+            "l": dict(L, frame="f"),
+        }})
+        board = board_doc.parse_board(body)
+        self.assertEqual(board["mode"], "design")
+        f = board["elements"]["f"]
+        self.assertEqual((f["name"], f["device"], f["style"]["fill"]), ("Главная", "iphone", "#ffffff"))
+        self.assertEqual(board["elements"]["t"]["frame"], "f")
+        self.assertNotIn("frame", board["elements"]["l"])  # стрелки (переходы) — вне экранов
+        self.assertNotIn("mode", board_doc.parse_board(_board(A)))
+        self.assertNotIn("mode", board_doc.parse_board(json.dumps({"v": 1, "mode": "evil", "elements": {}})))
+        self.assertEqual(json.loads(board_doc.empty_board("design"))["mode"], "design")
+        self.assertIn("Главная", board_doc.board_plain_text(body))
+        svg = board_doc.render_board_svg(body)
+        self.assertIn(">Главная</text>", svg)
