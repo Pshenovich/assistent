@@ -30,7 +30,7 @@
   var MAX_Z = 4;
   var GRID = 20;
   var SHAPES = { rect: 1, diamond: 1, ellipse: 1 };
-  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1 };
+  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1, vector: 1 };
   // Составные блоки: свой HTML внутри узла и своя правка (таблица — редактор таблиц заметки).
   var BLOCKS = { table: 1, card: 1, gantt: 1 };
   var ALIGN_ICON = { left: "alignLeft", center: "alignCenter", right: "alignRight" };
@@ -73,7 +73,7 @@
   // Палец вместо мыши — ручки крупнее.
   var COARSE = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(pointer: coarse)").matches : false;
   var TEXTUAL = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, line: 1 };
-  var STROKED = { rect: 1, diamond: 1, ellipse: 1, line: 1, pen: 1 };
+  var STROKED = { rect: 1, diamond: 1, ellipse: 1, line: 1, pen: 1, vector: 1 };
   var IMAGE_MAX_SIDE = 1400;
   var CLIP_MIME = "application/x-leo-board";
   var CARD_PHOTO_SIDE = 400;
@@ -219,6 +219,23 @@
     return st && st.strokeWidth != null && isFinite(v) ? v : def;
   }
 
+  /** Контуры вектора (иконка из FigJam) в его системе координат vb; цвет и толщина из style — для всех. */
+  function vectorPaths(el, paint) {
+    var st = el.style || {};
+    return (el.paths || []).map(function (p) {
+      var fill = p.fill ? paint.fill(st.fill || p.fill) : "none";
+      var stroke = p.stroke ? paint.ink(st.stroke || p.stroke) : null;
+      var a = ' fill="' + (fill || "none") + '"';
+      if (stroke) {
+        a += ' stroke="' + stroke + '" stroke-width="' + (st.strokeWidth != null ? Number(st.strokeWidth) : p.sw || 1) + '"';
+        if (p.cap) a += ' stroke-linecap="' + p.cap + '"';
+        if (p.join) a += ' stroke-linejoin="' + p.join + '"';
+      }
+      if (p.rule === "evenodd") a += ' fill-rule="evenodd"';
+      return '<path d="' + String(p.d).replace(/[^MLCQZmlcqz0-9.,\s-]/g, "") + '"' + a + "/>";
+    }).join("");
+  }
+
   /** Скругление прямоугольника: своё (style.radius) или по умолчанию. */
   function rectRadius(st, w, h) {
     var r = st && st.radius != null ? Number(st.radius) : NaN;
@@ -266,6 +283,9 @@
       });
     } else if (el.type === "image") {
       o.src = el.src;
+    } else if (el.type === "vector") {
+      o.vb = el.vb;
+      o.paths = clone(el.paths || []);
     } else if (el.type === "table") {
       o.html = String(el.html || "");
     } else if (el.type === "card") {
@@ -773,6 +793,11 @@
         inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="3" fill="' + stickyVar(st.fill) + '" pointer-events="all" class="lb-hit lb-sticky-bg"/>';
       } else if (el.type === "image") {
         inner = '<image x="0" y="0" width="' + w + '" height="' + h + '" preserveAspectRatio="none" href="' + esc(el.src || "") + '" pointer-events="all" class="lb-hit"/>';
+      } else if (el.type === "vector") {
+        var vb = el.vb || [w, h];
+        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="transparent" pointer-events="all" class="lb-hit"/>' +
+          '<g transform="scale(' + w / Math.max(0.01, vb[0]) + " " + h / Math.max(0.01, vb[1]) + ')" pointer-events="none">' +
+          vectorPaths(el, { fill: fillVar, ink: inkVar }) + "</g>";
       } else {
         // Текст: прозрачный, а с заливкой — плашка под текстом (подсветка из Miro).
         inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="2" fill="' + (st.fill && st.fill !== "none" ? fillVar(st.fill) : "transparent") + '" pointer-events="all" class="lb-hit"/>';
@@ -900,7 +925,7 @@
           "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;" +
           (el.rot ? "transform:rotate(" + el.rot + "deg);" : "");
         replaceShape(node, shapeSvg(el));
-        if (el.type === "image") return;
+        if (el.type === "image" || el.type === "vector") return;
         textEl = ensureText(node);
         if (el.type === "sticky") renderAuthor(node, el.author);
       }
@@ -2341,7 +2366,7 @@
       }
       if (types.sticky) h.push(swatchBtn("sticky", stickyVar(commonStyle(list.filter(isType("sticky")), "fill") || "yellow"), "Цвет стикера"));
       if (anyStroke) h.push(swatchBtn("stroke", inkVar(commonStyle(list.filter(isStroked), "stroke") || "ink"), "Цвет линии", true));
-      if (anyShape) h.push(swatchBtn("fill", fillVar(commonStyle(list.filter(isShape), "fill") || "none"), "Заливка"));
+      if (anyShape || types.vector) h.push(swatchBtn("fill", fillVar(commonStyle(list.filter(isPaintable), "fill") || "none"), "Заливка"));
       if (types.text) h.push(swatchBtn("textColor", inkVar(commonStyle(list.filter(isType("text")), "textColor") || "ink"), "Цвет текста", false, true));
       if (anyStroke) h.push('<button type="button" class="lb-btn lb-pbtn" data-p="width" title="Толщина и пунктир">' + widthIcon(commonStyle(list.filter(isStroked), "strokeWidth") || 2, commonStyle(list.filter(isStroked), "dash")) + "</button>");
       if (anyText) {
@@ -2430,6 +2455,11 @@
       return !!SHAPES[e.type];
     }
 
+    /** Заливку меняют фигуры и векторы (у вектора — всех контуров с заливкой). */
+    function isPaintable(e) {
+      return !!SHAPES[e.type] || e.type === "vector";
+    }
+
     function isTextual(e) {
       return !!TEXTUAL[e.type];
     }
@@ -2498,7 +2528,7 @@
           box.onclick = function (ev) {
             var s = ev.target.closest("[data-v]");
             if (!s) return;
-            applyStyle(isShape, { fill: s.getAttribute("data-v") });
+            applyStyle(isPaintable, { fill: s.getAttribute("data-v") });
             closePop();
           };
         });
@@ -3934,13 +3964,13 @@
       var opp = { top: "bottom", bottom: "top", left: "right", right: "left" }[side];
       begin();
       var copy = {
-        id: uid(), type: from.type === "text" || from.type === "image" || from.type === "table" || from.type === "gantt" ? "rect" : from.type,
+        id: uid(), type: from.type === "text" || from.type === "image" || from.type === "table" || from.type === "gantt" || from.type === "vector" ? "rect" : from.type,
         x: c.x - from.w / 2, y: c.y - from.h / 2, w: from.w, h: from.h, z: topZ(),
         style: clone(from.style || styleFor("rect")),
       };
       if (from.rot) copy.rot = from.rot;
       if (copy.type === "sticky" && meAuthor()) copy.author = meAuthor();
-      if (from.type === "text" || from.type === "image" || from.type === "table" || from.type === "gantt") {
+      if (from.type === "text" || from.type === "image" || from.type === "table" || from.type === "gantt" || from.type === "vector") {
         copy.w = DEFAULTS.rect.w;
         copy.h = DEFAULTS.rect.h;
         copy.x = c.x - copy.w / 2;
@@ -4502,6 +4532,26 @@
         } else if (el.type === "image") {
           var img = images[el.id];
           if (img) ctx.drawImage(img, el.x, el.y, el.w, el.h);
+        } else if (el.type === "vector") {
+          var vbx = el.vb || [el.w, el.h];
+          var vst = el.style || {};
+          ctx.translate(el.x, el.y);
+          ctx.scale(el.w / Math.max(0.01, vbx[0]), el.h / Math.max(0.01, vbx[1]));
+          ctx.setLineDash([]);
+          (el.paths || []).forEach(function (p) {
+            var path2 = new Path2D(p.d);
+            if (p.fill) {
+              ctx.fillStyle = colors.fill(vst.fill || p.fill) || "transparent";
+              ctx.fill(path2, p.rule === "evenodd" ? "evenodd" : "nonzero");
+            }
+            if (p.stroke) {
+              ctx.strokeStyle = colors.ink(vst.stroke || p.stroke);
+              ctx.lineWidth = vst.strokeWidth != null ? Number(vst.strokeWidth) : p.sw || 1;
+              ctx.lineCap = p.cap || "butt";
+              ctx.lineJoin = p.join || "miter";
+              ctx.stroke(path2);
+            }
+          });
         } else {
           var path = new Path2D();
           if (el.type === "ellipse") path.ellipse(el.x + el.w / 2, el.y + el.h / 2, el.w / 2, el.h / 2, 0, 0, Math.PI * 2);
@@ -4664,6 +4714,12 @@
           out.push('<path d="' + d + '" fill="none" stroke="' + stroke + '" stroke-width="' + (Number(st.strokeWidth) || 3) + '" stroke-linecap="round" stroke-linejoin="round"/>');
         } else if (el.type === "image") {
           out.push('<image x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" preserveAspectRatio="none" href="' + esc(el.src || "") + '"/>');
+        } else if (el.type === "vector") {
+          var vbs = el.vb || [el.w, el.h];
+          out.push('<svg x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" viewBox="0 0 ' + vbs[0] + " " + vbs[1] + '" preserveAspectRatio="none" overflow="visible">' +
+            vectorPaths(el, { fill: function (k) {
+              return colors.fill(k) || "none";
+            }, ink: colors.ink }) + "</svg>");
         } else {
           var fill = el.type === "sticky" ? colors.sticky(st.fill) : colors.fill(st.fill) || "none";
           var strokeAttr = el.type === "sticky" || el.type === "text" || sw <= 0 ? ' stroke="none"' : ' stroke="' + stroke + '" stroke-width="' + sw + '"' + da;

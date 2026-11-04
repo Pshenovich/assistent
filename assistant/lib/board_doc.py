@@ -19,8 +19,9 @@ BOARD_VERSION = 1
 MAX_BOARD_BYTES = 12 * 1024 * 1024
 MAX_ELEMENTS = 5000
 MAX_TEXT = 20000
-ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image", "table", "card", "gantt")
-SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image", "table", "card", "gantt")
+ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image", "table", "card", "gantt", "vector")
+SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image", "table", "card", "gantt", "vector")
+MAX_VECTOR_PATHS = 200
 MAX_TABLE_HTML = 400_000
 MAX_GANTT_TASKS = 200
 GANTT_UNITS = ("day", "week")
@@ -290,6 +291,47 @@ def _gantt_tasks(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _paint(v: Any) -> Optional[str]:
+    """Цвет контура вектора: #rrggbb, ключ палитры или нет цвета."""
+    s = str(v or "").strip().lower()
+    if not s or s == "none":
+        return None
+    return s if _HEX_RE.match(s) or s in PALETTE else None
+
+
+def _clean_vector(raw: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Вектор (иконка / компонент из FigJam): контуры в своей системе координат vb = [w, h]."""
+    vb = raw.get("vb")
+    if not (isinstance(vb, (list, tuple)) and len(vb) == 2):
+        return None
+    vw, vh = _num(vb[0], 0, 0.01, 1e5), _num(vb[1], 0, 0.01, 1e5)
+    paths = []
+    for p in (raw.get("paths") or [])[:MAX_VECTOR_PATHS]:
+        if not isinstance(p, dict):
+            continue
+        d = str(p.get("d") or "")
+        if not d or not _PATH_RE.match(d):
+            continue
+        out: dict[str, Any] = {"d": d}
+        fill, stroke = _paint(p.get("fill")), _paint(p.get("stroke"))
+        if fill:
+            out["fill"] = fill
+        if stroke:
+            out["stroke"] = stroke
+            out["sw"] = _num(p.get("sw"), 1, 0, 1000)
+            if p.get("cap") in ("round", "square"):
+                out["cap"] = p["cap"]
+            if p.get("join") in ("round", "bevel"):
+                out["join"] = p["join"]
+        if p.get("rule") == "evenodd":
+            out["rule"] = "evenodd"
+        if fill or stroke:
+            paths.append(out)
+    if not paths:
+        return None
+    return {"vb": [vw, vh], "paths": paths}
+
+
 def _fmt_day(iso: str) -> str:
     try:
         d = dt.date.fromisoformat(iso)
@@ -378,6 +420,11 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         photo = str(raw.get("photo") or "")
         if photo and photo.lower().startswith(_IMAGE_PREFIXES):
             el["photo"] = photo
+    elif etype == "vector":
+        vec = _clean_vector(raw)
+        if not vec:
+            return None
+        el.update(vec)
     elif etype == "gantt":
         el["start"] = _date(raw.get("start")) or dt.date.today().isoformat()
         el["unit"] = raw.get("unit") if raw.get("unit") in GANTT_UNITS else "day"
@@ -491,7 +538,7 @@ def board_plain_text(body: Any) -> str:
 
 _SHAPE_RU = {
     "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "sticky": "стикер", "text": "текст", "image": "картинка",
-    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта",
+    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта", "vector": "иконка",
 }
 _COLOR_RU = {
     "red": "красный", "orange": "оранжевый", "yellow": "жёлтый", "green": "зелёный", "blue": "синий",
@@ -634,6 +681,27 @@ def _svg_text(x: float, y: float, text: str, fs: float = 13, color: str = "#1118
             f'dominant-baseline="middle"{w}>{html.escape(text)}</text>')
 
 
+def _svg_vector(el: dict[str, Any]) -> str:
+    vw, vh = el["vb"]
+    st = el.get("style") or {}
+    parts = []
+    for p in el.get("paths") or []:
+        fill = _fill(st.get("fill") or p.get("fill")) if p.get("fill") else None
+        stroke = _ink(st.get("stroke") or p.get("stroke")) if p.get("stroke") else None
+        attrs = f' fill="{_attr(fill) if fill else "none"}"'
+        if stroke:
+            attrs += f' stroke="{_attr(stroke)}" stroke-width="{p.get("sw", 1)}"'
+            if p.get("cap"):
+                attrs += f' stroke-linecap="{p["cap"]}"'
+            if p.get("join"):
+                attrs += f' stroke-linejoin="{p["join"]}"'
+        if p.get("rule") == "evenodd":
+            attrs += ' fill-rule="evenodd"'
+        parts.append(f'<path d="{p["d"]}"{attrs}/>')
+    return (f'<svg x="{el["x"]}" y="{el["y"]}" width="{el["w"]}" height="{el["h"]}" viewBox="0 0 {vw} {vh}" '
+            f'preserveAspectRatio="none" overflow="visible">{"".join(parts)}</svg>')
+
+
 def _gantt_geom(el: dict[str, Any]) -> dict[str, Any]:
     """Размеры Ганта — те же, что рисует клиент (webapp/board.js ganttLayout)."""
     cols = {"name": 150, "start": 64, "end": 64, "owner": 110}
@@ -760,6 +828,9 @@ def render_board_svg(body: Any) -> str:
             continue
         if t in ("table", "card", "gantt"):
             out.append(_svg_composite(el))
+            continue
+        if t == "vector":
+            out.append(_svg_vector(el))
             continue
         fill = _fill(st.get("fill"))
         if t == "sticky":

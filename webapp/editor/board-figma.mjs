@@ -122,8 +122,9 @@ function readField(defs, r, f) {
   if (!f.array) return readValue(defs, r, f.type);
   var n = r.vu();
   if (f.type === -2) {
-    r.i += n; // байтовые массивы (геометрия векторов) нам не нужны
-    return null;
+    var bytes = r.b.slice(r.i, r.i + n); // геометрия векторов (контуры, сеть вершин)
+    r.i += n;
+    return bytes;
   }
   var arr = new Array(n);
   for (var i = 0; i < n; i++) arr[i] = readValue(defs, r, f.type);
@@ -240,6 +241,150 @@ function mul(a, b) {
 
 var ID = { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 };
 
+// ---- векторы: контуры (commandsBlob) и сеть вершин (vectorNetworkBlob) ----
+function num(v) {
+  return String(Math.round(v * 100) / 100);
+}
+
+function apply(M, x, y) {
+  return [M.m00 * x + M.m01 * y + M.m02, M.m10 * x + M.m11 * y + M.m12];
+}
+
+function pt(M, x, y) {
+  var q = apply(M, x, y);
+  return num(q[0]) + " " + num(q[1]);
+}
+
+/** Контур Figma: [команда][float32…]: 0 — Z, 1 — M x y, 2 — L x y, 3 — Q, 4 — C. */
+function commandsPath(bytes, M) {
+  if (!bytes || !bytes.length) return "";
+  var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  var i = 0;
+  var out = [];
+  var f = function () {
+    var v = dv.getFloat32(i, true);
+    i += 4;
+    return v;
+  };
+  while (i < bytes.length) {
+    var c = bytes[i++];
+    if (c === 0) out.push("Z");
+    else if (c === 1 || c === 2) {
+      var x = f();
+      out.push((c === 1 ? "M" : "L") + pt(M, x, f()));
+    } else if (c === 3) {
+      var qx = f();
+      var qy = f();
+      var ex = f();
+      out.push("Q" + pt(M, qx, qy) + " " + pt(M, ex, f()));
+    } else if (c === 4) {
+      var ax = f();
+      var ay = f();
+      var bx = f();
+      var by = f();
+      var cx = f();
+      out.push("C" + pt(M, ax, ay) + " " + pt(M, bx, by) + " " + pt(M, cx, f()));
+    } else return "";
+  }
+  return out.join("");
+}
+
+/** Сеть вершин вектора: вершины, сегменты (с касательными), области (петли сегментов). */
+function readNetwork(bytes) {
+  if (!bytes || bytes.length < 12) return null;
+  var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  var i = 0;
+  var u = function () {
+    var v = dv.getUint32(i, true);
+    i += 4;
+    return v;
+  };
+  var f = function () {
+    var v = dv.getFloat32(i, true);
+    i += 4;
+    return v;
+  };
+  var nv = u();
+  var ns = u();
+  var nr = u();
+  if (12 + nv * 12 + ns * 28 > bytes.length) return null;
+  var verts = [];
+  for (var a = 0; a < nv; a++) {
+    u();
+    verts.push([f(), f()]);
+  }
+  var segs = [];
+  for (var b = 0; b < ns; b++) {
+    u();
+    var s0 = u();
+    var t0 = [f(), f()];
+    var s1 = u();
+    segs.push({ a: s0, ta: t0, b: s1, tb: [f(), f()] });
+  }
+  var regions = [];
+  for (var c = 0; c < nr && i + 8 <= bytes.length; c++) {
+    var sid = u();
+    var loops = [];
+    var nl = u();
+    for (var l = 0; l < nl; l++) {
+      var cnt = u();
+      var idx = [];
+      for (var k = 0; k < cnt; k++) idx.push(u());
+      loops.push(idx);
+    }
+    regions.push({ evenodd: !(sid & 1), loops: loops });
+  }
+  return { verts: verts, segs: segs, regions: regions };
+}
+
+function segTo(net, s, rev, M) {
+  var A = net.verts[rev ? s.b : s.a];
+  var B = net.verts[rev ? s.a : s.b];
+  var ta = rev ? s.tb : s.ta;
+  var tb = rev ? s.ta : s.tb;
+  if (!A || !B) return "";
+  if (!ta[0] && !ta[1] && !tb[0] && !tb[1]) return "L" + pt(M, B[0], B[1]);
+  return "C" + pt(M, A[0] + ta[0], A[1] + ta[1]) + " " + pt(M, B[0] + tb[0], B[1] + tb[1]) + " " + pt(M, B[0], B[1]);
+}
+
+/** Обводка — все сегменты, подряд идущие склеены в одну линию; заливка — по областям. */
+function networkPaths(net, M) {
+  var stroke = [];
+  var cur = -1;
+  net.segs.forEach(function (s) {
+    var A = net.verts[s.a];
+    if (!A) return;
+    if (s.a !== cur) stroke.push("M" + pt(M, A[0], A[1]));
+    stroke.push(segTo(net, s, false, M));
+    cur = s.b;
+  });
+  var fills = net.regions.map(function (r) {
+    var d = [];
+    r.loops.forEach(function (loop) {
+      var at = -1;
+      loop.forEach(function (si, j) {
+        var s = net.segs[si];
+        if (!s) return;
+        var rev = j === 0 ? false : s.a !== at;
+        if (j === 0) {
+          var nxt = net.segs[loop[1]];
+          if (nxt && (s.a === nxt.a || s.a === nxt.b)) rev = true;
+          var S = net.verts[rev ? s.b : s.a];
+          if (S) d.push("M" + pt(M, S[0], S[1]));
+        }
+        d.push(segTo(net, s, rev, M));
+        at = rev ? s.a : s.b;
+      });
+      d.push("Z");
+    });
+    return { d: d.join(""), evenodd: r.evenodd };
+  });
+  return { stroke: stroke.join(""), fills: fills };
+}
+
+var CAPS = { ROUND: "round", SQUARE: "square" };
+var JOINS = { ROUND: "round", BEVEL: "bevel" };
+
 function fromFigma(msg, uid) {
   var nodes = msg.nodeChanges;
   var byId = {};
@@ -266,6 +411,172 @@ function fromFigma(msg, uid) {
   var map = {};
   var skipped = 0;
   var connectors = [];
+  var blobs = (msg.blobs || []).map(function (b) {
+    return b && b.bytes;
+  });
+  var blob = function (i) {
+    return typeof i === "number" ? blobs[i] : null;
+  };
+
+  // ---- компоненты и векторы → один элемент «вектор» на узел ----
+  function vecPaint(paints) {
+    return themed(paintHex(paints));
+  }
+
+  /** Части компонента по ключу подмены (overrideKey) — так на них ссылаются экземпляры. */
+  var keyMaps = {};
+  function keyMap(symId) {
+    if (keyMaps[symId]) return keyMaps[symId];
+    var m = {};
+    (function walkKeys(id) {
+      (kids[id] || []).forEach(function (k) {
+        if (k.overrideKey) m[gid(k.overrideKey)] = k;
+        walkKeys(gid(k.guid));
+      });
+    })(symId);
+    return (keyMaps[symId] = m);
+  }
+
+  function chain(symId, node) {
+    var list = [];
+    for (var n = node; n && gid(n.guid) !== symId; n = byId[n.parentIndex && n.parentIndex.guid ? gid(n.parentIndex.guid) : ""]) list.unshift(n);
+    return list;
+  }
+
+  function overridesOf(inst) {
+    var o = {};
+    ((inst.symbolData && inst.symbolData.symbolOverrides) || []).forEach(function (ov) {
+      var g = (ov.guidPath && ov.guidPath.guids) || [];
+      if (g.length) o[gid(g[g.length - 1])] = ov;
+    });
+    return o;
+  }
+
+  function pushNetwork(paths, n, M, ov, scaleW) {
+    var vd = n.vectorData;
+    var net = vd ? readNetwork(blob(vd.vectorNetworkBlob)) : null;
+    if (!net) return;
+    var ns = vd.normalizedSize || n.size || { x: 1, y: 1 };
+    var sx = (n.size && n.size.x) / (ns.x || 1) || 1;
+    var sy = (n.size && n.size.y) / (ns.y || 1) || 1;
+    var Mn = mul(M, { m00: sx, m01: 0, m02: 0, m10: 0, m11: sy, m12: 0 });
+    var o = ov || {};
+    var fill = vecPaint(o.fillPaints || n.fillPaints);
+    var stroke = vecPaint(o.strokePaints || n.strokePaints);
+    var np = networkPaths(net, Mn);
+    if (fill) np.fills.forEach(function (fp) {
+      if (fp.d) paths.push({ d: fp.d, fill: fill, rule: fp.evenodd ? "evenodd" : undefined });
+    });
+    var sw = o.strokeWeight != null ? o.strokeWeight : n.strokeWeight;
+    if (stroke && np.stroke && sw > 0) {
+      var cap = CAPS[n.strokeCap] || ((vd.styleOverrideTable || []).some(function (t) {
+        return t.strokeCap === "ROUND";
+      }) ? "round" : undefined);
+      paths.push({ d: np.stroke, stroke: stroke, sw: Math.round(sw * scaleW * 100) / 100, cap: cap, join: JOINS[n.strokeJoin] });
+    }
+  }
+
+  /** Простая фигура внутри компонента (прямоугольник / эллипс) — контуром. */
+  function pushPrimitive(paths, n, M, ov, scaleW) {
+    var w = (n.size && n.size.x) || 0;
+    var h = (n.size && n.size.y) || 0;
+    var d;
+    if (n.type === "ELLIPSE") {
+      var k = 0.5523;
+      var rx = w / 2;
+      var ry = h / 2;
+      d = "M" + pt(M, w, ry) + "C" + pt(M, w, ry + ry * k) + " " + pt(M, rx + rx * k, h) + " " + pt(M, rx, h) +
+        "C" + pt(M, rx - rx * k, h) + " " + pt(M, 0, ry + ry * k) + " " + pt(M, 0, ry) +
+        "C" + pt(M, 0, ry - ry * k) + " " + pt(M, rx - rx * k, 0) + " " + pt(M, rx, 0) +
+        "C" + pt(M, rx + rx * k, 0) + " " + pt(M, w, ry - ry * k) + " " + pt(M, w, ry) + "Z";
+    } else {
+      var r = Math.min(n.cornerRadius || 0, w / 2, h / 2);
+      var c = r * 0.4477;
+      d = r > 0
+        ? "M" + pt(M, r, 0) + "L" + pt(M, w - r, 0) + "C" + pt(M, w - c, 0) + " " + pt(M, w, c) + " " + pt(M, w, r) +
+          "L" + pt(M, w, h - r) + "C" + pt(M, w, h - c) + " " + pt(M, w - c, h) + " " + pt(M, w - r, h) +
+          "L" + pt(M, r, h) + "C" + pt(M, c, h) + " " + pt(M, 0, h - c) + " " + pt(M, 0, h - r) +
+          "L" + pt(M, 0, r) + "C" + pt(M, 0, c) + " " + pt(M, c, 0) + " " + pt(M, r, 0) + "Z"
+        : "M" + pt(M, 0, 0) + "L" + pt(M, w, 0) + "L" + pt(M, w, h) + "L" + pt(M, 0, h) + "Z";
+    }
+    var o = ov || {};
+    var fill = vecPaint(o.fillPaints || n.fillPaints);
+    var stroke = vecPaint(o.strokePaints || n.strokePaints);
+    var sw = o.strokeWeight != null ? o.strokeWeight : n.strokeWeight;
+    if (fill) paths.push({ d: d, fill: fill });
+    if (stroke && sw > 0) paths.push({ d: d, stroke: stroke, sw: Math.round(sw * scaleW * 100) / 100, join: JOINS[n.strokeJoin] });
+  }
+
+  /** Содержимое компонента / группы векторов: обходим детей, скрытые ветки пропускаем. */
+  function pushTree(paths, parentId, M, ovs, scaleW, depth) {
+    if (depth > 6) return;
+    (kids[parentId] || []).forEach(function (n) {
+      if (n.visible === false) return;
+      var Mn = n.transform ? mul(M, n.transform) : M;
+      var ov = n.overrideKey ? ovs[gid(n.overrideKey)] : null;
+      if (ov && ov.visible === false) return;
+      if (n.type === "VECTOR" || n.type === "STAR" || n.type === "REGULAR_POLYGON" || n.type === "LINE") pushNetwork(paths, n, Mn, ov, scaleW);
+      else if (n.type === "RECTANGLE" || n.type === "ROUNDED_RECTANGLE" || n.type === "ELLIPSE") pushPrimitive(paths, n, Mn, ov, scaleW);
+      else if (n.type === "INSTANCE" && n.symbolData) {
+        var sid = gid(n.symbolData.symbolID);
+        var sym = byId[sid];
+        if (!sym) return;
+        var s2 = { m00: (n.size.x || 1) / ((sym.size && sym.size.x) || 1), m01: 0, m02: 0, m10: 0, m11: (n.size.y || 1) / ((sym.size && sym.size.y) || 1), m12: 0 };
+        pushTree(paths, sid, mul(Mn, s2), Object.assign({}, ovs, overridesOf(n)), scaleW * s2.m00, depth + 1);
+      } else pushTree(paths, gid(n.guid), Mn, ovs, scaleW, depth + 1);
+    });
+  }
+
+  /** Экземпляр компонента: готовая геометрия (derivedSymbolData) — или обход самого компонента. */
+  function instancePaths(n) {
+    var paths = [];
+    var sid = n.symbolData ? gid(n.symbolData.symbolID) : "";
+    var sym = byId[sid];
+    if (!sym) return paths;
+    var sx = ((n.size && n.size.x) || 1) / ((sym.size && sym.size.x) || 1);
+    var sy = ((n.size && n.size.y) || 1) / ((sym.size && sym.size.y) || 1);
+    var ovs = overridesOf(n);
+    var keys = keyMap(sid);
+    (n.derivedSymbolData || []).forEach(function (dd) {
+      var g = (dd.guidPath && dd.guidPath.guids) || [];
+      var part = g.length ? keys[gid(g[g.length - 1])] : null;
+      if (!part || !(dd.fillGeometry || dd.strokeGeometry)) return;
+      var links = chain(sid, part);
+      if (links.some(function (x) {
+        return x.visible === false || (x.overrideKey && ovs[gid(x.overrideKey)] && ovs[gid(x.overrideKey)].visible === false);
+      })) return;
+      // Готовая геометрия уже в размере экземпляра: масштабируем только смещения частей.
+      var M = ID;
+      links.forEach(function (x) {
+        if (!x.transform) return;
+        var t = Object.assign({}, x.transform, { m02: x.transform.m02 * sx, m12: x.transform.m12 * sy });
+        M = mul(M, t);
+      });
+      var ov = part.overrideKey ? ovs[gid(part.overrideKey)] : null;
+      var fill = vecPaint((ov && ov.fillPaints) || part.fillPaints);
+      var stroke = vecPaint((ov && ov.strokePaints) || part.strokePaints);
+      (dd.fillGeometry || []).forEach(function (gm) {
+        var d = fill && commandsPath(blob(gm.commandsBlob), M);
+        if (d) paths.push({ d: d, fill: fill, rule: gm.windingRule === "ODD" ? "evenodd" : undefined });
+      });
+      // Обводка в готовой геометрии — уже контур: заливаем его цветом обводки.
+      (dd.strokeGeometry || []).forEach(function (gm) {
+        var d = stroke && commandsPath(blob(gm.commandsBlob), M);
+        if (d) paths.push({ d: d, fill: stroke, rule: gm.windingRule === "ODD" ? "evenodd" : undefined });
+      });
+    });
+    if (!paths.length) pushTree(paths, sid, { m00: sx, m01: 0, m02: 0, m10: 0, m11: sy, m12: 0 }, ovs, (sx + sy) / 2, 0);
+    return paths;
+  }
+
+  function vectorEl(n, b, paths) {
+    if (!paths.length) return null;
+    var d = paths.reduce(function (s, p) {
+      return s + p.d.length;
+    }, 0);
+    if (d > 400000) return null;
+    return Object.assign({ id: uid(), type: "vector" }, b, { vb: [Math.max(0.01, b.w), Math.max(0.01, b.h)], paths: paths.slice(0, 200) });
+  }
 
   function box(n, world) {
     var t = n.transform ? mul(world, n.transform) : world;
@@ -367,8 +678,21 @@ function fromFigma(msg, uid) {
       });
       return;
     }
-    // Компоненты, векторы, иконки — нашими блоками не собрать.
-    skipped++;
+    // Компоненты, иконки, векторы — элементом «вектор» (контуры с цветами, как в FigJam).
+    var paths = [];
+    if (type === "INSTANCE") paths = instancePaths(n);
+    else if (type === "VECTOR" || type === "STAR" || type === "REGULAR_POLYGON" || type === "LINE") pushNetwork(paths, n, ID, null, 1);
+    else if (type === "BOOLEAN_OPERATION") {
+      (n.fillGeometry || []).forEach(function (gm) {
+        var fill = vecPaint(n.fillPaints);
+        var d = fill && commandsPath(blob(gm.commandsBlob), ID);
+        if (d) paths.push({ d: d, fill: fill, rule: gm.windingRule === "ODD" ? "evenodd" : undefined });
+      });
+      if (!paths.length) pushTree(paths, id, ID, {}, 1, 0);
+    }
+    var vel = vectorEl(n, b, paths);
+    if (vel) add(vel, id);
+    else skipped++;
   }
 
   function tableEl(n, b) {

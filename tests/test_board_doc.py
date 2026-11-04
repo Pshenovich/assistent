@@ -215,3 +215,30 @@ class BoardExactColorsTests(unittest.TestCase):
         self.assertIn('fill="#305bab" stroke="none"', svg)
         self.assertIn('fill="#fff3a3"', svg)
         self.assertIn('fill="#fe9f4d"', svg)
+
+
+class BoardVectorTests(unittest.TestCase):
+    """Вектор (иконка / компонент из FigJam): только контуры и цвета, без произвольного SVG."""
+
+    V = {"id": "v", "type": "vector", "x": 0, "y": 0, "w": 24, "h": 24, "vb": [24, 24], "paths": [
+        {"d": "M0 0L24 24Z", "fill": "#1B2559", "rule": "evenodd"},
+        {"d": "M1 1C2 2 3 3 4 4", "stroke": "ink", "sw": 2, "cap": "round", "join": "evil"},
+        {"d": 'M0 0"/><script>alert(1)</script>', "fill": "#000000"},
+        {"d": "M0 0L1 1", "fill": "url(#x)"},
+    ]}
+
+    def test_paths_cleaned(self) -> None:
+        el = board_doc._clean_element("v", self.V)
+        self.assertEqual(el["vb"], [24, 24])
+        self.assertEqual(el["paths"], [
+            {"d": "M0 0L24 24Z", "fill": "#1b2559", "rule": "evenodd"},
+            {"d": "M1 1C2 2 3 3 4 4", "stroke": "ink", "sw": 2, "cap": "round"},
+        ])
+        self.assertIsNone(board_doc._clean_element("v", dict(self.V, paths=[])))
+        self.assertIsNone(board_doc._clean_element("v", dict(self.V, vb="24")))
+
+    def test_svg(self) -> None:
+        svg = board_doc.render_board_svg(_board(self.V))
+        self.assertIn('viewBox="0 0 24 24"', svg)
+        self.assertIn('<path d="M0 0L24 24Z" fill="#1b2559" fill-rule="evenodd"/>', svg)
+        self.assertNotIn("script", svg)

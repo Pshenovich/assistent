@@ -40,13 +40,47 @@ const msg = { nodeChanges: [
   under({ guid: g(12, 1), type: "FRAME", size: { x: 300, y: 60 }, transform: tr(0, 400), fillPaints: paint(1, 1, 1), cornerRadius: 12 }, "&"),
   { guid: g(12, 2), parentIndex: { guid: g(12, 1), position: "!" }, type: "TEXT", size: { x: 100, y: 20 }, transform: tr(10, 20),
     fontSize: 14, textData: { characters: "Внутри фрейма" }, fillPaints: paint(0.5, 0.5, 0.5) },
-  { guid: g(12, 3), parentIndex: { guid: g(12, 1), position: "\"" }, type: "INSTANCE", size: { x: 24, y: 24 }, transform: tr(200, 20) },
-] };
+  // Экземпляр иконки 24×24 в размере 48×48: часть компонента со смещением (2, 2), готовая геометрия
+  // (уже в размере экземпляра) и подмена цвета; скрытая часть — пропускается.
+  under({ guid: g(13, 1), type: "INSTANCE", size: { x: 48, y: 48 }, transform: tr(800, 0),
+    symbolData: { symbolID: g(20, 1), symbolOverrides: [{ guidPath: { guids: [g(5, 2)] }, fillPaints: paint(1, 0, 0) }] },
+    derivedSymbolData: [
+      { guidPath: { guids: [g(5, 2)] }, fillGeometry: [{ windingRule: "NONZERO", commandsBlob: 0 }] },
+      { guidPath: { guids: [g(5, 3)] }, fillGeometry: [{ windingRule: "NONZERO", commandsBlob: 0 }] },
+    ] }, "'"),
+  { guid: g(20, 1), parentIndex: { guid: g(30, 1), position: "!" }, type: "SYMBOL", size: { x: 24, y: 24 } },
+  { guid: g(20, 2), parentIndex: { guid: g(20, 1), position: "!" }, type: "VECTOR", overrideKey: g(5, 2), size: { x: 10, y: 10 }, transform: tr(2, 2), fillPaints: paint(0, 0, 0) },
+  { guid: g(20, 3), parentIndex: { guid: g(20, 1), position: "\"" }, type: "VECTOR", overrideKey: g(5, 3), visible: false, size: { x: 10, y: 10 }, transform: tr(0, 0), fillPaints: paint(0, 0, 0) },
+  // Отдельный вектор: сеть вершин — 2 вершины, 1 сегмент без касательных, обводка.
+  under({ guid: g(14, 1), type: "VECTOR", size: { x: 20, y: 10 }, transform: tr(900, 0), strokeWeight: 2, strokeCap: "ROUND",
+    strokePaints: paint(0.1, 0.15, 0.35), vectorData: { vectorNetworkBlob: 1, normalizedSize: { x: 10, y: 5 } } }, "("),
+], blobs: [{ bytes: cmdBlob() }, { bytes: netBlob() }] };
+
+function cmdBlob() {
+  // M 0 0, L 20 0, L 20 20, Z — float32 LE
+  const buf = new ArrayBuffer(1 + 8 + 1 + 8 + 1 + 8 + 1);
+  const dv = new DataView(buf);
+  let i = 0;
+  const pt = (c, x, y) => { dv.setUint8(i++, c); dv.setFloat32(i, x, true); i += 4; dv.setFloat32(i, y, true); i += 4; };
+  pt(1, 0, 0); pt(2, 20, 0); pt(2, 20, 20); dv.setUint8(i, 0);
+  return new Uint8Array(buf);
+}
+
+function netBlob() {
+  const buf = new ArrayBuffer(12 + 2 * 12 + 28);
+  const dv = new DataView(buf);
+  const u = [2, 1, 0];
+  u.forEach((v, k) => dv.setUint32(k * 4, v, true));
+  let i = 12;
+  [[0, 0], [10, 5]].forEach(([x, y]) => { dv.setUint32(i, 0, true); dv.setFloat32(i + 4, x, true); dv.setFloat32(i + 8, y, true); i += 12; });
+  dv.setUint32(i, 0, true); dv.setUint32(i + 4, 0, true); dv.setUint32(i + 16, 1, true);
+  return new Uint8Array(buf);
+}
 
 let n = 0;
 const res = F._fromFigma(msg, () => "e" + ++n);
 assert.equal(res.source, "FigJam");
-assert.equal(res.skipped, 1); // INSTANCE (иконка)
+assert.equal(res.skipped, 0);
 const [a, b] = res.elements;
 assert.deepEqual([a.type, a.x, a.y, a.w, a.h, a.text], ["rect", 0, 0, 200, 80, "Старт"]);
 assert.equal(a.style.fill, "#c2e6ff");
@@ -64,6 +98,11 @@ assert.equal(table.w, 300);
 assert.match(table.html, /<tr><td[^>]*colwidth="100"><p>Первая &lt;строка&gt;<\/p><\/td><td[^>]*colwidth="200"><p><\/p><\/td><\/tr><tr>/);
 const inner = res.elements.find((e) => e.text === "Внутри фрейма");
 assert.deepEqual([inner.x, inner.y], [10, 420]);
+const [icon, net] = res.elements.filter((e) => e.type === "vector");
+assert.deepEqual([icon.x, icon.y, icon.w, icon.h, icon.vb], [800, 0, 48, 48, [48, 48]]);
+// Смещение части 2×2 → 4×4 (масштаб 2), геометрия как есть; цвет — из подмены; скрытая часть пропущена.
+assert.deepEqual(icon.paths, [{ d: "M4 4L24 4L24 24Z", fill: "#ff0000", rule: undefined }]);
+assert.deepEqual(net.paths, [{ d: "M0 0L20 10", stroke: "#1a2659", sw: 2, cap: "round", join: undefined }]);
 assert.equal(F.isFigma("<p>нет</p>"), false);
 assert.equal(await F.fromHtml('<span data-buffer="<!--(figma)AAAA(/figma)-->">', () => "x"), null);
 console.log("board figma ok");
