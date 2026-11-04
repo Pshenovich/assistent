@@ -341,7 +341,7 @@
     var o = { id: el.id, type: el.type, x: r2(el.x), y: r2(el.y), w: r2(el.w), h: r2(el.h), z: r2(el.z) };
     if (el.rot) o.rot = r2(el.rot);
     if (el.group) o.group = el.group;
-    if (el.frame && el.type !== "line") o.frame = el.frame;
+    if (el.frame) o.frame = el.frame;
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
@@ -1025,11 +1025,13 @@
         box.x2 = Math.min(box.x2, p.x + p.w);
         box.y2 = Math.min(box.y2, p.y + p.h);
       }
-      var t = Math.max(0, box.y1 - el.y);
-      var l = Math.max(0, box.x1 - el.x);
-      var r = Math.max(0, el.x + el.w - box.x2);
-      var b = Math.max(0, el.y + el.h - box.y2);
-      node.style.clipPath = t || l || r || b ? "inset(" + t + "px " + r + "px " + b + "px " + l + "px)" : "";
+      var t = box.y1 - el.y;
+      var l = box.x1 - el.x;
+      var r = el.x + el.w - box.x2;
+      var b = el.y + el.h - box.y2;
+      // Отрицательный отступ — край экрана дальше края элемента: тень и обводка видны до края экрана.
+      var cut = t > 0 || l > 0 || r > 0 || b > 0;
+      node.style.clipPath = cut || (el.style && el.style.shadow) ? "inset(" + t + "px " + r + "px " + b + "px " + l + "px)" : "";
     }
 
     function renderFrame(node, el, isEditing) {
@@ -1488,7 +1490,7 @@
       guides.forEach(function (g) {
         var p0 = toScreen(g.a);
         var p1 = toScreen(g.b);
-        h.push('<line class="lb-guide" x1="' + p0.x + '" y1="' + p0.y + '" x2="' + p1.x + '" y2="' + p1.y + '"/>');
+        h.push('<line class="lb-guide' + (mode === "design" ? " is-design" : "") + '" x1="' + p0.x + '" y1="' + p0.y + '" x2="' + p1.x + '" y2="' + p1.y + '"/>');
       });
       if (marquee) h.push(rectPath(marquee, "lb-marquee"));
       if (measure) h.push(measureSvg(measure.a, measure.b));
@@ -1663,7 +1665,8 @@
         });
         var a = selBounds();
         var p = toWorld(ev.clientX, ev.clientY);
-        var t = shapeAt(p, skip);
+        // Во время переноса цель не меняется: курсор теперь над самим объектом.
+        var t = movingIds && measure && measure.tid && !skip[measure.tid] ? getEl(measure.tid) : shapeAt(p, skip);
         if (!t) {
           var first = getEl(Array.from(selected)[0]);
           var f = first ? frameOf(first) : null;
@@ -1678,7 +1681,7 @@
           t = f;
         }
         var b = t ? G.elBounds(t, getEl) : null;
-        if (a && b) next = { a: a, b: b };
+        if (a && b) next = { a: a, b: b, tid: t.id };
       }
       if (JSON.stringify(next) !== JSON.stringify(measure)) {
         measure = next;
@@ -2938,6 +2941,8 @@
     }
 
     var inspKey = "";
+    var inspDown = null; // {pending} — кнопка мыши нажата на панели свойств
+    var inspUp = null;
     function renderInspector(list) {
       if (!inspector) return;
       if (mode !== "design" || !list.length || editing) {
@@ -2953,6 +2958,12 @@
       // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
       var ae = document.activeElement;
       if (key === inspKey || (ae && ae.tagName === "INPUT" && inspector.contains(ae))) return;
+      // Кнопка мыши ещё нажата на панели (человек ставит курсор в поле) — перерисуем после отпускания,
+      // иначе поле под курсором заменится новым и фокус пропадёт.
+      if (inspDown) {
+        inspDown.pending = true;
+        return;
+      }
       inspKey = key;
       var types = {};
       list.forEach(function (e) {
@@ -3065,6 +3076,14 @@
           var fw = {};
           fw[k] = n;
           if (cur.type === "frame" && cur.device) fw.device = undefined;
+          // Прижат к нижнему (правому) краю экрана и не к верхнему (левому) — растёт вверх (влево), как во Figma.
+          var pk = k === "w" ? "x" : "y";
+          if (f && !cur.rot) {
+            var near = function (u, v) {
+              return Math.abs(u - v) < 0.5;
+            };
+            if (near(cur[pk] + cur[k], f[pk] + f[k]) && !near(cur[pk], f[pk])) fw[pk] = cur[pk] + cur[k] - n;
+          }
           patch(cur.id, fw);
         } else if (k === "rot") {
           if (n != null) patch(cur.id, { rot: ((n % 360) + 360) % 360 || undefined });
@@ -3232,7 +3251,33 @@
     if (inspector) {
       inspector.addEventListener("pointerdown", function (e) {
         e.stopPropagation();
+        inspDown = { pending: false };
       });
+      inspUp = function () {
+        if (!inspDown) return;
+        var was = inspDown;
+        // После click и фокуса поля: перерисовка, отложенная нажатием, — с возвратом фокуса и курсора.
+        setTimeout(function () {
+          if (inspDown !== was) return;
+          inspDown = null;
+          if (!was.pending) return;
+          var ae = document.activeElement;
+          var k = ae && inspector.contains(ae) ? ae.getAttribute("data-k") || ae.getAttribute("data-hex") : "";
+          var sel = k && ae.selectionStart != null ? [ae.selectionStart, ae.selectionEnd] : null;
+          var val = k ? ae.value : "";
+          if (k) ae.blur();
+          inspKey = "";
+          renderInspector(selList());
+          var again = k ? inspector.querySelector('[data-k="' + k + '"], [data-hex="' + k + '"]') : null;
+          if (again) {
+            again.value = val;
+            again.focus({ preventScroll: true });
+            if (sel) again.setSelectionRange(sel[0], sel[1]);
+          }
+        }, 0);
+      };
+      document.addEventListener("pointerup", inspUp, true);
+      document.addEventListener("pointercancel", inspUp, true);
       inspector.addEventListener("keydown", function (e) {
         e.stopPropagation();
         if (e.key === "Enter" && e.target.tagName === "INPUT") e.target.blur();
@@ -3799,6 +3844,7 @@
       moveBy(withFrameKids(Array.from(selected)), dx, dy);
       syncFrames();
       commit();
+      if (measure && lastMove) updateMeasure({ clientX: lastMove.clientX, clientY: lastMove.clientY, altKey: true });
     }
 
     /** Сдвиг набора элементов (экран — вместе с содержимым); стрелки между ними остаются прилипшими. */
@@ -4155,8 +4201,15 @@
         return e.frame;
       })) return;
       // Сначала экраны (крупные раньше: вложенный узнаёт внешний), потом остальное.
+      // Стрелка, привязанная к фигурам, ходит за ними — в экран кладём только свободную.
+      var tied = function (el) {
+        return el.type === "line" && ((el.start && el.start.el) || (el.end && el.end.el));
+      };
+      els.forEach(function (el) {
+        if (el.frame && tied(el)) patch(el.id, { frame: undefined });
+      });
       var order = Array.from(els.values()).filter(function (el) {
-        return el.type !== "line" && el.type !== "pen";
+        return !tied(el);
       }).sort(function (a, b) {
         var fa = a.type === "frame" ? 0 : 1;
         var fb = b.type === "frame" ? 0 : 1;
@@ -4508,6 +4561,7 @@
         schedule();
       } else if (g.kind === "move") {
         doMove(g, p, e);
+        updateMeasure(e, Object.keys(g.moving || {}));
       } else if (g.kind === "create") {
         doCreate(g, p, e.shiftKey);
       } else if (g.kind === "end") {
@@ -4537,7 +4591,7 @@
       } else if (g.kind === "gbar") {
         doGanttBar(g, p);
       } else if (g.kind === "resize") {
-        doResize(g, p, e.shiftKey);
+        doResize(g, p, e.shiftKey, e.metaKey || e.ctrlKey);
       } else if (g.kind === "gscale") {
         doGroupScale(g, p);
       } else if (g.kind === "pen") {
@@ -4627,8 +4681,10 @@
     }
 
     function doMove(g, p, e) {
-      // Alt на доске — тянуть копию (как в Miro); в макете Alt — показать расстояния (как во Figma), копия — ⌘D.
-      if (e.altKey && !g.dup && mode !== "design") duplicateDragged(g);
+      // Alt — тянуть копию (как в Miro и Figma). В макете — только если Alt зажат с начала переноса:
+      // нажатый по ходу Alt лишь показывает расстояния.
+      if (e.altKey && !g.dup && (mode !== "design" || !g.started)) duplicateDragged(g);
+      g.started = true;
       var dx = p.x - g.p0.x;
       var dy = p.y - g.p0.y;
       // Shift — только по горизонтали или только по вертикали (куда сдвинули больше).
@@ -4644,10 +4700,12 @@
         // (сетка двигает край с шагом 20, центры всегда расходятся на несколько пикселей).
         var pre = alignGuides(g, b, dx, dy);
         guides = [];
+        // В макете вместо сетки — целые пиксели (как во Figma): прилипание к краям важнее.
+        var step = mode === "design" ? 1 : showGrid ? GRID : 0;
         if (pre.snapX && lock !== "y") dx = pre.dx;
-        else if (showGrid && lock !== "y") dx = Math.round((b.x + dx) / GRID) * GRID - b.x;
+        else if (step && lock !== "y") dx = Math.round((b.x + dx) / step) * step - b.x;
         if (pre.snapY && lock !== "x") dy = pre.dy;
-        else if (showGrid && lock !== "x") dy = Math.round((b.y + dy) / GRID) * GRID - b.y;
+        else if (step && lock !== "x") dy = Math.round((b.y + dy) / step) * step - b.y;
         var adj = alignGuides(g, b, dx, dy);
         if (lock !== "y") dx = adj.dx;
         if (lock !== "x") dy = adj.dy;
@@ -4812,7 +4870,7 @@
       nw: [-1, -1], n: [0, -1], ne: [1, -1], e: [1, 0], se: [1, 1], s: [0, 1], sw: [-1, 1], w: [-1, 0],
     };
 
-    function doResize(g, p, keepRatio) {
+    function doResize(g, p, keepRatio, free) {
       var el0 = g.el0;
       var dir = RESIZE[g.h];
       if (!dir) return;
@@ -4852,7 +4910,46 @@
         var fs = (el0.style && el0.style.fontSize) || 18;
         f.style = { fontSize: Math.max(8, Math.round(fs * (w / Math.max(1, el0.w)))) };
       }
+      guides = [];
+      if (!el0.rot && !free && !(ratio && dir[0] && dir[1])) snapResize(g, f, dir, el0.type === "text" || BLOCKS[el0.type]);
       patch(g.id, f);
+    }
+
+    /** Тянем край — он прилипает к краям и центрам соседей и экрана (в макете — ещё и к целым пикселям). */
+    function snapResize(g, f, dir, fixedH) {
+      var th = 6 / view.z;
+      var best = [null, null];
+      var edges = [dir[0] < 0 ? f.x : dir[0] > 0 ? f.x + f.w : null, fixedH || !dir[1] ? null : dir[1] < 0 ? f.y : f.y + f.h];
+      els.forEach(function (el) {
+        if (el.id === g.id || !BOXED[el.type]) return;
+        var ob = G.elBounds(el, getEl);
+        if (!ob) return;
+        [[ob.x, ob.x + ob.w / 2, ob.x + ob.w], [ob.y, ob.y + ob.h / 2, ob.y + ob.h]].forEach(function (cands, ax) {
+          if (edges[ax] == null) return;
+          cands.forEach(function (c) {
+            var d = c - edges[ax];
+            if (Math.abs(d) <= th && (!best[ax] || Math.abs(d) < Math.abs(best[ax].d))) best[ax] = { d: d, v: c, ob: ob };
+          });
+        });
+      });
+      [0, 1].forEach(function (ax) {
+        if (edges[ax] == null) return;
+        var P = ax ? "y" : "x";
+        var S = ax ? "h" : "w";
+        var d = best[ax] ? best[ax].d : mode === "design" ? Math.round(edges[ax]) - edges[ax] : 0;
+        if (!d && !best[ax]) return;
+        if (dir[ax] < 0) {
+          f[P] += d;
+          f[S] -= d;
+        } else f[S] += d;
+        if (!best[ax]) return;
+        var ob = best[ax].ob;
+        var Q = ax ? "x" : "y";
+        var T = ax ? "w" : "h";
+        var lo = Math.min(ob[Q], f[Q]);
+        var hi = Math.max(ob[Q] + ob[T], f[Q] + f[T]);
+        guides.push(ax ? { a: G.pt(lo, best[ax].v), b: G.pt(hi, best[ax].v) } : { a: G.pt(best[ax].v, lo), b: G.pt(best[ax].v, hi) });
+      });
     }
 
     function doGroupScale(g, p) {
@@ -6187,6 +6284,10 @@
         if (ro) ro.disconnect();
         document.removeEventListener("pointerdown", onDocPointer, true);
         window.removeEventListener("blur", onWinBlur);
+        if (inspector) {
+          document.removeEventListener("pointerup", inspUp, true);
+          document.removeEventListener("pointercancel", inspUp, true);
+        }
         if (saveViewTimer) clearTimeout(saveViewTimer);
         Array.from(tables.keys()).forEach(dropTable);
         root.remove();

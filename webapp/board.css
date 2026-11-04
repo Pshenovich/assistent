@@ -390,6 +390,12 @@ html[data-theme="light"] .leo-board {
   stroke-dasharray: 3 3;
 }
 
+/* Макет: сплошная красная линия, как во Figma. */
+.lb-guide.is-design {
+  stroke: #f24822;
+  stroke-dasharray: none;
+}
+
 .lb-marquee {
   fill: var(--lb-accent-soft);
   stroke: var(--lb-accent);

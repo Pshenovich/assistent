@@ -369,8 +369,11 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["rot"] = _num(raw.get("rot"), 0, -360, 360)
     if raw.get("group"):
         el["group"] = _str(raw.get("group"))
-    if raw.get("frame") and etype != "line" and raw.get("frame") != eid:
-        el["frame"] = _str(raw.get("frame"))  # экран, в котором лежит элемент (макет); у экрана — внешний экран
+    # Экран, в котором лежит элемент (макет); у экрана — внешний экран. Стрелка — только свободная:
+    # привязанная (переход между экранами) ходит за фигурами.
+    tied = etype == "line" and any(isinstance(raw.get(k), dict) and raw[k].get("el") for k in ("start", "end"))
+    if raw.get("frame") and raw.get("frame") != eid and not tied:
+        el["frame"] = _str(raw.get("frame"))
     if raw.get("text"):
         el["text"] = _str(raw.get("text"), MAX_TEXT)
     style = raw.get("style")

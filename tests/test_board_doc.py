@@ -260,6 +260,9 @@ class BoardDesignModeTests(unittest.TestCase):
         self.assertEqual((f["name"], f["device"], f["style"]["fill"]), ("Главная", "iphone", "#ffffff"))
         self.assertEqual(board["elements"]["t"]["frame"], "f")
         self.assertNotIn("frame", board["elements"]["l"])  # стрелки (переходы) — вне экранов
+        free = board_doc.parse_board(json.dumps({"v": 1, "elements": {"f": {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 393, "h": 852},
+            "s": {"id": "s", "type": "line", "x": 0, "y": 0, "points": [[10, 10], [90, 10]], "frame": "f"}}}))
+        self.assertEqual(free["elements"]["s"]["frame"], "f")  # свободная стрелка — часть экрана
         self.assertNotIn("mode", board_doc.parse_board(_board(A)))
         self.assertNotIn("mode", board_doc.parse_board(json.dumps({"v": 1, "mode": "evil", "elements": {}})))
         self.assertEqual(json.loads(board_doc.empty_board("design"))["mode"], "design")
