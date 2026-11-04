@@ -261,6 +261,16 @@ def list_active_by_item_ids(
     return out
 
 
+def find_active_share(
+    user_id: int | str, item_kind: str, item_id: str | int, sheet_ids: list[str] | None = None
+) -> Optional[dict[str, Any]]:
+    """Активная ссылка на тот же набор листов (без sheet_ids — последняя), ничего не меняя."""
+    active = list_active_shares(_uid(user_id), (item_kind or "").strip(), str(item_id).strip())
+    if sheet_ids is None:
+        return active[0] if active else None
+    return next((x for x in active if _same_sheets(x.get("sheet_ids") or [], sheet_ids)), None)
+
+
 def create_or_get_share(
     user_id: int | str,
     item_kind: str,

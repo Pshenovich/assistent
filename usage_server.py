@@ -14285,6 +14285,12 @@ async def miniapp_share_create(
         raise HTTPException(status_code=404, detail="Запись не найдена")
     access = (body.access if body else None)
     sheet_ids = body.sheet_ids if body else None
+    if owner != uid:
+        # Участник может скопировать уже созданную ссылку, но новые ссылки и их доступ — у владельца.
+        existing = await run_in_threadpool(share_links_store.find_active_share, owner, kind, item_id, sheet_ids)
+        if existing:
+            return _share_response(existing)
+        raise HTTPException(status_code=403, detail="Новую ссылку создаёт владелец документа — попросите его поделиться.")
     try:
         link = await run_in_threadpool(
             share_links_store.create_or_get_share,
@@ -14312,6 +14318,8 @@ async def miniapp_share_revoke(
     owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
     if not owner:
         return {"shared": False, "revoked": False, "access": None}
+    if owner != uid:
+        raise HTTPException(status_code=403, detail="Отключить ссылку может только владелец документа.")
     token = str(request.query_params.get("token") or "").strip() or None
     revoked = await run_in_threadpool(share_links_store.revoke_share, owner, kind, item_id, token)
     left = await run_in_threadpool(share_links_store.list_active_shares, owner, kind, item_id)
