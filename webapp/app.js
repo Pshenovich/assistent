@@ -31499,6 +31499,9 @@
       if (noteHeadPadRO) noteHeadPadRO.disconnect();
       noteHeadPadRO = new ResizeObserver(scheduleNoteHeadInline);
       noteHeadPadRO.observe(pad);
+      // Кнопки справа появляются после открытия заметки — пересчитать отступ справа.
+      var moreWrap = document.getElementById("note-editor-more-wrap");
+      if (moreWrap) noteHeadPadRO.observe(moreWrap);
       noteHeadPad = pad;
     }
     // Только когда есть место: на телефоне и в узкой колонке — шапка как раньше (в несколько строк).
@@ -31509,10 +31512,12 @@
     var more = document.getElementById("note-editor-more-wrap");
     var pr = pad.getBoundingClientRect();
     var sr = sheet.getBoundingClientRect();
-    var l = back && back.offsetParent ? back.getBoundingClientRect().right - pr.left + 12 : 0;
-    var r = more && more.offsetParent ? pr.right - more.getBoundingClientRect().left + 12 : 0;
-    sheet.style.setProperty("--head-l", Math.max(0, Math.round(l)) + "px");
-    sheet.style.setProperty("--head-r", Math.max(0, Math.round(r)) + "px");
+    // Отступы — от краёв окна заметки (CSS вычитает поля контейнера сам: у доски и обычного листа они разные).
+    // Слева — кнопка «‹» постоянного размера: отступ задан в CSS (--head-l: 52px), замер не нужен.
+    var r = more && more.offsetParent ? sr.right - more.getBoundingClientRect().left + 12 : 0;
+    if (r > 0) sheet.style.setProperty("--head-r", Math.round(r) + "px");
+    if (back && !back.getAttribute("title")) back.setAttribute("title", "К списку");
+    if (back && !back.getAttribute("aria-label")) back.setAttribute("aria-label", "К списку");
     // Полоса с кнопками — по центру строки заголовка (у блока заголовка свой отступ сверху).
     var title = document.getElementById("note-editor-title-input");
     var tr = title ? title.getBoundingClientRect() : pr;
