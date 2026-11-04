@@ -36655,6 +36655,7 @@
     if (type === "focus.changed") {
       // Участник встречи разобрал её задачи — карточка «Задачи из встречи» общая, перечитываем сразу.
       if (ev.note_id != null) meetingTasksRefresh(ev.note_id); // и таблицу задач, если эта встреча открыта
+      if (document.querySelector(".focus-chat-card")) kickFocusLive(); // и карточки задач в чате
       if (realtimeFocusTimer) clearTimeout(realtimeFocusTimer);
       realtimeFocusTimer = setTimeout(function () {
         realtimeFocusTimer = null;
@@ -47449,6 +47450,7 @@
   // Задачи встречи в чате у нескольких участников: опрашиваем их состояние, пока карточки на экране,
   // — кто-то поставил, выполнил или поправил задачу, у остальных это видно через пару секунд.
   var FOCUS_LIVE_MS = 3000;
+  var FOCUS_LIVE_SOCKET_MS = 15000; // при открытом сокете изменения приходят событием focus.changed
   var focusLiveTimer = null;
 
   function focusLiveIds() {
@@ -47461,7 +47463,17 @@
   }
 
   function ensureFocusLive() {
-    if (!focusLiveTimer) focusLiveTimer = setTimeout(tickFocusLive, FOCUS_LIVE_MS);
+    var rt = realtimeApi();
+    var ms = rt && rt.isOpen() ? FOCUS_LIVE_SOCKET_MS : FOCUS_LIVE_MS;
+    if (!focusLiveTimer) focusLiveTimer = setTimeout(tickFocusLive, ms);
+  }
+
+  function kickFocusLive() {
+    if (focusLiveTimer) {
+      clearTimeout(focusLiveTimer);
+      focusLiveTimer = null;
+    }
+    tickFocusLive();
   }
 
   function tickFocusLive() {
