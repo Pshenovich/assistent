@@ -337,6 +337,39 @@
     return "var(--lb-fill-" + (FILLS.indexOf(key) >= 0 ? key : "white") + ")";
   }
 
+  // Заливки палитры — одни и те же в обеих темах (board.css --lb-fill-*).
+  var FILL_HEX = {
+    white: "#ffffff", gray: "#f1f3f5", red: "#ffe3e3", orange: "#ffe8cc", yellow: "#fff3bf", lime: "#e9fac8", green: "#d3f9d8",
+    teal: "#c3fae8", cyan: "#c5f6fa", blue: "#d0ebff", indigo: "#dbe4ff", purple: "#e5dbff", pink: "#ffdeeb", brown: "#efe3d6",
+  };
+  var TEXT_DARK = "#1f2328";
+  var TEXT_LIGHT = "#ffffff";
+
+  function relLum(hex) {
+    var c = [1, 3, 5].map(function (i) {
+      var v = parseInt(hex.slice(i, i + 2), 16) / 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  }
+
+  /** Цвет текста по заливке (как во Figma): если цвет текста не выбран вручную — тёмный на светлой
+   * заливке, белый на тёмной. null — заливки нет (текст по теме). */
+  function autoTextColor(el) {
+    var st = (el && el.style) || {};
+    if (st.textColor && st.textColor !== "ink") return null;
+    if (el.type === "sticky" || st.fillOff || (st.fillOpacity != null && Number(st.fillOpacity) < 0.5)) return null;
+    var hex = null;
+    var g = st.fillGrad && /#[0-9a-fA-F]{6}/.exec(String(st.fillGrad));
+    if (g) hex = g[0];
+    else if (isHex(st.fill)) hex = st.fill;
+    else if (FILL_HEX[st.fill]) hex = FILL_HEX[st.fill];
+    if (!hex) return null;
+    var L = relLum(hex.toLowerCase());
+    // Какой из двух цветов контрастнее на этой заливке (по WCAG).
+    return 1.05 / (L + 0.05) > (L + 0.05) / (relLum(TEXT_DARK) + 0.05) ? TEXT_LIGHT : TEXT_DARK;
+  }
+
   function stickyVar(key) {
     if (isHex(key)) return key;
     return "var(--lb-sticky-" + (STICKY.indexOf(key) >= 0 ? key : "yellow") + ")";
@@ -1154,7 +1187,7 @@
       var fs = Number(st.fontSize) || 16;
       div.style.fontSize = fs + "px";
       div.style.fontWeight = st.fontWeight ? String(st.fontWeight) : st.bold ? "600" : "";
-      var color = st.textColor ? inkVar(st.textColor) : "";
+      var color = autoTextColor(el) || (st.textColor ? inkVar(st.textColor) : "");
       div.style.color = color;
       div.style.textAlign = alignOf(el);
       div.style.fontFamily = fontStack(st.fontFamily);
@@ -8901,7 +8934,7 @@
         ctx.setLineDash([]);
         var tl = textLayout(ctx, el, colors);
         if (tl) {
-          ctx.fillStyle = el.type === "sticky" ? "#1f2328" : colors.ink(st.textColor || "ink");
+          ctx.fillStyle = el.type === "sticky" ? "#1f2328" : autoTextColor(el) || colors.ink(st.textColor || "ink");
           ctx.textAlign = tl.align === "center" || tl.align === "right" ? tl.align : "left";
           ctx.textBaseline = "middle";
           if (tl.label) {
@@ -9047,7 +9080,7 @@
         }
         var tl = textLayout(measure, el, colors);
         if (tl) {
-          var color = el.type === "sticky" ? "#1f2328" : colors.ink(st.textColor || "ink");
+          var color = el.type === "sticky" ? "#1f2328" : autoTextColor(el) || colors.ink(st.textColor || "ink");
           if (tl.label) {
             var wmax = 0;
             tl.lines.forEach(function (l) {
@@ -9158,7 +9191,7 @@
         }
         var tl = el.type !== "frame" && textLayout(measure, el, colors);
         if (tl) {
-          var color = el.type === "sticky" ? "#1f2328" : colors.ink(st.textColor || "ink");
+          var color = el.type === "sticky" ? "#1f2328" : autoTextColor(el) || colors.ink(st.textColor || "ink");
           out.push('<text font-size="' + tl.fs + '" font-family="' + esc(tl.fam) + '"' + (tl.wt !== 400 ? ' font-weight="' + tl.wt + '"' : "") +
             (tl.ls ? ' letter-spacing="' + Math.round(tl.ls * 100) / 100 + '"' : "") + (tl.deco ? ' text-decoration="' + (tl.deco === "strike" ? "line-through" : "underline") + '"' : "") +
             ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") +

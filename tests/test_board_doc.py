@@ -349,3 +349,12 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         self.assertEqual(svg.count('stroke-linejoin="round"'), len(board_doc.FLOW_SHAPES))
         self.assertIn("Шаг cylinder", svg)
         self.assertIn("цилиндр", board_doc.board_describe(body))
+
+    def test_text_color_follows_fill(self) -> None:
+        def color(style):
+            body = _board({"id": "a", "type": "rect", "x": 0, "y": 0, "w": 100, "h": 50, "text": "Т", "style": style})
+            return board_doc.render_board_svg(body).split('<text font-size="16" fill="')[1].split('"')[0]
+        self.assertEqual(color({"fill": "#7048e8"}), "#ffffff")  # тёмная заливка — белый текст
+        self.assertEqual(color({"fill": "yellow"}), "#1f2328")  # светлая — тёмный
+        self.assertEqual(color({"fill": "#7048e8", "textColor": "red"}), "#e03131")  # выбран вручную — как есть
+        self.assertEqual(board_doc.auto_text_color({}, None), None)

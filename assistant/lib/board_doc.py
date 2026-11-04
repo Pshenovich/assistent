@@ -781,6 +781,23 @@ def _bounds(elements: dict[str, dict[str, Any]]) -> tuple[float, float, float, f
     return min(xs) - 40, min(ys) - 40, max(xs) + 40, max(ys) + 40
 
 
+def _rel_lum(hex6: str) -> float:
+    def ch(i: int) -> float:
+        v = int(hex6[i:i + 2], 16) / 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * ch(1) + 0.7152 * ch(3) + 0.0722 * ch(5)
+
+
+def auto_text_color(st: dict[str, Any], fill: Optional[str]) -> Optional[str]:
+    """Цвет текста по заливке (как во Figma, webapp/board.js autoTextColor): None — цвет выбран вручную или заливки нет."""
+    if (st.get("textColor") and st.get("textColor") != "ink") or st.get("fillOff") or not fill or not _HEX_RE.match(fill):
+        return None
+    if st.get("fillOpacity") is not None and float(st["fillOpacity"]) < 0.5:
+        return None
+    lum = _rel_lum(fill.lower())
+    return "#ffffff" if 1.05 / (lum + 0.05) > (lum + 0.05) / (_rel_lum("#1f2328") + 0.05) else "#1f2328"
+
+
 def _attr(v: Any) -> str:
     return html.escape(str(v), quote=True)
 
@@ -1043,7 +1060,7 @@ def render_board_svg(body: Any, *, view: Optional[tuple[float, float, float, flo
         text = str(el.get("text") or "")
         if text and t != "image":
             fs = _num(st.get("fontSize"), 16, 6, 200)
-            color = _attr(_ink(st.get("textColor"), "#111827"))
+            color = _attr((t != "sticky" and auto_text_color(st, fill)) or _ink(st.get("textColor"), "#111827"))
             lines = text.split("\n")
             lh = float(st.get("lineHeight") or 0) or fs * 1.3
             # Середина подписи: у треугольника — в широкой части, у цилиндра — под крышкой.

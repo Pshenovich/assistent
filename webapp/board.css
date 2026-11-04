@@ -25,21 +25,22 @@
   --lb-ink-purple: #b197fc;
   --lb-ink-pink: #f783ac;
   --lb-ink-brown: #c9a27e;
-  /* Заливки тёмной темы — насыщенные (не «серые»), светлый текст на них читается. */
-  --lb-fill-white: #3d4048;
-  --lb-fill-gray: #5a5e68;
-  --lb-fill-red: #b03a3a;
-  --lb-fill-orange: #b8651c;
-  --lb-fill-yellow: #a58a12;
-  --lb-fill-lime: #5f8f17;
-  --lb-fill-green: #2b8a45;
-  --lb-fill-teal: #13806f;
-  --lb-fill-cyan: #15819e;
-  --lb-fill-blue: #2463b0;
-  --lb-fill-indigo: #4453c2;
-  --lb-fill-purple: #6c47cf;
-  --lb-fill-pink: #b03b72;
-  --lb-fill-brown: #85603f;
+  /* Заливки — одни и те же в обеих темах (как в светлой): доска у всех выглядит одинаково,
+     текст в залитой фигуре сам берёт контрастный цвет (board.js autoTextColor). */
+  --lb-fill-white: #ffffff;
+  --lb-fill-gray: #f1f3f5;
+  --lb-fill-red: #ffe3e3;
+  --lb-fill-orange: #ffe8cc;
+  --lb-fill-yellow: #fff3bf;
+  --lb-fill-lime: #e9fac8;
+  --lb-fill-green: #d3f9d8;
+  --lb-fill-teal: #c3fae8;
+  --lb-fill-cyan: #c5f6fa;
+  --lb-fill-blue: #d0ebff;
+  --lb-fill-indigo: #dbe4ff;
+  --lb-fill-purple: #e5dbff;
+  --lb-fill-pink: #ffdeeb;
+  --lb-fill-brown: #efe3d6;
   --lb-sticky-yellow: #fff1a8;
   --lb-sticky-orange: #ffd5a8;
   --lb-sticky-pink: #ffc9de;
@@ -990,6 +991,7 @@ html[data-theme="light"] .leo-board {
 .lb-card-head {
   padding: 9px 12px;
   background: var(--head);
+  color: #1f2328; /* шапка — светлая заливка в обеих темах */
   font-size: 13px;
   font-weight: 600;
   line-height: 1.3;
