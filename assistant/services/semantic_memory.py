@@ -98,7 +98,7 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
     for n in notes_store.list_transcription_notes(uid, limit=500):
         if str(n.get("owner_user_id") or n.get("user_id") or uid) != str(uid):
             continue
-        full = notes_store.get_note(uid, int(n["id"])) or n
+        full = n  # список и так отдаёт полные строки (раньше — ещё get_note на каждую расшифровку)
         summary = _plain(str(full.get("body") or "")) if tnotes.has_summary(full) else ""
         transcript = _plain(tnotes.transcript_html(full))
         date = str(full.get("created_at") or "")[:10]

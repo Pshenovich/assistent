@@ -45,9 +45,11 @@ async def semantic_index_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
 def register_semantic_index_jobs(app) -> None:
     if app.job_queue is None or not embed_client.enabled():
         return
+    # Полный проход по всем — страховка: правки в вебе, саммари, почта и задачи сами ставят
+    # переиндексацию через минуту (semantic_memory.note_changed). Раньше — каждые 15 минут.
     try:
-        interval = max(120.0, float(os.getenv("SEMANTIC_INDEX_SEC", "900") or "900"))
+        interval = max(120.0, float(os.getenv("SEMANTIC_INDEX_SEC", "3600") or "3600"))
     except ValueError:
-        interval = 900.0
+        interval = 3600.0
     app.job_queue.run_repeating(semantic_index_tick, interval=interval, first=90, name="semantic_index")
     print(f"[semantic] index every {interval}s")
