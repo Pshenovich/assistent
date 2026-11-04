@@ -16819,6 +16819,14 @@ html.note-discussion-open .note-discussion-overlay { background: var(--surface);
 .note-discuss-sugg { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 6px; }
 .note-discuss-sugg button { padding: 7px 12px; border-radius: 999px; border: 1px solid var(--overlay-5); background: var(--overlay-2); color: var(--text); font: inherit; font-size: 0.8125rem; cursor: pointer; }
 .note-discuss-sugg button:hover { background: var(--overlay-4); }
+/* Пустой чат на «Макете»: группы подсказок, раскрываются по нажатию. */
+.note-discuss-groups { display: flex; flex-direction: column; gap: 8px; width: 100%; max-width: 420px; margin-top: 8px; }
+.note-discuss-group { border: 1px solid var(--overlay-5); border-radius: 14px; background: var(--overlay-1, transparent); padding: 4px 8px 6px; }
+.note-discuss-group > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px; font-size: 0.875rem; font-weight: 600; color: var(--text); cursor: pointer; }
+.note-discuss-group > summary::-webkit-details-marker { display: none; }
+.note-discuss-group > summary::after { content: ""; width: 7px; height: 7px; border-right: 1.6px solid var(--text-secondary); border-bottom: 1.6px solid var(--text-secondary); transform: rotate(45deg); margin-right: 4px; transition: transform 0.15s; }
+.note-discuss-group[open] > summary::after { transform: rotate(-135deg); }
+.note-discuss-group .note-discuss-sugg { justify-content: flex-start; margin: 2px 0 4px; }
 
 /* ---------- Поле ввода ---------- */
 #note-paie-reply-form { gap: 6px; padding: 8px 8px 8px 12px; border-radius: 22px; border: 1px solid var(--overlay-5); background: var(--overlay-2); box-shadow: none; }

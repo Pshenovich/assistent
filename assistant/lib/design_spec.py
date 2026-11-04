@@ -314,7 +314,8 @@ def _node(el: dict[str, Any], parent: Optional[dict[str, Any]], kids: dict[str, 
             "fontSize": fs,
             "fontWeight": int(st.get("fontWeight") or (600 if st.get("bold") else 400)),
             "lineHeight": _r(st["lineHeight"]) if st.get("lineHeight") else "auto",
-            "color": _hex_ink(st.get("textColor"), "#000000"),
+            # Без своего цвета текст берёт контрастный к заливке (как рисует клиент).
+            "color": bd.auto_text_color(st, None if st.get("fillOff") else _hex_fill(st.get("fill"))) or _hex_ink(st.get("textColor"), "#000000"),
             "align": st.get("align") if st.get("align") in ("left", "center", "right") else ("left" if t == "text" else "center"),
             "valign": st.get("valign") or "center",
         }
@@ -706,9 +707,11 @@ def frame_svg(body: Any, ref: str) -> Optional[str]:
     return bd.render_board_svg({"v": 1, "mode": "design", "elements": sub}, view=view, labels=False)
 
 
-def spec_outline(spec: dict[str, Any]) -> str:
-    """Короткое текстовое дерево фрейма — агенту для обзора без полного JSON."""
+def spec_outline(spec: dict[str, Any], *, detail: bool = False) -> str:
+    """Короткое текстовое дерево фрейма — агенту для обзора без полного JSON.
+    detail=True — тексты целиком (до 400 символов) и цвета: заливка, текст, обводка (для Лео: опечатки, правки цвета)."""
     lines: list[str] = []
+    limit = 400 if detail else 60
 
     def walk(n: dict[str, Any], depth: int) -> None:
         bits = [n["type"]]
@@ -721,7 +724,18 @@ def spec_outline(spec: dict[str, Any]) -> str:
         tx = n.get("text")
         if tx:
             s = tx["content"].replace("\n", " ⏎ ")
-            bits.append(f"“{s[:60]}{'…' if len(s) > 60 else ''}” {tx['fontSize']}/{tx['fontWeight']}")
+            bits.append(f"“{s[:limit]}{'…' if len(s) > limit else ''}” {tx['fontSize']}/{tx['fontWeight']}")
+        if detail:
+            f = n.get("fill") or {}
+            if f.get("color"):
+                bits.append(f"fill {f['color']}")
+            elif f.get("gradient"):
+                bits.append("fill градиент")
+            if tx:
+                bits.append(f"color {tx['color']}")
+            st = n.get("stroke") or {}
+            if st.get("color") and n["type"] not in ("line", "pen"):
+                bits.append(f"stroke {st['color']}")
         lines.append("  " * depth + " ".join(bits) + f"  #{n['id']}")
         for c in n.get("children") or []:
             walk(c, depth + 1)

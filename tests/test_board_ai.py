@@ -82,8 +82,42 @@ class BoardAiTests(unittest.TestCase):
     def test_update_keeps_design_mode(self):
         body = json.loads(board_ai.build_board(FLOW))
         body["mode"] = "design"
+        n = len(body["elements"])
         upd = board_ai.update_board(json.dumps(body), {"action": "update", "nodes": [{"id": "x1", "text": "Ещё"}]})
         self.assertEqual(json.loads(upd).get("mode"), "design")
+        self.assertEqual(len(_els(upd)), n)  # на макете схемы не дорисовываются
+
+    def test_design_prompt_and_layer_edits(self):
+        body = json.dumps({"v": 1, "mode": "design", "elements": {
+            "s": {"type": "frame", "name": "Вход", "x": 0, "y": 0, "w": 393, "h": 852, "z": 1, "style": {"fill": "#ffffff"}},
+            "t": {"type": "text", "frame": "s", "x": 20, "y": 40, "w": 200, "h": 30, "z": 2, "text": "Добро пожаловть в приложение " * 4,
+                  "style": {"fontSize": 24, "textColor": "#111111"}},
+            "b": {"type": "rect", "frame": "s", "x": 20, "y": 700, "w": 353, "h": 52, "z": 3, "text": "Войти", "name": "Frame 12",
+                  "style": {"fill": "#305bab", "strokeWidth": 0}},
+            "h": {"type": "rect", "frame": "s", "x": 0, "y": 0, "w": 10, "h": 10, "z": 4, "hidden": True, "name": "Старый баннер"},
+        }}, ensure_ascii=False)
+        self.assertTrue(board_ai.is_design(body))
+        block = board_ai.design_prompt_block("8", "Макет", body, ["b", "нет"])
+        self.assertIn("Экран «Вход»", block)
+        self.assertIn("#b", block)
+        self.assertIn("fill #305bab", block)
+        self.assertEqual(block.count("пожаловть"), 4)  # текст целиком — для поиска опечаток
+        self.assertIn("“Войти” 16/400 fill #305bab color #ffffff", block)  # цвет текста — как на экране
+        self.assertIn("Скрытые слои: rect «Старый баннер» #h", block)
+        self.assertIn("выделил", block)
+        self.assertIn("layers", board_ai.design_system_addon())
+        upd = board_ai.update_board(body, {"action": "update", "layers": [
+            {"id": "b", "text": "Продолжить", "fill": "#2463b0", "name": "Кнопка «Войти»"},
+            {"id": "t", "textColor": "#ff0000"}, {"id": "h", "hidden": False}, {"id": "s", "text": "нельзя"},
+            {"id": "b", "fill": "url(javascript:1)"}, {"id": "нет", "text": "x"},
+        ]})
+        els = _els(upd)
+        self.assertEqual((els["b"]["text"], els["b"]["name"], els["b"]["style"]["fill"]), ("Продолжить", "Кнопка «Войти»", "#2463b0"))
+        self.assertEqual(els["t"]["style"]["textColor"], "#ff0000")
+        self.assertNotIn("hidden", els["h"])
+        self.assertNotIn("text", els["s"])
+        self.assertEqual((els["b"]["x"], els["b"]["w"]), (20, 353))  # геометрия не меняется
+        self.assertEqual(json.loads(upd)["mode"], "design")
 
     def test_update_edits_adds_and_removes(self):
         body = board_ai.build_board(FLOW)

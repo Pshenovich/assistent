@@ -3827,6 +3827,7 @@
       mode = m;
       root.classList.toggle("is-mode-design", m === "design");
       root.classList.toggle("is-mode-board", m !== "design");
+      if (typeof o.onModeChange === "function") o.onModeChange(m);
       drawTools();
       renderEmptyHint();
       zoomBar.removeAttribute("data-pct");
@@ -3955,7 +3956,7 @@
       var acts = o.blockActions;
       if (!acts || readOnly) return [];
       var hasText = list.some(function (e) {
-        return elText(e).trim();
+        return mode === "design" ? !!designLabel(e) : elText(e).trim();
       });
       return NOTE_ACTS.filter(function (a) {
         if (!acts[a.id]) return false;
@@ -3965,8 +3966,53 @@
       });
     }
 
+    // ---- Макет и Лео: что выделено — для чипа «Обсудить», задачи и ссылки; тексты слоёв — для «ИИ» ----
+    var LAYER_RU = { frame: "Фрейм", text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", image: "Картинка", vector: "Иконка",
+      line: "Линия", pen: "Рисунок" };
+
+    function inSubtree(el, top) {
+      for (var q = el, g = 0; q && g < 40; q = frameOf(q), g++) if (q.id === top.id) return true;
+      return false;
+    }
+
+    /** Текстовые слои внутри (или сам слой) — сверху вниз, слева направо. */
+    function textLayersOf(el) {
+      var out = [];
+      if (el.type !== "frame") return String(el.text || "").trim() ? [el] : [];
+      els.forEach(function (x) {
+        if (x.type !== "frame" && !x.hidden && String(x.text || "").trim() && inSubtree(x, el)) out.push(x);
+      });
+      return out.sort(function (a, b) {
+        return a.y - b.y || a.x - b.x;
+      });
+    }
+
+    /** Подпись слоя для чипа: «Фрейм «Вход»: Войти · E-mail · …» (без id — их сервер получает отдельно). */
+    function designLabel(el) {
+      var kind = LAYER_RU[el.type] || SHAPE_RU[el.type] || "Слой";
+      var own = String(el.name || "").trim();
+      if (el.type === "frame") {
+        var texts = textLayersOf(el).slice(0, 6).map(function (x) {
+          return oneLine(String(x.text)).slice(0, 40);
+        });
+        return kind + " «" + (own || "Фрейм") + "»" + (texts.length ? ": " + texts.join(" · ") : "");
+      }
+      var t = oneLine(String(el.text || "")).slice(0, 120);
+      if (t) return kind + " «" + t + "»" + (own && own !== t ? " (" + own + ")" : "");
+      return own || el.type === "image" || el.type === "vector" ? kind + (own ? " «" + own + "»" : "") : "";
+    }
+
     /** Выделенные элементы для действий заметки: id, вид и текст (сверху вниз, слева направо). */
     function selectionInfo() {
+      if (mode === "design") {
+        return selList().slice().sort(function (a, b) {
+          return a.y - b.y || a.x - b.x;
+        }).map(function (el) {
+          return { id: el.id, type: el.type, text: designLabel(el), label: el.name || "", layer: true };
+        }).filter(function (it) {
+          return it.text;
+        });
+      }
       return selList().filter(function (el) {
         return el.type !== "pen";
       }).sort(function (a, b) {
@@ -4051,7 +4097,21 @@
       if (mode === "design" && !list.some(function (e) {
         return BLOCKS[e.type];
       })) {
-        propsBar.classList.add("hidden");
+        var dActs = !readOnly && list.length && !(gesture && gesture.kind !== "none") && !editing ? blockActsFor(list) : [];
+        if (!dActs.length) {
+          propsBar.classList.add("hidden");
+          return;
+        }
+        var dKey = "design|" + list.map(function (e) {
+          return e.id;
+        }).join(",");
+        if (propsBar.getAttribute("data-key") !== dKey) {
+          propsBar.setAttribute("data-key", dKey);
+          propsBar.innerHTML = '<button type="button" class="lb-btn lb-pbtn lb-nact-trigger" data-p="noteacts" title="ИИ, обсудить с Лео, задача, ссылка">' +
+            NOTE_ACTS[0].svg + "</button>";
+        }
+        propsBar.classList.remove("hidden");
+        positionProps();
         return;
       }
       // Правка таблицы — у неё своё меню (как в заметке), панель доски ему мешает.
@@ -4063,7 +4123,9 @@
       list.forEach(function (el) {
         types[el.type] = 1;
       });
-      var anyShape = types.rect || types.diamond || types.ellipse;
+      var anyShape = list.some(function (e) {
+        return !!SHAPES[e.type];
+      });
       var anyStroke = anyShape || types.line || types.pen;
       var anyText = types.text || anyShape || types.sticky || types.line;
       var h = [];
@@ -6803,10 +6865,24 @@
           box.onclick = function (ev) {
             var btn = ev.target.closest("[data-act]");
             if (!btn) return;
-            var fn = o.blockActions && o.blockActions[btn.getAttribute("data-act")];
+            var actId = btn.getAttribute("data-act");
+            var fn = o.blockActions && o.blockActions[actId];
             closePop();
             if (editing) finishEdit();
-            if (fn) fn(selectionInfo());
+            if (!fn) return;
+            if (actId === "ai" && mode === "design") {
+              // «ИИ» на макете переписывает текстовые слои выделенного (у фрейма — все тексты внутри).
+              var seen = {};
+              var items = [];
+              selList().forEach(function (el) {
+                textLayersOf(el).forEach(function (x) {
+                  if (seen[x.id] || items.length >= 40) return;
+                  seen[x.id] = 1;
+                  items.push({ id: x.id, type: x.type, text: String(x.text || "") });
+                });
+              });
+              fn(items);
+            } else fn(selectionInfo());
           };
         });
       } else if (p === "unbend") {
@@ -10031,6 +10107,9 @@
       },
       setTexts: setTexts,
       getSelection: selectionInfo,
+      getMode: function () {
+        return mode;
+      },
       isEditing: function () {
         return !!editing || !!gesture;
       },

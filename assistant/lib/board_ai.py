@@ -105,6 +105,128 @@ def system_addon() -> str:
 """.strip()
 
 
+# ---- Лист «Макет» (mode=design): Лео разбирает экраны и правит существующие слои ----
+
+MAX_LAYER_EDITS = 200
+
+
+def is_design(body: Any) -> bool:
+    return board_doc.parse_board(body).get("mode") == "design"
+
+
+def design_system_addon() -> str:
+    return """
+## Макет (лист «Макет»: экраны приложения, как во Figma)
+Открыт макет — ниже его экраны деревом слоёв: тип, «имя», размер W×H @x,y (от родителя), автолэйаут
+[row|column|grid gap pad], текст “…” размер/вес, цвета (fill, color, stroke) и #id слоя.
+
+Разбор — отвечай текстом, по экранам, называя экраны и слои по именам (не по id):
+- UX: иерархия, понятность действий, размеры нажимаемых зон (меньше 44 px — мелко), контраст, единообразие отступов и шрифтов;
+- задание разработчику: по экранам — что на экране, элементы и их поведение, состояния, данные, размеры и цвета из дерева;
+- сверка с требованиями из заметки: что есть, чего не хватает, что расходится;
+- опечатки и пропущенные состояния: пустой список, ошибка, загрузка, длинный текст, нет сети.
+Не выдумывай того, чего нет в дереве; чего не видно — так и скажи.
+
+Правки — только существующих слоёв, одним блоком (после него — одно короткое предложение, что изменено):
+```leo-board
+{"action":"update","sheet_id":"123","layers":[
+  {"id":"t1","text":"Продолжить"},{"id":"r1","fill":"#2463b0"},{"id":"t2","textColor":"#ffffff"},
+  {"id":"r2","stroke":"#d0d5dd"},{"id":"g1","hidden":true},{"id":"f3","name":"Кнопка «Войти»"}]}
+```
+- Поля: text — новый текст слоя; name — имя слоя; fill / textColor / stroke — цвет #rrggbb; hidden — true / false.
+- Только id из дерева (и из «Скрытые слои»). Новых экранов и слоёв не создавай, ничего не двигай и не удаляй —
+  скажи, что это пока делается руками.
+- «Переименуй слои» — понятные короткие имена по смыслу, по-русски: «Кнопка „Войти“», «Поле e-mail», «Карточка ассистента».
+- Если просят разбор — блок не нужен. Схемы (nodes / edges) на макете не рисуй.
+""".strip()
+
+
+def design_prompt_block(sheet_id: str, title: str, body: Any, selected: Optional[list[str]] = None) -> str:
+    """Открытый макет для модели: экраны деревом слоёв с id, цветами и полными текстами."""
+    from assistant.lib import design_spec
+
+    sid = str(sheet_id or "").strip()
+    if not sid:
+        return ""
+    elements = board_doc.parse_board(body)["elements"]
+    frames = design_spec.list_frames(body)
+    out = [
+        f'Открыт макет sheet_id={sid} title="{str(title or "").strip()}". '
+        "Правка слоёв — action=update с этим sheet_id и ключом layers.",
+    ]
+    if not frames:
+        out.append("Экранов (фреймов) пока нет.")
+    for f in frames[:30]:
+        spec = design_spec.frame_spec(body, f["id"])
+        if spec:
+            out.append(f"\nЭкран «{f['name']}»:")
+            out.append(design_spec.spec_outline(spec, detail=True))
+    # Слои вне экранов (подписи, заметки рядом с макетом).
+    loose = [e for e in elements.values() if not e.get("frame") and e.get("type") != "frame" and not e.get("hidden")]
+    if loose:
+        out.append("\nВне экранов:")
+        for e in sorted(loose, key=lambda q: (q["y"], q["x"]))[:60]:
+            text = " ".join(str(e.get("text") or "").split())[:200]
+            out.append(f"{e['type']}" + (f" «{e['name']}»" if e.get("name") else "") + (f" “{text}”" if text else "") + f"  #{e['id']}")
+    hidden = [e for e in elements.values() if e.get("hidden")]
+    if hidden:
+        out.append("\nСкрытые слои: " + ", ".join(
+            f"{e['type']} «{e.get('name') or ' '.join(str(e.get('text') or '').split())[:40] or e['type']}» #{e['id']}" for e in hidden[:80]))
+    sel = [i for i in (selected or []) if i in elements][:40]
+    if sel:
+        out.append("\nПользователь выделил и показал в сообщении слои: " + ", ".join(
+            f"«{elements[i].get('name') or ' '.join(str(elements[i].get('text') or '').split())[:40] or elements[i]['type']}» #{i}" for i in sel)
+            + ". «Этот экран», «здесь», «эти» — про них.")
+    return "\n".join(out)[:40000]
+
+
+def _color_value(raw: Any) -> Optional[str]:
+    v = str(raw or "").strip().lower()
+    if re.match(r"^#[0-9a-f]{6}$", v) or v in board_doc.PALETTE:
+        return v
+    return None
+
+
+def update_design(board: dict[str, Any], action: dict[str, Any]) -> str:
+    """Правки слоёв макета: текст, имя, цвета, видимость. Геометрию и состав не трогаем."""
+    elements = board["elements"]
+    for raw in (action.get("layers") or [])[:MAX_LAYER_EDITS]:
+        if not isinstance(raw, dict):
+            continue
+        el = elements.get(str(raw.get("id") or ""))
+        if not el:
+            continue
+        st = dict(el.get("style") or {})
+        if "text" in raw and el["type"] not in ("frame", "image", "vector", "line", "pen", "table", "gantt", "card") and str(raw["text"]).strip():
+            el["text"] = str(raw["text"])[: board_doc.MAX_TEXT]
+        if "name" in raw and str(raw["name"]).strip():
+            el["name"] = str(raw["name"]).strip()[:120]
+        if "hidden" in raw:
+            if raw["hidden"] is True:
+                el["hidden"] = True
+            else:
+                el.pop("hidden", None)
+        fill = _color_value(raw.get("fill"))
+        if fill:
+            st["fill"] = fill
+            st.pop("fillOff", None)
+            st.pop("fillGrad", None)
+        color = _color_value(raw.get("textColor"))
+        if color:
+            st["textColor"] = color
+        stroke = _color_value(raw.get("stroke"))
+        if stroke:
+            st["stroke"] = stroke
+            st.pop("strokeOff", None)
+            st.pop("strokeGrad", None)
+            if not st.get("strokeWidth"):
+                st["strokeWidth"] = 1
+        if st:
+            el["style"] = st
+    out = {"v": 1, "mode": "design", "elements": elements}
+    return board_doc.normalize_board_body(json.dumps(out, ensure_ascii=False))
+
+
 def open_board_prompt_block(sheet_id: str, title: str, body: Any) -> str:
     """Открытая доска для модели: узлы и связи с id (без координат)."""
     sid = str(sheet_id or "").strip()
@@ -883,6 +1005,8 @@ def _bounds(elements: dict[str, dict[str, Any]]) -> Optional[tuple[float, float,
 def update_board(body: Any, action: dict[str, Any]) -> str:
     """action=update: правки узлов, новые узлы и связи, удаление, при relayout — заново раскладка."""
     board = board_doc.parse_board(body)
+    if board.get("mode") == "design":
+        return update_design(board, action)  # на макете — только правки существующих слоёв
     elements = board["elements"]
     remove = {str(x) for x in (action.get("remove") or []) if str(x)}
     for rid in list(remove):
@@ -1073,6 +1197,8 @@ def apply_action(note: dict[str, Any], action: dict[str, Any], note_sheets_mod: 
             )
         if not (action.get("nodes")) and not has_blocks(action):
             return None
+    if action.get("layers") and not action.get("nodes"):
+        return None  # правки слоёв без открытого макета — некуда применять
     nodes = action.get("nodes") if isinstance(action.get("nodes"), list) else []
     if not nodes and not has_blocks(action):
         return None

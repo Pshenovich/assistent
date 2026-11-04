@@ -32034,6 +32034,12 @@
       onOpenChat: openNoteDiscussionFromToolbar,
       // Шаблон «На моих данных» — Лео собирает его в чате по листам заметки.
       onTemplateAsk: askBoardTemplate,
+      // «Доска» ↔ «Макет»: в пустом чате — свои подсказки.
+      onModeChange: function () {
+        setTimeout(function () {
+          if (isNoteDiscussionOpen()) rerenderDiscussionFeed();
+        }, 0);
+      },
       // Макет для разработчика: код фрейма, ссылка для ИИ-агентов (MCP), превью фреймов.
       design: function (method, suffix, payload) {
         var nid = noteSheetsNoteId();
@@ -32111,7 +32117,12 @@
         if (!quote) return;
         var current = noteAskMode();
         var mode = noteAskUsesChips(current) ? current : current === "comment" ? "comment" : "gpt";
-        openNoteDiscussion({ mode: mode, draft: { quote: quote, prefix: "", suffix: "" }, focus: true });
+        var layers = (items || []).filter(function (it) {
+          return it.layer;
+        }).map(function (it) {
+          return String(it.id);
+        });
+        openNoteDiscussion({ mode: mode, draft: { quote: quote, prefix: "", suffix: "", layers: layers }, focus: true });
       },
       task: function (items) {
         var quote = boardSelectionQuote(items);
@@ -38243,6 +38254,7 @@
     var quotes = [];
     var parts = [];
     var boardTemplate = "";
+    var boardLayers = [];
     // То же по порядку: цитата — строками «> …», за ней свой текст (для нескольких реплаев).
     var threaded = [];
     function push(t) {
@@ -38257,6 +38269,9 @@
       if (node.nodeType !== 1) return;
       if (node.classList && node.classList.contains("note-gpt-quote-chip")) {
         var q = String(node.getAttribute("data-quote") || "").trim();
+        String(node.getAttribute("data-layers") || "").split(",").forEach(function (id) {
+          if (id && boardLayers.indexOf(id) < 0) boardLayers.push(id);
+        });
         // Цитата уходит в поле quote / reply UI, не в тело бабла.
         if (q) {
           quotes.push(q);
@@ -38325,8 +38340,8 @@
     }
     // Несколько цитат с комментариями между ними — отправляем по порядку («> цитата», под ней комментарий),
     // и в сообщении, и для модели; раньше все цитаты слипались в начале, а комментарии — после.
-    if (quotes.length > 1) return { text: tidy(threaded), quotes: [], threaded: true, boardTemplate: boardTemplate };
-    return { text: tidy(parts), quotes: quotes, boardTemplate: boardTemplate };
+    if (quotes.length > 1) return { text: tidy(threaded), quotes: [], threaded: true, boardTemplate: boardTemplate, boardLayers: boardLayers };
+    return { text: tidy(parts), quotes: quotes, boardTemplate: boardTemplate, boardLayers: boardLayers };
   }
 
   // Тело с реплаями по порядку: строки «> …» — блок цитаты, за ним свой текст.
@@ -38420,7 +38435,7 @@
     sel.addRange(range);
   }
 
-  function insertGptQuoteChip(quote) {
+  function insertGptQuoteChip(quote, layers) {
     var ed = noteGptEditor();
     var q = clipGptQuote(quote);
     if (!ed || !q) return false;
@@ -38432,6 +38447,8 @@
     var chip = document.createElement("span");
     chip.className = "note-gpt-quote-chip";
     chip.setAttribute("data-quote", q);
+    // Слои макета (id) — сервер покажет Лео, о каких слоях речь; в тексте чипа их нет.
+    if (layers && layers.length) chip.setAttribute("data-layers", layers.slice(0, 40).join(","));
     chip.setAttribute("contenteditable", "false");
     chip.textContent = clipChipPreview(q);
     ed._ignoreRange = true;
@@ -44746,7 +44763,7 @@
       wrap._shareKind,
       wrap._shareId
     );
-    if (useChips) insertGptQuoteChip(draftQuote);
+    if (useChips) insertGptQuoteChip(draftQuote, opts.draft && opts.draft.layers);
     var input = document.getElementById("note-paie-reply-input");
     var editor = noteGptEditor();
     var focusEl = noteAskUsesComposerEditor(noteAskMode()) ? editor : input;
@@ -48154,6 +48171,12 @@
     else sugg.push("Предложи следующие шаги");
     // На открытой доске — шаблоны «по заметке»: чип шаблона в поле ввода, Лео соберёт по листам.
     var boardOpen = !!openBoardForYjs();
+    if (openBoardIsDesign()) {
+      hint.textContent = "Лео видит экраны макета — слои, тексты, размеры и цвета — и может поправить тексты, цвета, имена и видимость слоёв." +
+        (shared ? " Чат видят все участники." : "");
+      box.appendChild(designSuggestions());
+      return box;
+    }
     if (!boardOpen) sugg.push("Нарисуй схему на доске");
     var chips = document.createElement("div");
     chips.className = "note-discuss-sugg";
@@ -48203,6 +48226,76 @@
     return box;
   }
 
+  function openBoardIsDesign() {
+    var ob = openBoardForYjs();
+    return !!(ob && ob.board && typeof ob.board.getMode === "function" && ob.board.getMode() === "design");
+  }
+
+  // Подсказки пустого чата на «Макете»: две раскрывающиеся группы; текст подсказки — в поле ввода.
+  var DESIGN_SUGG = [
+    { title: "Разобрать макет", open: true, items: [
+      ["Разбери экран по UX", "Разбери экран по UX: что непонятно, что мелко, где не хватает контраста или единообразия"],
+      ["Задание разработчику", "Напиши задание разработчику по экранам макета: элементы, поведение, состояния, размеры и цвета"],
+      ["Сверить с требованиями", "Сверь макет с требованиями из заметки: что есть, чего не хватает, что расходится"],
+      ["Опечатки и состояния", "Найди опечатки и пропущенные состояния: пустой список, ошибка, загрузка, длинный текст"],
+    ] },
+    { title: "Внести правки", open: false, items: [
+      ["Поменять тексты", "Поменяй тексты: "],
+      ["Поменять цвета", "Поменяй цвета: "],
+      ["Скрыть слои", "Скрой слои: "],
+      ["Переименовать слои", "Переименуй слои понятно по смыслу"],
+    ] },
+  ];
+
+  function designSuggestions() {
+    var wrap = document.createElement("div");
+    wrap.className = "note-discuss-groups";
+    DESIGN_SUGG.forEach(function (g) {
+      var det = document.createElement("details");
+      det.className = "note-discuss-group";
+      det.open = g.open;
+      var sum = document.createElement("summary");
+      sum.textContent = g.title;
+      det.appendChild(sum);
+      var chips = document.createElement("div");
+      chips.className = "note-discuss-sugg";
+      g.items.forEach(function (it) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = it[0];
+        b.title = it[1].replace(/:\s*$/, "");
+        b.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          fillGptComposer(it[1]);
+        });
+        chips.appendChild(b);
+      });
+      det.appendChild(chips);
+      wrap.appendChild(det);
+    });
+    return wrap;
+  }
+
+  /** Подсказка → в поле ввода (с курсором в конце), не отправляя. */
+  function fillGptComposer(text) {
+    var ed = noteGptEditor();
+    if (!ed) return;
+    ed.textContent = text;
+    try {
+      syncGptEditorEmpty(ed);
+      autosizeNoteComposer(ed);
+      ed.focus();
+      var sel = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(ed);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (_) {}
+    syncNotePaieReplyForm();
+  }
+
   function renderNotePaieThread(comments, kind, itemId) {
     var wrap = document.getElementById("note-editor-more-wrap");
     var running = !!(wrap && wrap._paeiRunning);
@@ -48226,7 +48319,7 @@
       "chat:" +
       String(chatNow) +
       // Пустой чат на доске — другие подсказки (шаблоны «по заметке»).
-      (openBoardForYjs() ? "|board" : "") +
+      (openBoardForYjs() ? (openBoardIsDesign() ? "|design" : "|board") : "") +
       "|" +
       String(kind || "") +
       ":" +
@@ -50375,6 +50468,7 @@
           canvas_theme: preferredDeckTheme() || undefined,
           board_sheet_id: openBoard ? openBoard.sheetId : undefined,
           board_template: openBoard && packed.boardTemplate ? packed.boardTemplate : undefined,
+          board_layers: openBoard && packed.boardLayers && packed.boardLayers.length ? packed.boardLayers : undefined,
           doc_view: docView ? docView.view : undefined,
           doc_sheet_id: docView ? docView.sheet_id : undefined,
           // Ответ сервер сам сохранит в обсуждение — не пропадёт, если человек вышел из него или закрыл приложение.

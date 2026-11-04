@@ -2796,6 +2796,8 @@ class _MiniappGptChatBody(BaseModel):
     board_sheet_id: Optional[str] = None
     # Шаблон доски «На моих данных» (scheme / gantt / org / table): Лео собирает его по листам заметки.
     board_template: Optional[str] = None
+    # Слои макета, показанные чипом «Обсудить» (id элементов открытой доски-макета).
+    board_layers: Optional[list[str]] = None
     # Второй шаг после обработки больших данных по ссылке частями (assistant/services/bulk_links.py).
     bulk_job_id: Optional[str] = None
     # Ответ в обсуждение сервер сохраняет сам: человек мог уйти из обсуждения или закрыть приложение.
@@ -9588,10 +9590,7 @@ async def miniapp_gpt_chat(
             board_tpl = str(body.board_template or "").strip().lower()
             if board_tpl not in board_ai_lib.TEMPLATES:
                 board_tpl = ""
-            if open_board_id or board_tpl or board_ai_lib.looks_like_board_request(q):
-                system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
-            if board_tpl:
-                prompt = (prompt.rstrip() + "\n\n" + board_ai_lib.template_prompt(board_tpl, open_board_id.isdigit())).strip()
+            board_sheet = None
             if open_board_id.isdigit():
                 try:
                     from assistant.stores import note_sheets as note_sheets_store
@@ -9599,7 +9598,24 @@ async def miniapp_gpt_chat(
                     board_sheet = note_sheets_store.get_extra_sheet(int(iid), int(open_board_id))
                 except (TypeError, ValueError):
                     board_sheet = None
-                if board_sheet and str(board_sheet.get("kind") or "") == "board":
+                if not board_sheet or str(board_sheet.get("kind") or "") != "board":
+                    board_sheet = None
+            design_open = bool(board_sheet) and board_ai_lib.is_design(board_sheet.get("body") or "")
+            if design_open:
+                # Макет: разбор экранов и правки существующих слоёв (схемы на макете не рисуем).
+                system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.design_system_addon()).strip()
+                prompt = (
+                    prompt.rstrip() + "\n\n" + board_ai_lib.design_prompt_block(
+                        open_board_id, str(board_sheet.get("title") or ""), board_sheet.get("body") or "",
+                        [str(x) for x in (body.board_layers or [])][:40],
+                    )
+                ).strip()
+            else:
+                if open_board_id or board_tpl or board_ai_lib.looks_like_board_request(q):
+                    system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
+                if board_tpl:
+                    prompt = (prompt.rstrip() + "\n\n" + board_ai_lib.template_prompt(board_tpl, open_board_id.isdigit())).strip()
+                if board_sheet:
                     prompt = (
                         prompt.rstrip() + "\n\n" + board_ai_lib.open_board_prompt_block(
                             open_board_id, str(board_sheet.get("title") or ""), board_sheet.get("body") or ""
