@@ -10814,11 +10814,17 @@ async def miniapp_notes_bundle(
         counts = note_sheets_store.extra_sheet_counts(
             [n.get("id") for n in local_notes + transcriptions]
         )
+        kinds = note_sheets_store.extra_sheet_kinds([n.get("id") for n in local_notes])
         for n in local_notes + transcriptions:
             try:
                 n["sheets_count"] = 1 + counts.get(int(n.get("id")), 0)
             except (TypeError, ValueError):
                 n["sheets_count"] = 1
+        for n in local_notes:
+            try:
+                n["sheet_kinds"] = kinds.get(int(n.get("id")), [])
+            except (TypeError, ValueError):
+                n["sheet_kinds"] = []
 
     try:
         await run_in_threadpool(_attach_sheet_counts)
@@ -13302,11 +13308,23 @@ async def miniapp_note_sheet_patch(
             else None
         )
         sheet_body = body.description
-        effective_kind = kind or (
-            web_canvas_lib.normalize_kind((existing or {}).get("kind"))
-            if existing
-            else web_canvas_lib.SHEET_KIND_DOC
-        )
+        old_kind = web_canvas_lib.normalize_kind((existing or {}).get("kind")) if existing else None
+        if existing and kind is not None and kind != old_kind:
+            # Смена типа вручную — только у пустого листа: тело другого типа не переводится.
+            if not note_sheets_store.sheet_is_blank(existing):
+                raise note_sheets_store.SheetError("Тип меняется только у пустого листа")
+            if sheet_body is None:
+                if kind == web_canvas_lib.SHEET_KIND_BOARD:
+                    from assistant.lib import board_doc
+
+                    sheet_body = board_doc.empty_board()
+                else:
+                    sheet_body = ""
+            if old_kind == web_canvas_lib.SHEET_KIND_BOARD:
+                from assistant.stores import note_ydoc
+
+                note_ydoc.delete(int(note_id), str(extra_id))
+        effective_kind = kind or old_kind or web_canvas_lib.SHEET_KIND_DOC
         if sheet_body is not None and effective_kind == web_canvas_lib.SHEET_KIND_WEB:
             sheet_body = web_canvas_lib.finalize_canvas_html(sheet_body)
         from_yjs = (

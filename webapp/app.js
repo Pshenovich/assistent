@@ -41346,6 +41346,20 @@
     return String(id || NOTE_SHEET_MAIN) === NOTE_SHEET_MAIN;
   }
 
+  // Пустой текст листа: без букв, картинок и таблиц.
+  function sheetHtmlIsBlank(html) {
+    var raw = String(html || "");
+    if (/<(img|table|iframe|video|hr)\b/i.test(raw)) return false;
+    return !raw.replace(/<[^>]+>/g, "").replace(/&nbsp;|\u00a0/g, " ").trim();
+  }
+
+  // Документ создан как доска/макет/презентация: «Основная» пуста — её вкладку не показываем.
+  function primarySheetHidden() {
+    if (noteSheetState.primaryLocked) return false;
+    if (!extraNoteSheets().length || isPrimarySheetId(noteSheetState.leftId)) return false;
+    return sheetHtmlIsBlank(noteSheetState.primaryBody);
+  }
+
   function focusedNoteSheetId() {
     if (
       noteSheetState.focus === "right" &&
@@ -42034,6 +42048,9 @@
     var id = String(sheetId || "");
     if (!id || isPrimarySheetId(id)) return;
     if (noteSheetState.applyingRemoteSheet === id) return; // чужая версия, только что показанная
+    var live = findNoteSheet(id);
+    if (live) live._blankStub = false;
+    if (String(noteSheetState.leftId) === id) dropSheetKindPick();
     previewOpenNoteFromSheets();
     if (noteSheetState.sheetTimers[id]) clearTimeout(noteSheetState.sheetTimers[id]);
     noteSheetState.sheetTimers[id] = setTimeout(function () {
@@ -42640,8 +42657,11 @@
       if (transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote)) toolsHost.appendChild(transcriptViewSwitch());
       return;
     }
+    renderSheetKindPick(tools);
     var extras = extraNoteSheets();
-    var showBar = extras.length > 0;
+    var hidePrimary = primarySheetHidden();
+    // Без пустой «Основной» остался один лист — вкладки не нужны, как у документа из одного листа.
+    var showBar = extras.length > (hidePrimary ? 1 : 0);
     host.classList.toggle("hidden", !showBar && extras.length === 0);
     if (!showBar) {
       var quiet = document.createElement("button");
@@ -42660,6 +42680,7 @@
       return;
     }
     noteSheetState.sheets.forEach(function (s) {
+      if (hidePrimary && s.is_primary) return;
       var chip = document.createElement("button");
       chip.type = "button";
       chip.className =
@@ -43968,6 +43989,138 @@
     }, 0);
   }
 
+  // Вид листа для меню типов: doc | board | design | web.
+  function sheetKindKey(sheet) {
+    if (isDesignSheet(sheet)) return "design";
+    if (isBoardSheet(sheet)) return "board";
+    if (isWebSheet(sheet)) return "web";
+    return "doc";
+  }
+
+  // Лист ещё пуст — тип можно сменить (сервер проверяет то же: note_sheets.sheet_is_blank).
+  function noteSheetIsBlank(sheet) {
+    if (!sheet) return false;
+    var body = String(sheet.body || sheet.description || "");
+    if (isPrimarySheetId(sheet.id) || sheet.is_primary) return sheetHtmlIsBlank(noteSheetState.primaryBody);
+    if (isBoardSheet(sheet)) {
+      if (!body.trim()) return true;
+      try {
+        var data = JSON.parse(body);
+        return !!data && !Object.keys(data.elements || {}).length;
+      } catch (_) {
+        return false;
+      }
+    }
+    if (isWebSheet(sheet)) return !!sheet._blankStub || Number(sheet.revision || 1) <= 1;
+    return sheetHtmlIsBlank(body);
+  }
+
+  var SHEET_KIND_LABELS = { doc: "Лист", board: "Доска", design: "Макет", web: "Презентация" };
+
+  // На пустом листе справа от вкладок: «Сделать: Доска · Макет · Презентация».
+  function renderSheetKindPick(tools) {
+    if (!tools || isTranscriptionNoteItem(openSheetsNote())) return;
+    var sheet = findNoteSheet(noteSheetState.leftId);
+    if (!sheet || !noteSheetIsBlank(sheet)) return;
+    bindSheetKindPickInputOnce();
+    var cur = sheetKindKey(sheet);
+    var wrap = document.createElement("div");
+    wrap.className = "sheet-kind-pick";
+    var lbl = document.createElement("span");
+    lbl.className = "sheet-kind-pick-label";
+    lbl.textContent = "Сделать:";
+    wrap.appendChild(lbl);
+    ["doc", "board", "design", "web"].forEach(function (k) {
+      if (k === cur) return;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "sheet-kind-pick-btn";
+      b.textContent = SHEET_KIND_LABELS[k];
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        changeLeftSheetKind(k);
+      });
+      wrap.appendChild(b);
+    });
+    tools.appendChild(wrap);
+  }
+
+  var sheetKindPickInputBound = false;
+  function bindSheetKindPickInputOnce() {
+    if (sheetKindPickInputBound) return;
+    sheetKindPickInputBound = true;
+    document.addEventListener(
+      "input",
+      function (e) {
+        var t = e.target;
+        if (t && t.closest && t.closest("#note-editor-overlay .note-editor-pad--body")) dropSheetKindPick();
+      },
+      true
+    );
+  }
+
+  // Первая правка — лист больше не пуст, выбор типа убираем.
+  function dropSheetKindPick() {
+    var el = document.querySelector("#note-editor-sheet-tools .sheet-kind-pick");
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  async function changeLeftSheetKind(kindRaw) {
+    var sheet = findNoteSheet(noteSheetState.leftId);
+    if (!sheet) return;
+    if (isPrimarySheetId(sheet.id) || sheet.is_primary) {
+      // «Основная» всегда текст: новый лист нужного типа, пустая «Основная» прячется.
+      if (kindRaw !== "doc") await createNoteSheet({ openOn: "left", kind: kindRaw });
+      return;
+    }
+    var noteId = noteSheetsNoteId();
+    if (!noteId || String(noteId).indexOf("tmp_") === 0 || String(sheet.id).indexOf("tmp_") === 0 || isAppOffline()) {
+      showNoteToast("Нужна сеть, чтобы сменить тип листа");
+      return;
+    }
+    var id = String(sheet.id);
+    if (noteSheetState.sheetTimers[id]) {
+      clearTimeout(noteSheetState.sheetTimers[id]);
+      delete noteSheetState.sheetTimers[id];
+    }
+    var design = kindRaw === "design";
+    var payload = { kind: design ? "board" : kindRaw };
+    if (design) payload.description = '{"v":1,"mode":"design","elements":{}}';
+    // Название по умолчанию («Доска», «Лист 3») следует за типом; своё — не трогаем.
+    var oldTitle = String(sheet.title || "");
+    var oldKindLabel = SHEET_KIND_LABELS[sheetKindKey(sheet)];
+    if (!oldTitle || /^(Лист( \d+)?|Доска|Макет|Презентация)$/.test(oldTitle)) {
+      payload.title = kindRaw === "doc" ? "Лист " + (extraNoteSheets().length + 1) : SHEET_KIND_LABELS[kindRaw];
+    }
+    try {
+      var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets/" + encodeURIComponent(id), {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      var item = res && res.item;
+      if (!item) return;
+      if (kindRaw === "web") item._blankStub = true;
+      upsertNoteSheet(item);
+      // Документ, созданный доской, называется «Доска» — название по умолчанию тоже следует за типом.
+      var titleInput = document.getElementById("note-editor-title-input");
+      if (titleInput && oldKindLabel !== "Лист" && String(titleInput.value || "").trim() === oldKindLabel) {
+        titleInput.value = kindRaw === "doc" ? "" : SHEET_KIND_LABELS[kindRaw];
+        titleInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      if (String(noteSheetState.leftId) === id) {
+        destroyLeftBoard();
+        destroyLeftWebCanvas();
+        applyLeftSheetHtml(item);
+      }
+      renderNoteSheetChips();
+      renderNoteKnowledgeMenu();
+      syncNotePaneHeader();
+    } catch (e) {
+      showNoteToast(e.message || String(e));
+    }
+  }
+
   async function createNoteSheet(opts) {
     opts = opts || {};
     var noteId = await ensureNoteIdForSheets();
@@ -44099,6 +44252,7 @@
         renderNoteKnowledgeMenu();
         var pending = String(noteSheetState.pendingOpenSheetId || "");
         noteSheetState.pendingOpenSheetId = "";
+        var firstExtra = extraNoteSheets()[0];
         if (pending && findNoteSheet(pending)) switchLeftSheetWhenEditorReady(String(noteId), pending, hydratedAt);
         else if (
           rows.length &&
@@ -44109,6 +44263,15 @@
         ) {
           // Вкладки переставлены — открываем ту, что пользователь поставил первой.
           switchLeftSheetWhenEditorReady(String(noteId), String(rows[0].id), hydratedAt);
+        } else if (
+          firstExtra &&
+          !noteSheetState.primaryLocked &&
+          sheetHtmlIsBlank(noteSheetState.primaryBody) &&
+          isPrimarySheetId(noteSheetState.leftId) &&
+          !(noteCollabState.lastTypedAt > hydratedAt)
+        ) {
+          // «Основная» пуста (документ создан доской, макетом или презентацией) — сразу на первый лист.
+          switchLeftSheetWhenEditorReady(String(noteId), String(firstExtra.id), hydratedAt);
         }
         loadNoteShareLinks(); // иконки шеринга на вкладках
       })
@@ -53980,7 +54143,12 @@
     var out = [];
     var body = String(n.body || n.description || "");
     var sheets = Number(n.sheets_count || 0);
-    if (sheets > 1) {
+    var kinds = Array.isArray(n.sheet_kinds) ? n.sheet_kinds : [];
+    // Документ создан доской, макетом или презентацией: «Основная» пуста — на карточке тип, а не «2 листа».
+    if (kinds.length && sheetHtmlIsBlank(body)) sheets = kinds.length;
+    if (sheets === 1 && kinds.length === 1 && kinds[0] !== "doc" && sheetHtmlIsBlank(body)) {
+      out.push({ icon: "sheets", text: SHEET_KIND_LABELS[kinds[0]] || "Лист" });
+    } else if (sheets > 1) {
       var w = sheets % 10 === 1 && sheets % 100 !== 11 ? "лист" : sheets % 10 >= 2 && sheets % 10 <= 4 && (sheets % 100 < 10 || sheets % 100 >= 20) ? "листа" : "листов";
       out.push({ icon: "sheets", text: sheets + " " + w });
     }
@@ -55605,6 +55773,51 @@
     }
   }
 
+  var NEW_SHEET_TITLES = { board: "Доска", design: "Макет", web: "Презентация" };
+
+  // Документ сразу доской, макетом или презентацией: пустая «Основная» + лист нужного типа.
+  // Открывается сразу на нём (см. hydrateNoteSheets).
+  async function createTypedNote(kindRaw) {
+    if (isAppOffline()) {
+      showNoteToast("Нужна сеть, чтобы создать " + NEW_SHEET_TITLES[kindRaw].toLowerCase());
+      return;
+    }
+    if (notesSplitCapable() && isNoteEditorModalOpen()) {
+      var ok = await handleNoteEditorModalClose({ skipPrompt: true });
+      if (!ok) return;
+    }
+    var title = NEW_SHEET_TITLES[kindRaw] || "Лист";
+    var design = kindRaw === "design";
+    var project = activeNotesProjectTag();
+    try {
+      var res = await apiFetch("/notes/local", {
+        method: "POST",
+        body: JSON.stringify({ title: title, description: "", sync_todoist: false }),
+      });
+      var item = (res && res.item) || null;
+      if (!item || item.id == null) throw new Error("Не удалось создать");
+      var sheetBody = { title: title, kind: design ? "board" : kindRaw };
+      if (design) sheetBody.description = '{"v":1,"mode":"design","elements":{}}';
+      var sheetRes = await apiFetch("/notes/local/" + encodeURIComponent(String(item.id)) + "/sheets", {
+        method: "POST",
+        body: JSON.stringify(sheetBody),
+      });
+      prependLocalInCache(item);
+      if (project) {
+        try {
+          await saveItemTags("local", item.id, [project.id]);
+        } catch (_) {}
+      }
+      if (notesDataCache) renderNotesPanesFromData(notesDataCache);
+      var sheet = sheetRes && sheetRes.item;
+      if (sheet) noteSheetState.pendingOpenSheetId = String(sheet.id);
+      if (notesSplitCapable()) notesSplitCurrentId = String(item.id);
+      openNoteDetail(item, { isLocal: true });
+    } catch (e) {
+      alert(e.message || String(e));
+    }
+  }
+
   function closeNotesCreateMenu() {
     var menu = document.getElementById("notes-create-menu");
     var btn = document.getElementById("notes-create-btn");
@@ -56125,6 +56338,8 @@
       var excerpt = fields.description;
       if (isTrivialNoteHtml(excerpt)) {
         extraNoteSheets().some(function (s) {
+          // У доски и презентации тело — JSON и HTML холста, а не текст для превью.
+          if (isBoardSheet(s) || isWebSheet(s)) return false;
           var html = s.body || s.description || "";
           if (String(noteSheetState.leftId) === String(s.id)) {
             html = readSheetEditorHtml("left") || html;
@@ -57177,7 +57392,8 @@
         e.stopPropagation();
         var action = b.getAttribute("data-notes-create");
         closeNotesCreateMenu();
-        openNewTodoistNote({ dictate: action === "dictate" });
+        if (action === "board" || action === "design" || action === "web") createTypedNote(action);
+        else openNewTodoistNote({ dictate: action === "dictate" });
       });
     });
     document.addEventListener("click", function (e) {

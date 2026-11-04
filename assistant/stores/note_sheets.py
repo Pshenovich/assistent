@@ -94,6 +94,33 @@ def _plain_text(html: str) -> str:
     return re.sub(r"<[^>]+>", "", html or "").replace("\xa0", " ").strip()
 
 
+def sheet_is_blank(sheet: dict[str, Any]) -> bool:
+    """Лист ещё пуст — его тип можно сменить, ничего не потеряв."""
+    import json
+    import re
+
+    kind = _normalize_kind(sheet.get("kind"))
+    body = str(sheet.get("body") or "").strip()
+    if kind == SHEET_KIND_BOARD:
+        if not body:
+            return True
+        try:
+            data = json.loads(body)
+        except ValueError:
+            return False
+        return isinstance(data, dict) and not data.get("elements")
+    if kind == SHEET_KIND_WEB:
+        # Холст презентации — заглушка, пока его не трогали.
+        if int(sheet.get("revision") or 1) <= 1:
+            return True
+        from assistant.lib import web_canvas
+
+        return body == web_canvas.finalize_canvas_html("").strip()
+    if re.search(r"<(img|table|iframe|video|hr)\b", body, re.I):
+        return False
+    return not _plain_text(body)
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     body = str(row["body"] or "")
     keys = set(row.keys())
@@ -449,6 +476,7 @@ def update_sheet(
     if (
         body is not None
         and effective_kind == SHEET_KIND_DOC
+        and _normalize_kind(existing.get("kind")) == SHEET_KIND_DOC
         and not _plain_text(new_body)
         and _plain_text(existing["body"] or "")
     ):
@@ -638,6 +666,35 @@ def extra_sheet_counts(note_ids: list[Any]) -> dict[int, int]:
                 chunk,
             ):
                 out[int(row["note_id"])] = int(row["c"])
+    return out
+
+
+def extra_sheet_kinds(note_ids: list[Any]) -> dict[int, list[str]]:
+    """Типы доп. листов по порядку (doc | board | design | web) — карточка списка показывает тип документа."""
+    ids = []
+    for x in note_ids or []:
+        try:
+            ids.append(int(x))
+        except (TypeError, ValueError):
+            continue
+    if not ids:
+        return {}
+    out: dict[int, list[str]] = {}
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(ids), 500):
+            chunk = ids[i : i + 500]
+            q = ",".join("?" * len(chunk))
+            for row in conn.execute(
+                f"""SELECT note_id, kind, (instr(substr(body, -60), '"mode":"design"') > 0
+                    OR instr(substr(body, 1, 200), '"mode":"design"') > 0) AS design
+                FROM note_sheets WHERE note_id IN ({q}) ORDER BY note_id, position, id""",
+                chunk,
+            ):
+                kind = _normalize_kind(row["kind"])
+                if kind == SHEET_KIND_BOARD and row["design"]:
+                    kind = "design"
+                out.setdefault(int(row["note_id"]), []).append(kind)
     return out
 
 
