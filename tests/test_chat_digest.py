@@ -91,14 +91,26 @@ def test_insert_message_and_report(digest_db):
     assert "<p>Новый текст</p>" in updated["summary"]["body_html"]
 
 
-def test_digest_prefs_default_off(prefs_dir):
+def test_digest_prefs_default_off(digest_db, prefs_dir):
     user_prefs = prefs_dir
     assert user_prefs.digest_enabled(7) is False
     assert user_prefs.digest_chat_ids(7) == []
+    for cid in (1, 2, 3):
+        digest_db.upsert_member(cid, 7)
     user_prefs.set_digest_enabled(7, True)
     user_prefs.set_digest_chat_ids(7, [1, 2, 2, "x", 3])
     assert user_prefs.digest_enabled(7) is True
     assert user_prefs.digest_chat_ids(7) == [1, 2, 3]
+
+
+def test_digest_chat_ids_only_member_chats(digest_db, prefs_dir):
+    """Id чужой группы в настройках не даёт её дайджест: только чаты, где человек состоит."""
+    user_prefs = prefs_dir
+    digest_db.upsert_member(-100111, 7)
+    digest_db.upsert_member(-100222, 8)  # чужой чат
+    user_prefs.set_digest_enabled(7, True)
+    user_prefs.set_digest_chat_ids(7, [-100111, -100222])
+    assert user_prefs.digest_chat_ids(7) == [-100111]
 
 
 def test_operation_label_chat_digest():

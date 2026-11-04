@@ -640,6 +640,13 @@ def chat_author_ids(chat_id: int, since_utc: str) -> set[int]:
     return {int(r[0]) for r in rs}
 
 
+def member_chat_ids(user_id: int) -> set[int]:
+    """Чаты, где пользователь — участник (видел бот). Дайджест — только по ним."""
+    with _LOCK:
+        rs = _conn().execute("SELECT chat_id FROM leo_chat_members WHERE user_id = ?", (int(user_id),)).fetchall()
+    return {int(r[0]) for r in rs}
+
+
 def is_human_member(chat_id: int, user_id: int | None) -> bool:
     """Участник-человек: боты в leo_chat_members не попадают (chat_ingest пропускает is_bot)."""
     if user_id is None:

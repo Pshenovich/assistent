@@ -298,7 +298,14 @@ def digest_chat_ids(user_id: int) -> list[int]:
             continue
         seen.add(cid)
         out.append(cid)
-    return out
+    if not out:
+        return out
+    # Только чаты, где человек состоит: id чужой группы в настройках не даёт ни отчётов, ни пушей,
+    # и доступ пропадает, когда он выходит из чата.
+    from assistant.stores import chat_digest as digest_store
+
+    members = digest_store.member_chat_ids(int(user_id))
+    return [cid for cid in out if cid in members]
 
 
 def set_digest_chat_ids(user_id: int, chat_ids: list[int]) -> None:
