@@ -12,6 +12,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/assistant/.venv/bin/python worker.py
 Restart=on-failure
 RestartSec=5
+# Фоновые задачи: мягкий лимит памяти.
+OOMScoreAdjust=0
+MemoryHigh=25%
 
 [Install]
 WantedBy=multi-user.target

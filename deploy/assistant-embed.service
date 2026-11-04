@@ -12,6 +12,8 @@ EnvironmentFile=-/opt/assistant/.env
 ExecStart=/opt/assistant/.venv/bin/uvicorn assistant.services.embed_server:app --host 127.0.0.1 --port 8095
 Restart=on-failure
 RestartSec=10
+# Эмбеддинги — первыми под OOM-killer (поиск переживёт, бот и веб — нет).
+OOMScoreAdjust=500
 MemoryMax=900M
 # Модель — фоновая работа: процессор и диск в первую очередь достаются боту и API.
 Nice=10

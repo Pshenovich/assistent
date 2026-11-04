@@ -11,6 +11,9 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/assistant/.venv/bin/uvicorn usage_server:app --host 127.0.0.1 --port 8080
 Restart=on-failure
 RestartSec=5
+# Веб: при нехватке памяти — после embed и воркера; мягкий лимит замедляет, а не убивает.
+OOMScoreAdjust=-100
+MemoryHigh=45%
 
 [Install]
 WantedBy=multi-user.target
