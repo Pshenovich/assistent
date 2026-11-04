@@ -117,12 +117,12 @@
   var TOOLS_DESIGN = [
     { id: "select", key: "v", title: "Выделение (V)", icon: "cursor" },
     { id: "hand", key: "h", title: "Рука (H, пробел)", icon: "hand" },
-    { id: "frame", key: "f", title: "Экран (F)", icon: "frame" },
+    { id: "frame", key: "f", title: "Фрейм (F)", icon: "frame" },
     { id: "text", key: "t", title: "Текст (T)", icon: "text" },
     { id: "rect", key: "r", title: "Прямоугольник (R)", icon: "rect" },
     { id: "ellipse", key: "o", title: "Эллипс (O)", icon: "ellipse" },
     { id: "line", key: "l", title: "Линия (L)", icon: "line" },
-    { id: "arrow", key: "a", title: "Стрелка — переход между экранами (A)", icon: "arrow" },
+    { id: "arrow", key: "a", title: "Стрелка — переход между фреймами (A)", icon: "arrow" },
     { id: "path", key: "p", title: "Перо (P): клик — точка, протянуть — кривая, клик по первой — замкнуть, Enter — готово", icon: "penTool" },
     { id: "pen", key: "b", title: "Карандаш (B)", icon: "pen" },
     { id: "image", key: "", title: "Картинка", icon: "image" },
@@ -228,6 +228,13 @@
     vaT: '<path d="M4 4h12"/><path d="M10 7v9M7 10l3-3 3 3"/>',
     vaM: '<path d="M4 10h12"/><path d="M10 3v4M10 13v4M8 5l2 2 2-2M8 15l2-2 2 2"/>',
     vaB: '<path d="M4 16h12"/><path d="M10 4v9M7 10l3 3 3-3"/>',
+    autoLayout: '<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 7h6M7 10h6M7 13h6"/>',
+    free: '<rect x="3.5" y="3.5" width="5" height="5" rx="1"/><rect x="11.5" y="11.5" width="5" height="5" rx="1"/><path d="M8.5 6h3v2M11.5 14h-3v-2"/>',
+    padL: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M6.5 7v6"/>',
+    padR: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M13.5 7v6"/>',
+    padT: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M7 7h6"/>',
+    padB: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M7 13h6"/>',
+    padAll: '<rect x="3" y="3" width="14" height="14" rx="1.5"/><rect x="6.5" y="6.5" width="7" height="7" rx="1" stroke-dasharray="1.5 1.5"/>',
     dirV: '<path d="M10 3v14M6 13l4 4 4-4"/>',
     dirH: '<path d="M3 10h14M13 6l4 4-4 4"/>',
     gapV: '<path d="M4 4h12M4 16h12"/><path d="M10 7v6"/>',
@@ -567,6 +574,7 @@
       if (el.name) o.name = String(el.name);
       if (el.device) o.device = el.device;
       if (el.layout) o.layout = el.layout;
+      if (el.noclip) o.noclip = true;
     } else if (el.type === "table") {
       o.html = String(el.html || "");
     } else if (el.type === "card") {
@@ -1256,7 +1264,7 @@
     function clipToFrame(node, el) {
       var f = frameOf(el);
       var turned = false;
-      for (var q = f, gq = 0; q && gq < 20; q = frameOf(q), gq++) if (q.rot) turned = true;
+      for (var q = f, gq = 0; q && gq < 20; q = frameOf(q), gq++) if (q.rot || q.noclip) turned = true;
       // Повёрнутый экран: прямоугольник обрезки не совпал бы с ним — не обрезаем.
       if (!f || el.rot || turned) {
         if (node.style.clipPath) node.style.clipPath = "";
@@ -1302,7 +1310,7 @@
       if (!head) {
         head = document.createElement("div");
         head.className = "lb-frame-head";
-        head.innerHTML = '<span class="lb-frame-name" data-f="name" data-ph="Экран"></span><span class="lb-frame-size"></span>';
+        head.innerHTML = '<span class="lb-frame-name" data-f="name" data-ph="Фрейм"></span><span class="lb-frame-size"></span>';
         node.appendChild(head);
       }
       var nm = head.querySelector("[data-f=name]");
@@ -3398,12 +3406,12 @@
     function renderEmptyHint() {
       if (readOnly || !emptyHint.classList.contains("has-start")) return;
       if (mode === "design") {
-        emptyHint.innerHTML = '<div class="lb-start-title">Добавьте экран</div><div class="lb-start-devices">' +
+        emptyHint.innerHTML = '<div class="lb-start-title">Добавьте фрейм</div><div class="lb-start-devices">' +
           DEVICES.map(function (d) {
             return '<button type="button" class="lb-device" data-device="' + d.id + '"><span class="lb-device-pre" style="--ar:' + d.w / d.h + '"></span>' +
               '<span class="lb-tpl-t">' + esc(d.title) + '</span><span class="lb-tpl-h">' + d.w + " × " + d.h + "</span></button>";
           }).join("") +
-          '</div><div class="lb-start-hint">или вставьте макет из Figma (⌘V) · инструмент «Экран» (F) — свой размер</div>';
+          '</div><div class="lb-start-hint">или вставьте макет из Figma (⌘V) · инструмент «Фрейм» (F) — свой размер</div>';
       } else {
         emptyHint.innerHTML = '<div class="lb-start-title">С чего начнём?</div><div class="lb-start-cards">' + templateCards() + "</div>" +
           '<div class="lb-start-hint">или выберите инструмент и начните рисовать</div>';
@@ -3577,7 +3585,7 @@
       }
       if (changeTimer) clearTimeout(changeTimer);
       changeTimer = setTimeout(emitChange, 250);
-      notify(mode === "design" ? "Режим «Макет»: экраны, точные размеры, передача в разработку" : "Режим «Доска»");
+      notify(mode === "design" ? "Режим «Макет»: фреймы, точные размеры, передача в разработку" : "Режим «Доска»");
     }
 
     function renderHistoryBar() {
@@ -3601,7 +3609,7 @@
         (readOnly ? "" : '<button type="button" class="lb-btn' + (layersOn() ? " is-on" : "") + '" data-act="layers" title="Слои">' + icon("layers") + "</button>" +
           '<span class="lb-mode" role="group" aria-label="Режим">' +
           '<button type="button" class="lb-btn' + (mode !== "design" ? " is-on" : "") + '" data-act="mode-board" title="Режим «Доска»: схемы, стикеры, шаблоны">' + icon("modeBoard") + "</button>" +
-          '<button type="button" class="lb-btn' + (mode === "design" ? " is-on" : "") + '" data-act="mode-design" title="Режим «Макет»: экраны для разработки">' + icon("modeDesign") + "</button>" +
+          '<button type="button" class="lb-btn' + (mode === "design" ? " is-on" : "") + '" data-act="mode-design" title="Режим «Макет»: фреймы для разработки">' + icon("modeDesign") + "</button>" +
           '</span><span class="lb-sep"></span>') +
         '<button type="button" class="lb-btn" data-act="zoom-out" title="Отдалить (−)">' + icon("minus") + "</button>" +
         '<button type="button" class="lb-btn lb-pct" data-act="zoom-100" title="Масштаб 100%">' + pct + "</button>" +
@@ -3843,7 +3851,7 @@
         var dv = DEVICES.filter(function (d) {
           return d.id === fr.device && d.w === Math.round(fr.w) && d.h === Math.round(fr.h);
         })[0];
-        h.push('<button type="button" class="lb-btn lb-pbtn lb-txt" data-p="device" title="Размер экрана">' + icon("modeDesign") + "&nbsp;" + esc(dv ? dv.title : Math.round(fr.w) + " × " + Math.round(fr.h)) + "</button>");
+        h.push('<button type="button" class="lb-btn lb-pbtn lb-txt" data-p="device" title="Размер фрейма">' + icon("modeDesign") + "&nbsp;" + esc(dv ? dv.title : Math.round(fr.w) + " × " + Math.round(fr.h)) + "</button>");
       }
       if (anyShape || types.vector || types.frame) h.push(swatchBtn("fill", fillVar(commonStyle(list.filter(isPaintable), "fill") || "none"), "Заливка"));
       if (types.text) h.push(swatchBtn("textColor", inkVar(commonStyle(list.filter(isType("text")), "textColor") || "ink"), "Цвет текста", false, true));
@@ -3973,6 +3981,7 @@
     }
 
     var inspKey = "";
+    var padSplit = false;
     var expFmt = "png";
     var expScale = 2;
     var inspDown = null; // {pending} — кнопка мыши нажата на панели свойств
@@ -3986,7 +3995,7 @@
       }
       var one = list.length === 1 ? list[0] : null;
       var key = JSON.stringify(list.map(function (e) {
-        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame];
+        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, padSplit];
       }));
       inspector.classList.remove("hidden");
       // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
@@ -4019,7 +4028,7 @@
         });
       };
       var h = [];
-      var title = one ? (one.type === "frame" ? "Экран" : { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия",
+      var title = one ? (one.type === "frame" ? "Фрейм" : { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия",
         image: "Картинка", vector: "Вектор", table: "Таблица", sticky: "Стикер", pen: "Рисунок" }[one.type] || "Элемент") : "Выделено: " + list.length;
       var grp = !one && common(list, function (e) {
         return e.group || "";
@@ -4043,20 +4052,32 @@
           })[0] || { title: "Свой размер" }).title) + "</button></div>");
       }
       if (one && one.type !== "line" && one.type !== "pen") {
+        // Позиция (как во Figma): X/Y, поворот и отражения.
         var f = frameOf(one);
-        h.push('<div class="lb-isec"><div class="lb-irow">' +
-          numField("x", "X", r1(one.x - (f ? f.x : 0)), { title: f ? "X внутри экрана" : "X" }) + numField("y", "Y", r1(one.y - (f ? f.y : 0)), { title: f ? "Y внутри экрана" : "Y" }) +
-          "</div><div class=\"lb-irow\">" + numField("w", "W", r1(one.w)) + numField("h", "H", r1(one.h), { title: one.type === "text" ? "Высота текста — по содержимому" : "H" }) +
-          "</div>" + ('<div class="lb-irow">' + numField("rot", "↻", r1(one.rot || 0), { title: "Поворот, °" }) +
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Позиция</div><div class="lb-irow">' +
+          numField("x", "X", r1(one.x - (f ? f.x : 0)), { title: f ? "X внутри фрейма" : "X" }) + numField("y", "Y", r1(one.y - (f ? f.y : 0)), { title: f ? "Y внутри фрейма" : "Y" }) +
+          '</div><div class="lb-irow">' + numField("rot", "↻", r1(one.rot || 0), { title: "Поворот, °" }) +
             '<button type="button" class="lb-ibtn" data-act="flipH" title="Отразить по горизонтали (⇧H)">' + icon("flipH") + "</button>" +
-            '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div>") + "</div>");
-      }
-      if (one && one.type === "frame") {
-        // Автолэйаут (как во Figma): направление, промежуток, отступы, выравнивание 3×3, «обнимать содержимое».
-        var LA = parseLayout(one.layout);
-        h.push('<div class="lb-isec"><div class="lb-ilabel">Автолэйаут' +
-          (LA ? '<button type="button" class="lb-ibtn lb-iadd" data-act="alDel" title="Убрать автолэйаут">' + icon("minus") + "</button>"
-            : '<button type="button" class="lb-ibtn lb-iadd" data-act="alAdd" title="Добавить автолэйаут (⇧A)">' + icon("plus") + "</button>") + "</div>");
+            '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div></div>");
+        // Размеры; у фрейма — автолэйаут вокруг них: поток, «фикс./обнимать», выравнивание и промежуток, отступы.
+        var LA = one.type === "frame" ? parseLayout(one.layout) : null;
+        var sizeField = function (k, label, val, hug) {
+          if (!LA) return numField(k, label, val, { title: k === "h" && one.type === "text" ? "Высота текста — по содержимому" : label });
+          return '<div class="lb-if lb-ifsel" title="' + label + '"><span>' + label + '</span><input type="text" inputmode="decimal" data-k="' + k + '" value="' + esc(String(val)) + '">' +
+            '<select data-k="hug' + label + '"><option value="fixed"' + (hug ? "" : " selected") + '>Фикс.</option><option value="hug"' + (hug ? " selected" : "") + ">Обним.</option></select></div>";
+        };
+        h.push('<div class="lb-isec"><div class="lb-ilabel">' + (one.type === "frame" ? "Автолэйаут" : "Размеры") +
+          (one.type === "frame" ? '<button type="button" class="lb-ibtn lb-iadd' + (LA ? " is-on" : "") + '" data-act="' + (LA ? "alDel" : "alAdd") + '" title="' +
+            (LA ? "Убрать автолэйаут" : "Автолэйаут (⇧A)") + '">' + icon("autoLayout") + "</button>" : "") + "</div>");
+        if (one.type === "frame") {
+          var dirNow = LA ? LA.dir : "";
+          h.push('<div class="lb-isub">Поток</div><div class="lb-irow"><span class="lb-iseg">' +
+            '<button type="button" class="lb-ibtn' + (!LA ? " is-on" : "") + '" data-act="alDir" data-ldir="" title="Свободно">' + icon("free") + "</button>" +
+            '<button type="button" class="lb-ibtn' + (dirNow === "v" ? " is-on" : "") + '" data-act="alDir" data-ldir="v" title="Вертикально">' + icon("dirV") + "</button>" +
+            '<button type="button" class="lb-ibtn' + (dirNow === "h" ? " is-on" : "") + '" data-act="alDir" data-ldir="h" title="Горизонтально">' + icon("dirH") + "</button></span></div>" +
+            '<div class="lb-isub">Размеры</div>');
+        }
+        h.push('<div class="lb-irow">' + sizeField("w", "W", r1(one.w), LA && LA.hug.indexOf("w") >= 0) + sizeField("h", "H", r1(one.h), LA && LA.hug.indexOf("h") >= 0) + "</div>");
         if (LA) {
           var Hd = LA.dir === "h";
           var cells = "";
@@ -4069,23 +4090,29 @@
               cells += '<button type="button" class="lb-lcell' + (on ? " is-on" : "") + '" data-act="alCell" data-lc="' + cr + '" data-lm="' + m + '" title="Выровнять"><i></i></button>';
             });
           });
-          h.push('<div class="lb-irow"><span class="lb-iseg">' +
-              '<button type="button" class="lb-ibtn' + (!Hd ? " is-on" : "") + '" data-act="alDir" data-ldir="v" title="Вертикально">' + icon("dirV") + "</button>" +
-              '<button type="button" class="lb-ibtn' + (Hd ? " is-on" : "") + '" data-act="alDir" data-ldir="h" title="Горизонтально">' + icon("dirH") + "</button></span>" +
-              numField("lgap", icon(Hd ? "gapH" : "gapV"), LA.justify === "between" ? undefined : LA.gap, { title: "Промежуток", html: true, ph: "Авто" }) + "</div>" +
-            '<div class="lb-ilayout"><div class="lb-lgrid">' + cells + "</div><div class=\"lb-lside\">" +
-              '<div class="lb-irow">' + numField("lpadh", icon("padH"), LA.pad[3] === LA.pad[1] ? LA.pad[3] : undefined, { title: "Отступ слева и справа", html: true, ph: "Разные" }) + "</div>" +
-              '<div class="lb-irow">' + numField("lpadv", icon("padV"), LA.pad[0] === LA.pad[2] ? LA.pad[0] : undefined, { title: "Отступ сверху и снизу", html: true, ph: "Разные" }) + "</div>" +
-              '<button type="button" class="lb-ibtn is-wide' + (LA.justify === "between" ? " is-on" : "") + '" data-act="alBetween" title="Равномерно по всей длине">Между</button>' +
-            "</div></div>" +
-            '<div class="lb-irow"><button type="button" class="lb-ibtn is-wide' + (LA.hug.indexOf("w") >= 0 ? " is-on" : "") + '" data-act="hugW" title="Ширина по содержимому">Ширина по содержимому</button></div>' +
-            '<div class="lb-irow"><button type="button" class="lb-ibtn is-wide' + (LA.hug.indexOf("h") >= 0 ? " is-on" : "") + '" data-act="hugH" title="Высота по содержимому">Высота по содержимому</button></div>');
+          var auto = LA.justify === "between";
+          var split = padSplit || !(LA.pad[1] === LA.pad[3] && LA.pad[0] === LA.pad[2]);
+          h.push('<div class="lb-ilayout"><div><div class="lb-isub">Выравнивание</div><div class="lb-lgrid">' + cells + "</div></div>" +
+            '<div class="lb-lside"><div class="lb-isub">Промежуток</div>' +
+              '<div class="lb-if lb-ifsel" title="Промежуток между объектами"><span>' + icon(Hd ? "gapH" : "gapV") + '</span><input type="text" inputmode="decimal" data-k="lgap" value="' +
+                (auto ? "" : esc(String(r1(LA.gap)))) + '"' + (auto ? ' placeholder="Авто"' : "") + '><select data-k="lgapm"><option value="fixed"' + (auto ? "" : " selected") +
+                '>Фикс.</option><option value="auto"' + (auto ? " selected" : "") + ">Авто</option></select></div></div></div>" +
+            '<div class="lb-isub">Отступы</div><div class="lb-irow">' +
+              (split
+                ? numField("lpl", icon("padL"), LA.pad[3], { title: "Слева", html: true }) + numField("lpt", icon("padT"), LA.pad[0], { title: "Сверху", html: true })
+                : numField("lpadh", icon("padH"), LA.pad[3], { title: "Слева и справа", html: true }) + numField("lpadv", icon("padV"), LA.pad[0], { title: "Сверху и снизу", html: true })) +
+              '<button type="button" class="lb-ibtn' + (split ? " is-on" : "") + '" data-act="padSplit" title="Каждая сторона отдельно">' + icon("padAll") + "</button></div>" +
+              (split ? '<div class="lb-irow">' + numField("lpr", icon("padR"), LA.pad[1], { title: "Справа", html: true }) + numField("lpb", icon("padB"), LA.pad[2], { title: "Снизу", html: true }) +
+                '<span class="lb-ispacer"></span></div>' : ""));
+        }
+        if (one.type === "frame") {
+          h.push('<label class="lb-icheck"><input type="checkbox" data-k="clip"' + (one.noclip ? "" : " checked") + "> Обрезать содержимое</label>");
         }
         h.push("</div>");
       }
       // Выравнивание: несколько объектов — между собой (группа как одно целое), один в экране — по экрану.
       if (list.length > 1 || (one && frameOf(one))) {
-        h.push('<div class="lb-isec"><div class="lb-ilabel">Выравнивание' + (list.length > 1 ? "" : " по экрану") + '</div><div class="lb-ialign">' +
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Выравнивание' + (list.length > 1 ? "" : " по фрейму") + '</div><div class="lb-ialign">' +
           [["L", "alL", "По левому краю"], ["CH", "alCH", "По центру по горизонтали"], ["R", "alR", "По правому краю"], ["DH", "distH", "Равные промежутки по горизонтали"],
             ["T", "alT", "По верхнему краю"], ["CV", "alCV", "По центру по вертикали"], ["B", "alB", "По нижнему краю"], ["DV", "distV", "Равные промежутки по вертикали"]].map(function (a) {
             return '<button type="button" class="lb-ibtn" data-align="' + a[0] + '" title="' + a[2] + '">' + icon(a[1]) + "</button>";
@@ -4193,14 +4220,14 @@
         '<label class="lb-iselect" title="Формат"><select data-exp="fmt">' + [["png", "PNG"], ["jpg", "JPG"], ["svg", "SVG"], ["pdf", "PDF"]].map(function (f) {
           return '<option value="' + f[0] + '"' + (expFmt === f[0] ? " selected" : "") + ">" + f[1] + "</option>";
         }).join("") + "</select></label></div>" +
-        '<button type="button" class="lb-ibtn is-wide lb-iexport" data-act="export">Скачать ' + (one && one.type === "frame" ? "экран" : list.length > 1 ? "выделенное" : "объект") + "</button></div>");
+        '<button type="button" class="lb-ibtn is-wide lb-iexport" data-act="export">Скачать ' + (one && one.type === "frame" ? "фрейм" : list.length > 1 ? "выделенное" : "объект") + "</button></div>");
       var anyGroup = list.some(function (e) {
         return e.group;
       });
       h.push('<div class="lb-isec lb-iacts">' +
         (list.length > 1 && !grp ? '<button type="button" class="lb-ibtn" data-act="group" title="Сгруппировать (⌘G)">' + icon("group") + "</button>" : "") +
         (anyGroup ? '<button type="button" class="lb-ibtn" data-act="ungroup" title="Разгруппировать (⇧⌘G)">' + icon("ungroup") + "</button>" : "") +
-        (one && o.blockActions && o.blockActions.link ? '<button type="button" class="lb-ibtn" data-act="link" title="Скопировать ссылку на ' + (one.type === "frame" ? "экран" : "объект") + '">' + icon("link") + "</button>" : "") +
+        (one && o.blockActions && o.blockActions.link ? '<button type="button" class="lb-ibtn" data-act="link" title="Скопировать ссылку на ' + (one.type === "frame" ? "фрейм" : "объект") + '">' + icon("link") + "</button>" : "") +
         '<button type="button" class="lb-ibtn" data-act="dup" title="Дублировать (⌘D)">' + icon("copy") + "</button>" +
         '<button type="button" class="lb-ibtn" data-act="front" title="На передний план (])">' + icon("front") + "</button>" +
         '<button type="button" class="lb-ibtn" data-act="back" title="На задний план ([)">' + icon("back") + "</button>" +
@@ -4292,15 +4319,29 @@
           var so = {};
           so[ok] = n == null ? undefined : n >= 100 ? null : Math.max(0, n) / 100;
           if (n != null) patch(cur.id, { style: so });
-        } else if (k === "lgap" || k === "lpadh" || k === "lpadv") {
+        } else if (/^(lgap|lgapm|lpadh|lpadv|lpt|lpr|lpb|lpl|hugW|hugH)$/.test(k)) {
           var LL = cur.type === "frame" ? parseLayout(cur.layout) : null;
-          if (!LL || n == null || n < 0) return;
-          if (k === "lgap") {
-            LL.gap = n;
-            if (LL.justify === "between") LL.justify = "start";
-          } else if (k === "lpadh") LL.pad[1] = LL.pad[3] = n;
-          else LL.pad[0] = LL.pad[2] = n;
+          if (!LL) return;
+          if (k === "lgapm") LL.justify = raw === "auto" ? "between" : LL.justify === "between" ? "start" : LL.justify;
+          else if (k === "hugW" || k === "hugH") {
+            var ax = k === "hugW" ? "w" : "h";
+            var hw = LL.hug.indexOf("w") >= 0;
+            var hh = LL.hug.indexOf("h") >= 0;
+            if (ax === "w") hw = raw === "hug";
+            else hh = raw === "hug";
+            LL.hug = hw && hh ? "wh" : hw ? "w" : hh ? "h" : "none";
+          } else {
+            if (n == null || n < 0) return;
+            if (k === "lgap") {
+              LL.gap = n;
+              if (LL.justify === "between") LL.justify = "start";
+            } else if (k === "lpadh") LL.pad[1] = LL.pad[3] = n;
+            else if (k === "lpadv") LL.pad[0] = LL.pad[2] = n;
+            else LL.pad[{ lpt: 0, lpr: 1, lpb: 2, lpl: 3 }[k]] = n;
+          }
           patch(cur.id, { layout: layoutStr(LL) });
+        } else if (k === "clip") {
+          if (cur.type === "frame") patch(cur.id, { noclip: raw ? undefined : true });
         } else if (k === "fontFamily") {
           var fam = String(raw || "").trim();
           var fsx = { fontFamily: fam && FONT_RE.test(fam) ? fam : null };
@@ -4471,12 +4512,13 @@
     }
 
     /** Разложить содержимое экрана по правилам (порядок — по положению вдоль главной оси). */
-    function applyLayout(fid) {
+    function applyLayout(fid, order) {
       var f = getEl(fid);
       var L = f && f.type === "frame" ? parseLayout(f.layout) : null;
       if (!L) return;
       var H = L.dir === "h";
       var kids = layoutKids(f).sort(function (a, b) {
+        if (order) return order.indexOf(a.id) - order.indexOf(b.id);
         return H ? a.x + a.w / 2 - (b.x + b.w / 2) : a.y + a.h / 2 - (b.y + b.h / 2);
       });
       var sizeM = function (e) {
@@ -4528,6 +4570,38 @@
       });
     }
 
+    /** Стрелки у объекта в автолэйауте — поменяться местами с соседом вдоль оси (как во Figma). */
+    function reorderInLayout(dx, dy) {
+      var list = selList();
+      var f = list.length ? frameOf(list[0]) : null;
+      var L = f ? parseLayout(f.layout) : null;
+      if (!L || !list.every(function (e) {
+        return frameOf(e) === f;
+      })) return false;
+      var H = L.dir === "h";
+      var step = H ? dx : dy;
+      if (!step) return true; // поперёк оси в автолэйауте не двигаем
+      var kids = layoutKids(f).sort(function (a, b) {
+        return H ? a.x - b.x : a.y - b.y;
+      }).map(function (e) {
+        return e.id;
+      });
+      var sel = kids.filter(function (id) {
+        return selected.has(id);
+      });
+      var rest = kids.filter(function (id) {
+        return !selected.has(id);
+      });
+      var first = kids.indexOf(sel[0]);
+      var at = Math.max(0, Math.min(rest.length, first + (step > 0 ? 1 : -1)));
+      var order = rest.slice(0, at).concat(sel, rest.slice(at));
+      if (order.join() === kids.join()) return true;
+      begin();
+      applyLayout(f.id, order);
+      commit();
+      return true;
+    }
+
     /** Какие экраны с автолэйаутом затронула правка (и их внешние — у «обнимающих» меняется размер). */
     function relayout(ids) {
       var todo = {};
@@ -4552,13 +4626,13 @@
     }
 
     /** ⇧A: экрану — автолэйаут; выделенным объектам — новый экран-обёртка с автолэйаутом (как во Figma). */
-    function addAutoLayout() {
+    function addAutoLayout(dirForce) {
       var list = selList().filter(function (e) {
         return e.type !== "line" && e.type !== "pen";
       });
       if (!list.length || readOnly) return;
       var guess = function (items) {
-        if (items.length < 2) return { dir: "v", gap: 8 };
+        if (items.length < 2) return { dir: "v", gap: 8, align: "start" };
         // Направление — куда разбросаны центры: стопка — вертикально, ряд — горизонтально.
         var cx = items.map(function (e) {
           return e.x + e.w / 2;
@@ -4575,7 +4649,21 @@
         gaps.sort(function (a, c) {
           return a - c;
         });
-        return { dir: H ? "h" : "v", gap: Math.max(0, Math.round(gaps[Math.floor(gaps.length / 2)] || 0)) };
+        // Уже выровнены между собой (левые края, центры, правые края) — так и оставляем.
+        var near = function (arr) {
+          return Math.max.apply(null, arr) - Math.min.apply(null, arr) <= 1.5;
+        };
+        var a0 = items.map(function (e) {
+          return H ? e.y : e.x;
+        });
+        var a1 = items.map(function (e) {
+          return H ? e.y + e.h / 2 : e.x + e.w / 2;
+        });
+        var a2 = items.map(function (e) {
+          return H ? e.y + e.h : e.x + e.w;
+        });
+        var align = near(a0) ? "start" : near(a1) ? "center" : near(a2) ? "end" : "start";
+        return { dir: H ? "h" : "v", gap: Math.max(0, Math.round(gaps[Math.floor(gaps.length / 2)] || 0)), align: align };
       };
       begin();
       if (list.length === 1 && list[0].type === "frame") {
@@ -4586,13 +4674,14 @@
         }
         var kids = layoutKids(f);
         var g0 = guess(kids);
+        if (dirForce) g0.dir = dirForce;
         var kb = kids.length ? G.unionBounds(kids.map(function (e) {
           return G.elBounds(e, getEl);
         })) : null;
         var pad = kb ? [kb.y - f.y, f.x + f.w - (kb.x + kb.w), f.y + f.h - (kb.y + kb.h), kb.x - f.x].map(function (v) {
           return Math.max(0, Math.round(v));
         }) : [16, 16, 16, 16];
-        patch(f.id, { layout: layoutStr({ dir: g0.dir, gap: g0.gap, pad: pad, align: "start", justify: "start", hug: "none" }) });
+        patch(f.id, { layout: layoutStr({ dir: g0.dir, gap: g0.gap, pad: pad, align: g0.align, justify: "start", hug: "none" }) });
         relayout([f.id]);
       } else {
         // Обёртка: экран вокруг выделенного, они — внутри, размер по содержимому.
@@ -4603,7 +4692,7 @@
         var parent = frameOf(list[0]);
         var wrap = newEl("frame", G.pt(b.x, b.y), {
           w: b.w, h: b.h, name: "Автолэйаут", style: { fill: "#ffffff", fillOff: true, radius: 0 },
-          layout: layoutStr({ dir: g1.dir, gap: g1.gap, pad: [0, 0, 0, 0], align: "start", justify: "start", hug: "wh" }),
+          layout: layoutStr({ dir: g1.dir, gap: g1.gap, pad: [0, 0, 0, 0], align: g1.align, justify: "start", hug: "wh" }),
           z: Math.min.apply(null, list.map(function (e) {
             return e.z || 0;
           })) - 0.5,
@@ -4627,6 +4716,19 @@
       if (a === "alAdd") {
         commit();
         addAutoLayout();
+        return;
+      }
+      if (a === "alDir" && !b.getAttribute("data-ldir")) a = "alDel";
+      if (!L && a === "alDir") {
+        commit();
+        addAutoLayout(b.getAttribute("data-ldir"));
+        return;
+      }
+      if (a === "padSplit") {
+        padSplit = !padSplit;
+        inspKey = "";
+        commit();
+        renderInspector(selList());
         return;
       }
       if (!L) return commit();
@@ -4670,12 +4772,12 @@
     }
 
     var TYPE_RU = { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия", image: "Картинка", vector: "Вектор",
-      table: "Таблица", sticky: "Стикер", pen: "Рисунок", card: "Карточка", gantt: "Гант", frame: "Экран" };
+      table: "Таблица", sticky: "Стикер", pen: "Рисунок", card: "Карточка", gantt: "Гант", frame: "Фрейм" };
     var TYPE_ICON = { text: "text", rect: "rect", ellipse: "ellipse", diamond: "diamond", line: "line", image: "image", vector: "penTool",
       table: "table", sticky: "sticky", pen: "pen", card: "child", gantt: "taskAdd", frame: "frame" };
 
     function layerName(el) {
-      if (el.type === "frame") return el.name || "Экран";
+      if (el.type === "frame") return el.name || "Фрейм";
       if (el.type === "line" && el.arrowEnd) return el.text ? oneLine(el.text) : "Стрелка";
       var t = el.text || el.title || el.name || "";
       return t ? oneLine(String(t).split("\n")[0]).slice(0, 48) : TYPE_RU[el.type] || "Объект";
@@ -5414,7 +5516,7 @@
           else expScale = Number(t.value) || 1;
           return;
         }
-        if (t.getAttribute("data-k")) applyInspector(t.getAttribute("data-k"), t.value);
+        if (t.getAttribute("data-k")) applyInspector(t.getAttribute("data-k"), t.type === "checkbox" ? t.checked : t.value);
         else if (t.getAttribute("data-hex")) {
           var v = String(t.value).trim().toLowerCase();
           if (/^[0-9a-f]{6}$/.test(v)) v = "#" + v;
@@ -5475,11 +5577,11 @@
         } else if (a === "flipH" || a === "flipV") flipSel(a === "flipH");
         else if (a === "group") groupSel();
         else if (a === "fxAdd") openFxMenu(b);
-        else if (/^(alAdd|alDel|alDir|alCell|alBetween|hugW|hugH)$/.test(a)) layoutAct(a, b);
+        else if (/^(alAdd|alDel|alDir|alCell|alBetween|hugW|hugH|padSplit)$/.test(a)) layoutAct(a, b);
         else if (a === "export") exportSelection(expFmt, expScale);
         else if (a === "link") {
           var lk = selList()[0];
-          if (lk) o.blockActions.link([{ id: lk.id, text: lk.type === "frame" ? lk.name || "Экран" : lk.text || "", label: lk.name || lk.text || "Объект макета" }]);
+          if (lk) o.blockActions.link([{ id: lk.id, text: lk.type === "frame" ? lk.name || "Фрейм" : lk.text || "", label: lk.name || lk.text || "Объект макета" }]);
         }
         else if (a === "blurOff" || a === "bgBlurOff") applyStyle(function () {
           return true;
@@ -5984,6 +6086,7 @@
 
     function nudge(dx, dy) {
       if (!selected.size) return;
+      if (reorderInLayout(dx, dy)) return;
       begin();
       moveBy(withFrameKids(Array.from(selected)), dx, dy);
       syncFrames();
@@ -6406,7 +6509,7 @@
       els.forEach(function (el) {
         if (el.type === "frame") n++;
       });
-      return "Экран " + (n + 1);
+      return "Фрейм " + (n + 1);
     }
 
     /** Новый экран по размеру устройства — справа от последнего экрана (или в центре вида). */
@@ -8227,7 +8330,7 @@
         }
         // Содержимое экрана обрезается по экрану.
         var f = frameOf(el);
-        if (f && set[f.id] && !f.rot && !el.rot) {
+        if (f && set[f.id] && !f.rot && !f.noclip && !el.rot) {
           var cid = "clip-" + f.id;
           if (!defs.some(function (d) {
             return d.indexOf('id="' + cid + '"') >= 0;
@@ -8335,7 +8438,7 @@
 
     function exportBaseName() {
       var one = selList().length === 1 ? selList()[0] : null;
-      var t = one && one.type === "frame" ? one.name || "Экран" : one && one.text ? String(one.text).split("\n")[0].slice(0, 40) : o.title || "Макет";
+      var t = one && one.type === "frame" ? one.name || "Фрейм" : one && one.text ? String(one.text).split("\n")[0].slice(0, 40) : o.title || "Макет";
       return String(t).replace(/[\\/:*?"<>|]+/g, " ").trim() || "Макет";
     }
 
@@ -8401,7 +8504,7 @@
       var ids = Array.from(selected);
       var sv = ids.length ? selectionSvg(ids) : null;
       if (!sv) {
-        notify("Выделите объект или экран");
+        notify("Выделите объект или фрейм");
         return;
       }
       var name = exportBaseName();

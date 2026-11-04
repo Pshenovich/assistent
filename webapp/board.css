@@ -1424,7 +1424,7 @@ html[data-theme="light"] .leo-board {
   z-index: 4;
   top: 64px;
   right: 12px;
-  width: 236px;
+  width: 264px;
   max-height: calc(100% - 140px);
   overflow-y: auto;
   padding: 4px 0;
@@ -2132,4 +2132,69 @@ html[data-theme="light"] .leo-board {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+/* Вложенный фрейм (в т. ч. автолэйаут) без своей обводки — без тонкой рамки, как во Figma; при наведении — подсветка. */
+.lb-t-frame.is-nested .lb-frame-bg:not(.has-stroke) {
+  stroke: none;
+}
+
+.lb-t-frame.is-nested:hover .lb-frame-bg:not(.has-stroke) {
+  stroke: var(--lb-accent);
+  stroke-width: 1;
+}
+
+/* Панель как во Figma: подписи групп, поле с выбором режима, флажок. */
+.lb-isub {
+  margin: 2px 0 -2px;
+  color: var(--lb-muted);
+  font-size: 11px;
+}
+
+.lb-ifsel select {
+  flex: none;
+  width: 48px;
+  -webkit-appearance: none;
+  appearance: none;
+  text-align: right;
+  text-align-last: right;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--lb-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.lb-ifsel input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 24px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.lb-ilayout > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lb-icheck {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lb-iadd.is-on {
+  background: var(--lb-accent-soft);
+  color: var(--lb-accent);
 }

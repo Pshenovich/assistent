@@ -498,6 +498,8 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         layout = str(raw.get("layout") or "").strip()
         if _LAYOUT_RE.match(layout):
             el["layout"] = layout
+        if raw.get("noclip") is True:
+            el["noclip"] = True  # содержимое не обрезается по краю фрейма
     elif etype == "vector":
         vec = _clean_vector(raw)
         if not vec:
@@ -621,7 +623,7 @@ def board_plain_text(body: Any) -> str:
 
 _SHAPE_RU = {
     "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "sticky": "стикер", "text": "текст", "image": "картинка",
-    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта", "vector": "иконка", "frame": "экран",
+    "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта", "vector": "иконка", "frame": "фрейм",
 }
 _COLOR_RU = {
     "red": "красный", "orange": "оранжевый", "yellow": "жёлтый", "green": "зелёный", "blue": "синий",
