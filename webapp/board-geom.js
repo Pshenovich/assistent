@@ -871,6 +871,7 @@
   }
 
   var api = {
+    cubicAt: cubicAt,
     SIDES: SIDES,
     pt: pt,
     add: add,

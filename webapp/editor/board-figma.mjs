@@ -527,6 +527,17 @@ function fromFigma(msg, uid) {
     });
   }
 
+  /** Есть ли в поддереве узлы этих типов (с заходом во вложенные компоненты). */
+  function hasKind(parentId, types, depth) {
+    if (depth > 6) return false;
+    return (kids[parentId] || []).some(function (n) {
+      if (n.visible === false) return false;
+      if (types[n.type]) return true;
+      if (n.type === "INSTANCE" && n.symbolData) return hasKind(gid(n.symbolData.symbolID), types, depth + 1);
+      return hasKind(gid(n.guid), types, depth + 1);
+    });
+  }
+
   /** Экземпляр компонента: готовая геометрия (derivedSymbolData) — или обход самого компонента. */
   function instancePaths(n) {
     var paths = [];
@@ -536,6 +547,13 @@ function fromFigma(msg, uid) {
     var sx = ((n.size && n.size.x) || 1) / ((sym.size && sym.size.x) || 1);
     var sy = ((n.size && n.size.y) || 1) / ((sym.size && sym.size.y) || 1);
     var ovs = overridesOf(n);
+    // Сначала — сами линии компонента (сеть вершин): их можно править по точкам, обводка остаётся обводкой.
+    // Булевы операции так не собрать (вычитание) — тогда готовая геометрия.
+    if (!hasKind(sid, { BOOLEAN_OPERATION: 1, TEXT: 1 }, 0)) {
+      var tree = [];
+      pushTree(tree, sid, { m00: sx, m01: 0, m02: 0, m10: 0, m11: sy, m12: 0 }, ovs, (sx + sy) / 2, 0);
+      if (tree.length) return tree;
+    }
     var keys = keyMap(sid);
     (n.derivedSymbolData || []).forEach(function (dd) {
       var g = (dd.guidPath && dd.guidPath.guids) || [];

@@ -1045,7 +1045,10 @@ def update_board(body: Any, action: dict[str, Any]) -> str:
         ln = _line(a, b, e, layout, side_of, 1 + k * 0.01)
         elements[ln["id"]] = ln
     _add_blocks(elements, action, replace=True)
-    return board_doc.normalize_board_body(json.dumps({"v": 1, "elements": elements}, ensure_ascii=False))
+    out: dict[str, Any] = {"v": 1, "elements": elements}
+    if board.get("mode"):
+        out["mode"] = board["mode"]  # лист «Макет» остаётся макетом после правки Лео
+    return board_doc.normalize_board_body(json.dumps(out, ensure_ascii=False))
 
 
 def apply_action(note: dict[str, Any], action: dict[str, Any], note_sheets_mod: Any, open_sheet_id: str = "") -> Optional[dict[str, Any]]:

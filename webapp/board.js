@@ -219,6 +219,8 @@
     plus: '<path d="M10 4.5v11M4.5 10h11"/>',
     minus: '<path d="M4.5 10h11"/>',
     weight: '<path d="M4 5.5h12M4 10h12M4 14.5h12" /><path d="M4 14.5h12" stroke-width="2.6"/>',
+    group: '<rect x="3" y="3" width="14" height="14" rx="2" stroke-dasharray="2 2"/><rect x="6" y="6" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/>',
+    ungroup: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/>',
     flipH: '<path d="M10 3v14" stroke-dasharray="2 2"/><path d="M7.5 6L3 14h4.5zM12.5 6l4.5 8h-4.5z"/>',
     flipV: '<path d="M3 10h14" stroke-dasharray="2 2"/><path d="M6 7.5L14 3v4.5zM6 12.5l8 4.5v-4.5z"/>',
   };
@@ -603,7 +605,7 @@
     var tables = new Map(); // id → редактор таблицы (NoteRichEditor.mountTable)
     var mode = modeOf(o.json); // «board» — доска, «design» — макет экранов
     var gSel = null; // выбранная задача Ганта: {id, task}
-    var penPath = null; // перо: {pts: [{x, y, hx, hy}], cursor} — рисуемый контур
+    var penPath = null; // перо: контуры вектора, который рисуем или правим (см. «перо» ниже)
     var lastMove = null; // последняя точка курсора над доской (для Alt без движения мыши)
     var measure = null; // Alt в макете: расстояния от выделенного {a} до объекта под курсором / экрана {b}
     var ganttOn = new Map(); // id Ганта → был ли он единственным выделенным (тогда видна строка «+ Задача»)
@@ -1055,7 +1057,10 @@
     /** Элемент экрана обрезается по краю экрана (как во Figma); вне экрана — как есть. */
     function clipToFrame(node, el) {
       var f = frameOf(el);
-      if (!f || el.rot) {
+      var turned = false;
+      for (var q = f, gq = 0; q && gq < 20; q = frameOf(q), gq++) if (q.rot) turned = true;
+      // Повёрнутый экран: прямоугольник обрезки не совпал бы с ним — не обрезаем.
+      if (!f || el.rot || turned) {
         if (node.style.clipPath) node.style.clipPath = "";
         return;
       }
@@ -1078,7 +1083,8 @@
 
     function renderFrame(node, el, isEditing) {
       var st = el.style || {};
-      node.style.cssText = "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;";
+      node.style.cssText = "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;" +
+        (el.rot ? "transform:rotate(" + el.rot + "deg);" : "");
       var fsw = st.strokeOff ? 0 : strokeW(st, 0);
       var fr = radiiOf(st, el.w, el.h, 0);
       var fStroke = fsw > 0 ? ' stroke="' + inkVar(st.stroke || "ink") + '" stroke-width="' + fsw + '"' + opacityAttrs(st) : "";
@@ -1446,7 +1452,7 @@
           // Таблица и карточка растут по высоте сами — тянутся только вширь; Гант — по данным.
           if (BLOCKS[single.type]) names = single.type === "gantt" ? [] : [["w", mids[3]], ["e", mids[1]]];
           // Поворот мышкой: чуть снаружи каждого угла — зона с курсором поворота (как во Figma).
-          if (!BLOCKS[single.type] && single.type !== "frame") {
+          if (!BLOCKS[single.type]) {
             var cc = toScreen(G.center(single));
             c.forEach(function (cp) {
               var sp = toScreen(cp);
@@ -1559,13 +1565,27 @@
       return G.mul(G.add(a, b), 0.5);
     }
 
-    // ---- перо (макет): контур из точек и кривых → вектор; двойной клик по вектору — правка точек ----
-    // penPath: {pts: [{x, y, ix, iy, ox, oy}] (мир; ручки — смещения от точки), closed, drawing, editId, sel, cursor}
+    // ---- перо (макет): контуры из точек и кривых → вектор; двойной клик по вектору — правка точек ----
+    // penPath: {cs: [{pi, pts: [{x, y, ix, iy, ox, oy}], closed}] (мир; ручки — смещения от точки),
+    //           ci — контур, который рисуем; drawing, editId, sel {c, i}, cursor, alias {путь: путь-образец}}
     var penLastDown = { t: 0, x: 0, y: 0 };
     var PEN_HIT = 7; // px экрана
 
     function penPt(x, y) {
       return { x: x, y: y, ix: 0, iy: 0, ox: 0, oy: 0 };
+    }
+
+    function penAct() {
+      return penPath && penPath.cs[penPath.ci];
+    }
+
+    function penAll(fn) {
+      if (!penPath) return;
+      penPath.cs.forEach(function (c, ci) {
+        c.pts.forEach(function (q, i) {
+          fn(q, ci, i, c);
+        });
+      });
     }
 
     /** Shift — угол с шагом 15° от точки o (как у линий). */
@@ -1577,13 +1597,13 @@
       return G.add(o, G.pt(Math.cos(ang) * len, Math.sin(ang) * len));
     }
 
-    /** Прилипание к горизонтали / вертикали других точек контура — с направляющими. */
+    /** Прилипание к горизонтали / вертикали других точек — с направляющими. */
     function penSnap(p, skip) {
       var th = 6 / view.z;
       var bx = null;
       var by = null;
-      (penPath ? penPath.pts : []).forEach(function (q, i) {
-        if (i === skip) return;
+      penAll(function (q) {
+        if (q === skip) return;
         if (Math.abs(q.x - p.x) <= th && (!bx || Math.abs(q.x - p.x) < Math.abs(bx.x - p.x))) bx = q;
         if (Math.abs(q.y - p.y) <= th && (!by || Math.abs(q.y - p.y) < Math.abs(by.y - p.y))) by = q;
       });
@@ -1596,35 +1616,105 @@
 
     /** Куда встанет новая точка: Shift — 15° от последней, иначе прилипание к осям других точек. */
     function penTarget(p, e) {
-      var pts = penPath ? penPath.pts : [];
-      var last = pts[pts.length - 1];
+      var c = penAct();
+      var last = c && c.pts[c.pts.length - 1];
       if (e && e.shiftKey && last) {
         guides = [];
         return snapAngle(G.pt(last.x, last.y), p);
       }
-      return penSnap(p, -1);
+      return penSnap(p, null);
     }
 
-    /** Что под курсором: ручка {i, h: "in"|"out"} или точка {i}. */
+    function segCtrl(a, b) {
+      return [G.pt(a.x, a.y), G.pt(a.x + a.ox, a.y + a.oy), G.pt(b.x + b.ix, b.y + b.iy), G.pt(b.x, b.y)];
+    }
+
+    /** Что под курсором: ручка {c, i, h}, точка {c, i} или отрезок {c, i (начало), t}. */
     function penHit(e) {
       if (!penPath) return null;
       var r = stageRect();
-      var c = G.pt(e.clientX - r.left, e.clientY - r.top);
+      var m = G.pt(e.clientX - r.left, e.clientY - r.top);
       var best = null;
-      penPath.pts.forEach(function (q, i) {
+      var take = function (d, lim, hit) {
+        if (d <= lim && (!best || d < best.d)) best = Object.assign({ d: d }, hit);
+      };
+      penAll(function (q, c, i) {
         [["out", q.ox, q.oy], ["in", q.ix, q.iy]].forEach(function (h) {
-          if (!h[1] && !h[2]) return;
-          var s = toScreen(G.pt(q.x + h[1], q.y + h[2]));
-          var d = G.dist(s, c);
-          if (d <= PEN_HIT && (!best || d < best.d)) best = { i: i, h: h[0], d: d };
+          if (h[1] || h[2]) take(G.dist(toScreen(G.pt(q.x + h[1], q.y + h[2])), m), PEN_HIT, { c: c, i: i, h: h[0] });
         });
       });
       if (best) return best;
-      penPath.pts.forEach(function (q, i) {
-        var d = G.dist(toScreen(G.pt(q.x, q.y)), c);
-        if (d <= PEN_HIT + 2 && (!best || d < best.d)) best = { i: i, d: d };
+      penAll(function (q, c, i) {
+        take(G.dist(toScreen(G.pt(q.x, q.y)), m), PEN_HIT + 2, { c: c, i: i });
+      });
+      if (best) return best;
+      // Отрезок: ищем ближайшую точку кривой (грубо по 32 шагам, потом уточняем).
+      penPath.cs.forEach(function (cn, c) {
+        var n = cn.pts.length;
+        var segs = cn.closed ? n : n - 1;
+        for (var i = 0; i < segs; i++) {
+          var P = segCtrl(cn.pts[i], cn.pts[(i + 1) % n]).map(toScreen);
+          var bt = 0;
+          var bd = Infinity;
+          for (var k = 0; k <= 32; k++) {
+            var d = G.dist(G.cubicAt(P[0], P[1], P[2], P[3], k / 32), m);
+            if (d < bd) {
+              bd = d;
+              bt = k / 32;
+            }
+          }
+          for (var step = 1 / 64; step > 0.0005; step /= 2) {
+            [bt - step, bt + step].forEach(function (t) {
+              if (t < 0 || t > 1) return;
+              var d2 = G.dist(G.cubicAt(P[0], P[1], P[2], P[3], t), m);
+              if (d2 < bd) {
+                bd = d2;
+                bt = t;
+              }
+            });
+          }
+          take(bd, 6, { c: c, i: i, t: bt, seg: true });
+        }
       });
       return best;
+    }
+
+    /** Новая точка на отрезке (де Кастельжо): форма кривой не меняется. */
+    function penSplit(c, i, t) {
+      var cn = penPath.cs[c];
+      var n = cn.pts.length;
+      var a = cn.pts[i];
+      var b = cn.pts[(i + 1) % n];
+      var P = segCtrl(a, b);
+      var L = function (u, v) {
+        return G.pt(u.x + (v.x - u.x) * t, u.y + (v.y - u.y) * t);
+      };
+      var p01 = L(P[0], P[1]);
+      var p12 = L(P[1], P[2]);
+      var p23 = L(P[2], P[3]);
+      var p012 = L(p01, p12);
+      var p123 = L(p12, p23);
+      var M = L(p012, p123);
+      var curved = a.ox || a.oy || b.ix || b.iy;
+      var q = penPt(M.x, M.y);
+      if (curved) {
+        a.ox = p01.x - a.x;
+        a.oy = p01.y - a.y;
+        b.ix = p23.x - b.x;
+        b.iy = p23.y - b.y;
+        q.ix = p012.x - M.x;
+        q.iy = p012.y - M.y;
+        q.ox = p123.x - M.x;
+        q.oy = p123.y - M.y;
+      }
+      cn.pts.splice(i + 1, 0, q);
+      penPath.sel = { c: c, i: i + 1 };
+      return i + 1;
+    }
+
+    function penEnd(c, i) {
+      var cn = penPath && penPath.cs[c];
+      return cn && !cn.closed && (i === 0 || i === cn.pts.length - 1);
     }
 
     function penDown(p, e) {
@@ -1636,49 +1726,99 @@
         stopPenDrawing();
         return;
       }
-      if (!penPath) penPath = { pts: [], closed: false, drawing: true, editId: null, sel: -1 };
+      if (!penPath) penPath = { cs: [{ pi: 0, pts: [], closed: false }], ci: 0, drawing: true, editId: null, sel: null };
       var hit = penHit(e);
       var base = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, p0: p, rect: stageRect(), moved: false };
       if (hit && hit.h) {
-        var q0 = penPath.pts[hit.i];
-        startGesture(Object.assign(base, { kind: "vhd", i: hit.i, h: hit.h, q0: clone(q0) }));
+        startGesture(Object.assign(base, { kind: "vhd", c: hit.c, i: hit.i, h: hit.h }));
         return;
       }
-      if (hit) {
-        var n = penPath.pts.length;
-        if (penPath.drawing && hit.i === 0 && n >= 2 && !penPath.closed) {
-          penPath.closed = true;
+      var act = penAct();
+      if (hit && !hit.seg) {
+        var n = act.pts.length;
+        if (penPath.drawing && hit.c === penPath.ci && hit.i === 0 && n >= 2 && !act.closed) {
+          act.closed = true;
           penPath.drawing = false;
           writePen();
           renderOverlay();
           return;
         }
-        if (!penPath.drawing || hit.i !== n - 1) {
-          penPath.sel = hit.i;
-          startGesture(Object.assign(base, { kind: "vpt", i: hit.i, q0: clone(penPath.pts[hit.i]) }));
+        if (penPath.drawing && hit.c !== penPath.ci && penEnd(hit.c, hit.i) && n >= 1) {
+          // Рисуем и кликнули в конец другого открытого контура — соединяем их в один.
+          joinPen(hit.c, hit.i);
+          return;
+        }
+        if (!penPath.drawing || hit.c !== penPath.ci || hit.i !== n - 1) {
+          penPath.sel = { c: hit.c, i: hit.i };
+          var q = penPath.cs[hit.c].pts[hit.i];
+          startGesture(Object.assign(base, { kind: "vpt", c: hit.c, i: hit.i, q0: G.pt(q.x, q.y) }));
           renderOverlay();
           return;
         }
       }
-      if (!penPath.drawing) {
-        // Правка точек: клик мимо контура — правка закончена.
-        exitPen();
-        setTool("select");
+      if (hit && hit.seg && !penPath.drawing) {
+        // Клик по линии контура — новая точка на ней (её сразу можно тянуть).
+        var ni = penSplit(hit.c, hit.i, hit.t);
+        var nq = penPath.cs[hit.c].pts[ni];
+        writePen();
+        startGesture(Object.assign(base, { kind: "vpt", c: hit.c, i: ni, q0: G.pt(nq.x, nq.y) }));
+        renderOverlay();
         return;
       }
+      if (!penPath.drawing) {
+        // Выбран конец открытого контура — продолжаем от него (как во Figma), иначе — новый контур в том же векторе.
+        var sl = penPath.sel;
+        if (sl && penEnd(sl.c, sl.i)) resumePen(sl.c, sl.i);
+        else if (penPath.editId && !penPath.sel) {
+          exitPen();
+          setTool("select");
+          return;
+        } else {
+          penPath.cs.push({ pi: penPath.cs[penPath.cs.length - 1].pi, pts: [], closed: false });
+          penPath.ci = penPath.cs.length - 1;
+          penPath.drawing = true;
+        }
+      }
       var t = penTarget(p, e);
-      penPath.pts.push(penPt(t.x, t.y));
-      penPath.sel = penPath.pts.length - 1;
+      act = penAct();
+      act.pts.push(penPt(t.x, t.y));
+      penPath.sel = { c: penPath.ci, i: act.pts.length - 1 };
       startGesture(Object.assign(base, { kind: "pathpt", p0: t }));
       renderOverlay();
     }
 
+    /** Соединить рисуемый контур с концом другого открытого контура. */
+    function joinPen(c, i) {
+      var pp = penPath;
+      var a = pp.cs[pp.ci];
+      var b = pp.cs[c];
+      if (i !== 0) reverseContour(b);
+      a.pts = a.pts.concat(b.pts);
+      pp.cs.splice(c, 1);
+      if (c < pp.ci) pp.ci--;
+      pp.drawing = false;
+      pp.sel = null;
+      writePen();
+      renderOverlay();
+    }
+
+    function reverseContour(cn) {
+      cn.pts.reverse().forEach(function (q) {
+        var ix = q.ix;
+        var iy = q.iy;
+        q.ix = q.ox;
+        q.iy = q.oy;
+        q.ox = ix;
+        q.oy = iy;
+      });
+    }
+
     /** Тянем от новой точки — ручки кривой (симметричные); Shift — угол ручки с шагом 15°. */
     function penDrag(p, e) {
-      var pt = penPath && penPath.pts[penPath.pts.length - 1];
+      var c = penAct();
+      var pt = c && c.pts[c.pts.length - 1];
       if (!pt) return;
-      var o = G.pt(pt.x, pt.y);
-      if (e && e.shiftKey) p = snapAngle(o, p);
+      if (e && e.shiftKey) p = snapAngle(G.pt(pt.x, pt.y), p);
       pt.ox = p.x - pt.x;
       pt.oy = p.y - pt.y;
       pt.ix = -pt.ox;
@@ -1688,9 +1828,9 @@
 
     /** Перенос точки (с её ручками): прилипание к осям других точек, Shift — только по одной оси. */
     function penMovePt(g, p, e) {
-      var q = penPath && penPath.pts[g.i];
+      var q = penPath && penPath.cs[g.c] && penPath.cs[g.c].pts[g.i];
       if (!q) return;
-      var t = penSnap(p, g.i);
+      var t = penSnap(p, q);
       if (e && e.shiftKey) {
         guides = [];
         t = Math.abs(p.x - g.q0.x) >= Math.abs(p.y - g.q0.y) ? G.pt(p.x, g.q0.y) : G.pt(g.q0.x, p.y);
@@ -1702,143 +1842,382 @@
 
     /** Ручка точки: вторая — зеркально (Alt — независимо); Shift — угол 15°. */
     function penMoveHandle(g, p, e) {
-      var q = penPath && penPath.pts[g.i];
+      var q = penPath && penPath.cs[g.c] && penPath.cs[g.c].pts[g.i];
       if (!q) return;
-      var o = G.pt(q.x, q.y);
-      if (e && e.shiftKey) p = snapAngle(o, p);
+      if (e && e.shiftKey) p = snapAngle(G.pt(q.x, q.y), p);
       var dx = p.x - q.x;
       var dy = p.y - q.y;
+      var me = g.h === "out" ? "o" : "i";
       var other = g.h === "out" ? "i" : "o";
-      q[g.h === "out" ? "ox" : "ix"] = dx;
-      q[g.h === "out" ? "oy" : "iy"] = dy;
+      q[me + "x"] = dx;
+      q[me + "y"] = dy;
       if (!(e && e.altKey)) {
         q[other + "x"] = -dx;
         q[other + "y"] = -dy;
       }
+      penPath.sel = { c: g.c, i: g.i };
       renderOverlay();
     }
 
-    function penD(pts, closed, ox, oy, sx, sy) {
-      sx = sx || 1;
-      sy = sy || 1;
+    function penD(pts, closed, ox, oy) {
       var f = function (x, y) {
-        return Math.round(((x - ox) / sx) * 100) / 100 + " " + Math.round(((y - oy) / sy) * 100) / 100;
+        return Math.round((x - ox) * 100) / 100 + " " + Math.round((y - oy) * 100) / 100;
       };
       var seg = function (a, b) {
         if (!a.ox && !a.oy && !b.ix && !b.iy) return "L" + f(b.x, b.y);
         return "C" + f(a.x + a.ox, a.y + a.oy) + " " + f(b.x + b.ix, b.y + b.iy) + " " + f(b.x, b.y);
       };
+      if (!pts.length) return "";
       var d = "M" + f(pts[0].x, pts[0].y);
       for (var i = 1; i < pts.length; i++) d += seg(pts[i - 1], pts[i]);
       if (closed && pts.length > 1) d += seg(pts[pts.length - 1], pts[0]) + "Z";
       return d;
     }
 
-    /** Контур вектора → точки для правки (только M/L/C/Z — так пишет перо); иначе null. */
+    /** Контуры вектора → точки для правки: M/L/H/V/C/S/Q/T/Z (абсолютные и относительные). null — не разобрать. */
     function parsePen(el) {
-      if (!el || el.type !== "vector" || el.rot || !el.paths || el.paths.length !== 1) return null;
-      var d = String(el.paths[0].d || "");
-      if (/[^MLCZmlcz0-9.,\s\-e]/.test(d)) return null;
+      if (!el || el.type !== "vector" || !el.paths || !el.paths.length) return null;
       var vb = el.vb || [el.w, el.h];
       var sx = el.w / Math.max(0.01, vb[0]);
       var sy = el.h / Math.max(0.01, vb[1]);
+      var c0 = G.center(el);
+      var rot = ((el.rot || 0) * Math.PI) / 180;
       var W = function (x, y) {
-        return G.pt(el.x + x * sx, el.y + y * sy);
+        var wx = el.x + x * sx;
+        var wy = el.y + y * sy;
+        if (!rot) return G.pt(wx, wy);
+        var dx = wx - c0.x;
+        var dy = wy - c0.y;
+        return G.pt(c0.x + dx * Math.cos(rot) - dy * Math.sin(rot), c0.y + dx * Math.sin(rot) + dy * Math.cos(rot));
       };
-      var toks = d.match(/[MLCZmlcz]|-?\d*\.?\d+(?:e[-+]?\d+)?/g) || [];
-      var pts = [];
-      var closed = false;
-      var cx = 0;
-      var cy = 0;
-      var i = 0;
-      var cmd = "";
-      var num = function () {
-        return Number(toks[i++]);
-      };
-      while (i < toks.length) {
-        if (/[A-Za-z]/.test(toks[i])) cmd = toks[i++];
-        var rel = cmd === cmd.toLowerCase();
-        var C = cmd.toUpperCase();
-        if (C === "Z") {
-          closed = true;
+      var cs = [];
+      var alias = {};
+      var seen = {};
+      for (var pi = 0; pi < el.paths.length; pi++) {
+        var d = String(el.paths[pi].d || "");
+        if (seen[d] != null) {
+          alias[pi] = seen[d]; // заливка и обводка одной фигуры — один контур
           continue;
         }
-        if (C === "M" || C === "L") {
-          if (pts.length && C === "M") return null; // несколько контуров — не наше
-          var x = num() + (rel ? cx : 0);
-          var y = num() + (rel ? cy : 0);
-          var w0 = W(x, y);
-          pts.push(penPt(w0.x, w0.y));
-          cx = x;
-          cy = y;
-          if (C === "M") cmd = rel ? "l" : "L";
-        } else if (C === "C") {
-          var x1 = num() + (rel ? cx : 0);
-          var y1 = num() + (rel ? cy : 0);
-          var x2 = num() + (rel ? cx : 0);
-          var y2 = num() + (rel ? cy : 0);
-          var x3 = num() + (rel ? cx : 0);
-          var y3 = num() + (rel ? cy : 0);
-          var prev = pts[pts.length - 1];
-          if (!prev) return null;
-          var a1 = W(x1, y1);
-          var a2 = W(x2, y2);
-          var e3 = W(x3, y3);
-          prev.ox = a1.x - prev.x;
-          prev.oy = a1.y - prev.y;
-          var np = penPt(e3.x, e3.y);
-          np.ix = a2.x - e3.x;
-          np.iy = a2.y - e3.y;
-          pts.push(np);
-          cx = x3;
-          cy = y3;
-        } else return null;
-        if (!isFinite(cx) || !isFinite(cy)) return null;
+        seen[d] = pi;
+        var got = parseD(d, W, pi);
+        if (!got) return null;
+        cs = cs.concat(got);
       }
-      if (pts.length < 2) return null;
-      // Замкнутый контур пишется с возвратом в первую точку — её дубль убираем, ручку переносим.
-      var first = pts[0];
-      var last = pts[pts.length - 1];
-      if (closed && pts.length > 2 && Math.abs(last.x - first.x) < 0.01 && Math.abs(last.y - first.y) < 0.01) {
-        first.ix = last.ix;
-        first.iy = last.iy;
-        pts.pop();
-      }
-      return { pts: pts, closed: closed };
+      if (!cs.length) return null;
+      return { cs: cs, alias: alias };
     }
 
-    /** Контур → вектор (новый или правим существующий) одним шагом отмены. */
+    function parseD(d, W, pi) {
+      if (/[^MLHVCSQTZmlhvcsqtz0-9.,\s\-+e]/.test(d)) return null;
+      var toks = d.match(/[MLHVCSQTZmlhvcsqtz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi) || [];
+      var out = [];
+      var cur = null;
+      var i = 0;
+      var cmd = "";
+      var cx = 0;
+      var cy = 0;
+      var sx0 = 0;
+      var sy0 = 0;
+      var lastC = null; // последняя управляющая точка (для S / T), в координатах d
+      var lastQ = null;
+      var num = function () {
+        var v = Number(toks[i++]);
+        if (!isFinite(v)) throw new Error("num");
+        return v;
+      };
+      var addPt = function (x, y) {
+        var w = W(x, y);
+        var q = penPt(w.x, w.y);
+        cur.pts.push(q);
+        return q;
+      };
+      var setOut = function (x, y) {
+        var prev = cur.pts[cur.pts.length - 1];
+        var w = W(x, y);
+        prev.ox = w.x - prev.x;
+        prev.oy = w.y - prev.y;
+      };
+      var setIn = function (q, x, y) {
+        var w = W(x, y);
+        q.ix = w.x - q.x;
+        q.iy = w.y - q.y;
+      };
+      try {
+        while (i < toks.length) {
+          if (/[a-z]/i.test(toks[i])) cmd = toks[i++];
+          else if (!cmd) return null;
+          var rel = cmd === cmd.toLowerCase();
+          var C = cmd.toUpperCase();
+          var bx = rel ? cx : 0;
+          var by = rel ? cy : 0;
+          if (C === "Z") {
+            if (cur) {
+              cur.closed = true;
+              cx = sx0;
+              cy = sy0;
+            }
+            cur = null;
+            lastC = lastQ = null;
+            continue;
+          }
+          if (C === "M") {
+            cx = num() + bx;
+            cy = num() + by;
+            sx0 = cx;
+            sy0 = cy;
+            cur = { pi: pi, pts: [], closed: false };
+            out.push(cur);
+            addPt(cx, cy);
+            cmd = rel ? "l" : "L";
+            lastC = lastQ = null;
+            continue;
+          }
+          if (!cur) {
+            // Команда после Z без M — новый контур от последней точки.
+            cur = { pi: pi, pts: [], closed: false };
+            out.push(cur);
+            addPt(cx, cy);
+          }
+          if (C === "L" || C === "H" || C === "V") {
+            var nx = C === "V" ? cx : num() + bx;
+            var ny = C === "H" ? cy : num() + (C === "V" ? by : by);
+            cx = nx;
+            cy = ny;
+            addPt(cx, cy);
+            lastC = lastQ = null;
+          } else if (C === "C" || C === "S") {
+            var x1;
+            var y1;
+            if (C === "C") {
+              x1 = num() + bx;
+              y1 = num() + by;
+            } else {
+              x1 = lastC ? 2 * cx - lastC[0] : cx;
+              y1 = lastC ? 2 * cy - lastC[1] : cy;
+            }
+            var x2 = num() + bx;
+            var y2 = num() + by;
+            var x3 = num() + bx;
+            var y3 = num() + by;
+            setOut(x1, y1);
+            var q3 = addPt(x3, y3);
+            setIn(q3, x2, y2);
+            lastC = [x2, y2];
+            lastQ = null;
+            cx = x3;
+            cy = y3;
+          } else if (C === "Q" || C === "T") {
+            var qx;
+            var qy;
+            if (C === "Q") {
+              qx = num() + bx;
+              qy = num() + by;
+            } else {
+              qx = lastQ ? 2 * cx - lastQ[0] : cx;
+              qy = lastQ ? 2 * cy - lastQ[1] : cy;
+            }
+            var ex = num() + bx;
+            var ey = num() + by;
+            // Квадратичная кривая → кубическая с теми же концами.
+            setOut(cx + (2 / 3) * (qx - cx), cy + (2 / 3) * (qy - cy));
+            var qe = addPt(ex, ey);
+            setIn(qe, ex + (2 / 3) * (qx - ex), ey + (2 / 3) * (qy - ey));
+            lastQ = [qx, qy];
+            lastC = null;
+            cx = ex;
+            cy = ey;
+          } else return null;
+        }
+      } catch (_) {
+        return null;
+      }
+      // Замкнутый контур, вернувшийся в первую точку: дубль убираем, ручку переносим.
+      out.forEach(function (cn) {
+        var f = cn.pts[0];
+        var l = cn.pts[cn.pts.length - 1];
+        if (cn.closed && cn.pts.length > 2 && Math.abs(l.x - f.x) < 0.01 && Math.abs(l.y - f.y) < 0.01) {
+          f.ix = l.ix;
+          f.iy = l.iy;
+          cn.pts.pop();
+        }
+      });
+      return out.filter(function (cn) {
+        return cn.pts.length >= 2 || cn.closed;
+      });
+    }
+
+    /** SVG-текст → вектор: path, rect, circle, ellipse, line, polyline, polygon с наследованием цветов от групп. */
+    function svgToVector(text) {
+      var doc;
+      try {
+        doc = new DOMParser().parseFromString(String(text).slice(0, 2000000), "image/svg+xml");
+      } catch (_) {
+        return null;
+      }
+      var svg = doc && doc.documentElement;
+      if (!svg || svg.nodeName.toLowerCase() !== "svg" || doc.getElementsByTagName("parsererror").length) return null;
+      var vbA = String(svg.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+      var W0 = parseFloat(svg.getAttribute("width"));
+      var H0 = parseFloat(svg.getAttribute("height"));
+      var vb = vbA.length === 4 && vbA.every(isFinite) ? vbA : [0, 0, W0 || 24, H0 || 24];
+      var w = W0 || vb[2];
+      var h = H0 || vb[3];
+      var ID = function (x, y) {
+        return G.pt(x - vb[0], y - vb[1]);
+      };
+      var hexColor = function (v) {
+        v = String(v || "").trim().toLowerCase();
+        if (/^#[0-9a-f]{6}$/.test(v)) return v;
+        if (/^#[0-9a-f]{3}$/.test(v)) return "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+        if (v === "white") return "#ffffff";
+        if (v === "black" || v === "currentcolor") return "#000000";
+        var m = /^rgba?\((\d+)[ ,]+(\d+)[ ,]+(\d+)/.exec(v);
+        if (m) return "#" + [m[1], m[2], m[3]].map(function (n) {
+          return ("0" + Math.min(255, Number(n)).toString(16)).slice(-2);
+        }).join("");
+        return v === "none" ? "none" : null;
+      };
+      var attr = function (node, k, inh) {
+        var v = node.getAttribute(k);
+        var st = node.getAttribute("style");
+        if (st) {
+          var m = new RegExp("(?:^|;)\\s*" + k + "\\s*:\\s*([^;]+)").exec(st);
+          if (m) v = m[1].trim();
+        }
+        return v != null ? v : inh[k];
+      };
+      var num = function (node, k) {
+        return parseFloat(node.getAttribute(k)) || 0;
+      };
+      var K = 0.5523;
+      var paths = [];
+      var walk = function (node, inh) {
+        if (paths.length > 300 || node.nodeType !== 1) return;
+        var tag = node.nodeName.toLowerCase();
+        if (tag === "defs" || tag === "clippath" || tag === "mask" || tag === "lineargradient" || tag === "radialgradient" || tag === "style") return;
+        var own = {};
+        ["fill", "stroke", "stroke-width", "stroke-linecap", "stroke-linejoin", "fill-rule", "display", "visibility"].forEach(function (k) {
+          own[k] = attr(node, k, inh);
+        });
+        if (own.display === "none" || own.visibility === "hidden") return;
+        var d = "";
+        if (tag === "path") d = node.getAttribute("d") || "";
+        else if (tag === "rect") {
+          var x = num(node, "x");
+          var y = num(node, "y");
+          var rw = num(node, "width");
+          var rh = num(node, "height");
+          var r = Math.min(num(node, "rx") || num(node, "ry"), rw / 2, rh / 2);
+          var c = r * (1 - K);
+          d = r > 0
+            ? "M" + (x + r) + " " + y + "L" + (x + rw - r) + " " + y + "C" + (x + rw - c) + " " + y + " " + (x + rw) + " " + (y + c) + " " + (x + rw) + " " + (y + r) +
+              "L" + (x + rw) + " " + (y + rh - r) + "C" + (x + rw) + " " + (y + rh - c) + " " + (x + rw - c) + " " + (y + rh) + " " + (x + rw - r) + " " + (y + rh) +
+              "L" + (x + r) + " " + (y + rh) + "C" + (x + c) + " " + (y + rh) + " " + x + " " + (y + rh - c) + " " + x + " " + (y + rh - r) +
+              "L" + x + " " + (y + r) + "C" + x + " " + (y + c) + " " + (x + c) + " " + y + " " + (x + r) + " " + y + "Z"
+            : "M" + x + " " + y + "L" + (x + rw) + " " + y + "L" + (x + rw) + " " + (y + rh) + "L" + x + " " + (y + rh) + "Z";
+        } else if (tag === "circle" || tag === "ellipse") {
+          var cx = num(node, "cx");
+          var cy = num(node, "cy");
+          var rx = tag === "circle" ? num(node, "r") : num(node, "rx");
+          var ry = tag === "circle" ? rx : num(node, "ry");
+          var P = function (a, b) {
+            return a + " " + b;
+          };
+          d = "M" + P(cx + rx, cy) + "C" + P(cx + rx, cy + ry * K) + " " + P(cx + rx * K, cy + ry) + " " + P(cx, cy + ry) +
+            "C" + P(cx - rx * K, cy + ry) + " " + P(cx - rx, cy + ry * K) + " " + P(cx - rx, cy) +
+            "C" + P(cx - rx, cy - ry * K) + " " + P(cx - rx * K, cy - ry) + " " + P(cx, cy - ry) +
+            "C" + P(cx + rx * K, cy - ry) + " " + P(cx + rx, cy - ry * K) + " " + P(cx + rx, cy) + "Z";
+        } else if (tag === "line") {
+          d = "M" + num(node, "x1") + " " + num(node, "y1") + "L" + num(node, "x2") + " " + num(node, "y2");
+        } else if (tag === "polyline" || tag === "polygon") {
+          var ns = String(node.getAttribute("points") || "").trim().split(/[\s,]+/).map(Number);
+          for (var i = 0; i + 1 < ns.length; i += 2) d += (i ? "L" : "M") + ns[i] + " " + ns[i + 1];
+          if (tag === "polygon" && d) d += "Z";
+        } else {
+          Array.prototype.forEach.call(node.childNodes, function (ch) {
+            walk(ch, own);
+          });
+          return;
+        }
+        if (!d) return;
+        // Свои команды (H, V, S, T, относительные) → M / L / C, как пишет перо; дуги (A) не поддерживаем.
+        var cs = parseD(d, ID, 0);
+        if (!cs || !cs.length) return;
+        var nd = cs.map(function (cn) {
+          return penD(cn.pts, cn.closed, 0, 0);
+        }).join("");
+        var fill = hexColor(own.fill == null ? "#000000" : own.fill);
+        var stroke = hexColor(own.stroke);
+        var sw = own["stroke-width"] != null ? parseFloat(own["stroke-width"]) : 1;
+        if (fill && fill !== "none") paths.push({ d: nd, fill: fill, rule: own["fill-rule"] === "evenodd" ? "evenodd" : undefined });
+        if (stroke && stroke !== "none" && sw > 0) {
+          paths.push({ d: nd, stroke: stroke, sw: sw, cap: own["stroke-linecap"] === "round" || own["stroke-linecap"] === "square" ? own["stroke-linecap"] : undefined,
+            join: own["stroke-linejoin"] === "round" || own["stroke-linejoin"] === "bevel" ? own["stroke-linejoin"] : undefined });
+        }
+      };
+      walk(svg, { fill: svg.getAttribute("fill") });
+      if (!paths.length) return null;
+      return { id: uid(), type: "vector", x: 0, y: 0, w: w, h: h, vb: [vb[2], vb[3]], paths: paths };
+    }
+
+    /** Контуры → вектор (новый или правим существующий) одним шагом отмены. */
     function writePen() {
       var pp = penPath;
-      if (!pp || pp.pts.length < 2) return;
+      if (!pp) return;
+      var cs = pp.cs.filter(function (c) {
+        return c.pts.length >= 2;
+      });
+      if (!cs.length) return;
       var xs = [];
       var ys = [];
-      pp.pts.forEach(function (q, i) {
-        xs.push(q.x);
-        ys.push(q.y);
-        if (i < pp.pts.length - 1 || pp.closed) {
-          xs.push(q.x + q.ox);
-          ys.push(q.y + q.oy);
-        }
-        if (i > 0 || pp.closed) {
-          xs.push(q.x + q.ix);
-          ys.push(q.y + q.iy);
-        }
+      cs.forEach(function (cn) {
+        var n = cn.pts.length;
+        cn.pts.forEach(function (q, i) {
+          xs.push(q.x);
+          ys.push(q.y);
+          if (i < n - 1 || cn.closed) {
+            xs.push(q.x + q.ox);
+            ys.push(q.y + q.oy);
+          }
+          if (i > 0 || cn.closed) {
+            xs.push(q.x + q.ix);
+            ys.push(q.y + q.iy);
+          }
+        });
       });
       var x0 = Math.min.apply(null, xs);
       var y0 = Math.min.apply(null, ys);
       var w = Math.max(1, Math.max.apply(null, xs) - x0);
       var h = Math.max(1, Math.max.apply(null, ys) - y0);
-      var d = penD(pp.pts, pp.closed, x0, y0);
+      var dOf = function (pi) {
+        return cs.filter(function (cn) {
+          return cn.pi === pi;
+        }).map(function (cn) {
+          return penD(cn.pts, cn.closed, x0, y0);
+        }).join("");
+      };
       begin();
       var cur = pp.editId ? getEl(pp.editId) : null;
       if (cur) {
-        patch(cur.id, { x: x0, y: y0, w: w, h: h, vb: [w, h], paths: [Object.assign({}, cur.paths[0], { d: d })] });
+        // Вектор переписан в мировых единицах (масштаб 1, без поворота) — толщины обводок пересчитываем.
+        var vb = cur.vb || [cur.w, cur.h];
+        var k = ((cur.w / Math.max(0.01, vb[0])) + (cur.h / Math.max(0.01, vb[1]))) / 2;
+        var paths = [];
+        cur.paths.forEach(function (p0, pi) {
+          var d = dOf(pp.alias && pp.alias[pi] != null ? pp.alias[pi] : pi);
+          if (!d) return;
+          var np = Object.assign({}, p0, { d: d });
+          if (np.sw && Math.abs(k - 1) > 0.001) np.sw = Math.round(np.sw * k * 100) / 100;
+          paths.push(np);
+        });
+        if (!paths.length) return commit();
+        patch(cur.id, { x: x0, y: y0, w: w, h: h, vb: [w, h], rot: undefined, paths: paths });
       } else {
         var st = styleFor("pen");
         var el = newEl("vector", G.pt(x0, y0), {
           w: w, h: h, vb: [w, h], style: undefined,
-          paths: [{ d: d, stroke: isHex(st.stroke) || INK.indexOf(st.stroke) >= 0 ? st.stroke : "#000000", sw: Number(st.strokeWidth) || 2, cap: "round", join: "round" }],
+          paths: [{ d: dOf(0), stroke: isHex(st.stroke) || INK.indexOf(st.stroke) >= 0 ? st.stroke : "#000000", sw: Number(st.strokeWidth) || 2, cap: "round", join: "round" }],
         });
         delete el.style;
         put(el);
@@ -1854,9 +2233,17 @@
       if (!penPath) return;
       penPath.drawing = false;
       penPath.cursor = null;
+      penPath.sel = null;
       guides = [];
-      if (penPath.pts.length < 2 && !penPath.editId) {
+      // Недорисованный контур из одной точки не нужен.
+      penPath.cs = penPath.cs.filter(function (c) {
+        return c.pts.length >= 2;
+      });
+      penPath.ci = Math.max(0, penPath.cs.length - 1);
+      if (!penPath.cs.length) {
+        var id = penPath.editId;
         penPath = null;
+        if (id) markDirty(id);
         setTool("select");
       } else writePen();
       renderOverlay();
@@ -1866,7 +2253,10 @@
     function exitPen() {
       var pp = penPath;
       if (!pp) return;
-      if (pp.pts.length >= 2) writePen();
+      if (pp.drawing) pp.cs = pp.cs.filter(function (c) {
+        return c.pts.length >= 2;
+      });
+      writePen();
       penPath = null;
       guides = [];
       if (pp.editId) {
@@ -1876,7 +2266,7 @@
       renderOverlay();
     }
 
-    /** Отмена во время пера: контур в памяти устарел — бросаем его без записи. */
+    /** Отмена во время пера: контуры в памяти устарели — бросаем их без записи. */
     function dropPen() {
       if (!penPath) return;
       var id = penPath.editId;
@@ -1897,7 +2287,7 @@
       }
       exitPen();
       setTool("path");
-      penPath = { pts: parsed.pts, closed: parsed.closed, drawing: false, editId: id, sel: -1 };
+      penPath = { cs: parsed.cs, ci: parsed.cs.length - 1, alias: parsed.alias, drawing: false, editId: id, sel: null };
       selected.clear();
       markDirty(id);
       schedule();
@@ -1905,32 +2295,29 @@
     }
 
     /** Продолжить рисование от конца открытого контура (от начала — разворачиваем порядок точек). */
-    function resumePen(i) {
+    function resumePen(c, i) {
       var pp = penPath;
-      if (!pp || pp.closed || pp.drawing) return false;
-      if (i !== 0 && i !== pp.pts.length - 1) return false;
-      if (i === 0) {
-        pp.pts.reverse().forEach(function (q) {
-          var ix = q.ix;
-          var iy = q.iy;
-          q.ix = q.ox;
-          q.iy = q.oy;
-          q.ox = ix;
-          q.oy = iy;
-        });
-      }
+      var cn = pp && pp.cs[c];
+      if (!cn || cn.closed || pp.drawing) return false;
+      if (i !== 0 && i !== cn.pts.length - 1) return false;
+      if (i === 0) reverseContour(cn);
+      pp.ci = c;
       pp.drawing = true;
-      pp.sel = pp.pts.length - 1;
+      pp.sel = { c: c, i: cn.pts.length - 1 };
       renderOverlay();
       return true;
     }
 
     function deletePenPoint() {
       var pp = penPath;
-      if (!pp || pp.sel < 0 || pp.drawing) return false;
-      pp.pts.splice(pp.sel, 1);
-      pp.sel = -1;
-      if (pp.pts.length < 2) {
+      if (!pp || !pp.sel || pp.drawing) return false;
+      var cn = pp.cs[pp.sel.c];
+      cn.pts.splice(pp.sel.i, 1);
+      pp.sel = null;
+      if (cn.pts.length < 3) cn.closed = false;
+      if (cn.pts.length < 2) pp.cs.splice(pp.cs.indexOf(cn), 1);
+      pp.ci = Math.max(0, Math.min(pp.ci, pp.cs.length - 1));
+      if (!pp.cs.length) {
         var id = pp.editId;
         penPath = null;
         if (id) {
@@ -1939,40 +2326,60 @@
           commit();
         }
         setTool("select");
-      } else {
-        if (pp.pts.length < 3) pp.closed = false;
-        writePen();
-      }
+      } else writePen();
       renderOverlay();
       return true;
     }
 
     function penOverlay() {
-      if (!penPath || !penPath.pts.length) return "";
+      if (!penPath) return "";
       var pp = penPath;
-      var pts = pp.pts;
       var tr = 'transform="translate(' + view.x + " " + view.y + ") scale(" + view.z + ')"';
       var out = [];
-      // Сам контур — с заливкой и обводкой вектора (вектор на время правки скрыт).
+      var dOf = function (pi) {
+        return pp.cs.filter(function (cn) {
+          return cn.pi === pi && cn.pts.length;
+        }).map(function (cn) {
+          return penD(cn.pts, cn.closed, 0, 0);
+        }).join("");
+      };
+      // Сам вектор — с его заливками и обводками (на время правки он скрыт).
       var el = pp.editId ? getEl(pp.editId) : null;
-      if (el && pts.length >= 2) {
+      if (el) {
         var st = el.style || {};
-        var p0 = el.paths[0] || {};
-        var closed = pp.closed;
-        var fill = st.fillOff ? "none" : p0.fill ? fillVar(st.fill && st.fill !== "none" ? st.fill : p0.fill) : st.fill && st.fill !== "none" && closed ? fillVar(st.fill) : "none";
-        var stroke = p0.stroke && !st.strokeOff && st.strokeWidth !== 0 ? inkVar(st.stroke || p0.stroke) : "none";
-        var sw = st.strokeWidth != null ? Number(st.strokeWidth) : p0.sw || 1;
-        out.push('<path ' + tr + ' d="' + penD(pts, closed, 0, 0) + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + sw + '"' +
-          ' stroke-linecap="' + (p0.cap || "round") + '" stroke-linejoin="' + (p0.join || "round") + '"' + opacityAttrs(st) + (p0.rule === "evenodd" ? ' fill-rule="evenodd"' : "") + "/>");
+        var vb = el.vb || [el.w, el.h];
+        var k = ((el.w / Math.max(0.01, vb[0])) + (el.h / Math.max(0.01, vb[1]))) / 2;
+        el.paths.forEach(function (p0, pi) {
+          var d = dOf(pp.alias && pp.alias[pi] != null ? pp.alias[pi] : pi);
+          if (!d) return;
+          var closed = /Z\s*$/i.test(d);
+          var fill = st.fillOff ? "none" : p0.fill ? fillVar(st.fill && st.fill !== "none" ? st.fill : p0.fill) : st.fill && st.fill !== "none" && closed ? fillVar(st.fill) : "none";
+          if (p0.fill && st.fill === "none") fill = "none";
+          var stroke = p0.stroke && !st.strokeOff && st.strokeWidth !== 0 ? inkVar(st.stroke || p0.stroke) : "none";
+          var sw = (st.strokeWidth != null ? Number(st.strokeWidth) : p0.sw || 1) * (st.strokeWidth != null ? 1 : k);
+          out.push('<path ' + tr + ' d="' + d + '" fill="' + fill + '" stroke="' + stroke + '" stroke-width="' + sw + '"' +
+            (p0.cap ? ' stroke-linecap="' + p0.cap + '"' : "") + (p0.join ? ' stroke-linejoin="' + p0.join + '"' : "") + opacityAttrs(st) + (p0.rule === "evenodd" ? ' fill-rule="evenodd"' : "") + "/>");
+        });
       }
-      out.push('<path ' + tr + ' d="' + penD(pts, pp.closed, 0, 0) + '" class="lb-pen-draft" vector-effect="non-scaling-stroke"/>');
-      var last = pts[pts.length - 1];
-      if (pp.drawing && pp.cursor && !(gesture && gesture.kind === "pathpt")) {
+      pp.cs.forEach(function (cn) {
+        if (cn.pts.length) out.push('<path ' + tr + ' d="' + penD(cn.pts, cn.closed, 0, 0) + '" class="lb-pen-draft" vector-effect="non-scaling-stroke"/>');
+      });
+      var act = penAct();
+      var last = act && act.pts[act.pts.length - 1];
+      if (pp.drawing && last && pp.cursor && !(gesture && gesture.kind === "pathpt")) {
         var a = toScreen(G.pt(last.x, last.y));
         var b = toScreen(pp.cursor);
         out.push('<line class="lb-pen-rubber" x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '"/>');
       }
-      pts.forEach(function (q) {
+      // Ручки — у выбранной точки и её соседей (у всех сразу — каша на иконках), при рисовании — у последней.
+      var showH = function (c, i) {
+        var sl = pp.sel;
+        if (!sl || sl.c !== c) return false;
+        var n = pp.cs[c].pts.length;
+        return i === sl.i || i === (sl.i + 1) % n || i === (sl.i - 1 + n) % n;
+      };
+      penAll(function (q, c, i) {
+        if (!showH(c, i)) return;
         var s0 = toScreen(G.pt(q.x, q.y));
         [[q.ox, q.oy], [q.ix, q.iy]].forEach(function (hd) {
           if (!hd[0] && !hd[1]) return;
@@ -1981,10 +2388,11 @@
           out.push('<circle class="lb-pen-hdot" cx="' + h1.x + '" cy="' + h1.y + '" r="3.5"/>');
         });
       });
-      pts.forEach(function (q, i) {
+      penAll(function (q, c, i, cn) {
         var s0 = toScreen(G.pt(q.x, q.y));
-        var cls = "lb-pen-pt" + (i === 0 && pp.drawing ? " is-first" : "") + (i === pp.sel ? " is-sel" : "") +
-          (!pp.drawing && !pp.closed && (i === 0 || i === pts.length - 1) ? " is-end" : "");
+        var sel = pp.sel && pp.sel.c === c && pp.sel.i === i;
+        var cls = "lb-pen-pt" + (i === 0 && pp.drawing && c === pp.ci ? " is-first" : "") + (sel ? " is-sel" : "") +
+          (!cn.closed && (i === 0 || i === cn.pts.length - 1) ? " is-end" : "");
         out.push('<rect class="' + cls + '" x="' + (s0.x - 4) + '" y="' + (s0.y - 4) + '" width="8" height="8"/>');
       });
       return out.join("");
@@ -2489,6 +2897,7 @@
       text: { fontSize: 16, textColor: "#000000", align: "left" },
       line: { stroke: "#000000", strokeWidth: 1 },
       pen: { stroke: "#000000", strokeWidth: 2 },
+      frame: { fill: "#ffffff", stroke: "#000000", strokeWidth: 0 },
     };
 
     function styleFor(type) {
@@ -3372,7 +3781,21 @@
       var h = [];
       var title = one ? (one.type === "frame" ? "Экран" : { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия",
         image: "Картинка", vector: "Вектор", table: "Таблица", sticky: "Стикер", pen: "Рисунок" }[one.type] || "Элемент") : "Выделено: " + list.length;
+      var grp = !one && common(list, function (e) {
+        return e.group || "";
+      });
+      if (grp) title = "Группа";
       h.push('<div class="lb-ihead">' + esc(title) + "</div>");
+      if (!one) {
+        // Несколько объектов (или группа) — общая рамка: X/Y двигают всё, W/H растягивают.
+        var gb = selBounds();
+        var gf = frameOf(list[0]);
+        if (gf && !list.every(function (e) {
+          return frameOf(e) === gf;
+        })) gf = null;
+        if (gb) h.push('<div class="lb-isec"><div class="lb-irow">' + numField("x", "X", r1(gb.x - (gf ? gf.x : 0))) + numField("y", "Y", r1(gb.y - (gf ? gf.y : 0))) +
+          '</div><div class="lb-irow">' + numField("w", "W", r1(gb.w)) + numField("h", "H", r1(gb.h)) + "</div></div>");
+      }
       if (one && one.type === "frame") {
         h.push('<div class="lb-isec"><label class="lb-if is-wide"><span>Название</span><input type="text" data-k="name" value="' + esc(one.name || "") + '"></label>' +
           '<button type="button" class="lb-ibtn is-wide" data-act="device">' + esc((DEVICES.filter(function (d) {
@@ -3384,9 +3807,9 @@
         h.push('<div class="lb-isec"><div class="lb-irow">' +
           numField("x", "X", r1(one.x - (f ? f.x : 0)), { title: f ? "X внутри экрана" : "X" }) + numField("y", "Y", r1(one.y - (f ? f.y : 0)), { title: f ? "Y внутри экрана" : "Y" }) +
           "</div><div class=\"lb-irow\">" + numField("w", "W", r1(one.w)) + numField("h", "H", r1(one.h), { title: one.type === "text" ? "Высота текста — по содержимому" : "H" }) +
-          "</div>" + (one.type !== "frame" ? '<div class="lb-irow">' + numField("rot", "↻", r1(one.rot || 0), { title: "Поворот, °" }) +
+          "</div>" + ('<div class="lb-irow">' + numField("rot", "↻", r1(one.rot || 0), { title: "Поворот, °" }) +
             '<button type="button" class="lb-ibtn" data-act="flipH" title="Отразить по горизонтали (⇧H)">' + icon("flipH") + "</button>" +
-            '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div>" : "") + "</div>");
+            '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div>") + "</div>");
       }
       // Выравнивание: несколько объектов — между собой (группа как одно целое), один в экране — по экрану.
       if (list.length > 1 || (one && frameOf(one))) {
@@ -3444,7 +3867,12 @@
           (sh ? '<div class="lb-irow">' + numField("shx", "X", Number(sh[1])) + numField("shy", "Y", Number(sh[2])) + numField("shb", "Blur", Number(sh[3])) + "</div>" +
             colorField("shc", "Цвет тени", sh[4].slice(0, 7), "ink") + '<div class="lb-irow">' + numField("sha", "%", Math.round(parseInt(sh[4].slice(7), 16) / 2.55), { title: "Непрозрачность тени" }) + "</div>" : "") + "</div>");
       }
+      var anyGroup = list.some(function (e) {
+        return e.group;
+      });
       h.push('<div class="lb-isec lb-iacts">' +
+        (list.length > 1 && !grp ? '<button type="button" class="lb-ibtn" data-act="group" title="Сгруппировать (⌘G)">' + icon("group") + "</button>" : "") +
+        (anyGroup ? '<button type="button" class="lb-ibtn" data-act="ungroup" title="Разгруппировать (⇧⌘G)">' + icon("ungroup") + "</button>" : "") +
         '<button type="button" class="lb-ibtn" data-act="dup" title="Дублировать (⌘D)">' + icon("copy") + "</button>" +
         '<button type="button" class="lb-ibtn" data-act="front" title="На передний план (])">' + icon("front") + "</button>" +
         '<button type="button" class="lb-ibtn" data-act="back" title="На задний план ([)">' + icon("back") + "</button>" +
@@ -3470,6 +3898,25 @@
       var list = selList();
       if (!list.length) return;
       var n = parseNum(raw);
+      if (list.length > 1 && (k === "x" || k === "y" || k === "w" || k === "h")) {
+        if (n == null) return;
+        var gb = selBounds();
+        if (!gb) return;
+        var gf = frameOf(list[0]);
+        if (gf && !list.every(function (e) {
+          return frameOf(e) === gf;
+        })) gf = null;
+        begin();
+        if (k === "x" || k === "y") {
+          var dd = n + (gf ? gf[k] : 0) - gb[k];
+          if (dd) moveBy(withFrameKids(list.map(function (e) {
+            return e.id;
+          })), k === "x" ? dd : 0, k === "y" ? dd : 0);
+        } else if (n >= 1) scaleSel(gb, k === "w" ? n / Math.max(0.01, gb.w) : 1, k === "h" ? n / Math.max(0.01, gb.h) : 1);
+        syncFrames();
+        commit();
+        return;
+      }
       begin();
       list.forEach(function (el) {
         var cur = getEl(el.id);
@@ -3494,7 +3941,15 @@
           }
           patch(cur.id, fw);
         } else if (k === "rot") {
-          if (n != null) patch(cur.id, { rot: ((n % 360) + 360) % 360 || undefined });
+          if (n == null) return;
+          var nr = ((n % 360) + 360) % 360;
+          if (nr > 180) nr -= 360;
+          if (cur.type === "frame") {
+            rotateKids(withFrameKids([cur.id]).filter(function (id) {
+              return id !== cur.id;
+            }).map(getEl).filter(Boolean).map(clone), G.center(cur), nr - (cur.rot || 0));
+          }
+          patch(cur.id, { rot: nr || undefined });
         } else if (k === "name") {
           patch(cur.id, { name: String(raw).trim() || undefined });
         } else if (k === "opacity") {
@@ -3543,6 +3998,75 @@
       });
       syncFrames();
       commit();
+    }
+
+    /** Растянуть выделение (группу) от левого верхнего угла рамки B: по ширине sx, по высоте sy. */
+    function scaleSel(B, sx, sy) {
+      var X = function (x) {
+        return B.x + (x - B.x) * sx;
+      };
+      var Y = function (y) {
+        return B.y + (y - B.y) * sy;
+      };
+      withFrameKids(Array.from(selected)).map(getEl).filter(Boolean).forEach(function (el) {
+        if (el.type === "line") {
+          var res = G.resolveLine(el, getEl);
+          var f = { points: [[X(res.p0.x), Y(res.p0.y)], [X(res.p1.x), Y(res.p1.y)]] };
+          if (el.waypoints) f.waypoints = el.waypoints.map(function (q) {
+            return [X(q[0]), Y(q[1])];
+          });
+          patch(el.id, f);
+        } else if (el.type === "pen") {
+          patch(el.id, { x: X(el.x), y: Y(el.y), w: el.w * sx, h: el.h * sy, points: (el.points || []).map(function (q) {
+            return [q[0] * sx, q[1] * sy];
+          }) });
+        } else if (el.type === "text" || BLOCKS[el.type]) {
+          patch(el.id, { x: X(el.x), y: Y(el.y), w: el.w * sx });
+        } else {
+          patch(el.id, { x: X(el.x), y: Y(el.y), w: el.w * sx, h: el.h * sy });
+        }
+      });
+    }
+
+    /** Содержимое экрана поворачивается вместе с ним: вокруг центра экрана на тот же угол (от исходных положений kids0). */
+    function rotateKids(kids0, c, delta) {
+      var a = (delta * Math.PI) / 180;
+      var cos = Math.cos(a);
+      var sin = Math.sin(a);
+      var R = function (x, y) {
+        var dx = x - c.x;
+        var dy = y - c.y;
+        return G.pt(c.x + dx * cos - dy * sin, c.y + dx * sin + dy * cos);
+      };
+      kids0.forEach(function (k) {
+        if (!getEl(k.id)) return;
+        if (k.type === "line") {
+          if ((k.start && k.start.el) || (k.end && k.end.el)) return;
+          var res = G.resolveLine(k, getEl);
+          var a0 = R(res.p0.x, res.p0.y);
+          var a1 = R(res.p1.x, res.p1.y);
+          var f = { points: [[a0.x, a0.y], [a1.x, a1.y]] };
+          if (k.waypoints) f.waypoints = k.waypoints.map(function (q) {
+            var r = R(q[0], q[1]);
+            return [r.x, r.y];
+          });
+          patch(k.id, f);
+          return;
+        }
+        if (k.type === "pen") {
+          var pts = (k.points || []).map(function (q) {
+            return R(k.x + q[0], k.y + q[1]);
+          });
+          var bb = G.boundsOf(pts);
+          patch(k.id, { x: bb.x, y: bb.y, w: bb.w, h: bb.h, points: pts.map(function (q) {
+            return [q.x - bb.x, q.y - bb.y];
+          }) });
+          return;
+        }
+        var kc = R(k.x + k.w / 2, k.y + k.h / 2);
+        var rot = (((k.rot || 0) + delta) % 360 + 540) % 360 - 180;
+        patch(k.id, { x: kc.x - k.w / 2, y: kc.y - k.h / 2, rot: Math.round(rot * 10) / 10 || undefined });
+      });
     }
 
     /** Заливка и обводка из панели: добавить, убрать, скрыть/показать (значения при скрытии сохраняются). */
@@ -3867,6 +4391,8 @@
         } else if (a === "fillAdd" || a === "fillDel" || a === "fillEye" || a === "strokeAdd" || a === "strokeDel" || a === "strokeEye") {
           paintAct(a);
         } else if (a === "flipH" || a === "flipV") flipSel(a === "flipH");
+        else if (a === "group") groupSel();
+        else if (a === "ungroup") ungroupSel();
         else if (a === "dup") duplicateSel();
         else if (a === "front") reorderSel(true);
         else if (a === "back") reorderSel(false);
@@ -4500,6 +5026,13 @@
       // Схема из FigJam (webapp/board-figma.js): разбор асинхронный; не разобрали — текст как раньше.
       var htmlAll = cd.getData("text/html") || "";
       var plain = cd.getData("text/plain") || "";
+      // «Copy as SVG» из Figma и любой SVG-текст — вектором, который правится по точкам.
+      var svgEl = /^\s*(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(plain) ? svgToVector(plain) : null;
+      if (svgEl) {
+        placeImported([svgEl]);
+        notify("Вставлено из SVG: вектор — двойной клик, чтобы править точки");
+        return;
+      }
       if (window.LeoBoardFigma && window.LeoBoardFigma.isFigma(htmlAll)) {
         window.LeoBoardFigma.fromHtml(htmlAll, uid).then(function (fig) {
           if (destroyed) return;
@@ -5103,7 +5636,9 @@
         if (ln) patch(g.id, { bend: Math.round(G.bendFromPoint(ln, G.resolveLine(ln, getEl), p)) });
       } else if (g.kind === "rotate") {
         var c = G.center(g.el0);
-        var ang = (Math.atan2(p.y - c.y, p.x - c.x) * 180) / Math.PI + 90;
+        // Угол — от места, где схватили (зона у угла), а не от верха: объект не прыгает при нажатии.
+        if (g.a0 == null) g.a0 = (Math.atan2(g.p0.y - c.y, g.p0.x - c.x) * 180) / Math.PI;
+        var ang = (g.el0.rot || 0) + (Math.atan2(p.y - c.y, p.x - c.x) * 180) / Math.PI - g.a0;
         if (e.shiftKey) ang = Math.round(ang / 15) * 15;
         else {
           var near = Math.round(ang / 90) * 90;
@@ -5112,6 +5647,12 @@
         ang = ((ang % 360) + 360) % 360;
         if (ang > 180) ang -= 360;
         patch(g.id, { rot: Math.round(ang * 10) / 10 || undefined });
+        if (g.el0.type === "frame") {
+          if (!g.kids0) g.kids0 = withFrameKids([g.id]).filter(function (id) {
+            return id !== g.id;
+          }).map(getEl).filter(Boolean).map(clone);
+          rotateKids(g.kids0, c, (Math.round(ang * 10) / 10) - (g.el0.rot || 0));
+        }
       } else if (g.kind === "pathpt") {
         penDrag(p, e);
       } else if (g.kind === "vpt") {
@@ -5622,10 +6163,9 @@
           commit();
         }
       } else if (g.kind === "pathpt" || g.kind === "vhd") {
-        if (penPath && penPath.pts.length >= 2) writePen();
+        if (penPath) writePen();
       } else if (g.kind === "vpt") {
         if (g.moved) writePen();
-        else if (penPath && !cancelled) resumePen(g.i);
       } else if (g.kind === "connect") {
         if (!g.moved && !cancelled) quickAdd(g.from, g.side);
       } else if (g.kind === "label") {
@@ -5685,6 +6225,12 @@
       if (!dbl || readOnly) return;
       if (id) {
         var el = getEl(id);
+        // Двойной клик по объекту в группе — выделен он один (вход в группу, как во Figma); ещё раз — правка.
+        if (el && el.group && selected.size > 1 && selected.has(id)) {
+          selected = new Set([id]);
+          schedule();
+          return;
+        }
         if (el && TEXTUAL[el.type]) startEdit(id, { selectAll: false });
         else if (el && (BLOCKS[el.type] || el.type === "frame")) startEdit(id, { at: e });
         else if (el && el.type === "vector" && mode === "design") editVector(id);
@@ -5818,7 +6364,7 @@
         }
         return;
       }
-      if (penPath && !penPath.drawing && (e.key === "Backspace" || e.key === "Delete") && penPath.sel >= 0) {
+      if (penPath && !penPath.drawing && (e.key === "Backspace" || e.key === "Delete") && penPath.sel) {
         e.preventDefault();
         e.stopPropagation();
         deletePenPoint();
@@ -6916,7 +7462,8 @@
       });
       var m0 = modeOf(oldJson);
       var m1 = modeOf(newJson);
-      if (m0 !== m1) doc.getMap("meta").set("mode", m1);
+      // Режим меняют кнопкой (через meta). Тело без пометки (правка мимо Yjs, старый сервер) «Макет» в «Доску» не превращает.
+      if (m0 !== m1 && m1 === "design") doc.getMap("meta").set("mode", m1);
     }, origin);
   }
 

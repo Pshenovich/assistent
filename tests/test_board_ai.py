@@ -79,6 +79,12 @@ class BoardAiTests(unittest.TestCase):
         grid = _els(board_ai.build_board({"action": "create", "nodes": [{"id": str(i), "text": f"Идея {i}"} for i in range(6)]}))
         self.assertTrue(all(e["type"] == "sticky" for e in grid.values()))
 
+    def test_update_keeps_design_mode(self):
+        body = json.loads(board_ai.build_board(FLOW))
+        body["mode"] = "design"
+        upd = board_ai.update_board(json.dumps(body), {"action": "update", "nodes": [{"id": "x1", "text": "Ещё"}]})
+        self.assertEqual(json.loads(upd).get("mode"), "design")
+
     def test_update_edits_adds_and_removes(self):
         body = board_ai.build_board(FLOW)
         els = _els(body)
