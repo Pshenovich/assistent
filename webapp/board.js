@@ -223,6 +223,11 @@
     ungroup: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/>',
     layers: '<path d="M10 3l7 3.5-7 3.5-7-3.5z"/><path d="M3 10l7 3.5 7-3.5M3 13.5l7 3.5 7-3.5"/>',
     caret: '<path d="M7.5 5l5 5-5 5"/>',
+    lineH: '<path d="M3 4h14M3 16h14"/><path d="M10 7v6M8 8.5l2-2 2 2M8 11.5l2 2 2-2"/>',
+    letterS: '<path d="M3 4v12M17 4v12"/><path d="M7 14l3-8 3 8M8.2 11h3.6"/>',
+    vaT: '<path d="M4 4h12"/><path d="M10 7v9M7 10l3-3 3 3"/>',
+    vaM: '<path d="M4 10h12"/><path d="M10 3v4M10 13v4M8 5l2 2 2-2M8 15l2-2 2 2"/>',
+    vaB: '<path d="M4 16h12"/><path d="M10 4v9M7 10l3 3 3-3"/>',
     blurFx: '<circle cx="10" cy="10" r="6.5" stroke-dasharray="2 2.2"/><circle cx="10" cy="10" r="2.5"/>',
     link: '<path d="M8.5 11.5a3 3 0 004.2 0l2.6-2.6a3 3 0 00-4.2-4.2l-1 1"/><path d="M11.5 8.5a3 3 0 00-4.2 0l-2.6 2.6a3 3 0 004.2 4.2l1-1"/>',
     flipH: '<path d="M10 3v14" stroke-dasharray="2 2"/><path d="M7.5 6L3 14h4.5zM12.5 6l4.5 8h-4.5z"/>',
@@ -312,6 +317,79 @@
       a += opacityAttrs(st);
       return '<path d="' + String(p.d).replace(/[^MLCQZmlcqz0-9.,\s-]/g, "") + '"' + a + "/>";
     }).join("");
+  }
+
+  // ---- шрифты макета: семейства с кириллицей (Google Fonts, грузятся по требованию) ----
+  // w — начертания: [от, до] у вариативных, список — у обычных.
+  var FONTS = [
+    { f: "Inter", w: [100, 900] }, { f: "Roboto", w: [100, 900] }, { f: "Open Sans", w: [300, 800] }, { f: "Montserrat", w: [100, 900] },
+    { f: "Manrope", w: [200, 800] }, { f: "Golos Text", w: [400, 900] }, { f: "Onest", w: [100, 900] }, { f: "Rubik", w: [300, 900] },
+    { f: "Nunito", w: [200, 900] }, { f: "Raleway", w: [100, 900] }, { f: "PT Sans", w: "400;700" }, { f: "PT Serif", w: "400;700" },
+    { f: "Lora", w: [400, 700] }, { f: "Playfair Display", w: [400, 900] }, { f: "Merriweather", w: "300;400;700;900" },
+    { f: "Unbounded", w: [200, 900] }, { f: "JetBrains Mono", w: [100, 800] },
+  ];
+  var WEIGHTS = [[100, "Thin"], [200, "ExtraLight"], [300, "Light"], [400, "Regular"], [500, "Medium"], [600, "SemiBold"], [700, "Bold"], [800, "ExtraBold"], [900, "Black"]];
+  var FONT_RE = /^[A-Za-z0-9 ]{1,40}$/;
+  var fontLoads = {};
+
+  function fontInfo(f) {
+    return FONTS.filter(function (x) {
+      return x.f === f;
+    })[0] || null;
+  }
+
+  function fontWeights(f) {
+    var fi = fontInfo(f);
+    if (!fi) return WEIGHTS.map(function (w) {
+      return w[0];
+    });
+    if (typeof fi.w === "string") return fi.w.split(";").map(Number);
+    return WEIGHTS.map(function (w) {
+      return w[0];
+    }).filter(function (w) {
+      return w >= fi.w[0] && w <= fi.w[1];
+    });
+  }
+
+  function fontStack(f) {
+    if (!f || !FONT_RE.test(f)) return "";
+    var mono = /mono/i.test(f);
+    var serif = /serif|lora|playfair|merriweather/i.test(f) && !/sans/i.test(f);
+    return '"' + f + '", ' + (mono ? "ui-monospace, monospace" : serif ? "Georgia, serif" : "system-ui, sans-serif");
+  }
+
+  /** Подключить шрифт (один раз); cb — когда загрузился (пересчитать высоту текстов). */
+  function ensureFont(f, cb) {
+    var fi = fontInfo(f);
+    if (!fi || typeof document === "undefined") return;
+    if (!fontLoads[f]) {
+      var spec = typeof fi.w === "string" ? fi.w : fi.w[0] + ".." + fi.w[1];
+      var link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = "https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + ":wght@" + spec + "&display=swap";
+      document.head.appendChild(link);
+      fontLoads[f] = new Promise(function (resolve) {
+        link.onload = function () {
+          var ws = fontWeights(f);
+          Promise.all(ws.map(function (w) {
+            return document.fonts && document.fonts.load ? document.fonts.load(w + ' 16px "' + f + '"', "Аб").catch(function () {}) : null;
+          })).then(resolve, resolve);
+        };
+        link.onerror = resolve;
+      });
+    }
+    if (cb) fontLoads[f].then(cb);
+  }
+
+  /** Текст с учётом регистра (Figma: ВСЕ ПРОПИСНЫЕ / строчные / Каждое Слово). */
+  function casedText(text, c) {
+    var t = String(text || "");
+    if (c === "upper") return t.toUpperCase();
+    if (c === "lower") return t.toLowerCase();
+    if (c === "title") return t.replace(/(^|[\s\-«"(])([^\s])/g, function (_, a, b) {
+      return a + b.toUpperCase();
+    });
+    return t;
   }
 
   /** Градиент заливки / обводки: «linear|radial УГОЛ #rrggbbaa@ПОЗИЦИЯ …» (угол 0 — слева направо). */
@@ -448,7 +526,8 @@
     if (el.style) {
       var st = {};
       ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "radii", "highlight", "opacity", "shadow",
-        "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign", "fillGrad", "strokeGrad", "blur", "bgBlur"].forEach(function (k) {
+        "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign", "fillGrad", "strokeGrad", "blur", "bgBlur",
+        "fontFamily", "fontWeight", "lineHeight", "letterSpacing", "valign", "deco", "textCase"].forEach(function (k) {
         if (el.style[k] != null) st[k] = el.style[k];
       });
       if (Object.keys(st).length) o.style = st;
@@ -978,11 +1057,33 @@
 
     function textStyle(el, div) {
       var st = el.style || {};
-      div.style.fontSize = (Number(st.fontSize) || 16) + "px";
-      div.style.fontWeight = st.bold ? "600" : "";
+      var fs = Number(st.fontSize) || 16;
+      div.style.fontSize = fs + "px";
+      div.style.fontWeight = st.fontWeight ? String(st.fontWeight) : st.bold ? "600" : "";
       var color = st.textColor ? inkVar(st.textColor) : "";
       div.style.color = color;
       div.style.textAlign = alignOf(el);
+      div.style.fontFamily = fontStack(st.fontFamily);
+      if (st.fontFamily && fontInfo(st.fontFamily)) ensureFont(st.fontFamily, refitFonts);
+      div.style.lineHeight = Number(st.lineHeight) > 0 ? Number(st.lineHeight) + "px" : "";
+      div.style.letterSpacing = st.letterSpacing ? Number(st.letterSpacing) / 100 + "em" : "";
+      div.style.textDecoration = st.deco === "underline" ? "underline" : st.deco === "strike" ? "line-through" : "";
+      div.style.textTransform = st.textCase === "upper" ? "uppercase" : st.textCase === "lower" ? "lowercase" : st.textCase === "title" ? "capitalize" : "";
+      div.style.justifyContent = st.valign === "top" ? "flex-start" : st.valign === "bottom" ? "flex-end" : "";
+    }
+
+    /** Шрифт догрузился — тексты с ним перерисовать (высота текста по содержимому меняется). */
+    var refitPending = false;
+    function refitFonts() {
+      if (refitPending || destroyed) return;
+      refitPending = true;
+      setTimeout(function () {
+        refitPending = false;
+        els.forEach(function (el) {
+          if (el.style && el.style.fontFamily) dirty.add(el.id);
+        });
+        schedule();
+      }, 30);
     }
 
     function shapeSvg(el) {
@@ -3886,6 +3987,10 @@
           return set[e.type];
         });
       };
+      var st0 = function (e, k) {
+        var v = (e.style || {})[k];
+        return v == null ? ((mode === "design" && DESIGN_STYLE[e.type]) || (DEFAULTS[e.type] || {}).style || {})[k] : v;
+      };
       var st = function (k) {
         return common(list, function (e) {
           var v = (e.style || {})[k];
@@ -3948,7 +4053,11 @@
           numField("r2", icon("cBR"), rr[2], { title: "Правый нижний", html: true }) + '<span class="lb-ispacer"></span></div>' : "") + "</div>");
       if (all(FILLABLE)) {
         var fillKey = st("fill");
-        var hasFill = fillKey === undefined || (fillKey && fillKey !== "none");
+        // Разные заливки у нескольких — строка есть; у одного «нет заливки» — только «+».
+        var hasFill = list.some(function (e) {
+          var v = st0(e, "fill");
+          return v && v !== "none";
+        });
         h.push('<div class="lb-isec"><div class="lb-ilabel">' + (types.text && Object.keys(types).length === 1 ? "Фон" : "Заливка") +
           (hasFill ? "" : '<button type="button" class="lb-ibtn lb-iadd" data-act="fillAdd" title="Добавить заливку">' + icon("plus") + "</button>") + "</div>" +
           (hasFill ? paintRow("fill", "Заливка", fillKey, "fill", st("fillOpacity"), st("fillOff"), false, st("fillGrad")) : "") + "</div>");
@@ -3956,7 +4065,9 @@
       if (all(STROKABLE)) {
         var sw = st("strokeWidth");
         var lineish = types.line || types.pen;
-        var hasStroke = lineish || sw === undefined || (sw > 0 && st("stroke") !== "none");
+        var hasStroke = lineish || list.some(function (e) {
+          return Number(st0(e, "strokeWidth")) > 0 && st0(e, "stroke") !== "none";
+        });
         h.push('<div class="lb-isec"><div class="lb-ilabel">Обводка' +
           (hasStroke ? "" : '<button type="button" class="lb-ibtn lb-iadd" data-act="strokeAdd" title="Добавить обводку">' + icon("plus") + "</button>") + "</div>" +
           (hasStroke ? paintRow("stroke", "Обводка", st("stroke"), "ink", st("strokeOpacity"), st("strokeOff"), lineish, lineish ? null : st("strokeGrad")) +
@@ -3968,12 +4079,40 @@
       }
       if (all(TEXTY)) {
         var al = common(list, alignOf);
-        h.push('<div class="lb-isec"><div class="lb-ilabel">Текст</div>' + colorField("textColor", "Цвет текста", st("textColor"), "ink") +
-          '<div class="lb-irow">' + numField("fontSize", "Размер", st("fontSize")) +
-          '<button type="button" class="lb-ibtn' + (st("bold") ? " is-on" : "") + '" data-act="bold" title="Жирный"><b>B</b></button></div>' +
-          '<div class="lb-irow lb-iseg">' + ["left", "center", "right"].map(function (a) {
-            return '<button type="button" class="lb-ibtn' + (al === a ? " is-on" : "") + '" data-al="' + a + '" title="' + { left: "Влево", center: "По центру", right: "Вправо" }[a] + '">' + icon(ALIGN_ICON[a]) + "</button>";
-          }).join("") + "</div></div>");
+        // Типографика как во Figma: шрифт, начертание и размер, интервалы, выравнивание, оформление.
+        var ff = st("fontFamily");
+        var fw = st("fontWeight") || (st("bold") ? 600 : 400);
+        var va = st("valign") || (types.text && Object.keys(types).length === 1 ? "top" : "middle");
+        var deco = st("deco");
+        var tc = st("textCase");
+        var fams = FONTS.map(function (x) {
+          return x.f;
+        });
+        if (ff && fams.indexOf(ff) < 0) fams.unshift(ff);
+        var segBtn = function (attr, val, cur, title, inner) {
+          return '<button type="button" class="lb-ibtn' + (cur === val ? " is-on" : "") + '" data-' + attr + '="' + val + '" title="' + title + '">' + inner + "</button>";
+        };
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Текст</div>' +
+          '<label class="lb-iselect is-wide" title="Шрифт"><select data-k="fontFamily"><option value=""' + (ff ? "" : " selected") + ">Системный</option>" +
+            fams.map(function (f) {
+              return '<option value="' + esc(f) + '"' + (ff === f ? " selected" : "") + ' style="font-family:' + esc(fontStack(f)) + '">' + esc(f) + "</option>";
+            }).join("") + "</select></label>" +
+          '<div class="lb-irow"><label class="lb-iselect" title="Начертание"><select data-k="fontWeight">' + fontWeights(ff).map(function (w) {
+            var name = WEIGHTS.filter(function (x) {
+              return x[0] === w;
+            })[0];
+            return '<option value="' + w + '"' + (Number(fw) === w ? " selected" : "") + ">" + (name ? name[1] : w) + "</option>";
+          }).join("") + "</select></label>" + numField("fontSize", icon("text"), st("fontSize"), { title: "Размер", html: true }) + "</div>" +
+          '<div class="lb-irow">' + numField("lineHeight", icon("lineH"), Number(st("lineHeight")) > 0 ? st("lineHeight") : undefined, { title: "Межстрочный интервал, px (пусто — авто)", html: true, ph: "Авто" }) +
+            numField("letterSpacing", icon("letterS"), st("letterSpacing") || 0, { title: "Межбуквенный интервал, %", html: true, suffix: "%" }) + "</div>" +
+          '<div class="lb-irow"><span class="lb-iseg">' + ["left", "center", "right"].map(function (a) {
+            return segBtn("al", a, al, { left: "Влево", center: "По центру", right: "Вправо" }[a], icon(ALIGN_ICON[a]));
+          }).join("") + '</span><span class="lb-iseg">' + [["top", "vaT", "По верхнему краю"], ["middle", "vaM", "По центру"], ["bottom", "vaB", "По нижнему краю"]].map(function (v) {
+            return segBtn("va", v[0], va, v[2], icon(v[1]));
+          }).join("") + "</span></div>" +
+          '<div class="lb-irow"><span class="lb-iseg">' + segBtn("deco", "underline", deco, "Подчёркнутый", "<u>U</u>") + segBtn("deco", "strike", deco, "Зачёркнутый", "<s>S</s>") +
+            '</span><span class="lb-iseg">' + segBtn("tcase", "title", tc, "Каждое Слово", "Aa") + segBtn("tcase", "upper", tc, "ВСЕ ПРОПИСНЫЕ", "AA") + segBtn("tcase", "lower", tc, "строчные", "aa") + "</span></div>" +
+          colorField("textColor", "Цвет текста", st("textColor"), "ink") + "</div>");
       }
       if (!types.line && !types.pen) {
         // Эффекты (как во Figma): тень, размытие слоя, размытие фона.
@@ -4095,6 +4234,23 @@
           var so = {};
           so[ok] = n == null ? undefined : n >= 100 ? null : Math.max(0, n) / 100;
           if (n != null) patch(cur.id, { style: so });
+        } else if (k === "fontFamily") {
+          var fam = String(raw || "").trim();
+          var fsx = { fontFamily: fam && FONT_RE.test(fam) ? fam : null };
+          // Начертания нет у нового шрифта — ближайшее доступное.
+          var curW = Number((cur.style || {}).fontWeight) || ((cur.style || {}).bold ? 600 : 400);
+          var ws = fontWeights(fam);
+          if (ws.indexOf(curW) < 0) fsx.fontWeight = ws.reduce(function (b, w) {
+            return Math.abs(w - curW) < Math.abs(b - curW) ? w : b;
+          }, ws[0]);
+          if (fam) ensureFont(fam, refitFonts);
+          patch(cur.id, { style: fsx });
+        } else if (k === "fontWeight") {
+          if (n != null) patch(cur.id, { style: { fontWeight: Math.max(100, Math.min(900, Math.round(n / 100) * 100)), bold: null } });
+        } else if (k === "lineHeight") {
+          patch(cur.id, { style: { lineHeight: n != null && n > 0 ? Math.min(1000, n) : null } });
+        } else if (k === "letterSpacing") {
+          if (n != null) patch(cur.id, { style: { letterSpacing: Math.max(-50, Math.min(200, n)) || null } });
         } else if (k === "fillGrad" || k === "strokeGrad") {
           var gs = {};
           gs[k] = raw && GRAD_RE.test(raw) ? raw : null;
@@ -5014,6 +5170,18 @@
         var al = e.target.closest("[data-al]");
         if (al) {
           applyStyle(isAlignable, { align: al.getAttribute("data-al") });
+          return;
+        }
+        var tb = e.target.closest("[data-va], [data-deco], [data-tcase]");
+        if (tb) {
+          var cur0 = function (k) {
+            return common(selList(), function (x) {
+              return (x.style || {})[k] || "";
+            });
+          };
+          if (tb.hasAttribute("data-va")) applyStyle(isTextual, { valign: tb.getAttribute("data-va") === "middle" ? null : tb.getAttribute("data-va") });
+          else if (tb.hasAttribute("data-deco")) applyStyle(isTextual, { deco: cur0("deco") === tb.getAttribute("data-deco") ? null : tb.getAttribute("data-deco") });
+          else applyStyle(isTextual, { textCase: cur0("textCase") === tb.getAttribute("data-tcase") ? null : tb.getAttribute("data-tcase") });
           return;
         }
         var b = e.target.closest("[data-act]");
@@ -7264,8 +7432,11 @@
       if (!el.text || el.type === "image") return null;
       var st = el.style || {};
       var fs = Number(st.fontSize) || 16;
-      ctx.font = (st.bold ? "600 " : "") + fs + "px " + colors.font;
-      var lh = fs * 1.3;
+      var fam = fontStack(st.fontFamily) || colors.font;
+      var wt = st.fontWeight || (st.bold ? 600 : 400);
+      ctx.font = wt + " " + fs + "px " + fam;
+      if ("letterSpacing" in ctx) ctx.letterSpacing = st.letterSpacing ? (Number(st.letterSpacing) / 100) * fs + "px" : "0px";
+      var lh = Number(st.lineHeight) > 0 ? Number(st.lineHeight) : fs * 1.3;
       var padX = el.type === "text" ? 0 : el.type === "diamond" ? el.w * 0.22 : 10;
       var maxW;
       var cx;
@@ -7279,12 +7450,14 @@
         return { lines: lines0, x: lm.x, y: lm.y - ((lines0.length - 1) * lh) / 2, lh: lh, align: "center", fs: fs, label: true };
       }
       maxW = Math.max(10, el.w - padX * 2);
-      var lines = wrapLines(ctx, el.text, maxW);
+      var lines = wrapLines(ctx, casedText(el.text, st.textCase), maxW);
       align = alignOf(el);
       cx = align === "center" ? el.x + el.w / 2 : align === "right" ? el.x + el.w - padX : el.x + padX;
-      if (el.type === "text") top = el.y + lh / 2;
+      var pad = el.type === "text" ? 0 : 8;
+      if (el.type === "text" || st.valign === "top") top = el.y + pad + lh / 2;
+      else if (st.valign === "bottom") top = el.y + el.h - pad - lh / 2 - (lines.length - 1) * lh;
       else top = el.y + el.h / 2 - ((lines.length - 1) * lh) / 2;
-      return { lines: lines, x: cx, y: top, lh: lh, align: align, fs: fs };
+      return { lines: lines, x: cx, y: top, lh: lh, align: align, fs: fs, fam: fam, wt: wt, ls: st.letterSpacing ? (Number(st.letterSpacing) / 100) * fs : 0, deco: st.deco };
     }
 
     /** Блок для экспорта: прямоугольники, тексты и фото по тому, как он нарисован сейчас (координаты холста). */
@@ -7806,7 +7979,9 @@
         var tl = el.type !== "frame" && textLayout(measure, el, colors);
         if (tl) {
           var color = el.type === "sticky" ? "#1f2328" : colors.ink(st.textColor || "ink");
-          out.push('<text font-size="' + tl.fs + '"' + (st.bold ? ' font-weight="600"' : "") + ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") +
+          out.push('<text font-size="' + tl.fs + '" font-family="' + esc(tl.fam) + '"' + (tl.wt !== 400 ? ' font-weight="' + tl.wt + '"' : "") +
+            (tl.ls ? ' letter-spacing="' + Math.round(tl.ls * 100) / 100 + '"' : "") + (tl.deco ? ' text-decoration="' + (tl.deco === "strike" ? "line-through" : "underline") + '"' : "") +
+            ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") +
             '" dominant-baseline="central">' + tl.lines.map(function (l, i) {
               return '<tspan x="' + tl.x + '" y="' + (tl.y + i * tl.lh) + '">' + esc(l) + "</tspan>";
             }).join("") + "</text>");
@@ -7817,7 +7992,60 @@
       var h = Math.max(1, Math.round(b.h * 100) / 100);
       var svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="' + b.x + " " + b.y + " " + w + " " + h + '" width="' + w + '" height="' + h +
         '" font-family="' + esc(colors.font) + '">' + (defs.length ? "<defs>" + defs.join("") + "</defs>" : "") + out.join("") + "</svg>";
-      return { svg: svg, w: w, h: h };
+      var fams = {};
+      list.forEach(function (el) {
+        var f = el.style && el.style.fontFamily;
+        if (f && fontInfo(f) && el.text) fams[f] = 1;
+      });
+      return { svg: svg, w: w, h: h, fonts: Object.keys(fams) };
+    }
+
+    /** Шрифты внутрь SVG (@font-face с data:) — иначе картинка из SVG рисует текст системным шрифтом. */
+    function embedFonts(sv) {
+      if (!sv.fonts || !sv.fonts.length || !window.fetch) return Promise.resolve(sv);
+      var toData = function (url) {
+        return fetch(url).then(function (r) {
+          return r.blob();
+        }).then(function (b) {
+          return new Promise(function (res) {
+            var fr = new FileReader();
+            fr.onload = function () {
+              res(fr.result);
+            };
+            fr.onerror = function () {
+              res("");
+            };
+            fr.readAsDataURL(b);
+          });
+        });
+      };
+      return Promise.all(sv.fonts.map(function (f) {
+        var fi = fontInfo(f);
+        var spec = typeof fi.w === "string" ? fi.w : fi.w[0] + ".." + fi.w[1];
+        return fetch("https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + ":wght@" + spec + "&display=swap").then(function (r) {
+          return r.text();
+        }).then(function (css) {
+          // Только кириллица и латиница: остальные наборы знаков тексту макета не нужны, а файл раздувают.
+          var blocks = css.split("/* ").filter(function (b) {
+            return /^(cyrillic|latin) \*\//.test(b);
+          });
+          return Promise.all(blocks.map(function (b) {
+            var m = /url\((https:[^)]+)\)/.exec(b);
+            if (!m) return "";
+            return toData(m[1]).then(function (data) {
+              return data ? b.replace(/^[^*]*\*\/\s*/, "").replace(m[1], data) : "";
+            });
+          }));
+        }).catch(function () {
+          return [];
+        });
+      })).then(function (parts) {
+        var css = [].concat.apply([], parts).join("\n");
+        if (!css) return sv;
+        return Object.assign({}, sv, { svg: sv.svg.replace(/(<svg[^>]*>)/, "$1<style>" + css.replace(/</g, "") + "</style>") });
+      }).catch(function () {
+        return sv;
+      });
     }
 
     function exportBaseName() {
@@ -7896,7 +8124,9 @@
         downloadBlob(new Blob([sv.svg], { type: "image/svg+xml" }), name + ".svg");
         return;
       }
-      svgToCanvas(sv, fmt === "pdf" ? Math.max(2, k) : k, fmt !== "png").then(function (c) {
+      embedFonts(sv).then(function (sv2) {
+        return svgToCanvas(sv2, fmt === "pdf" ? Math.max(2, k) : k, fmt !== "png");
+      }).then(function (c) {
         var type = fmt === "png" ? "image/png" : "image/jpeg";
         c.toBlob(function (blob) {
           if (!blob) return notify("Не удалось сохранить файл");

@@ -2062,3 +2062,20 @@ html[data-theme="light"] .leo-board {
     max-height: 50%;
   }
 }
+
+/* Типографика в панели. */
+.lb-iselect.is-wide {
+  flex: none;
+  width: 100%;
+}
+
+.lb-irow > .lb-iseg {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+.lb-irow > .lb-iseg .lb-ibtn {
+  flex: 1 1 0;
+  min-width: 0;
+}

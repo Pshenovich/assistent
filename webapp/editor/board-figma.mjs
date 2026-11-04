@@ -615,8 +615,31 @@ function fromFigma(msg, uid) {
     if (ALIGN[tp.textAlignHorizontal]) st.align = ALIGN[tp.textAlignHorizontal];
     var c = paintHex(tp.fillPaints);
     if (c) st.textColor = onColor ? c : themed(c);
-    var style = tp.fontName && tp.fontName.style;
-    if (/bold|semi|black|heavy/i.test(style || "")) st.bold = true;
+    var style = (tp.fontName && tp.fontName.style) || "";
+    // Шрифт и начертание как в Figma: «Inter» + «Semi Bold» → fontFamily, fontWeight 600.
+    var fam = tp.fontName && tp.fontName.family;
+    if (fam && /^[A-Za-z0-9 ]{1,40}$/.test(fam)) st.fontFamily = fam;
+    var s0 = style.toLowerCase().replace(/[\s_-]/g, "");
+    var wt = /thin|hairline/.test(s0) ? 100 : /extralight|ultralight/.test(s0) ? 200 : /light/.test(s0) ? 300 : /medium/.test(s0) ? 500 :
+      /semibold|demibold/.test(s0) ? 600 : /extrabold|ultrabold/.test(s0) ? 800 : /black|heavy/.test(s0) ? 900 : /bold/.test(s0) ? 700 : 400;
+    if (wt !== 400) st.fontWeight = wt;
+    var lh = tp.lineHeight;
+    if (lh && lh.value && tp.fontSize) {
+      var px = lh.units === "PIXELS" ? lh.value : lh.units === "PERCENT" ? (lh.value / 100) * tp.fontSize : lh.units === "RAW" ? lh.value * tp.fontSize : 0;
+      if (px > 0 && Math.abs(px - tp.fontSize * 1.3) > 0.5) st.lineHeight = Math.round(px * 10) / 10;
+    }
+    var ls = tp.letterSpacing;
+    if (ls && ls.value) {
+      var pct = ls.units === "PIXELS" && tp.fontSize ? (ls.value / tp.fontSize) * 100 : ls.units === "PERCENT" ? ls.value : 0;
+      if (pct) st.letterSpacing = Math.round(pct * 10) / 10;
+    }
+    if (tp.textDecoration === "UNDERLINE") st.deco = "underline";
+    if (tp.textDecoration === "STRIKETHROUGH") st.deco = "strike";
+    if (tp.textCase === "UPPER") st.textCase = "upper";
+    if (tp.textCase === "LOWER") st.textCase = "lower";
+    if (tp.textCase === "TITLE") st.textCase = "title";
+    if (tp.textAlignVertical === "TOP") st.valign = "top";
+    if (tp.textAlignVertical === "BOTTOM") st.valign = "bottom";
     return st;
   }
 

@@ -32,7 +32,8 @@ _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
 _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight",
                "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign",
-               "fillGrad", "strokeGrad", "blur", "bgBlur")
+               "fillGrad", "strokeGrad", "blur", "bgBlur",
+               "fontFamily", "fontWeight", "lineHeight", "letterSpacing", "valign", "deco", "textCase")
 # Градиент: «linear|radial угол #rrggbbaa@позиция …» (2–8 точек).
 _GRAD_RE = re.compile(r"^(linear|radial) -?\d{1,3}( #[0-9a-fA-F]{8}@\d{1,3}){2,8}$")
 # Скругления углов по отдельности: «левый-верхний правый-верхний правый-нижний левый-нижний».
@@ -392,6 +393,25 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
             if k in ("fillOff", "strokeOff"):
                 if v is True:
                     st[k] = True
+                continue
+            if k == "fontFamily":
+                if isinstance(v, str) and re.match(r"^[A-Za-z0-9 ]{1,40}$", v.strip()):
+                    st[k] = v.strip()
+                continue
+            if k == "fontWeight":
+                w = int(round(_num(v, 400, 100, 900) / 100) * 100)
+                if w != 400:
+                    st[k] = w
+                continue
+            if k in ("lineHeight", "letterSpacing"):
+                n = _num(v, 0, 0 if k == "lineHeight" else -50, 1000 if k == "lineHeight" else 200)
+                if n:
+                    st[k] = n
+                continue
+            if k in ("valign", "deco", "textCase"):
+                ok = {"valign": ("top", "bottom"), "deco": ("underline", "strike"), "textCase": ("upper", "lower", "title")}[k]
+                if v in ok:
+                    st[k] = v
                 continue
             if k in ("fillGrad", "strokeGrad"):
                 if isinstance(v, str) and _GRAD_RE.match(v.strip()):
@@ -944,7 +964,7 @@ def render_board_svg(body: Any) -> str:
             fs = _num(st.get("fontSize"), 16, 6, 200)
             color = _attr(_ink(st.get("textColor"), "#111827"))
             lines = text.split("\n")
-            lh = fs * 1.3
+            lh = float(st.get("lineHeight") or 0) or fs * 1.3
             cy = y + eh / 2 - (len(lines) - 1) * lh / 2
             align = st.get("align")
             if align not in ("left", "center", "right"):
@@ -963,6 +983,11 @@ def render_board_svg(body: Any) -> str:
             spans = "".join(
                 f'<tspan x="{tx}" y="{cy + i * lh:.1f}">{html.escape(line)}</tspan>' for i, line in enumerate(lines)
             )
-            out.append(f'<text font-size="{fs}" fill="{color}" text-anchor="{anchor}" dominant-baseline="middle">{spans}</text>')
+            font = ""
+            if st.get("fontFamily"):
+                font += f' font-family="{html.escape(str(st["fontFamily"]))}, sans-serif"'
+            if st.get("fontWeight") or st.get("bold"):
+                font += f' font-weight="{int(st.get("fontWeight") or 600)}"'
+            out.append(f'<text font-size="{fs}"{font} fill="{color}" text-anchor="{anchor}" dominant-baseline="middle">{spans}</text>')
     out.append("</svg>")
     return "".join(out)

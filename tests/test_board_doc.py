@@ -303,6 +303,13 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         self.assertEqual((st["fillGrad"], st["blur"]), ("linear 90 #ff0000ff@0 #0000ff00@100", 4))
         self.assertNotIn("strokeGrad", st)
         self.assertNotIn("bgBlur", st)
+        body = json.dumps({"v": 1, "elements": {"t": {"id": "t", "type": "text", "x": 0, "y": 0, "w": 10, "h": 10, "text": "a", "style": {
+            "fontFamily": "Golos Text", "fontWeight": 650, "lineHeight": 24, "letterSpacing": -2, "valign": "bottom", "deco": "x",
+            "textCase": "upper"}}}})
+        st = board_doc.parse_board(body)["elements"]["t"]["style"]
+        self.assertEqual((st["fontFamily"], st["fontWeight"], st["lineHeight"], st["letterSpacing"], st["valign"], st["textCase"]),
+                         ("Golos Text", 600, 24, -2, "bottom", "upper"))
+        self.assertNotIn("deco", st)
 
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}
