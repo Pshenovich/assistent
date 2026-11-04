@@ -47,9 +47,12 @@
    Проверка: `ssh root@NEW 'ufw status; swapon --show; sshd -T | grep -i passwordauth'`.
 3. **Репетиция на копии данных** — старый сервер продолжает работать:
    ```bash
-   # со старого на новый, без остановки старого (копия может быть неконсистентной — это только репетиция).
-   # -A: старый сервер ходит на новый ключом с Мака (сначала ssh-add ~/.ssh/leo_server)
-   ssh -A root@91.229.90.4 "rsync -az --exclude .venv --exclude '__pycache__' /opt/assistant/ root@NEW:/opt/assistant/"
+   # Старый сервер был взломан: НЕ пробрасывать на него ключ с Мака (ssh -A) — оттуда им можно зайти на новый.
+   # Новый сервер сам тянет данные одноразовым ключом, который знает только старый, и ключ потом удаляется.
+   ssh root@NEW "test -f /root/.ssh/old_pull || ssh-keygen -q -t ed25519 -N '' -C old_pull -f /root/.ssh/old_pull"
+   ssh root@NEW "cat /root/.ssh/old_pull.pub" | ssh root@91.229.90.4 "cat >> /root/.ssh/authorized_keys"
+   # копия без остановки старого (может быть неконсистентной — это только репетиция)
+   ssh root@NEW "rsync -az -e 'ssh -i /root/.ssh/old_pull -o StrictHostKeyChecking=accept-new' --exclude .venv --exclude '__pycache__' root@91.229.90.4:/opt/assistant/ /opt/assistant/"
    ```
    На новом сервере:
    - в его `.env` поставить `TELEGRAM_BOT_TOKEN=` **пустым**, чтобы бот не стартовал;
@@ -72,10 +75,17 @@
    Если на старом сервере нужна страница «Идёт обновление», поставить её в nginx на эти минуты.
 2. **Данные — финальная копия, сервисы стоят:**
    ```bash
-   ssh -A root@91.229.90.4 "rsync -az --delete --exclude .venv --exclude '__pycache__' /opt/assistant/ root@NEW:/opt/assistant/"
-   ssh -A root@91.229.90.4 "rsync -az /opt/obuchat-news/ root@NEW:/opt/obuchat-news/ && rsync -az /etc/letsencrypt/ root@NEW:/etc/letsencrypt/ && rsync -az /root/leo-backups/ root@NEW:/root/leo-backups/"
-   ssh -A root@91.229.90.4 "scp /etc/systemd/system/assistant-news-sync.* root@NEW:/etc/systemd/system/"
+   PULL="rsync -az -e 'ssh -i /root/.ssh/old_pull -o StrictHostKeyChecking=accept-new'"
+   ssh root@NEW "$PULL --delete --exclude .venv --exclude '__pycache__' root@91.229.90.4:/opt/assistant/ /opt/assistant/"
+   ssh root@NEW "$PULL root@91.229.90.4:/opt/obuchat-news/ /opt/obuchat-news/ && $PULL root@91.229.90.4:/etc/letsencrypt/ /etc/letsencrypt/ && $PULL root@91.229.90.4:/root/leo-backups/ /root/leo-backups/"
+   ssh root@NEW "$PULL 'root@91.229.90.4:/etc/systemd/system/assistant-news-sync.*' /etc/systemd/system/"
+   # одноразовый ключ больше не нужен
+   ssh root@91.229.90.4 "sed -i '/ old_pull\$/d' /root/.ssh/authorized_keys"
+   ssh root@NEW "rm -f /root/.ssh/old_pull /root/.ssh/old_pull.pub"
    ```
+   Код со старого сервера не нужен: следующий деплой с Мака перезапишет его. Но данные и настройки — с взломанной
+   машины: на новом сервере сверить `.env` с ожидаемым (посторонние ключи, адреса прокси, `MINIAPP_DEV_MODE`),
+   посмотреть `crontab -l`, `/etc/cron.d/`, `~/.ssh/authorized_keys` старого сервера на чужие записи и не переносить их.
 3. **Сверка** `count_rows` на обоих серверах — должно совпасть один в один.
 3а. **Заглушка.** С 04.11 на NEW включён `scripts/maintenance_mode.sh public`: getorbita.me уже смотрит
    на NEW, лендинг и юридические страницы работают, приложение — «на обслуживании». Перед деплоем:

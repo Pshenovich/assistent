@@ -315,7 +315,14 @@ if [[ ! -d .venv ]]; then
   "$PYTHON_BIN" -m venv .venv
 fi
 ./.venv/bin/pip install -q -U pip
-./.venv/bin/pip install -q -r requirements.txt
+# Проверенные версии (requirements.lock, Python 3.12): на чистом сервере не взять новые наугад.
+# Конфликт с пакетом, добавленным после lock, — ставим без него и предупреждаем (lock пора обновить).
+if [[ -f requirements.lock ]] && ./.venv/bin/pip install -q -r requirements.txt -c requirements.lock; then
+  :
+else
+  echo "WARN: requirements.lock не подошёл — ставлю по requirements.txt; обновите lock" >&2
+  ./.venv/bin/pip install -q -r requirements.txt
+fi
 # B6: эмбеддинги — сервис assistant-embed работает, только если включён в .env
 cp -f deploy/assistant-embed.service /etc/systemd/system/assistant-embed.service
 systemctl daemon-reload
