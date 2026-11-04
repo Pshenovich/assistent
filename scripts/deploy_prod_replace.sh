@@ -566,6 +566,23 @@ if [[ -f deploy/nginx-getorbita.me.conf && ! -e /etc/nginx/sites-enabled/getorbi
   fi
 fi
 
+# Живые nginx-конфиги (их ставит только первая выкатка, дальше правит certbot): gzip для text/javascript,
+# буферизация прокси, лимиты тела — идемпотентно, с откатом, если nginx -t не прошёл.
+_ng_files=()
+for _ng in /etc/nginx/sites-available/assistent.networ.ru /etc/nginx/sites-available/getorbita.me; do
+  [[ -f "$_ng" ]] && _ng_files+=("$_ng")
+done
+if (( ${#_ng_files[@]} )) && ! python3 scripts/nginx_perf_patch.py --check "${_ng_files[@]}" >/dev/null; then
+  for _ng in "${_ng_files[@]}"; do cp -f "$_ng" "$_ng.bak-perf"; done
+  python3 scripts/nginx_perf_patch.py "${_ng_files[@]}"
+  if nginx -t; then
+    systemctl reload nginx && echo "nginx perf: применено"
+  else
+    for _ng in "${_ng_files[@]}"; do cp -f "$_ng.bak-perf" "$_ng"; done
+    echo "WARN: nginx perf: nginx -t не прошёл — конфиги возвращены" >&2
+  fi
+fi
+
 # Дайджест генерирует assistant-news-sync; rsync репозитория его затирал.
 if [[ -d /opt/obuchat-news/public/news ]]; then
   mkdir -p /opt/assistant/news
