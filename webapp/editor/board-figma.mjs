@@ -419,8 +419,9 @@ function fromFigma(msg, uid) {
   };
 
   // ---- компоненты и векторы → один элемент «вектор» на узел ----
+  var exact = msg.pasteEditorType === "DESIGN"; // Figma Design — цвета как есть, без подгонки под тему доски
   function vecPaint(paints) {
-    return themed(paintHex(paints));
+    return exact ? paintHex(paints) : themed(paintHex(paints));
   }
 
   /** Части компонента по ключу подмены (overrideKey) — так на них ссылаются экземпляры. */
@@ -736,6 +737,247 @@ function fromFigma(msg, uid) {
     else skipped++;
   }
 
+  // ---- Figma Design: фреймы, автолэйаут, точные стили, экземпляры компонентов ----
+  function designImport() {
+    var imageSlots = 0;
+    var r1 = function (v) {
+      return Math.round(v * 10) / 10;
+    };
+    var hexOf = function (c) {
+      return "#" + hex2(c.r) + hex2(c.g) + hex2(c.b);
+    };
+    var alphaOf = function (p) {
+      return (p.color && p.color.a != null ? p.color.a : 1) * (p.opacity == null ? 1 : p.opacity);
+    };
+    var inv = function (m) {
+      var d = m.m00 * m.m11 - m.m01 * m.m10 || 1;
+      return { m00: m.m11 / d, m01: -m.m01 / d, m10: -m.m10 / d, m11: m.m00 / d,
+        m02: (m.m01 * m.m12 - m.m11 * m.m02) / d, m12: (m.m10 * m.m02 - m.m00 * m.m12) / d };
+    };
+    var top = function (paints) {
+      var list = (paints || []).filter(function (p) {
+        return p && p.visible !== false && alphaOf(p) > 0.001;
+      });
+      return list[list.length - 1] || null; // верхняя заливка
+    };
+    /** Градиент Figma → «linear|radial угол #rrggbbaa@поз …» (как на доске). */
+    var gradOf = function (p) {
+      var stops = (p.stops || []).slice(0, 8).map(function (t) {
+        var a = (t.color.a == null ? 1 : t.color.a) * (p.opacity == null ? 1 : p.opacity);
+        return hexOf(t.color) + hex2(a) + "@" + Math.round(Math.max(0, Math.min(1, t.position || 0)) * 100);
+      });
+      if (stops.length < 2) return null;
+      var angle = 0;
+      if (p.transform) {
+        var iv = inv(p.transform);
+        var a0 = [iv.m00 * 0 + iv.m01 * 0.5 + iv.m02, iv.m10 * 0 + iv.m11 * 0.5 + iv.m12];
+        var a1 = [iv.m00 * 1 + iv.m01 * 0.5 + iv.m02, iv.m10 * 1 + iv.m11 * 0.5 + iv.m12];
+        angle = Math.round((Math.atan2(a1[1] - a0[1], a1[0] - a0[0]) * 180) / Math.PI);
+      }
+      return (p.type === "GRADIENT_RADIAL" || p.type === "GRADIENT_DIAMOND" ? "radial" : "linear") + " " + angle + " " + stops.join(" ");
+    };
+    var hasImage = function (n) {
+      return (n.fillPaints || []).some(function (p) {
+        return p && p.visible !== false && p.type === "IMAGE";
+      });
+    };
+    /** Заливка, обводка, скругления, прозрачность и эффекты узла → style доски. */
+    var styleOf = function (n, kind) {
+      var st = {};
+      var f = top(n.fillPaints);
+      if (f && f.type === "SOLID") {
+        st.fill = hexOf(f.color);
+        var fa = alphaOf(f);
+        if (fa < 0.999) st.fillOpacity = Math.round(fa * 1000) / 1000;
+      } else if (f && /^GRADIENT/.test(f.type)) {
+        var g = gradOf(f);
+        if (g) {
+          st.fillGrad = g;
+          st.fill = hexOf(f.stops[0].color);
+        } else st.fill = "none";
+      } else if (f && f.type === "IMAGE") st.fill = "#e5e7eb";
+      else st.fill = "none";
+      var sp = top(n.strokePaints);
+      var sw = n.strokeWeight || 0;
+      if (sp && sw > 0 && (sp.type === "SOLID" || /^GRADIENT/.test(sp.type))) {
+        st.stroke = sp.type === "SOLID" ? hexOf(sp.color) : hexOf(sp.stops[0].color);
+        if (sp.type !== "SOLID") {
+          var sg = gradOf(sp);
+          if (sg) st.strokeGrad = sg;
+        } else if (alphaOf(sp) < 0.999) st.strokeOpacity = Math.round(alphaOf(sp) * 1000) / 1000;
+        st.strokeWidth = r1(sw);
+        if (n.strokeAlign === "INSIDE") st.strokeAlign = "inside";
+        else if (n.strokeAlign === "OUTSIDE") st.strokeAlign = "outside";
+        if ((n.dashPattern || []).length) st.dash = "dashed";
+      } else st.strokeWidth = 0;
+      if (kind !== "ellipse") {
+        if (n.rectangleCornerRadiiIndependent) {
+          st.radii = [n.rectangleTopLeftCornerRadius, n.rectangleTopRightCornerRadius, n.rectangleBottomRightCornerRadius, n.rectangleBottomLeftCornerRadius].map(function (v) {
+            return r1(v || 0);
+          }).join(" ");
+        } else st.radius = r1(n.cornerRadius || 0);
+      }
+      if (n.opacity != null && n.opacity < 0.999) st.opacity = Math.round(n.opacity * 1000) / 1000;
+      (n.effects || []).forEach(function (e) {
+        if (!e || e.visible === false) return;
+        if (e.type === "DROP_SHADOW" && !st.shadow) {
+          var c = e.color || { r: 0, g: 0, b: 0, a: 0.25 };
+          st.shadow = Math.round((e.offset && e.offset.x) || 0) + " " + Math.round((e.offset && e.offset.y) || 0) + " " + Math.min(999, Math.round(e.radius || 0)) + " " + hexOf(c) + hex2(c.a == null ? 1 : c.a);
+        } else if (e.type === "FOREGROUND_BLUR") st.blur = r1(e.radius || 0);
+        else if (e.type === "BACKGROUND_BLUR") st.bgBlur = r1(e.radius || 0);
+      });
+      return st;
+    };
+    var SIDE = { MIN: "start", CENTER: "center", MAX: "end", BASELINE: "start", STRETCH: "start" };
+    /** Автолэйаут Figma → «dir gap pt pr pb pl align justify hug [wrap|cN]». Есть «абсолютные» дети — без автолэйаута. */
+    var layoutOf = function (n, children) {
+      var m = n.stackMode;
+      if (m !== "HORIZONTAL" && m !== "VERTICAL" && m !== "GRID") return null;
+      if (children.some(function (k) {
+        return k.stackPositioning === "ABSOLUTE";
+      })) return null;
+      var dir = m === "HORIZONTAL" ? "h" : m === "VERTICAL" ? "v" : "g";
+      var pl = n.stackHorizontalPadding != null ? n.stackHorizontalPadding : n.stackPadding || 0;
+      var pt = n.stackVerticalPadding != null ? n.stackVerticalPadding : n.stackPadding || 0;
+      var pr = n.stackPaddingRight != null ? n.stackPaddingRight : pl;
+      var pb = n.stackPaddingBottom != null ? n.stackPaddingBottom : pt;
+      var just = n.stackPrimaryAlignItems === "SPACE_BETWEEN" || n.stackPrimaryAlignItems === "SPACE_EVENLY" ? "between" : SIDE[n.stackPrimaryAlignItems] || "start";
+      var al = SIDE[n.stackCounterAlignItems] || "start";
+      var fitM = /RESIZE_TO_FIT/.test(String(n.stackPrimarySizing || ""));
+      var fitC = /RESIZE_TO_FIT/.test(String(n.stackCounterSizing || ""));
+      var hw = dir === "v" ? fitC : fitM;
+      var hh = dir === "v" ? fitM : fitC;
+      var hug = hw && hh ? "wh" : hw ? "w" : hh ? "h" : "none";
+      var gap = dir === "g" ? n.gridColumnGap || 0 : n.stackSpacing || 0;
+      var ex = dir === "g" ? "c" + Math.max(1, Math.min(24, ((n.gridColumns && n.gridColumns.entries) || []).length || 2)) : dir === "h" && n.stackWrap === "WRAP" ? "wrap" : "";
+      return [dir, r1(Math.max(0, gap)), r1(pt), r1(pr), r1(pb), r1(pl), al, just, hug].concat(ex ? [ex] : []).join(" ");
+    };
+    /** Подмены экземпляра (тексты, заливки, видимость) и готовые размеры частей. */
+    var merged = function (n, ctx) {
+      if (!ctx) return n;
+      var k = n.overrideKey ? gid(n.overrideKey) : "";
+      var ov = k && ctx.ovs[k];
+      var dv = k && ctx.der[k];
+      if (!ov && !dv) return n;
+      var out = Object.assign({}, n);
+      if (dv) {
+        if (dv.size) out.size = dv.size;
+        if (dv.transform) out.transform = dv.transform;
+        if (dv.derivedTextData) out.derivedTextData = dv.derivedTextData;
+      }
+      if (ov) Object.keys(ov).forEach(function (f) {
+        if (f !== "guidPath" && ov[f] != null) out[f] = ov[f];
+      });
+      return out;
+    };
+    var derivedOf = function (inst) {
+      var d = {};
+      (inst.derivedSymbolData || []).forEach(function (x) {
+        var g = (x.guidPath && x.guidPath.guids) || [];
+        if (g.length) d[gid(g[g.length - 1])] = x;
+      });
+      return d;
+    };
+    var kidsOf = function (n) {
+      if (n.type === "INSTANCE" && n.symbolData) return kids[gid(n.symbolData.symbolID)] || [];
+      return kids[gid(n.guid)] || [];
+    };
+    var put = function (el, n, parentFrame, groupId) {
+      if (parentFrame) el.frame = parentFrame;
+      if (groupId) el.group = groupId;
+      if (n && n.proportionsConstrained) el.ratio = true;
+      add(el, n ? gid(n.guid) : "");
+      return el;
+    };
+    var growOf = function (n, parentDir) {
+      if (!parentDir) return "";
+      var g = "";
+      if (n.stackChildPrimaryGrow > 0) g += parentDir === "h" ? "w" : "h";
+      if (n.stackChildAlignSelf === "STRETCH") g += parentDir === "h" ? "h" : "w";
+      return g ? (g.indexOf("w") >= 0 ? "w" : "") + (g.indexOf("h") >= 0 ? "h" : "") : "";
+    };
+    function walkD(n0, world, parentFrame, groupId, ctx, parentDir) {
+      var n = merged(n0, ctx);
+      if (n.visible === false) return;
+      var type = n.type;
+      var pos = box(n, world);
+      var b = pos.b;
+      var grow = growOf(n, parentDir);
+      var withGrow = function (el) {
+        if (grow) el.grow = grow;
+        return el;
+      };
+      if (type === "FRAME" || type === "COMPONENT" || type === "COMPONENT_SET" || type === "SYMBOL" || type === "INSTANCE" || type === "SECTION") {
+        var ctx2 = ctx;
+        if (type === "INSTANCE") {
+          ctx2 = { ovs: Object.assign({}, ctx ? ctx.ovs : {}, overridesOf(n)), der: Object.assign({}, ctx ? ctx.der : {}, derivedOf(n)) };
+        }
+        var children = kidsOf(n).map(function (k) {
+          return merged(k, ctx2);
+        });
+        var fr = withGrow(Object.assign({ id: uid(), type: "frame", name: String(n.name || "Фрейм").slice(0, 120) }, b, { style: styleOf(n, "frame") }));
+        if (fr.style.fill === "none") {
+          fr.style.fill = "#ffffff";
+          fr.style.fillOff = true;
+        }
+        var lay = layoutOf(n, children);
+        if (lay) fr.layout = lay;
+        if (n.frameMaskDisabled) fr.noclip = true;
+        if (hasImage(n)) imageSlots++;
+        put(fr, n, parentFrame, groupId);
+        var dir = lay ? lay.split(" ")[0] : "";
+        kidsOf(n).forEach(function (k) {
+          walkD(k, pos.t, fr.id, "", ctx2, dir);
+        });
+        return;
+      }
+      if (type === "GROUP") {
+        // Группа Figma — группа доски (двигаются вместе); внутри автолэйаута — тоже ребёнок.
+        var gidNew = groupId || uid();
+        kidsOf(n).forEach(function (k) {
+          walkD(k, pos.t, parentFrame, gidNew, ctx, "");
+        });
+        return;
+      }
+      if (type === "TEXT") {
+        var tst = textStyle(n, true);
+        var tp = top(n.fillPaints);
+        if (tp && tp.type === "SOLID") tst.textColor = hexOf(tp.color);
+        if (n.opacity != null && n.opacity < 0.999) tst.opacity = Math.round(n.opacity * 1000) / 1000;
+        put(withGrow(Object.assign({ id: uid(), type: "text", text: textOf(n.textData) }, b, { style: tst })), n, parentFrame, groupId);
+        return;
+      }
+      if (type === "RECTANGLE" || type === "ROUNDED_RECTANGLE" || type === "ELLIPSE") {
+        var kind = type === "ELLIPSE" ? "ellipse" : "rect";
+        var img = hasImage(n);
+        if (img) imageSlots++;
+        var el = withGrow(Object.assign({ id: uid(), type: kind, text: img ? "Картинка из Figma" : "" }, b, { style: styleOf(n, kind) }));
+        if (img) Object.assign(el.style, { textColor: "#6b7280", fontSize: 12 });
+        put(el, n, parentFrame, groupId);
+        return;
+      }
+      // Векторы, линии, булевы операции — вектором (правится по точкам).
+      var paths = [];
+      if (type === "VECTOR" || type === "STAR" || type === "REGULAR_POLYGON" || type === "LINE") pushNetwork(paths, n, ID, null, 1);
+      else if (type === "BOOLEAN_OPERATION") {
+        (n.fillGeometry || []).forEach(function (gm) {
+          var fill = vecPaint(n.fillPaints);
+          var d = fill && commandsPath(blob(gm.commandsBlob), ID);
+          if (d) paths.push({ d: d, fill: fill, rule: gm.windingRule === "ODD" ? "evenodd" : undefined });
+        });
+      }
+      var vel = vectorEl(n, b, paths);
+      if (vel) {
+        if (n.opacity != null && n.opacity < 0.999) vel.style = { opacity: Math.round(n.opacity * 1000) / 1000 };
+        put(withGrow(vel), n, parentFrame, groupId);
+      } else skipped++;
+    }
+    (kids[gid(page.guid)] || []).forEach(function (n) {
+      walkD(n, ID, "", "", null, "");
+    });
+    return els.length ? { source: "Figma", elements: els, skipped: skipped, imageSlots: imageSlots } : null;
+  }
+
   function tableEl(n, b) {
     var order = function (list) {
       return ((list && list.entries) || []).slice().sort(function (a, c) {
@@ -768,6 +1010,8 @@ function fromFigma(msg, uid) {
     }, 0);
     return Object.assign({ id: uid(), type: "table" }, b, { w: tw || b.w, html: html });
   }
+
+  if (exact) return designImport();
 
   (kids[gid(page.guid)] || []).forEach(function (n) {
     walk(n, ID);

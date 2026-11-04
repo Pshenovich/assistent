@@ -103,6 +103,42 @@ assert.deepEqual([icon.x, icon.y, icon.w, icon.h, icon.vb], [800, 0, 48, 48, [48
 // Смещение части 2×2 → 4×4 (масштаб 2), геометрия как есть; цвет — из подмены; скрытая часть пропущена.
 assert.deepEqual(icon.paths, [{ d: "M4 4L24 4L24 24Z", fill: "#ff0000", rule: undefined }]);
 assert.deepEqual(net.paths, [{ d: "M0 0L20 10", stroke: "#1a2659", sw: 2, cap: "round", join: undefined }]);
+// Figma Design: фрейм с автолэйаутом, текст и прямоугольник — точные стили, членство во фрейме.
+{
+  const G = (l) => ({ sessionID: 1, localID: l });
+  const P = (l, pos) => ({ guid: G(l), position: pos });
+  const T = (x, y) => ({ m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y });
+  const dmsg = {
+    pasteEditorType: "DESIGN",
+    nodeChanges: [
+      { guid: G(0), type: "DOCUMENT" },
+      { guid: G(1), type: "CANVAS", parentIndex: P(0, "a"), name: "Page" },
+      { guid: G(2), type: "FRAME", parentIndex: P(1, "a"), name: "Карточка", size: { x: 200, y: 120 }, transform: T(100, 50),
+        fillPaints: [{ type: "SOLID", color: { r: 1, g: 1, b: 1, a: 1 } }], cornerRadius: 12,
+        stackMode: "VERTICAL", stackSpacing: 8, stackHorizontalPadding: 16, stackVerticalPadding: 12, stackPrimarySizing: "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE",
+        stackCounterAlignItems: "CENTER", effects: [{ type: "DROP_SHADOW", color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 4 }, radius: 12, visible: true }] },
+      { guid: G(3), type: "TEXT", parentIndex: P(2, "a"), size: { x: 168, y: 20 }, transform: T(16, 12), textData: { characters: "Заголовок" },
+        fontSize: 16, fontName: { family: "Inter", style: "Semi Bold" }, fillPaints: [{ type: "SOLID", color: { r: 0.1, g: 0.1, b: 0.1, a: 1 } }] },
+      { guid: G(4), type: "RECTANGLE", parentIndex: P(2, "b"), size: { x: 168, y: 40 }, transform: T(16, 40), stackChildAlignSelf: "STRETCH",
+        rectangleCornerRadiiIndependent: true, rectangleTopLeftCornerRadius: 8, rectangleTopRightCornerRadius: 8,
+        strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 } }], strokeWeight: 2, strokeAlign: "INSIDE",
+        fillPaints: [{ type: "GRADIENT_LINEAR", stops: [{ color: { r: 1, g: 0, b: 0, a: 1 }, position: 0 }, { color: { r: 0, g: 0, b: 1, a: 1 }, position: 1 }] }] },
+      { guid: G(5), type: "RECTANGLE", parentIndex: P(2, "c"), size: { x: 40, y: 40 }, transform: T(16, 88), fillPaints: [{ type: "IMAGE" }] },
+    ],
+  };
+  let k = 0;
+  const d = F._fromFigma(dmsg, () => "d" + ++k);
+  assert.equal(d.source, "Figma");
+  assert.equal(d.imageSlots, 1);
+  const [fr, tx, rc, im] = d.elements;
+  assert.deepEqual([fr.type, fr.name, fr.x, fr.y, fr.w, fr.h], ["frame", "Карточка", 100, 50, 200, 120]);
+  assert.equal(fr.layout, "v 8 12 16 12 16 center start h");
+  assert.deepEqual([fr.style.fill, fr.style.radius, fr.style.shadow], ["#ffffff", 12, "0 4 12 #00000040"]);
+  assert.deepEqual([tx.type, tx.frame, tx.x, tx.y, tx.text, tx.style.textColor, tx.style.fontFamily, tx.style.fontWeight], ["text", fr.id, 116, 62, "Заголовок", "#1a1a1a", "Inter", 600]);
+  assert.equal(rc.grow, "w"); // STRETCH поперёк вертикального — «заполнить» по ширине
+  assert.deepEqual([rc.style.radii, rc.style.stroke, rc.style.strokeWidth, rc.style.strokeAlign, rc.style.fillGrad], ["8 8 0 0", "#0000ff", 2, "inside", "linear 0 #ff0000ff@0 #0000ffff@100"]);
+  assert.equal(im.text, "Картинка из Figma");
+}
 assert.equal(F.isFigma("<p>нет</p>"), false);
 assert.equal(await F.fromHtml('<span data-buffer="<!--(figma)AAAA(/figma)-->">', () => "x"), null);
 console.log("board figma ok");

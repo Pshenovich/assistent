@@ -3468,7 +3468,7 @@
       }
       // Выделена заглушка картинки (из Miro) — картинка встаёт на её место и в её размер.
       var slot = selList().length === 1 ? selList()[0] : null;
-      if (!(slot && slot.type === "rect" && String(slot.text || "").indexOf(IMAGE_SLOT_TEXT) === 0)) slot = null;
+      if (!(slot && slot.type === "rect" && /^Картинка из (Miro|Figma)/.test(String(slot.text || "")))) slot = null;
       return readFileAsDataUrl(file).then(compressImage).then(function (img) {
         if (!img) {
           notify("Не удалось открыть картинку");
@@ -6403,7 +6403,7 @@
       }
       // Выделена заглушка картинки и в буфере есть картинка — она и вставляется (на место заглушки).
       var one = selList().length === 1 ? selList()[0] : null;
-      if (files.length && one && one.type === "rect" && String(one.text || "").indexOf(IMAGE_SLOT_TEXT) === 0) {
+      if (files.length && one && one.type === "rect" && /^Картинка из (Miro|Figma)/.test(String(one.text || ""))) {
         insertImageFile(files[0]);
         return;
       }
