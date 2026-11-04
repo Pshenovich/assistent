@@ -333,7 +333,9 @@ async def deliver_reminder(
     when = reminders_store.parse_when_iso(rec.get("when_iso"), tz=tz)
     if when is None:
         return
-    nxt = next_after(when, rrule, after=when)
+    # Следующее срабатывание — после «сейчас», а не после прошлого: иначе после простоя бота
+    # каждое пропущенное повторение уходило бы по одному в минуту (опрос пропущенных).
+    nxt = next_after(when, rrule, after=max(when, now))
     if nxt is None:
         reminders_store.patch_reminder(rid, done=True)
         return

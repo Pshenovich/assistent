@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from telegram.error import Forbidden
 from telegram.ext import ContextTypes
 
 from assistant.config import CALENDAR_TZ
@@ -91,6 +92,10 @@ async def deliver_missed_reminders(context: ContextTypes.DEFAULT_TYPE) -> int:
             )
             sent += 1
             print(f"[reminder] delivered missed id={rid} chat={chat_id}")
+        except Forbidden as e:
+            # Бот заблокирован или удалён из чата — не повторяем каждую минуту бесконечно.
+            reminders_store.patch_reminder(rid, done=True)
+            print(f"[reminder] missed send forbidden id={rid} chat={chat_id} — закрыто: {e!r}")
         except Exception as e:
             print(f"[reminder] missed send id={rid} err={e!r}")
     return sent
