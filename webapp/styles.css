@@ -24325,12 +24325,20 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-pad--title-in-body {
   /* Строка 1: заголовок (сжимается до «…») и проект рядом; строка 2: вкладки во всю ширину. */
   display: grid;
-  grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr);
+  /* Заголовок занимает свободное место, проект — справа, у кнопок. Отступы — от краёв окна заметки
+     (--head-l/-r), минус поля контейнера: при переключении листа (у доски полей нет) заголовок не сдвигается. */
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 12px;
-  padding-left: var(--head-l, 0px) !important;
-  padding-right: var(--head-r, 0px) !important;
+  padding-left: calc(var(--head-l, 52px) - var(--note-editor-pad-x, 16px)) !important;
+  padding-right: calc(var(--head-r, 134px) - var(--note-editor-pad-x, 16px)) !important;
   padding-top: 0;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-sheet.note-head-inline .note-editor-modal-content:has(.note-editor-pad--body.is-board-mode) .note-editor-pad--title-in-body {
+  padding-left: var(--head-l, 52px) !important;
+  padding-right: var(--head-r, 134px) !important;
+  padding-bottom: 0;
 }
 
 #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-title {
@@ -24344,7 +24352,6 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   padding-top: 8px;
   padding-bottom: 8px;
   box-sizing: border-box;
-  field-sizing: content;
   /* Длинный заголовок — одной строкой, конец плавно гаснет; при правке — прокрутка внутри строки. */
   white-space: nowrap;
   overflow: hidden;
@@ -24352,12 +24359,6 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   word-break: normal;
 }
 
-@supports not (field-sizing: content) {
-  /* Без подгонки поля под текст — заголовок занимает свободное место, проект — справа от него. */
-  #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-pad--title-in-body {
-    grid-template-columns: minmax(0, 1fr) auto 0;
-  }
-}
 
 #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-title.is-clipped:not(:focus) {
   -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 32px), transparent);
@@ -24371,15 +24372,38 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   flex-wrap: nowrap;
 }
 
+/* Вкладки — на прежнем месте (с полем заметки), независимо от отступов строки заголовка. */
 #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-sheets-bar {
   grid-column: 1 / -1;
   grid-row: 2;
-  margin-left: calc(-1 * var(--head-l, 0px));
-  margin-right: calc(-1 * var(--head-r, 0px));
+  margin-left: calc(var(--note-editor-pad-x, 16px) - var(--head-l, 52px));
+  margin-right: calc(var(--note-editor-pad-x, 16px) - var(--head-r, 134px));
 }
 
-/* На доске у строки заголовка свой отступ (поля контейнера сняты) — вкладки ставим так же, как раньше. */
-#note-editor-overlay.is-web-canvas-open .note-editor-sheet.note-head-inline .note-editor-modal-content:has(.note-editor-pad--body.is-board-mode) .note-editor-sheets-bar {
-  margin-left: calc(var(--note-editor-pad-x, 16px) - var(--head-l, 0px));
-  margin-right: calc(var(--note-editor-pad-x, 16px) - var(--head-r, 0px));
+/* «К списку» — квадратная кнопка со стрелкой. */
+#note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-web-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0;
+  color: var(--text);
+}
+
+#note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-web-back::before {
+  content: "";
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M15%205l-7%207%207%207%22%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%222.2%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22M15%205l-7%207%207%207%22%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
+}
+
+#note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-web-back:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
