@@ -2194,3 +2194,67 @@ html[data-theme="light"] .leo-board {
   background: var(--lb-accent-soft);
   color: var(--lb-accent);
 }
+
+/* Как во Figma: кнопки одной группой (общий фон, разделители), иконки 16px. */
+.lb-igroup {
+  display: flex;
+  flex: none;
+  overflow: hidden;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-igroup .lb-ibtn {
+  min-width: 30px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.lb-igroup .lb-ibtn + .lb-ibtn {
+  box-shadow: inset 1px 0 0 var(--lb-panel);
+}
+
+.lb-igroup .lb-ibtn:hover {
+  background: color-mix(in srgb, var(--lb-text) 8%, transparent);
+}
+
+.lb-ialign2 {
+  justify-content: space-between;
+}
+
+.lb-ialign2 .lb-igroup {
+  flex: 1 1 0;
+}
+
+.lb-ialign2 .lb-igroup .lb-ibtn {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.lb-ibtn svg [stroke-width="2.4"] {
+  stroke-linecap: round;
+}
+
+/* Наведение на промежуток / отступ автолэйаута (как во Figma) */
+.lb-overlay .lb-gap {
+  fill: url(#lb-hatch);
+  stroke: #f24ea0;
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.lb-overlay .lb-gap-hatch {
+  stroke: #f24ea0;
+  stroke-width: 1.5;
+  opacity: 0.55;
+}
+
+.lb-overlay .lb-gap-pill {
+  fill: #f24ea0;
+}
+
+.lb-overlay .lb-gap-label {
+  fill: #fff;
+  font: 600 11px var(--lb-font);
+  text-anchor: middle;
+}

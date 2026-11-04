@@ -190,14 +190,14 @@
     table: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 8h14M3 12h14M8 4v12M12.5 4v12"/>',
     templates: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><path d="M14 11v6M11 14h6"/>',
     photo: '<rect x="3" y="5" width="14" height="11" rx="1.5"/><circle cx="10" cy="10.5" r="2.8"/><path d="M7.5 5l1-1.6h3l1 1.6"/>',
-    alL: '<path d="M3 3v14M6 6h9v3H6zM6 11h6v3H6z"/>',
-    alCH: '<path d="M10 3v14M5 6h10v3H5zM7 11h6v3H7z"/>',
-    alR: '<path d="M17 3v14M5 6h9v3H5zM8 11h6v3H8z"/>',
-    alT: '<path d="M3 3h14M6 6v9h3V6zM11 6v6h3V6z"/>',
-    alCV: '<path d="M3 10h14M6 5v10h3V5zM11 7v6h3V7z"/>',
-    alB: '<path d="M3 17h14M6 5v9h3V5zM11 8v6h3V8z"/>',
-    distH: '<path d="M3 3v14M17 3v14M8 6h4v8H8z"/>',
-    distV: '<path d="M3 3h14M3 17h14M6 8h8v4H6z"/>',
+    alL: '<path d="M4 3.5v13"/><path d="M8 7.5h8M8 12.5h5" stroke-width="2.4"/>',
+    alCH: '<path d="M10 3.5v13"/><path d="M5.5 7.5h9M7.5 12.5h5" stroke-width="2.4"/>',
+    alR: '<path d="M16 3.5v13"/><path d="M4 7.5h8M7 12.5h5" stroke-width="2.4"/>',
+    alT: '<path d="M3.5 4h13"/><path d="M7.5 8v8M12.5 8v5" stroke-width="2.4"/>',
+    alCV: '<path d="M3.5 10h13"/><path d="M7.5 5.5v9M12.5 7.5v5" stroke-width="2.4"/>',
+    alB: '<path d="M3.5 16h13"/><path d="M7.5 4v8M12.5 7v5" stroke-width="2.4"/>',
+    distH: '<path d="M4 4v12M16 4v12"/><path d="M10 7v6" stroke-width="2.4"/>',
+    distV: '<path d="M4 4h12M4 16h12"/><path d="M7 10h6" stroke-width="2.4"/>',
     penTool: '<path d="M10 2.5l5 7-5 8-5-8z"/><circle cx="10" cy="10" r="1.3"/><path d="M10 11.3v6.2"/>',
     corners: '<path d="M3 8V5a2 2 0 012-2h3M12 3h3a2 2 0 012 2v3M17 12v3a2 2 0 01-2 2h-3M8 17H5a2 2 0 01-2-2v-3"/>',
     eyedrop: '<path d="M13.5 3.5l3 3-2 2-3-3z"/><path d="M11.5 5.5l-7 7V16h3.5l7-7"/>',
@@ -248,8 +248,10 @@
     padV: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M6 7h8M6 13h8"/>',
     blurFx: '<circle cx="10" cy="10" r="6.5" stroke-dasharray="2 2.2"/><circle cx="10" cy="10" r="2.5"/>',
     link: '<path d="M8.5 11.5a3 3 0 004.2 0l2.6-2.6a3 3 0 00-4.2-4.2l-1 1"/><path d="M11.5 8.5a3 3 0 00-4.2 0l-2.6 2.6a3 3 0 004.2 4.2l1-1"/>',
-    flipH: '<path d="M10 3v14" stroke-dasharray="2 2"/><path d="M7.5 6L3 14h4.5zM12.5 6l4.5 8h-4.5z"/>',
-    flipV: '<path d="M3 10h14" stroke-dasharray="2 2"/><path d="M6 7.5L14 3v4.5zM6 12.5l8 4.5v-4.5z"/>',
+    flipH: '<path d="M10 3.5v13"/><path d="M7 6.5L3.5 10 7 13.5zM13 6.5l3.5 3.5-3.5 3.5z"/>',
+    flipV: '<path d="M3.5 10h13"/><path d="M6.5 7L10 3.5 13.5 7zM6.5 13l3.5 3.5 3.5-3.5z"/>',
+    rot90: '<path d="M10 7.5l4 4-4 4-4-4z"/><path d="M6 6.5a5.5 5.5 0 018-.5"/><path d="M14.5 3.5v3h-3"/>',
+    angle: '<path d="M4.5 15.5h11M4.5 15.5l8-8"/><path d="M9.5 15.5a5 5 0 00-1.5-3.5"/>',
   };
 
   function icon(name) {
@@ -1790,6 +1792,7 @@
         h.push('<line class="lb-guide' + (mode === "design" ? " is-design" : "") + '" x1="' + p0.x + '" y1="' + p0.y + '" x2="' + p1.x + '" y2="' + p1.y + '"/>');
       });
       if (marquee) h.push(rectPath(marquee, "lb-marquee"));
+      if (gapHover) h.push(gapSvg(gapHover));
       if (layerHover) {
         var hb = G.unionBounds(layerIds(layerHover).map(function (id) {
           return G.elBounds(getEl(id), getEl);
@@ -4094,9 +4097,11 @@
         var f = frameOf(one);
         h.push('<div class="lb-isec"><div class="lb-ilabel">Позиция</div><div class="lb-irow">' +
           numField("x", "X", r1(one.x - (f ? f.x : 0)), { title: f ? "X внутри фрейма" : "X" }) + numField("y", "Y", r1(one.y - (f ? f.y : 0)), { title: f ? "Y внутри фрейма" : "Y" }) +
-          '</div><div class="lb-irow">' + numField("rot", "↻", r1(one.rot || 0), { title: "Поворот, °" }) +
+          '</div><div class="lb-irow">' + numField("rot", icon("angle"), r1(one.rot || 0), { title: "Поворот, °", html: true, suffix: "°" }) +
+            '<span class="lb-igroup">' +
+            '<button type="button" class="lb-ibtn" data-act="rot90" title="Повернуть на 90°">' + icon("rot90") + "</button>" +
             '<button type="button" class="lb-ibtn" data-act="flipH" title="Отразить по горизонтали (⇧H)">' + icon("flipH") + "</button>" +
-            '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div></div>");
+            '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></span></div></div>");
         // Размеры; у фрейма — автолэйаут вокруг них: поток, «фикс./обнимать», выравнивание и промежуток, отступы.
         var LA = one.type === "frame" ? parseLayout(one.layout) : null;
         // Режим размера: фикс.; «обним.» — у фрейма с автолэйаутом; «заполн.» — у ребёнка автолэйаута.
@@ -4162,11 +4167,17 @@
       }
       // Выравнивание: несколько объектов — между собой (группа как одно целое), один в экране — по экрану.
       if (list.length > 1 || (one && frameOf(one))) {
-        h.push('<div class="lb-isec"><div class="lb-ilabel">Выравнивание' + (list.length > 1 ? "" : " по фрейму") + '</div><div class="lb-ialign">' +
-          [["L", "alL", "По левому краю"], ["CH", "alCH", "По центру по горизонтали"], ["R", "alR", "По правому краю"], ["DH", "distH", "Равные промежутки по горизонтали"],
-            ["T", "alT", "По верхнему краю"], ["CV", "alCV", "По центру по вертикали"], ["B", "alB", "По нижнему краю"], ["DV", "distV", "Равные промежутки по вертикали"]].map(function (a) {
+        var grp = function (items) {
+          return '<span class="lb-igroup">' + items.map(function (a) {
             return '<button type="button" class="lb-ibtn" data-align="' + a[0] + '" title="' + a[2] + '">' + icon(a[1]) + "</button>";
-          }).join("") + "</div></div>");
+          }).join("") + "</span>";
+        };
+        // Как во Figma: по горизонтали и по вертикали — двумя группами; равные промежутки — отдельно (при 3+).
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Выравнивание' + (list.length > 1 ? "" : " по фрейму") + '</div><div class="lb-irow lb-ialign2">' +
+          grp([["L", "alL", "По левому краю"], ["CH", "alCH", "По центру по горизонтали"], ["R", "alR", "По правому краю"]]) +
+          grp([["T", "alT", "По верхнему краю"], ["CV", "alCV", "По центру по вертикали"], ["B", "alB", "По нижнему краю"]]) + "</div>" +
+          (list.length > 2 ? '<div class="lb-irow lb-ialign2">' + grp([["DH", "distH", "Равные промежутки по горизонтали"], ["DV", "distV", "Равные промежутки по вертикали"]]) + "</div>" : "") +
+          "</div>");
       }
       // Внешний вид (как во Figma): непрозрачность и скругление в одну строку, углы по отдельности — под ними.
       var op = st("opacity");
@@ -4558,6 +4569,82 @@
         var rot = (((k.rot || 0) + delta) % 360 + 540) % 360 - 180;
         patch(k.id, { x: kc.x - k.w / 2, y: kc.y - k.h / 2, rot: Math.round(rot * 10) / 10 || undefined });
       });
+    }
+
+    // ---- наведение на промежуток / отступ автолэйаута: розовая штриховка и значение (как во Figma) ----
+    var gapHover = null; // {x, y, w, h, v, kind}
+    function layoutZones(f) {
+      var L = parseLayout(f.layout);
+      if (!L || L.dir === "g" || L.wrap) return [];
+      var H = L.dir === "h";
+      var kids = layoutKids(f).sort(function (a, b) {
+        return H ? a.x - b.x : a.y - b.y;
+      });
+      var out = [];
+      var cx0 = f.x + L.pad[3];
+      var cy0 = f.y + L.pad[0];
+      var cw = f.w - L.pad[1] - L.pad[3];
+      var ch = f.h - L.pad[0] - L.pad[2];
+      for (var i = 1; i < kids.length; i++) {
+        var a = kids[i - 1];
+        var b = kids[i];
+        var g = H ? b.x - (a.x + a.w) : b.y - (a.y + a.h);
+        if (g <= 0.5) continue;
+        out.push(H ? { x: a.x + a.w, y: cy0, w: g, h: ch, v: g, kind: "gap" } : { x: cx0, y: a.y + a.h, w: cw, h: g, v: g, kind: "gap" });
+      }
+      // Отступы фрейма — тоже подсвечиваются.
+      if (L.pad[0] > 0.5) out.push({ x: f.x, y: f.y, w: f.w, h: L.pad[0], v: L.pad[0], kind: "pad" });
+      if (L.pad[2] > 0.5) out.push({ x: f.x, y: f.y + f.h - L.pad[2], w: f.w, h: L.pad[2], v: L.pad[2], kind: "pad" });
+      if (L.pad[3] > 0.5) out.push({ x: f.x, y: f.y, w: L.pad[3], h: f.h, v: L.pad[3], kind: "pad" });
+      if (L.pad[1] > 0.5) out.push({ x: f.x + f.w - L.pad[1], y: f.y, w: L.pad[1], h: f.h, v: L.pad[1], kind: "pad" });
+      return out;
+    }
+
+    function updateGapHover(e) {
+      var next = null;
+      if (mode === "design" && tool === "select" && !gesture && !editing && selected.size && e) {
+        var p = toWorld(e.clientX, e.clientY);
+        var cands = {};
+        selList().forEach(function (el) {
+          if (el.type === "frame" && el.layout) cands[el.id] = el;
+          var pf = frameOf(el);
+          if (pf && pf.layout) cands[pf.id] = pf;
+        });
+        Object.keys(cands).some(function (id) {
+          var zs = layoutZones(cands[id]);
+          // Промежутки важнее отступов (отступы по краям перекрываются с ними в углах).
+          zs.sort(function (a, b) {
+            return (a.kind === "gap" ? 0 : 1) - (b.kind === "gap" ? 0 : 1);
+          });
+          for (var i = 0; i < zs.length; i++) {
+            var z = zs[i];
+            if (p.x >= z.x && p.x <= z.x + z.w && p.y >= z.y && p.y <= z.y + z.h) {
+              next = z;
+              return true;
+            }
+          }
+          return false;
+        });
+      }
+      if (JSON.stringify(next) !== JSON.stringify(gapHover)) {
+        gapHover = next;
+        renderOverlay();
+      }
+    }
+
+    function gapSvg(z) {
+      var a = toScreen(G.pt(z.x, z.y));
+      var w = Math.max(1, z.w * view.z);
+      var h = Math.max(1, z.h * view.z);
+      var label = String(Math.round(z.v * 10) / 10);
+      var lw = 8 + label.length * 7;
+      var cx = a.x + w / 2;
+      var cy = a.y + h / 2;
+      return '<defs><pattern id="lb-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">' +
+        '<line x1="0" y1="0" x2="0" y2="6" class="lb-gap-hatch"/></pattern></defs>' +
+        '<rect class="lb-gap" x="' + a.x + '" y="' + a.y + '" width="' + w + '" height="' + h + '"/>' +
+        '<rect class="lb-gap-pill" x="' + (cx - lw / 2) + '" y="' + (cy - 9) + '" width="' + lw + '" height="18" rx="4"/>' +
+        '<text class="lb-gap-label" x="' + cx + '" y="' + (cy + 4) + '">' + label + "</text>";
     }
 
     // ---- автолэйаут экрана: «dir gap pt pr pb pl align justify hug» ----
@@ -5798,6 +5885,10 @@
         } else if (a === "fillAdd" || a === "fillDel" || a === "fillEye" || a === "strokeAdd" || a === "strokeDel" || a === "strokeEye") {
           paintAct(a);
         } else if (a === "flipH" || a === "flipV") flipSel(a === "flipH");
+        else if (a === "rot90") {
+          var r0 = selList()[0];
+          if (r0) applyInspector("rot", String((r0.rot || 0) + 90));
+        }
         else if (a === "group") groupSel();
         else if (a === "fxAdd") openFxMenu(b);
         else if (/^(alAdd|alDel|alDir|alCell|alBetween|alWrap|hugW|hugH|padSplit)$/.test(a)) layoutAct(a, b);
@@ -7013,6 +7104,7 @@
           renderOverlay();
         }
         updateMeasure(e, gesture && gesture.kind === "move" ? Object.keys(gesture.moving || {}) : null);
+        updateGapHover(e);
       }
       if (!pointers.has(e.pointerId)) {
         if (o.onCursor && !readOnly) {
@@ -8965,6 +9057,12 @@
 
     stage.addEventListener("pointerdown", onPointerDown);
     stage.addEventListener("pointermove", onPointerMove);
+    stage.addEventListener("pointerleave", function () {
+      if (gapHover) {
+        gapHover = null;
+        renderOverlay();
+      }
+    });
     stage.addEventListener("pointerup", onPointerUp);
     stage.addEventListener("pointercancel", onPointerUp);
     stage.addEventListener("wheel", onWheel, { passive: false });
@@ -9013,7 +9111,43 @@
 
     function onDocPointer(e) {
       if (!pop.classList.contains("hidden") && !pop.contains(e.target) && !(pop._anchor && pop._anchor.contains(e.target))) closePop();
+      boardActive = root.contains(e.target);
     }
+
+    // ⌘Z / ⇧⌘Z / ⌘Y — работают, пока последним трогали доску, даже если фокус ушёл на кнопку панели или в никуда.
+    var boardActive = false;
+    function isEditable(t) {
+      return !!(t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)));
+    }
+    function onDocKey(e) {
+      if (destroyed || readOnly || !boardActive || e.defaultPrevented) return;
+      var t = e.target;
+      if (t === stage || isEditable(t) || editing) return; // доска и поля ввода — сами
+      if (t && t.closest && !root.contains(t) && t !== document.body && t !== document.documentElement) return;
+      var mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      var k = e.key;
+      if (k === "z" || k === "Z" || k === "я" || k === "Я" || e.code === "KeyZ") {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (k === "y" || k === "н" || e.code === "KeyY") {
+        e.preventDefault();
+        redo();
+      }
+    }
+    document.addEventListener("keydown", onDocKey);
+
+    // Клик по кнопке панели (не по полю ввода) — фокус обратно на доску: горячие клавиши работают сразу.
+    root.addEventListener("click", function (e) {
+      var t = e.target;
+      if (!t || isEditable(t) || stage.contains(t) || editing) return;
+      if (t.closest && t.closest("label, .lb-pop input, .lb-lname[contenteditable=true]")) return;
+      setTimeout(function () {
+        var ae = document.activeElement;
+        if (!destroyed && !editing && !isEditable(ae)) stage.focus({ preventScroll: true });
+      }, 0);
+    }, true);
 
     root.classList.add(mode === "design" ? "is-mode-design" : "is-mode-board");
     renderEmptyHint();
@@ -9097,6 +9231,7 @@
         if (mapTimer) clearTimeout(mapTimer);
         if (ro) ro.disconnect();
         document.removeEventListener("pointerdown", onDocPointer, true);
+        document.removeEventListener("keydown", onDocKey);
         window.removeEventListener("blur", onWinBlur);
         if (inspector) {
           document.removeEventListener("pointerup", inspUp, true);
