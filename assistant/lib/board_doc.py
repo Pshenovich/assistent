@@ -28,7 +28,8 @@ MAX_VECTOR_PATHS = 200
 MAX_TABLE_HTML = 400_000
 MAX_GANTT_TASKS = 200
 GANTT_UNITS = ("day", "week")
-PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "white")
+PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "white",
+           "lime", "teal", "cyan", "indigo", "brown")
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
 _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight",
@@ -648,6 +649,7 @@ _SHAPE_RU = {
 _COLOR_RU = {
     "red": "красный", "orange": "оранжевый", "yellow": "жёлтый", "green": "зелёный", "blue": "синий",
     "purple": "фиолетовый", "pink": "розовый", "gray": "серый",
+    "lime": "салатовый", "teal": "бирюзовый", "cyan": "голубой", "indigo": "индиго", "brown": "коричневый",
 }
 
 
@@ -735,14 +737,17 @@ def board_text_html(body: Any) -> str:
 _INK = {
     "ink": "#1f2937", "gray": "#6b7280", "red": "#e03131", "orange": "#f08c00", "yellow": "#f2c200",
     "green": "#2f9e44", "blue": "#1c7ed6", "purple": "#7048e8", "pink": "#d6336c", "white": "#ffffff",
+    "lime": "#66a80f", "teal": "#0ca678", "cyan": "#1098ad", "indigo": "#4263eb", "brown": "#8d6e4f",
 }
 _FILL = {
     "ink": "#dee2e6", "gray": "#f1f3f5", "red": "#ffe3e3", "orange": "#ffe8cc", "yellow": "#fff3bf",
     "green": "#d3f9d8", "blue": "#d0ebff", "purple": "#e5dbff", "pink": "#ffdeeb", "white": "#ffffff",
+    "lime": "#e9fac8", "teal": "#c3fae8", "cyan": "#c5f6fa", "indigo": "#dbe4ff", "brown": "#efe3d6",
 }
 _STICKY = {
     "yellow": "#fff3a3", "orange": "#ffd8a8", "pink": "#ffc9de", "green": "#c8f2c2",
     "blue": "#c5e3ff", "purple": "#e3d4ff", "gray": "#e9ecef",
+    "lime": "#dcf5b0", "teal": "#b2f2e5", "cyan": "#b9eef7", "indigo": "#d2dbff", "brown": "#e8d8c6",
 }
 
 
@@ -1051,7 +1056,7 @@ def render_board_svg(body: Any, *, view: Optional[tuple[float, float, float, flo
                 align = "left" if t == "text" else "center"
             anchor = {"left": "start", "center": "middle", "right": "end"}[align]
             # Поля как в редакторе: у текста без отступа, у ромба — 22% ширины, у остальных 10px.
-            pad = 0 if t == "text" else ew * 0.22 if t in ("diamond", "triangle", "triangleDown") else ew * 0.18 if t.startswith("parallelogram") else 10
+            pad = 0 if t == "text" else ew * 0.22 if t in ("diamond", "triangle", "triangleDown") else ew * 0.18 if t.startswith("parallelogram") else 20
             tx = x + pad if align == "left" else x + ew - pad if align == "right" else x + ew / 2
             hl = st.get("highlight")
             if isinstance(hl, str) and _HEX_RE.match(hl):

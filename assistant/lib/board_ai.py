@@ -23,13 +23,13 @@ from assistant.lib import board_doc
 MAX_NODES = 80
 MAX_EDGES = 160
 SHAPES = ("rect", "diamond", "ellipse", "pill", "cylinder", "parallelogram", "triangle", "sticky", "text", "card")
-FILLS = ("gray", "red", "orange", "yellow", "green", "blue", "purple", "pink")
+FILLS = ("gray", "red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown")
 BAR_COLORS = ("blue", "green", "purple", "orange", "pink", "red", "yellow", "gray")
 MAX_TABLE_ROWS = 60
 MAX_TABLE_COLS = 12
 LAYOUTS = ("flow", "flow-right", "tree", "mindmap", "grid")
-INK = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink")
-STICKY = ("yellow", "orange", "pink", "green", "blue", "purple", "gray")
+INK = ("ink", "gray", "red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown")
+STICKY = ("yellow", "orange", "pink", "green", "blue", "purple", "gray", "lime", "teal", "cyan", "indigo", "brown")
 FONT = 16
 LINE_H = 21
 CHAR_W = 8.6  # средняя ширина символа при 16px — для оценки переносов
@@ -65,8 +65,8 @@ def system_addon() -> str:
 - shape: "rect" (шаг, блок), "diamond" (решение / вопрос), "pill" (старт и финиш), "ellipse" (событие),
   "cylinder" (база данных, хранилище), "parallelogram" (ввод / вывод данных: форма, отчёт, файл),
   "triangle" (слияние, этап воронки), "sticky" (стикер-заметка), "text" (подпись без рамки).
-- color — по смыслу, необязателен: ink, gray, red, orange, yellow, green, blue, purple, pink
-  (у стикера: yellow, orange, pink, green, blue, purple, gray).
+- color — по смыслу, необязателен: ink, gray, red, orange, yellow, lime, green, teal, cyan, blue, indigo,
+  purple, pink, brown (у стикера: yellow, orange, pink, green, blue, purple, gray, lime, teal, cyan, indigo, brown).
 - edges: from/to — id узлов; label — подпись на стрелке (коротко); "arrow": "end" (по умолчанию),
   "both" или "none"; "dashed": true — пунктир.
 - Текст узла короткий (до ~60 символов), без markdown. До 40 узлов. Только из заметки и разговора.

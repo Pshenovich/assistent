@@ -17,12 +17,13 @@
   var G = window.LeoBoardGeom;
   var BL = window.LeoBoardBlocks;
   var TPL = window.LeoBoardTemplates;
-  var INK = ["ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink"];
-  var FILLS = ["none", "white", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink"];
-  var STICKY = ["yellow", "orange", "pink", "green", "blue", "purple", "gray"];
+  var INK = ["ink", "gray", "red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown"];
+  var FILLS = ["none", "white", "gray", "red", "orange", "yellow", "lime", "green", "teal", "cyan", "blue", "indigo", "purple", "pink", "brown"];
+  var STICKY = ["yellow", "orange", "pink", "green", "blue", "purple", "gray", "lime", "teal", "cyan", "indigo", "brown"];
   var COLOR_NAMES = {
     none: "Без заливки", white: "Белый", ink: "Чёрный", gray: "Серый", red: "Красный", orange: "Оранжевый",
     yellow: "Жёлтый", green: "Зелёный", blue: "Синий", purple: "Фиолетовый", pink: "Розовый",
+    lime: "Салатовый", teal: "Бирюзовый", cyan: "Голубой", indigo: "Индиго", brown: "Коричневый",
   };
   var FONT_SIZES = [{ v: 12, t: "S" }, { v: 16, t: "M" }, { v: 24, t: "L" }, { v: 36, t: "XL" }];
   var WIDTHS = [1, 2, 4, 6];
@@ -33,8 +34,8 @@
   var FLOW = ["pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
   var SHAPES = { rect: 1, diamond: 1, ellipse: 1, pill: 1, cylinder: 1, triangle: 1, triangleDown: 1, parallelogram: 1, parallelogramL: 1 };
   // Набор фигур в панели инструментов (одна кнопка с выпадающей сеткой) — по порядку.
-  var SHAPE_MENU = ["rect", "ellipse", "diamond", "pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
-  var SHAPE_RU = { rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", pill: "Скруглённый блок", cylinder: "Цилиндр (база данных)",
+  var SHAPE_MENU = ["rect", "rectSharp", "ellipse", "diamond", "pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
+  var SHAPE_RU = { rect: "Скруглённый прямоугольник", rectSharp: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", pill: "Скруглённый блок", cylinder: "Цилиндр (база данных)",
     triangle: "Треугольник", triangleDown: "Треугольник вниз", parallelogram: "Параллелограмм (данные)", parallelogramL: "Параллелограмм влево" };
   // Где подпись внутри фигуры: доли рамки [слева, сверху, справа, снизу] (у цилиндра сверху — ещё крышка).
   var TEXT_BOX = { diamond: [0.22, 0, 0.22, 0], triangle: [0.24, 0.42, 0.24, 0.02], triangleDown: [0.24, 0.02, 0.24, 0.42],
@@ -119,7 +120,8 @@
     { id: "text", key: "t", title: "Текст (T)", icon: "text" },
     { id: "sticky", key: "s", title: "Стикер (S)", icon: "sticky" },
     // Фигуры — одной кнопкой с набором (group); клавиши R / D / O по-прежнему выбирают свою.
-    { id: "rect", key: "r", title: "Прямоугольник (R)", icon: "rect", group: "shape" },
+    { id: "rect", key: "r", title: "Скруглённый прямоугольник (R)", icon: "rect", group: "shape" },
+    { id: "rectSharp", key: "", title: "Прямоугольник", icon: "rectSharp", group: "shape" },
     { id: "diamond", key: "d", title: "Ромб (D)", icon: "diamond", group: "shape" },
     { id: "ellipse", key: "o", title: "Эллипс (O)", icon: "ellipse", group: "shape" },
     { id: "pill", key: "", title: "Скруглённый блок", icon: "pill", group: "shape" },
@@ -182,6 +184,7 @@
     diamond: '<path d="M10 2.5L17.5 10 10 17.5 2.5 10z"/>',
     ellipse: '<ellipse cx="10" cy="10" rx="7.5" ry="5.5"/>',
     pill: '<rect x="2.5" y="5.5" width="15" height="9" rx="4.5"/>',
+    rectSharp: '<rect x="3" y="5" width="14" height="10"/>',
     cylinder: '<ellipse cx="10" cy="5" rx="6" ry="2"/><path d="M4 5v10c0 1.1 2.7 2 6 2s6-.9 6-2V5"/>',
     triangle: '<path d="M10 3.5l7 12.5H3z"/>',
     triangleDown: '<path d="M3 4h14l-7 12.5z"/>',
@@ -1167,8 +1170,8 @@
       var tb = TEXT_BOX[el.type];
       if (el.type === "cylinder") {
         var cap = G.capOf(el.w, el.h);
-        div.style.padding = Math.round(cap * 2 + 4) + "px 10px " + Math.round(cap + 6) + "px";
-      } else div.style.padding = tb ? Math.round(8 + tb[1] * el.h) + "px " + Math.round(8 + tb[2] * el.w) + "px " + Math.round(8 + tb[3] * el.h) + "px " + Math.round(8 + tb[0] * el.w) + "px" : "";
+        div.style.padding = Math.round(cap * 2 + 4) + "px 20px " + Math.round(cap + 6) + "px";
+      } else div.style.padding = tb ? Math.round(8 + tb[1] * el.h) + "px " + Math.round(16 + tb[2] * el.w) + "px " + Math.round(8 + tb[3] * el.h) + "px " + Math.round(16 + tb[0] * el.w) + "px" : "";
     }
 
     /** Шрифт догрузился — тексты с ним перерисовать (высота текста по содержимому меняется). */
@@ -3647,7 +3650,7 @@
       tool = t;
       stage.setAttribute("data-tool", t);
       var sb = toolsBar && toolsBar.querySelector(".lb-shape-tool");
-      if (sb && SHAPES[t] && mode !== "design" && t !== lastShape) {
+      if (sb && (SHAPES[t] || t === "rectSharp") && mode !== "design" && t !== lastShape) {
         lastShape = t;
         sb.setAttribute("data-tool", t);
         sb.innerHTML = icon(t) + '<span class="lb-caret" aria-hidden="true"></span>';
@@ -6539,6 +6542,8 @@
             if (!t) return;
             var tt = t.getAttribute("data-t");
             applyFields(isShape, function () {
+              if (tt === "rectSharp") return { type: "rect", style: { radius: 0, radii: null } };
+              if (tt === "rect") return { type: "rect", style: { radius: null, radii: null } };
               return { type: tt };
             });
             closePop();
@@ -7052,13 +7057,16 @@
         startHandle(hEl.getAttribute("data-h"), base, e);
         return;
       }
-      if (SHAPES[tool] || tool === "sticky" || tool === "text" || tool === "frame") {
+      if (SHAPES[tool] || tool === "rectSharp" || tool === "sticky" || tool === "text" || tool === "frame") {
         e.preventDefault();
         begin();
-        var el = newEl(tool, p, tool === "frame" ? { w: 1, h: 1, name: nextFrameName(), z: bottomZ() } : { w: 1, h: 1 });
+        // «Прямоугольник» без скруглений — тот же rect с радиусом 0.
+        var ctype = tool === "rectSharp" ? "rect" : tool;
+        var el = newEl(ctype, p, ctype === "frame" ? { w: 1, h: 1, name: nextFrameName(), z: bottomZ() } : { w: 1, h: 1 });
+        if (tool === "rectSharp") el.style = Object.assign({}, el.style, { radius: 0 });
         if (tool === "text") el.h = DEFAULTS.text.h;
         put(el);
-        startGesture(Object.assign(base, { kind: "create", id: el.id, type: tool }));
+        startGesture(Object.assign(base, { kind: "create", id: el.id, type: ctype }));
         return;
       }
       if (tool === "line" || tool === "arrow") {
@@ -8601,7 +8609,7 @@
       if ("letterSpacing" in ctx) ctx.letterSpacing = st.letterSpacing ? (Number(st.letterSpacing) / 100) * fs + "px" : "0px";
       var lh = Number(st.lineHeight) > 0 ? Number(st.lineHeight) : fs * 1.3;
       var tbx = TEXT_BOX[el.type];
-      var padX = el.type === "text" ? 0 : tbx ? 8 + Math.max(tbx[0], tbx[2]) * el.w : 10;
+      var padX = el.type === "text" ? 0 : tbx ? 16 + Math.max(tbx[0], tbx[2]) * el.w : el.type === "sticky" ? 14 : 20;
       var maxW;
       var cx;
       var top;
