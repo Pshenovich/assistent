@@ -48,7 +48,29 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+_INIT_DONE: dict[str, int] = {}
+
+
+def _db_inode(path: Path) -> int:
+    try:
+        return path.stat().st_ino
+    except OSError:
+        return -1
+
+
 def init_db() -> None:
+    # Миграция — один раз на процесс и файл базы: init_db зовут почти все функции модуля
+    # (раньше каждый раз — новое соединение, PRAGMA table_info ×3, CREATE INDEX, commit).
+    # Файл пропал или пересоздан (восстановление из копии, тесты) — прогоняем заново.
+    path = _db_path()
+    ino = _db_inode(path)
+    if ino != -1 and _INIT_DONE.get(str(path)) == ino:
+        return
+    _init_db_now()
+    _INIT_DONE[str(path)] = _db_inode(path)
+
+
+def _init_db_now() -> None:
     with _connect() as conn:
         # Создаём таблицу (или убеждаемся, что она существует).
         conn.execute(
@@ -101,6 +123,10 @@ def init_db() -> None:
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_usage_events_user ON usage_events(telegram_user_id)"
+        )
+        # Журнал пользователя «свежие сверху» — по индексу, без сортировки всех его событий.
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_usage_events_user_ts ON usage_events(telegram_user_id, ts_utc)"
         )
         conn.commit()
 

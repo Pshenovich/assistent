@@ -2734,6 +2734,8 @@ class _MiniappNoteTeamSharesBody(BaseModel):
 
 class _MiniappNoteCollabBody(BaseModel):
     cursor: Optional[int] = None
+    # Ревизия документа у клиента: не новее на сервере — тело в ответ не кладём.
+    revision: Optional[int] = None
 
 
 class _MiniappShareCommentCreate(BaseModel):
@@ -13888,9 +13890,17 @@ async def miniapp_note_collab(
         HUB.publish(note_topic(note_id), {"type": "presence", "note_id": int(note_id), "peers": peers})
         from assistant.stores import note_sheets as note_sheets_store
 
+        item: dict[str, Any] = note
+        try:
+            remote_rev = int(note.get("revision") or 0)
+        except (TypeError, ValueError):
+            remote_rev = 0
+        if payload.revision is not None and remote_rev <= int(payload.revision):
+            # Опрос идёт раз в 1,4–15 с на каждый открытый документ: без изменений — без тела.
+            item = {"id": note.get("id"), "revision": note.get("revision"), "updated_at": note.get("updated_at")}
         return {
             "ok": True,
-            "item": note,
+            "item": item,
             "peers": others,
             "members": note.get("members") or [],
             # Версии дополнительных листов: клиент подтягивает изменённые другими участниками.

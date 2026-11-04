@@ -79,3 +79,21 @@ def test_list_members_bulk_matches_per_note():
     for n in listed:
         owner = str(n["owner_user_id"])
         assert n["members"] == note_members.list_members_public(owner, int(n["id"])), n["title"]
+
+
+def test_collab_poll_omits_body_when_client_up_to_date(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
+    monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
+    uid = next(_ids)
+    note = notes_store.create_note(uid, "Док", "<p>" + "большое тело " * 500 + "</p>")
+    client = TestClient(usage_server.app, raise_server_exceptions=False)
+    url = f"/api/miniapp/notes/local/{note['id']}/collab"
+    rev = int(note.get("revision") or 1)
+    slim = client.post(url, headers=_headers(uid), json={"cursor": 0, "revision": rev}).json()["item"]
+    assert "body" not in slim and int(slim["revision"]) == rev and slim.get("updated_at")
+    notes_store.update_note(uid, int(note["id"]), body="<p>новое</p>")
+    fresh = client.post(url, headers=_headers(uid), json={"cursor": 0, "revision": rev}).json()["item"]
+    assert "новое" in fresh["body"]
+    legacy = client.post(url, headers=_headers(uid), json={"cursor": 0}).json()["item"]  # старый клиент
+    assert "новое" in legacy["body"]

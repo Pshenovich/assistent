@@ -36238,9 +36238,11 @@
     }
     noteCollabState.lastPollAt = Date.now();
     var cursor = currentNoteCursor();
+    var knownRev = Number(wrap._noteRevision || 0);
     apiFetch("/notes/local/" + encodeURIComponent(id) + "/collab", {
       method: "POST",
-      body: JSON.stringify({ cursor: cursor }),
+      // Своя ревизия: сервер присылает тело, только если у него новее.
+      body: JSON.stringify(knownRev > 0 ? { cursor: cursor, revision: knownRev } : { cursor: cursor }),
     })
       .then(function (data) {
         if (noteCollabState.noteId !== String(id)) return;
