@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -16,6 +17,11 @@ from assistant.config import CALENDAR_TZ, ROOT
 _lock = threading.RLock()
 _TTL_SEC = float(os.getenv("USER_TZ_CACHE_TTL_SEC", "86400") or "86400")
 _ENTRY_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+# path -> ((inode, mtime_ns, size), данные): настройки читают много раз за запрос и в каждом тике
+# планировщиков; запись из другого процесса (os.replace) меняет inode — кэш это видит.
+_CACHE: dict[str, tuple[tuple[int, int, int], dict[str, Any]]] = {}
 
 
 def _dir() -> Path:
@@ -34,22 +40,34 @@ def _path(user_id: int) -> Path:
 def load_prefs(user_id: int) -> dict[str, Any]:
     path = _path(user_id)
     with _lock:
-        if not path.is_file():
+        try:
+            st = path.stat()
+        except OSError:
+            _CACHE.pop(str(path), None)
             return {}
+        stamp = (st.st_ino, st.st_mtime_ns, st.st_size)
+        hit = _CACHE.get(str(path))
+        if hit and hit[0] == stamp:
+            return copy.deepcopy(hit[1])  # вызывающие меняют словарь и сохраняют
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {}
         except Exception:
             return {}
+        if not isinstance(data, dict):
+            return {}
+        _CACHE[str(path)] = (stamp, data)
+        return copy.deepcopy(data)
 
 
 def save_prefs(user_id: int, prefs: dict[str, Any]) -> None:
     path = _path(user_id)
     with _lock:
-        path.write_text(
-            json.dumps(prefs, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        # Атомарно: бот, сайт и воркер читают те же файлы — недописанный файл читался как {},
+        # и следующее «прочитал → поменял → сохранил» стирало все настройки человека.
+        tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(prefs, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+        _CACHE.pop(str(path), None)
 
 
 def set_timezone(user_id: int, tz_name: str) -> None:
