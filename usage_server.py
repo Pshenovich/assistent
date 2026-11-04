@@ -145,6 +145,34 @@ def _default_security_csp(*, allow_any_frame_ancestor: bool = False) -> str:
     return base
 
 
+_LLM_LIMITER: Any = None
+
+
+def _llm_limiter() -> Any:
+    """Свой лимит потоков для запросов к модели (чат Лео, правка ИИ, доска, картинки, расшифровка).
+
+    Ответ модели держит поток десятки секунд; в общем пуле anyio (40) двадцать-сорок разговоров
+    с Лео ставили в очередь весь API — /me, список, сохранения. Сверх лимита запрос к модели ждёт
+    своей очереди, остальной API — нет.
+    """
+    global _LLM_LIMITER
+    if _LLM_LIMITER is None:
+        import anyio
+
+        try:
+            n = max(2, int(os.getenv("LLM_THREADS", "12") or "12"))
+        except ValueError:
+            n = 12
+        _LLM_LIMITER = anyio.CapacityLimiter(n)
+    return _LLM_LIMITER
+
+
+async def run_llm_in_threadpool(func: Any, *args: Any, **kwargs: Any) -> Any:
+    import anyio.to_thread
+
+    return await anyio.to_thread.run_sync(partial(func, *args, **kwargs), limiter=_llm_limiter())
+
+
 def _is_local_dev_request(request: Request) -> bool:
     """Локальный uvicorn / Simple Browser в Cursor — без жёсткого frame lock."""
     mode = (os.getenv("MINIAPP_DEV_MODE", "") or "").strip().lower()
@@ -207,6 +235,9 @@ def _log_slow_request(request: Request, response: Any, dur: float) -> None:
 
         lim = anyio.to_thread.current_default_thread_limiter()
         pool = f"{int(lim.borrowed_tokens)}/{int(lim.total_tokens)}"
+        llm = _LLM_LIMITER
+        if llm is not None:
+            pool += f" llm={int(llm.borrowed_tokens)}/{int(llm.total_tokens)} wait={int(llm.statistics().tasks_waiting)}"
     except Exception:
         pool = "?"
     print(
@@ -9882,7 +9913,7 @@ async def miniapp_gpt_chat(
         return res, saved
 
     try:
-        out, saved_reply = await run_in_threadpool(_run_and_save)
+        out, saved_reply = await run_llm_in_threadpool(_run_and_save)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:
@@ -10163,7 +10194,7 @@ async def miniapp_voice_transcribe(
         }
 
     try:
-        return await run_in_threadpool(_run)
+        return await run_llm_in_threadpool(_run)
     except RuntimeError as e:
         print(
             "[miniapp_voice_transcribe] failed "
@@ -14845,7 +14876,7 @@ async def miniapp_note_ai_edit(
         return {"edits": edits, "message": clean.strip()[:500]}
 
     try:
-        res = await run_in_threadpool(_run)
+        res = await run_llm_in_threadpool(_run)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001 — сеть/модель
@@ -14895,7 +14926,7 @@ async def miniapp_note_board_ai(
         return {"texts": texts}
 
     try:
-        res = await run_in_threadpool(_run)
+        res = await run_llm_in_threadpool(_run)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001 — сеть/модель
@@ -14986,7 +15017,7 @@ async def miniapp_canvas_image_generate(
         return openrouter_generate_images(image_style.styled_prompt(prompt, theme), n=1, timeout=180)
 
     try:
-        images = await run_in_threadpool(_gen)
+        images = await run_llm_in_threadpool(_gen)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e) or "Не удалось сгенерировать") from e
     if not images:
@@ -15371,7 +15402,7 @@ async def miniapp_canvas_restyle_images(
         return {"count": len(targets), "item": item, "done": done}
 
     try:
-        res = await run_in_threadpool(_run)
+        res = await run_llm_in_threadpool(_run)
     except note_sheets_store.SheetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     return {"ok": True, **res}
@@ -16471,7 +16502,7 @@ async def miniapp_mail_thread_summary(thread_key: str, principal: _MiniappPrinci
     from assistant.services import mail_composer
 
     try:
-        text = await run_in_threadpool(mail_composer.summarize_thread, int(principal.telegram_user_id), thread_key)
+        text = await run_llm_in_threadpool(mail_composer.summarize_thread, int(principal.telegram_user_id), thread_key)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
