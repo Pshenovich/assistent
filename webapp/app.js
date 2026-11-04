@@ -29922,6 +29922,7 @@
     if (webEditorBack) setHidden(webEditorBack, !showWebEditorBack);
     if (webEditorBackBar) setHidden(webEditorBackBar, !noteEditorOpen);
     document.documentElement.classList.toggle("note-editor-web-back-visible", !!noteEditorOpen);
+    scheduleNoteHeadInline();
 
     function finishAppBackChrome() {
       // Re-bind whenever chrome syncs — recovers from async telegram-web-app.js race.
@@ -31456,6 +31457,67 @@
     else if (state === "saved") el.textContent = "Сохранено";
     else if (state === "error") el.textContent = "Не сохранено";
     else el.textContent = "";
+  }
+
+  // ---- шапка заметки на широком экране: «К списку», заголовок, проект и кнопки — одной строкой ----
+  var noteHeadRaf = 0;
+  var noteHeadObserved = false;
+  var noteHeadPad = null;
+  var noteHeadPadRO = null;
+  function scheduleNoteHeadInline() {
+    if (noteHeadRaf) return;
+    noteHeadRaf = requestAnimationFrame(function () {
+      noteHeadRaf = 0;
+      syncNoteHeadInline();
+    });
+    if (noteHeadObserved) return;
+    var sheet = document.querySelector("#note-editor-overlay .note-editor-sheet");
+    var body = document.getElementById("note-editor-modal-body");
+    if (!sheet || !body) return;
+    noteHeadObserved = true;
+    if (typeof ResizeObserver === "function") new ResizeObserver(scheduleNoteHeadInline).observe(sheet);
+    // Заголовок пересоздаётся при каждом открытии заметки — пересчитать отступы и «не помещается».
+    if (typeof MutationObserver === "function") new MutationObserver(scheduleNoteHeadInline).observe(body, { childList: true });
+    document.addEventListener("input", function (e) {
+      if (e.target && e.target.id === "note-editor-title-input") markNoteTitleClipped(e.target);
+    });
+    window.addEventListener("resize", scheduleNoteHeadInline);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleNoteHeadInline);
+  }
+
+  function markNoteTitleClipped(title) {
+    if (title) title.classList.toggle("is-clipped", title.scrollWidth > title.clientWidth + 1);
+  }
+
+  function syncNoteHeadInline() {
+    var sheet = document.querySelector("#note-editor-overlay .note-editor-sheet");
+    var bar = document.getElementById("note-editor-web-back-bar");
+    if (!sheet || !bar) return;
+    var pad = sheet.querySelector(".note-editor-pad--title-in-body");
+    // Блок заголовка меняет ширину при переключении листа (у доски свои поля) — следим и за ним.
+    if (pad && pad !== noteHeadPad && typeof ResizeObserver === "function") {
+      if (noteHeadPadRO) noteHeadPadRO.disconnect();
+      noteHeadPadRO = new ResizeObserver(scheduleNoteHeadInline);
+      noteHeadPadRO.observe(pad);
+      noteHeadPad = pad;
+    }
+    // Только когда есть место: на телефоне и в узкой колонке — шапка как раньше (в несколько строк).
+    var on = !!pad && !bar.classList.contains("hidden") && sheet.clientWidth >= 640;
+    sheet.classList.toggle("note-head-inline", on);
+    if (!on) return;
+    var back = document.getElementById("note-editor-web-back");
+    var more = document.getElementById("note-editor-more-wrap");
+    var pr = pad.getBoundingClientRect();
+    var sr = sheet.getBoundingClientRect();
+    var l = back && back.offsetParent ? back.getBoundingClientRect().right - pr.left + 12 : 0;
+    var r = more && more.offsetParent ? pr.right - more.getBoundingClientRect().left + 12 : 0;
+    sheet.style.setProperty("--head-l", Math.max(0, Math.round(l)) + "px");
+    sheet.style.setProperty("--head-r", Math.max(0, Math.round(r)) + "px");
+    // Полоса с кнопками — по центру строки заголовка (у блока заголовка свой отступ сверху).
+    var title = document.getElementById("note-editor-title-input");
+    var tr = title ? title.getBoundingClientRect() : pr;
+    sheet.style.setProperty("--head-t", Math.max(0, Math.round(tr.top + tr.height / 2 - 24 - sr.top)) + "px");
+    markNoteTitleClipped(title);
   }
 
   function noteEditorPageInnerHtml(titleLabel) {
