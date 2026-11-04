@@ -77,6 +77,9 @@
    ssh -A root@91.229.90.4 "scp /etc/systemd/system/assistant-news-sync.* root@NEW:/etc/systemd/system/"
    ```
 3. **Сверка** `count_rows` на обоих серверах — должно совпасть один в один.
+3а. **Заглушка.** С 04.11 на NEW включён `scripts/maintenance_mode.sh public`: getorbita.me уже смотрит
+   на NEW, лендинг и юридические страницы работают, приложение — «на обслуживании». Перед деплоем:
+   `bash /root/maintenance_mode.sh off` (вернёт сайты Орбиты; сертификат getorbita.me уже выпущен).
 4. **Код.** В `.env` на Маке `DEPLOY_SSH_HOST=NEW`, затем `./scripts/deploy_prod_replace.sh`. Деплой:
    - ставит venv и сервисы, включая `assistant-worker`;
    - поднимает Telegram Bot API;
