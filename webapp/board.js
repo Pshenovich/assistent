@@ -1349,7 +1349,7 @@
       renderNodeInner(id);
       var el = els.get(id);
       var node = nodes.get(id);
-      if (el && node && el.type !== "line" && el.type !== "pen") clipToFrame(node, el);
+      if (el && node) clipToFrame(node, el);
       if (el && node) applyLook(node, el);
       // Вектор на время правки точек скрыт: его рисует перо поверх (см. penOverlay).
       if (node) node.style.visibility = penPath && penPath.editId === id ? "hidden" : "";
@@ -1385,7 +1385,7 @@
       for (var q = f, gq = 0; q && gq < 20; q = frameOf(q), gq++) if (q.rot) turned = true;
       // Видимая область — пересечение внешних фреймов, кроме тех, где снят флажок «Обрезать содержимое».
       var box = null;
-      for (var p = f, guard = 0; p && guard < 20 && !turned && !el.rot; p = frameOf(p), guard++) {
+      for (var p = f, guard = 0; p && guard < 20 && !turned; p = frameOf(p), guard++) {
         if (p.noclip) continue;
         box = box ? { x1: Math.max(box.x1, p.x), y1: Math.max(box.y1, p.y), x2: Math.min(box.x2, p.x + p.w), y2: Math.min(box.y2, p.y + p.h) }
           : { x1: p.x, y1: p.y, x2: p.x + p.w, y2: p.y + p.h };
@@ -1393,6 +1393,21 @@
       // Повёрнутый фрейм: прямоугольник обрезки не совпал бы с ним — не обрезаем.
       if (!box) {
         if (node.style.clipPath) node.style.clipPath = "";
+        return;
+      }
+      // Линия и рисунок нарисованы от начала координат доски, повёрнутый объект — в своих осях:
+      // для них обрезка — многоугольником в координатах узла.
+      if (el.type === "line" || el.type === "pen" || el.rot) {
+        var ox = el.type === "line" || el.type === "pen" ? 0 : el.x;
+        var oy = el.type === "line" || el.type === "pen" ? 0 : el.y;
+        var a = -((el.type === "line" || el.type === "pen" ? 0 : el.rot) || 0) * Math.PI / 180;
+        var cx = el.w / 2;
+        var cy = el.h / 2;
+        node.style.clipPath = "polygon(" + [[box.x1, box.y1], [box.x2, box.y1], [box.x2, box.y2], [box.x1, box.y2]].map(function (q) {
+          var u = q[0] - ox - cx;
+          var v = q[1] - oy - cy;
+          return r1(cx + u * Math.cos(a) - v * Math.sin(a)) + "px " + r1(cy + u * Math.sin(a) + v * Math.cos(a)) + "px";
+        }).join(", ") + ")";
         return;
       }
       var t = box.y1 - el.y;
@@ -2941,28 +2956,54 @@
       if (!(opts2 && opts2.selectAll)) range.collapse(false);
       // Двойной клик по тексту — курсор туда, куда кликнули (как во Figma), а не в конец.
       var at = opts2 && opts2.at;
-      if (at && !(opts2 && opts2.selectAll)) {
-        var cr = null;
-        if (document.caretRangeFromPoint) cr = document.caretRangeFromPoint(at.clientX, at.clientY);
-        else if (document.caretPositionFromPoint) {
-          var cp = document.caretPositionFromPoint(at.clientX, at.clientY);
-          if (cp) {
-            cr = document.createRange();
-            cr.setStart(cp.offsetNode, cp.offset);
-            cr.collapse(true);
-          }
-        }
-        if (cr && t.contains(cr.startContainer)) range = cr;
-      }
       var sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
+      if (at && !(opts2 && opts2.selectAll)) placeCaretAt(t, at.clientX, at.clientY);
       keepCaret(t);
       t.addEventListener("input", onEditInput);
       t.addEventListener("keydown", onEditKey);
       t.addEventListener("blur", onEditBlur);
       renderOverlay();
       renderProps();
+    }
+
+    /** Курсор в тексте — ближе всего к точке (по строке на той же высоте, иначе в конец). */
+    function placeCaretAt(t, x, y) {
+      var r = null;
+      var tr = t.getBoundingClientRect();
+      var cx = Math.max(tr.left + 1, Math.min(tr.right - 1, x));
+      var cy = Math.max(tr.top + 1, Math.min(tr.bottom - 1, y));
+      var pe = [];
+      // То, что лежит поверх текста, на время поиска не ловит точку.
+      for (var top = document.elementFromPoint(cx, cy), g = 0; top && !t.contains(top) && g < 8; top = document.elementFromPoint(cx, cy), g++) {
+        pe.push([top, top.style.pointerEvents]);
+        top.style.pointerEvents = "none";
+      }
+      try {
+        if (document.caretRangeFromPoint) r = document.caretRangeFromPoint(cx, cy);
+        else if (document.caretPositionFromPoint) {
+          var cp = document.caretPositionFromPoint(cx, cy);
+          if (cp) {
+            r = document.createRange();
+            r.setStart(cp.offsetNode, cp.offset);
+            r.collapse(true);
+          }
+        }
+      } finally {
+        pe.forEach(function (q) {
+          q[0].style.pointerEvents = q[1];
+        });
+      }
+      if (!r || !t.contains(r.startContainer)) {
+        r = document.createRange();
+        r.selectNodeContents(t);
+        r.collapse(false);
+      }
+      if (document.activeElement !== t) t.focus({ preventScroll: true });
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(r);
     }
 
     /** Курсор остаётся в новом блоке: после нажатия браузер своим действием по умолчанию (клик,
@@ -5214,6 +5255,38 @@
       if (c2 && (c2.x !== o.x || c2.y !== o.y || c2.w !== o.w || c2.h !== o.h)) applyPins(id, o, c2, snap);
     }
 
+    /** «Обнимающий» фрейм меняет размер по содержимому: растёт от края, к которому привязан в родителе
+     * (снизу — вверх, по центру — в обе стороны), как во Figma. Прижатый к низу/правому краю без привязки — тоже. */
+    function hugResize(f, w, h) {
+      var fx = { w: w, h: h, device: undefined };
+      var par = frameOf(f);
+      if (par && !par.layout && !f.rot) {
+        var P = pinOf(f);
+        var near = function (u, v) {
+          return Math.abs(u - v) < 0.5;
+        };
+        [["h", "x", "w", "r", "lr"], ["v", "y", "h", "b", "tb"]].forEach(function (a) {
+          var m = P[a[0]];
+          var d = f[a[2]] - fx[a[2]];
+          if (!d) return;
+          var flush = !f.pin && near(f[a[1]] + f[a[2]], par[a[1]] + par[a[2]]) && !near(f[a[1]], par[a[1]]);
+          if (m === a[3] || flush) fx[a[1]] = r1(f[a[1]] + d);
+          else if (m === "c") fx[a[1]] = r1(f[a[1]] + d / 2);
+        });
+      }
+      if (fx.x != null || fx.y != null) {
+        // Не входящее в раскладку (линии, рисунки) — вместе с фреймом.
+        var dx = fx.x != null ? fx.x - f.x : 0;
+        var dy = fx.y != null ? fx.y - f.y : 0;
+        var loose = [];
+        els.forEach(function (e) {
+          if (e.frame === f.id && (e.type === "line" || e.type === "pen")) loose.push(e.id);
+        });
+        if (loose.length) moveBy(loose, dx, dy);
+      }
+      return patch(f.id, fx);
+    }
+
     /** Разложить содержимое фрейма по правилам. Порядок — по положению вдоль главной оси (или явный order). */
     function applyLayout(fid, order) {
       var f = getEl(fid);
@@ -5252,7 +5325,7 @@
       if (hugC) sz[CA] = kids.length ? maxC + pCs + pCe : Math.max(1, pCs + pCe);
       sz.w = Math.max(1, r1(sz.w));
       sz.h = Math.max(1, r1(sz.h));
-      if (sz.w !== f.w || sz.h !== f.h) f = patch(f.id, { w: sz.w, h: sz.h, device: undefined });
+      if (sz.w !== f.w || sz.h !== f.h) f = hugResize(f, sz.w, sz.h);
       var availM = f[MA] - pMs - pMe;
       var availC = f[CA] - pCs - pCe;
       // Заполняющие делят свободное место поровну.
@@ -5350,7 +5423,7 @@
       var Hh = hugH ? contentH + L.pad[0] + L.pad[2] : f.h;
       W = Math.max(1, r1(W));
       Hh = Math.max(1, r1(Hh));
-      if (W !== f.w || Hh !== f.h) f = patch(f.id, { w: W, h: Hh, device: undefined });
+      if (W !== f.w || Hh !== f.h) f = hugResize(f, W, Hh);
       var y = f.y + L.pad[0];
       // Сетка: вертикально — по «распределению»; перенос: по горизонтали — распределение, в строке по вертикали — выравнивание.
       if (!hugH && grid) {
@@ -7261,6 +7334,17 @@
       if (destroyed) return;
       autoFit = false;
       if (editing && editing.text.contains(e.target)) return;
+      // Щелчок в рамке редактируемого текста, но мимо строк (поля блока, пустое место под текстом,
+      // подсветка поверх) — правка продолжается, курсор — в ближайшее место текста.
+      if (editing && !editing.kind && e.button === 0 && editing.text.isConnected) {
+        var edEl = getEl(editing.id);
+        var ep = edEl && toWorld(e.clientX, e.clientY);
+        if (edEl && (editing.node.contains(e.target) || (!edEl.rot && edEl.type !== "line" && G.contains(edEl, ep, 0)))) {
+          e.preventDefault();
+          placeCaretAt(editing.text, e.clientX, e.clientY);
+          return;
+        }
+      }
       // Нажатие мимо таблицы — гасим её меню и выделение ячеек, даже если правка уже закрыта.
       tables.forEach(function (tb, tid) {
         var n = nodes.get(tid);
