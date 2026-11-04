@@ -59,3 +59,23 @@ def test_hashtag_added_in_text_is_picked_up_on_list(monkeypatch):
     r = client.get("/api/miniapp/notes", headers=_headers(uid))
     item = next(n for n in r.json()["local_notes"] if int(n["id"]) == int(note["id"]))
     assert [h["name"] for h in item["hashtags"]] == ["новый"]
+
+
+def test_list_members_bulk_matches_per_note():
+    """Участники в списке документов — пакетом, но те же, что и по одному документу."""
+    from assistant.stores import note_members
+
+    a, b, c = next(_ids), next(_ids), next(_ids)
+    note_members.upsert_profile(a, username="anna_list", first_name="Анна")
+    note_members.upsert_profile(b, first_name="Боб")
+    n1 = notes_store.create_note(a, "общий", "x")
+    notes_store.create_note(a, "свой", "y")
+    n3 = notes_store.create_note(b, "чужой общий", "z")
+    note_members.add_member(a, int(n1["id"]), b)
+    note_members.add_member(a, int(n1["id"]), c)
+    note_members.add_member(b, int(n3["id"]), a)
+    listed = notes_store.list_notes(a)
+    assert {n["title"] for n in listed} == {"общий", "свой", "чужой общий"}
+    for n in listed:
+        owner = str(n["owner_user_id"])
+        assert n["members"] == note_members.list_members_public(owner, int(n["id"])), n["title"]

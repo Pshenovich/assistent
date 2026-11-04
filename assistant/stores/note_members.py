@@ -260,6 +260,50 @@ def list_members_public(owner_user_id: int | str, note_id: int) -> list[dict[str
     return out
 
 
+def members_public_for_notes(pairs: list[tuple[str, int]]) -> dict[tuple[str, int], list[dict[str, Any]]]:
+    """list_members_public для многих документов сразу: участники — одним запросом на пачку,
+    профиль каждого человека — один раз (раньше на список из 120 документов — сотни запросов
+    и чтений реестра ников)."""
+    keys = [(_uid(o), int(n)) for o, n in pairs]
+    rows_by_note: dict[tuple[str, int], list[dict[str, Any]]] = {k: [] for k in keys}
+    note_ids = sorted({n for _, n in keys})
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(note_ids), 500):
+            chunk = note_ids[i : i + 500]
+            cur = conn.execute(
+                f"""
+                SELECT owner_user_id, note_id, member_user_id, role FROM note_members
+                WHERE note_id IN ({",".join("?" * len(chunk))})
+                ORDER BY added_at ASC
+                """,
+                chunk,
+            )
+            for r in cur.fetchall():
+                key = (str(r["owner_user_id"]), int(r["note_id"]))
+                if key in rows_by_note:
+                    rows_by_note[key].append({"member_user_id": str(r["member_user_id"]), "role": r["role"]})
+    people: dict[str, dict[str, Any]] = {}
+
+    def person(uid: str, *, is_owner: bool, role: str) -> dict[str, Any]:
+        if uid not in people:
+            people[uid] = _public_member(uid)
+        return {**people[uid], "is_owner": bool(is_owner), "role": "owner" if is_owner else (role or "edit")}
+
+    out: dict[tuple[str, int], list[dict[str, Any]]] = {}
+    for owner, nid in keys:
+        members = [person(owner, is_owner=True, role="owner")]
+        seen = {owner}
+        for row in rows_by_note[(owner, nid)]:
+            mid = row["member_user_id"]
+            if mid in seen:
+                continue
+            seen.add(mid)
+            members.append(person(mid, is_owner=False, role=row.get("role") or "edit"))
+        out[(owner, nid)] = members
+    return out
+
+
 def is_member(owner_user_id: int | str, note_id: int, user_id: int | str) -> bool:
     owner = _uid(owner_user_id)
     uid = _uid(user_id)

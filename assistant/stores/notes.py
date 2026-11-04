@@ -82,6 +82,12 @@ def _ensure_role_column(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_local_notes_user_role "
         "ON local_notes(user_id, role)"
     )
+    # Список «свежие сверху» идёт по индексу и останавливается на LIMIT, а не сортирует все документы
+    # пользователя вместе с телами во временном B-дереве.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_local_notes_user_updated "
+        "ON local_notes(user_id, updated_at DESC)"
+    )
 
 
 def _ensure_kb_enabled_column(conn: sqlite3.Connection) -> None:
@@ -381,7 +387,7 @@ def list_notes(
     )
     notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
     notes = notes[:lim]
-    out = [_with_sharing(n, uid) for n in notes]
+    out = _with_sharing_many(notes, uid)
     pins = pinned_id_set(uid, "local")
     for n in out:
         n["pinned"] = str(n.get("id") or "") in pins
@@ -454,13 +460,18 @@ def _merge_shared_notes(
     return out
 
 
-def _with_sharing(note: dict[str, Any], viewer_id: int | str) -> dict[str, Any]:
+def _with_sharing(
+    note: dict[str, Any], viewer_id: int | str, *, members: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     uid = str(int(viewer_id))
     owner = str(note.get("owner_user_id") or note.get("user_id") or "")
     out = dict(note)
     out["owner_user_id"] = owner
     out["is_owner"] = owner == uid
     out["can_edit"] = True
+    if members is not None:
+        out["members"] = members
+        return out
     try:
         from assistant.stores import note_members
 
@@ -468,6 +479,21 @@ def _with_sharing(note: dict[str, Any], viewer_id: int | str) -> dict[str, Any]:
     except Exception:
         out["members"] = []
     return out
+
+
+def _with_sharing_many(notes: list[dict[str, Any]], viewer_id: int | str) -> list[dict[str, Any]]:
+    """_with_sharing для списка: участники всех документов — одним пакетом, а не запросами на каждый."""
+
+    def owner_of(n: dict[str, Any]) -> str:
+        return str(n.get("owner_user_id") or n.get("user_id") or "")
+
+    try:
+        from assistant.stores import note_members
+
+        members = note_members.members_public_for_notes([(owner_of(n), int(n["id"])) for n in notes])
+    except Exception:
+        return [_with_sharing(n, viewer_id) for n in notes]
+    return [_with_sharing(n, viewer_id, members=members.get((owner_of(n), int(n["id"])), [])) for n in notes]
 
 
 def create_note(
@@ -700,7 +726,7 @@ def list_knowledge_notes(
     notes = [n for n in notes if n.get("is_knowledge")]
     notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
     notes = notes[:lim]
-    out = [_with_sharing(n, uid) for n in notes]
+    out = _with_sharing_many(notes, uid)
     pins = pinned_id_set(uid, "local")
     for n in out:
         n["pinned"] = str(n.get("id") or "") in pins
@@ -731,7 +757,7 @@ def list_transcription_notes(
     notes = [n for n in notes if n.get("is_transcription")]
     notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
     notes = notes[:lim]
-    out = [_with_sharing(n, uid) for n in notes]
+    out = _with_sharing_many(notes, uid)
     pins = pinned_id_set(uid, "local")
     for n in out:
         n["pinned"] = str(n.get("id") or "") in pins
