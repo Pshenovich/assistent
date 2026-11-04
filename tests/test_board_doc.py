@@ -286,7 +286,7 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         self.assertEqual(st, {"radii": "0 20 0 4.5"})
         self.assertNotIn("style", board_doc._clean_element("a", dict(A, style={"radii": "1 2 3"})))
         svg = board_doc.render_board_svg(_board(dict(A, style={"radii": "0 20 0 0"})))
-        self.assertIn("A20 20 0 0 1", svg)
+        self.assertIn("A20.0 20.0 0 0 1", svg)
 
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}
