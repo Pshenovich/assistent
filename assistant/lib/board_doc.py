@@ -36,6 +36,7 @@ _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "te
                "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign",
                "fillGrad", "strokeGrad", "blur", "bgBlur",
                "fontFamily", "fontWeight", "lineHeight", "letterSpacing", "valign", "deco", "textCase")
+_PIN_RE = re.compile(r"^(l|r|lr|c|s) (t|b|tb|c|s)$")
 _LAYOUT_RE = re.compile(r"^(h|v|g)( \d{1,5}(\.\d)?){5} (start|center|end) (start|center|end|between) (none|w|h|wh)( (wrap|c\d{1,2}))?$")
 # Градиент: «linear|radial угол #rrggbbaa@позиция …» (2–8 точек).
 _GRAD_RE = re.compile(r"^(linear|radial) -?\d{1,3}( #[0-9a-fA-F]{8}@\d{1,3}){2,8}$")
@@ -384,6 +385,10 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
     # Ребёнок автолэйаута: «заполнить» по ширине/высоте; замок пропорций.
     if raw.get("grow") in ("w", "h", "wh"):
         el["grow"] = raw["grow"]
+    # Привязка к краям фрейма (constraints): «h v», h — l|r|lr|c|s, v — t|b|tb|c|s; «l t» — по умолчанию.
+    pin = str(raw.get("pin") or "").strip()
+    if _PIN_RE.match(pin) and pin != "l t":
+        el["pin"] = pin
     if raw.get("ratio") is True:
         el["ratio"] = True
     # Слои: скрыт с доски / заблокирован от правки.

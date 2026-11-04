@@ -2464,3 +2464,13 @@ html[data-theme="light"] .leo-board {
 .lb-layer.is-dim .lb-licon {
   opacity: 0.45;
 }
+
+/* Привязка к фрейму: выпадающий список во всю ширину поля. */
+.lb-ifsel.lb-ipin select {
+  flex: 1 1 auto;
+  width: 100%;
+  text-align: left;
+  text-align-last: left;
+  color: inherit;
+  font-size: 12px;
+}

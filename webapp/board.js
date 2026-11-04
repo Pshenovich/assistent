@@ -620,6 +620,7 @@
     if (el.group) o.group = el.group;
     if (el.frame) o.frame = el.frame;
     if (el.grow) o.grow = el.grow;
+    if (el.pin) o.pin = el.pin;
     if (el.autoW) o.autoW = true;
     if (el.hidden) o.hidden = true;
     if (el.locked) o.locked = true;
@@ -4442,7 +4443,7 @@
       }
       var one = list.length === 1 ? list[0] : null;
       var key = JSON.stringify(list.map(function (e) {
-        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, e.grow, e.ratio, padSplit];
+        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, e.grow, e.ratio, e.pin, padSplit];
       })) + "|" + dev.tab + (codeTab ? "|" + dev.ver : "");
       inspector.classList.remove("hidden");
       // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
@@ -4593,6 +4594,20 @@
           grp([["T", "alT", "По верхнему краю"], ["CV", "alCV", "По центру по вертикали"], ["B", "alB", "По нижнему краю"]]) + "</div>" +
           (list.length > 2 ? '<div class="lb-irow lb-ialign2">' + grp([["DH", "distH", "Равные промежутки по горизонтали"], ["DV", "distV", "Равные промежутки по вертикали"]]) + "</div>" : "") +
           "</div>");
+      }
+      // Привязка к краям фрейма (constraints): куда объект едет, когда у фрейма меняется размер.
+      var pinFr = one && frameOf(one);
+      if (pinFr && !pinFr.layout) {
+        var PN = pinOf(one);
+        var pinSel = function (k, cur, opts, title) {
+          return '<label class="lb-if lb-ifsel lb-ipin" title="' + title + '"><select data-k="' + k + '">' + opts.map(function (o2) {
+            return '<option value="' + o2[0] + '"' + (cur === o2[0] ? " selected" : "") + ">" + o2[1] + "</option>";
+          }).join("") + "</select></label>";
+        };
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Привязка к фрейму</div><div class="lb-irow">' +
+          pinSel("pinH", PN.h, [["l", "Слева"], ["r", "Справа"], ["lr", "Слева и справа"], ["c", "По центру"], ["s", "Масштаб"]], "По горизонтали") +
+          pinSel("pinV", PN.v, [["t", "Сверху"], ["b", "Снизу"], ["tb", "Сверху и снизу"], ["c", "По центру"], ["s", "Масштаб"]], "По вертикали") +
+          "</div></div>");
       }
       // Внешний вид (как во Figma): непрозрачность и скругление в одну строку, углы по отдельности — под ними.
       var op = st("opacity");
@@ -4848,6 +4863,10 @@
           patch(cur.id, { layout: layoutStr(LL) });
         } else if (k === "clip") {
           if (cur.type === "frame") patch(cur.id, { noclip: raw ? undefined : true });
+        } else if (k === "pinH" || k === "pinV") {
+          var PN2 = pinOf(cur);
+          PN2[k === "pinH" ? "h" : "v"] = String(raw);
+          patch(cur.id, { pin: pinStr(PN2) });
         } else if (k === "fontFamily") {
           var fam = String(raw || "").trim();
           var fsx = { fontFamily: fam && FONT_RE.test(fam) ? fam : null };
@@ -5131,6 +5150,7 @@
 
     /** Новое положение и размер по одной оси: a0/s0 — ребёнок, o0/os — фрейм до, n0/ns — после. */
     function pinAxis(m, a0, s0, o0, os, n0, ns, sizable) {
+      m = { t: "l", b: "r", tb: "lr" }[m] || m;
       var lo = a0 - o0;
       var hi = o0 + os - (a0 + s0);
       if (m === "r") return [n0 + ns - hi - s0, s0];
@@ -6111,6 +6131,16 @@
           dy = Math.round(dy * 100) / 100;
           if (dx || dy) moveBy(withFrameKids(u.ids), dx, dy);
         });
+        // Один объект выровняли по краю фрейма — он и привязывается к этому краю (едет за ним при смене размера).
+        var pf = arr.length === 1 ? frameOf(getEl(arr[0].ids[0])) : null;
+        var pk = { L: ["h", "l"], CH: ["h", "c"], R: ["h", "r"], T: ["v", "t"], CV: ["v", "c"], B: ["v", "b"] }[kind];
+        if (pf && !pf.layout && pk) {
+          arr[0].ids.forEach(function (id) {
+            var P = pinOf(getEl(id));
+            P[pk[0]] = pk[1];
+            patch(id, { pin: pinStr(P) });
+          });
+        }
       }
       syncFrames();
       commit();
@@ -7027,6 +7057,88 @@
       if (onCopy(e)) deleteSel();
     }
 
+    /** Куда вставлять (как во Figma): выделен фрейм — внутрь него; выделено что-то во фрейме — рядом,
+     * в тот же фрейм (в автолэйауте — сразу после выделенного). Копию самого фрейма — рядом с ним. */
+    function pasteInto(src, copies, tops) {
+      var sel = selList();
+      if (!sel.length || !tops.length) return;
+      var srcIds = {};
+      src.forEach(function (el) {
+        srcIds[el.id] = 1;
+      });
+      var parent = null;
+      var after = [];
+      if (sel.length === 1 && sel[0].type === "frame" && !srcIds[sel[0].id]) parent = sel[0];
+      else {
+        parent = frameOf(sel[0]);
+        if (!parent || !sel.every(function (e) {
+          return frameOf(e) === parent;
+        })) return;
+        after = sel.map(function (e) {
+          return e.id;
+        });
+      }
+      var b = G.unionBounds(tops.map(function (x) {
+        return G.elBounds(getEl(x.id), getEl);
+      }));
+      if (!b) return;
+      var all = withFrameKids(tops.map(function (x) {
+        return x.id;
+      }));
+      var L = parseLayout(parent.layout);
+      if (L) {
+        // Автолэйаут: в начало области, порядок — сразу за выделенным (или в конец); раскладка — тем же шагом.
+        moveBy(all, r1(parent.x + L.pad[3] - b.x), r1(parent.y + L.pad[0] - b.y));
+      } else {
+        // Обычный фрейм: на прежнее место, если оно внутри, иначе — по центру фрейма.
+        var src0 = G.unionBounds(src.filter(function (el) {
+          return !el.frame || !srcIds[el.frame];
+        }).map(function (el) {
+          return G.elBounds(el, function (id) {
+            return getEl(id) || src.find(function (q) {
+              return q.id === id;
+            }) || null;
+          });
+        }).filter(Boolean));
+        var inside = src0 && src0.x >= parent.x && src0.y >= parent.y && src0.x + src0.w <= parent.x + parent.w && src0.y + src0.h <= parent.y + parent.h;
+        var tx0 = inside ? src0.x : parent.x + (parent.w - b.w) / 2;
+        var ty0 = inside ? src0.y : parent.y + (parent.h - b.h) / 2;
+        moveBy(all, r1(tx0 - b.x), r1(ty0 - b.y));
+      }
+      tops.forEach(function (x) {
+        if (x.type !== "line" || !(x.start || x.end)) patch(x.id, { frame: parent.id });
+      });
+      if (L) {
+        var H = L.dir === "h";
+        var flow = L.dir === "g" || (H && L.wrap);
+        var mine = {};
+        tops.forEach(function (x) {
+          mine[x.id] = 1;
+        });
+        var kids = layoutKids(parent).filter(function (k) {
+          return !mine[k.id];
+        }).sort(function (a, c) {
+          if (flow) {
+            var d = a.y + a.h / 2 - (c.y + c.h / 2);
+            return Math.abs(d) > Math.min(a.h, c.h) / 2 ? d : a.x - c.x;
+          }
+          return H ? a.x - c.x : a.y - c.y;
+        }).map(function (k) {
+          return k.id;
+        });
+        var last = Math.max.apply(null, [-1].concat(after.map(function (id) {
+          return kids.indexOf(id);
+        })));
+        var at = last >= 0 ? last + 1 : kids.length;
+        var newIds = tops.filter(function (x) {
+          return getEl(x.id) && getEl(x.id).frame === parent.id;
+        }).map(function (x) {
+          return x.id;
+        });
+        applyLayout(parent.id, kids.slice(0, at).concat(newIds, kids.slice(at)));
+      }
+    }
+
     function onPaste(e) {
       if (readOnly || editing) return;
       var cd = e.clipboardData;
@@ -7074,15 +7186,17 @@
             } finally {
               getEl = saved;
             }
-            begin();
-            copies.forEach(put);
-            syncFrames();
-            commit();
-            setSelection(copies.filter(function (x) {
+            var tops = copies.filter(function (x) {
               return !x.frame || !copies.some(function (f) {
                 return f.id === x.frame;
               });
-            }).map(function (x) {
+            });
+            begin();
+            copies.forEach(put);
+            syncFrames();
+            pasteInto(list, copies, tops);
+            commit();
+            setSelection(tops.map(function (x) {
               return x.id;
             }));
             return;
@@ -7248,11 +7362,14 @@
         startGesture(Object.assign(base, { kind: "label", id: lblId }));
         return;
       }
-      var id = hitId(e.target);
+      var rawId = hitId(e.target);
+      // Как во Figma: щелчок выбирает объект на текущем уровне вложенности, глубже — двойным щелчком;
+      // Cmd/Ctrl — сразу самый глубокий под курсором; Shift — добавить к выделению.
+      var id = rawId ? pickLevel(rawId, e.metaKey || e.ctrlKey) : "";
       if (id) {
         e.preventDefault();
         var ids;
-        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        if (e.shiftKey) {
           var grp = expandGroups([id]);
           var nextSel = new Set(selected);
           var allIn = Array.from(grp).every(function (x) {
@@ -7272,7 +7389,7 @@
           setSelection([id]);
         }
         ids = Array.from(selected);
-        startMove(base, ids, id);
+        startMove(base, ids, rawId);
         return;
       }
       // Пустое место: мышью — рамка выделения, пальцем — панорама.
@@ -7283,6 +7400,38 @@
       if (!(e.shiftKey || e.metaKey || e.ctrlKey)) selected.clear();
       startGesture(Object.assign(base, { kind: "marquee", keep: new Set(selected) }));
       schedule();
+    }
+
+    /** Цепочка фреймов от внешнего до самого объекта. */
+    function frameChain(id) {
+      var chain = [];
+      for (var q = getEl(id), g = 0; q && g < 30; q = frameOf(q), g++) chain.unshift(q.id);
+      return chain;
+    }
+
+    /** Какой уровень выделить по щелчку: внутрь фрейма верхнего уровня — сразу; дальше — только туда,
+     * где уже стоит выделение (сам фрейм выделен — ещё нет, нужен двойной щелчок). */
+    function pickLevel(id, deep) {
+      if (deep) return id;
+      var chain = frameChain(id);
+      var open = {};
+      selected.forEach(function (sid) {
+        var c = frameChain(sid);
+        for (var i = 0; i < c.length - 1; i++) open[c[i]] = 1;
+      });
+      for (var i = 0; i < chain.length - 1; i++) {
+        if (!(i === 0 || open[chain[i]])) return chain[i];
+      }
+      return chain[chain.length - 1];
+    }
+
+    /** Двойной щелчок: на уровень глубже к объекту под курсором (если выделен один из его фреймов). */
+    function pickDeeper(id) {
+      var chain = frameChain(id);
+      for (var i = chain.length - 2; i >= 0; i--) {
+        if (selected.has(chain[i])) return chain[i + 1];
+      }
+      return "";
     }
 
     // ---- экраны (режим «Макет») ----
@@ -8350,6 +8499,11 @@
       lastTap = { id: id, t: dbl ? 0 : now, x: e.clientX, y: e.clientY };
       if (!dbl || readOnly) return;
       if (id) {
+        var deeper = pickDeeper(id);
+        if (deeper) {
+          setSelection([deeper]);
+          return;
+        }
         var el = getEl(id);
         // Двойной клик по объекту в группе — выделен он один (вход в группу, как во Figma); ещё раз — правка.
         if (el && el.group && selected.size > 1 && selected.has(id)) {

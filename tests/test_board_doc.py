@@ -323,6 +323,15 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         self.assertEqual(els["h"]["layout"], "g 8 0 0 0 0 start start h c3")
         self.assertEqual((els["k"]["grow"], els["k"]["ratio"]), ("w", True))
 
+    def test_pin_constraints(self) -> None:
+        def pin(v: str):
+            el = {"id": "k", "type": "rect", "x": 0, "y": 0, "w": 10, "h": 10, "pin": v}
+            return board_doc.parse_board(json.dumps({"v": 1, "elements": {"k": el}}))["elements"]["k"].get("pin")
+        self.assertEqual(pin("r b"), "r b")
+        self.assertEqual(pin("lr tb"), "lr tb")
+        self.assertIsNone(pin("l t"))  # по умолчанию — не пишется
+        self.assertIsNone(pin("bottom"))
+
     def test_hidden_and_locked(self) -> None:
         body = json.dumps({"v": 1, "elements": {
             "f": {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 100, "h": 100, "hidden": True, "locked": True},
