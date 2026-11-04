@@ -188,6 +188,7 @@
     table: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M3 8h14M3 12h14M8 4v12M12.5 4v12"/>',
     templates: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="3" width="6" height="6" rx="1"/><rect x="3" y="11" width="6" height="6" rx="1"/><path d="M14 11v6M11 14h6"/>',
     photo: '<rect x="3" y="5" width="14" height="11" rx="1.5"/><circle cx="10" cy="10.5" r="2.8"/><path d="M7.5 5l1-1.6h3l1 1.6"/>',
+    eyedrop: '<path d="M13.5 3.5l3 3-2 2-3-3z"/><path d="M11.5 5.5l-7 7V16h3.5l7-7"/>',
     noPhoto: '<rect x="3" y="5" width="14" height="11" rx="1.5"/><path d="M4 4l12 13"/>',
     child: '<rect x="6.5" y="2.5" width="7" height="5" rx="1"/><rect x="6.5" y="12.5" width="7" height="5" rx="1"/><path d="M10 7.5v5"/>',
     taskAdd: '<path d="M3 6h8M3 10h11M3 14h6"/><path d="M15 12v6M12 15h6"/>',
@@ -297,7 +298,7 @@
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
-      ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight"].forEach(function (k) {
+      ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight", "opacity", "shadow"].forEach(function (k) {
         if (el.style[k] != null) st[k] = el.style[k];
       });
       if (Object.keys(st).length) o.style = st;
@@ -558,6 +559,7 @@
       (readOnly ? "" : '<div class="lb-tools" role="toolbar" aria-label="Инструменты"></div>') +
       (readOnly ? "" : '<div class="lb-history"></div>') +
       '<div class="lb-props hidden"></div>' +
+      (readOnly ? "" : '<div class="lb-inspector hidden" aria-label="Свойства"></div>') +
       '<div class="lb-pop hidden"></div>' +
       '<canvas class="lb-minimap" width="180" height="120"></canvas>' +
       '<div class="lb-zoom"></div>' +
@@ -576,6 +578,7 @@
     var toolsBar = root.querySelector(".lb-tools");
     var historyBar = root.querySelector(".lb-history");
     var propsBar = root.querySelector(".lb-props");
+    var inspector = root.querySelector(".lb-inspector");
     var pop = root.querySelector(".lb-pop");
     var minimap = root.querySelector(".lb-minimap");
     var zoomBar = root.querySelector(".lb-zoom");
@@ -943,6 +946,18 @@
       var el = els.get(id);
       var node = nodes.get(id);
       if (el && node && el.type !== "line" && el.type !== "pen" && el.type !== "frame") clipToFrame(node, el);
+      if (el && node) applyLook(node, el);
+    }
+
+    var SHADOW_RE = /^(-?\d{1,3}) (-?\d{1,3}) (\d{1,3}) (#[0-9a-f]{8})$/i;
+
+    /** Прозрачность и тень элемента (макет). */
+    function applyLook(node, el) {
+      var st = el.style || {};
+      var op = st.opacity != null && isFinite(st.opacity) ? Math.max(0, Math.min(1, Number(st.opacity))) : 1;
+      node.style.opacity = op < 1 ? String(op) : "";
+      var m = SHADOW_RE.exec(String(st.shadow || ""));
+      node.style.filter = m ? "drop-shadow(" + m[1] + "px " + m[2] + "px " + m[3] / 2 + "px " + m[4] + ")" : "";
     }
 
     /** Элемент экрана обрезается по краю экрана (как во Figma); вне экрана — как есть. */
@@ -2494,6 +2509,14 @@
 
     function renderProps() {
       var list = selList();
+      renderInspector(list);
+      // В макете свойства — в панели справа; плавающая полоска — только у таблицы, Ганта, карточки.
+      if (mode === "design" && !list.some(function (e) {
+        return BLOCKS[e.type];
+      })) {
+        propsBar.classList.add("hidden");
+        return;
+      }
       // Правка таблицы — у неё своё меню (как в заметке), панель доски ему мешает.
       if (readOnly || !list.length || (gesture && gesture.kind !== "none") || (editing && editing.kind === "table")) {
         propsBar.classList.add("hidden");
@@ -2609,6 +2632,361 @@
       }
       propsBar.classList.remove("hidden");
       positionProps();
+    }
+
+    // ---- панель свойств макета (справа, как во Figma) ----
+    var FILLABLE = { rect: 1, ellipse: 1, diamond: 1, frame: 1, vector: 1, sticky: 1, text: 1 };
+    var STROKABLE = { rect: 1, ellipse: 1, diamond: 1, line: 1, vector: 1, pen: 1 };
+    var TEXTY = { text: 1, rect: 1, ellipse: 1, diamond: 1, sticky: 1 };
+    var RADIUS = { rect: 1, frame: 1 };
+
+    /** Цвет элемента как #rrggbb (ключ палитры — в цвете текущей темы). */
+    function hexOf(key, kind) {
+      if (!key || key === "none") return "";
+      if (isHex(key)) return key.toLowerCase();
+      var v = getComputedStyle(root).getPropertyValue((kind === "fill" ? "--lb-fill-" : "--lb-ink-") + key).trim();
+      if (/^#[0-9a-f]{6}$/i.test(v)) return v.toLowerCase();
+      var m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(v);
+      return m ? "#" + [m[1], m[2], m[3]].map(function (x) {
+        return ("0" + Number(x).toString(16)).slice(-2);
+      }).join("") : "";
+    }
+
+    function frameOf(el) {
+      var f = el && el.frame ? els.get(el.frame) : null;
+      return f && f.type === "frame" ? f : null;
+    }
+
+    function common(list, fn) {
+      var v;
+      for (var i = 0; i < list.length; i++) {
+        var c = fn(list[i]);
+        if (i === 0) v = c;
+        else if (v !== c) return undefined;
+      }
+      return v;
+    }
+
+    function r1(v) {
+      return Math.round(Number(v) * 10) / 10;
+    }
+
+    function numField(k, label, val, opts) {
+      opts = opts || {};
+      return '<label class="lb-if' + (opts.wide ? " is-wide" : "") + '" title="' + esc(opts.title || label) + '"><span>' + esc(label) + "</span>" +
+        '<input type="text" inputmode="decimal" data-k="' + k + '" value="' + (val === undefined ? "" : esc(String(val))) + '"' +
+        (val === undefined ? ' placeholder="—"' : "") + "></label>";
+    }
+
+    function colorField(c, label, key, kind) {
+      var hex = key === undefined ? "" : hexOf(key, kind);
+      var none = key !== undefined && (!key || key === "none");
+      return '<div class="lb-icolor" data-c="' + c + '">' +
+        '<button type="button" class="lb-icolor-sw' + (none ? " is-none" : "") + '" data-pick="' + c + '" title="' + esc(label) + '" style="--c:' + (hex || "transparent") + '"></button>' +
+        '<input type="text" class="lb-icolor-hex" data-hex="' + c + '" maxlength="7" spellcheck="false" value="' + (none ? "" : esc(hex)) + '" placeholder="' + (key === undefined ? "—" : "нет") + '">' +
+        "</div>";
+    }
+
+    var inspKey = "";
+    function renderInspector(list) {
+      if (!inspector) return;
+      if (mode !== "design" || !list.length || editing) {
+        inspector.classList.add("hidden");
+        inspKey = "";
+        return;
+      }
+      var one = list.length === 1 ? list[0] : null;
+      var key = JSON.stringify(list.map(function (e) {
+        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame];
+      }));
+      inspector.classList.remove("hidden");
+      // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
+      var ae = document.activeElement;
+      if (key === inspKey || (ae && ae.tagName === "INPUT" && inspector.contains(ae))) return;
+      inspKey = key;
+      var types = {};
+      list.forEach(function (e) {
+        types[e.type] = 1;
+      });
+      var all = function (set) {
+        return list.every(function (e) {
+          return set[e.type];
+        });
+      };
+      var st = function (k) {
+        return common(list, function (e) {
+          var v = (e.style || {})[k];
+          return v == null ? ((mode === "design" && DESIGN_STYLE[e.type]) || (DEFAULTS[e.type] || {}).style || {})[k] : v;
+        });
+      };
+      var h = [];
+      var title = one ? (one.type === "frame" ? "Экран" : { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия",
+        image: "Картинка", vector: "Вектор", table: "Таблица", sticky: "Стикер", pen: "Рисунок" }[one.type] || "Элемент") : "Выделено: " + list.length;
+      h.push('<div class="lb-ihead">' + esc(title) + "</div>");
+      if (one && one.type === "frame") {
+        h.push('<div class="lb-isec"><label class="lb-if is-wide"><span>Название</span><input type="text" data-k="name" value="' + esc(one.name || "") + '"></label>' +
+          '<button type="button" class="lb-ibtn is-wide" data-act="device">' + esc((DEVICES.filter(function (d) {
+            return d.id === one.device && d.w === Math.round(one.w) && d.h === Math.round(one.h);
+          })[0] || { title: "Свой размер" }).title) + "</button></div>");
+      }
+      if (one && one.type !== "line" && one.type !== "pen") {
+        var f = frameOf(one);
+        h.push('<div class="lb-isec"><div class="lb-irow">' +
+          numField("x", "X", r1(one.x - (f ? f.x : 0)), { title: f ? "X внутри экрана" : "X" }) + numField("y", "Y", r1(one.y - (f ? f.y : 0)), { title: f ? "Y внутри экрана" : "Y" }) +
+          "</div><div class=\"lb-irow\">" + numField("w", "W", r1(one.w)) + numField("h", "H", r1(one.h), { title: one.type === "text" ? "Высота текста — по содержимому" : "H" }) +
+          "</div><div class=\"lb-irow\">" + (one.type !== "frame" ? numField("rot", "↻", r1(one.rot || 0), { title: "Поворот, °" }) : "") +
+          (RADIUS[one.type] ? numField("radius", "◜", r1(st("radius") || 0), { title: "Скругление углов" }) : "") + "</div></div>");
+      }
+      h.push('<div class="lb-isec"><div class="lb-irow">' + numField("opacity", "%", st("opacity") == null ? 100 : st("opacity") === undefined ? undefined : Math.round(st("opacity") * 100), { title: "Непрозрачность" }) + "</div></div>");
+      if (all(FILLABLE)) {
+        h.push('<div class="lb-isec"><div class="lb-ilabel">' + (types.text && Object.keys(types).length === 1 ? "Фон" : "Заливка") + "</div>" + colorField("fill", "Заливка", st("fill"), "fill") + "</div>");
+      }
+      if (all(STROKABLE)) {
+        var sw = st("strokeWidth");
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Обводка</div>' + colorField("stroke", "Обводка", sw === 0 ? "none" : st("stroke"), "ink") +
+          '<div class="lb-irow">' + numField("strokeWidth", "Толщина", sw, { wide: true }) + "</div></div>");
+      }
+      if (all(TEXTY)) {
+        var al = common(list, alignOf);
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Текст</div>' + colorField("textColor", "Цвет текста", st("textColor"), "ink") +
+          '<div class="lb-irow">' + numField("fontSize", "Размер", st("fontSize")) +
+          '<button type="button" class="lb-ibtn' + (st("bold") ? " is-on" : "") + '" data-act="bold" title="Жирный"><b>B</b></button></div>' +
+          '<div class="lb-irow lb-iseg">' + ["left", "center", "right"].map(function (a) {
+            return '<button type="button" class="lb-ibtn' + (al === a ? " is-on" : "") + '" data-al="' + a + '" title="' + { left: "Влево", center: "По центру", right: "Вправо" }[a] + '">' + icon(ALIGN_ICON[a]) + "</button>";
+          }).join("") + "</div></div>");
+      }
+      if (!types.line && !types.pen) {
+        var sh = SHADOW_RE.exec(String(st("shadow") || ""));
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Тень <button type="button" class="lb-ilink" data-act="shadow">' + (sh ? "убрать" : "+ добавить") + "</button></div>" +
+          (sh ? '<div class="lb-irow">' + numField("shx", "X", Number(sh[1])) + numField("shy", "Y", Number(sh[2])) + numField("shb", "Blur", Number(sh[3])) + "</div>" +
+            colorField("shc", "Цвет тени", sh[4].slice(0, 7), "ink") + '<div class="lb-irow">' + numField("sha", "%", Math.round(parseInt(sh[4].slice(7), 16) / 2.55), { title: "Непрозрачность тени" }) + "</div>" : "") + "</div>");
+      }
+      h.push('<div class="lb-isec lb-iacts">' +
+        '<button type="button" class="lb-ibtn" data-act="dup" title="Дублировать (⌘D)">' + icon("copy") + "</button>" +
+        '<button type="button" class="lb-ibtn" data-act="front" title="На передний план (])">' + icon("front") + "</button>" +
+        '<button type="button" class="lb-ibtn" data-act="back" title="На задний план ([)">' + icon("back") + "</button>" +
+        '<button type="button" class="lb-ibtn lb-danger" data-act="delete" title="Удалить (Delete)">' + icon("trash") + "</button></div>");
+      inspector.innerHTML = h.join("");
+    }
+
+    function parseNum(v) {
+      var n = Number(String(v).replace(",", ".").replace(/[^\d.\-]/g, ""));
+      return isFinite(n) && String(v).trim() !== "" ? n : null;
+    }
+
+    function shadowOf(el) {
+      return SHADOW_RE.exec(String((el.style || {}).shadow || "")) || [null, "0", "4", "12", "#00000040"];
+    }
+
+    function hexA(n) {
+      return ("0" + Math.max(0, Math.min(255, Math.round(n))).toString(16)).slice(-2);
+    }
+
+    /** Значение из панели — во все выделенные элементы одним шагом отмены. */
+    function applyInspector(k, raw) {
+      var list = selList();
+      if (!list.length) return;
+      var n = parseNum(raw);
+      begin();
+      list.forEach(function (el) {
+        var cur = getEl(el.id);
+        if (!cur) return;
+        var f = frameOf(cur);
+        if (k === "x" || k === "y") {
+          if (n == null || list.length > 1) return;
+          var d = n + (f ? f[k] : 0) - cur[k];
+          if (d) moveBy(withFrameKids([cur.id]), k === "x" ? d : 0, k === "y" ? d : 0);
+        } else if (k === "w" || k === "h") {
+          if (n == null || n < 1) return;
+          var fw = {};
+          fw[k] = n;
+          if (cur.type === "frame" && cur.device) fw.device = undefined;
+          patch(cur.id, fw);
+        } else if (k === "rot") {
+          if (n != null) patch(cur.id, { rot: ((n % 360) + 360) % 360 || undefined });
+        } else if (k === "name") {
+          patch(cur.id, { name: String(raw).trim() || undefined });
+        } else if (k === "opacity") {
+          if (n != null) patch(cur.id, { style: { opacity: Math.max(0, Math.min(100, n)) / 100 } });
+        } else if (k === "radius" || k === "strokeWidth" || k === "fontSize") {
+          if (n == null || n < 0) return;
+          var sf = {};
+          sf[k] = k === "fontSize" ? Math.max(4, n) : n;
+          patch(cur.id, { style: sf });
+        } else if (k === "shx" || k === "shy" || k === "shb" || k === "sha" || k === "shc") {
+          var m = shadowOf(cur);
+          var x = Number(m[1]);
+          var y = Number(m[2]);
+          var b = Number(m[3]);
+          var col = m[4].slice(0, 7);
+          var a = parseInt(m[4].slice(7), 16);
+          if (k === "shc") col = raw;
+          else if (n == null) return;
+          else if (k === "shx") x = Math.round(n);
+          else if (k === "shy") y = Math.round(n);
+          else if (k === "shb") b = Math.max(0, Math.round(n));
+          else a = Math.max(0, Math.min(100, n)) * 2.55;
+          patch(cur.id, { style: { shadow: Math.max(-999, Math.min(999, x)) + " " + Math.max(-999, Math.min(999, y)) + " " + Math.min(999, b) + " " + col + hexA(a) } });
+        } else if (k === "fill" || k === "stroke" || k === "textColor") {
+          var fs = {};
+          fs[k] = raw;
+          if (k === "stroke" && raw !== "none" && !(Number((cur.style || {}).strokeWidth) > 0) && cur.type !== "line") fs.strokeWidth = 1;
+          if (k === "stroke" && raw === "none") {
+            fs.stroke = (cur.style || {}).stroke || "ink";
+            fs.strokeWidth = 0;
+          }
+          patch(cur.id, { style: fs });
+        }
+      });
+      syncFrames();
+      commit();
+    }
+
+    /** Цвета этого макета — точные цвета, которые уже есть на доске (для единообразия). */
+    function docColors() {
+      var seen = {};
+      var out = [];
+      els.forEach(function (el) {
+        var st = el.style || {};
+        ["fill", "stroke", "textColor"].forEach(function (k) {
+          var v = st[k];
+          if (isHex(v) && !seen[v.toLowerCase()]) {
+            seen[v.toLowerCase()] = 1;
+            out.push(v.toLowerCase());
+          }
+        });
+      });
+      return out.slice(0, 24);
+    }
+
+    function openColorPop(anchor, c) {
+      var cur = anchor.closest(".lb-icolor").querySelector("[data-hex]").value || "#000000";
+      openPop(anchor, function (box) {
+        var colors = docColors();
+        box.innerHTML =
+          '<div class="lb-cpick"><input type="color" value="' + esc(/^#[0-9a-f]{6}$/i.test(cur) ? cur : "#000000") + '" data-native="1">' +
+          (window.EyeDropper ? '<button type="button" class="lb-btn" data-eye="1" title="Пипетка: цвет с экрана">' + icon("eyedrop") + "</button>" : "") +
+          (c === "fill" || c === "stroke" ? '<button type="button" class="lb-btn" data-none="1" title="Без цвета">⦸</button>' : "") + "</div>" +
+          (colors.length ? '<div class="lb-ilabel">Цвета макета</div><div class="lb-swatches">' + colors.map(function (k) {
+            return '<button type="button" class="lb-sw" data-v="' + k + '" title="' + k + '" style="--c:' + k + '"></button>';
+          }).join("") + "</div>" : "");
+        var nat = box.querySelector("[data-native]");
+        nat.addEventListener("input", function () {
+          applyInspector(c, nat.value.toLowerCase());
+        });
+        box.onclick = function (ev) {
+          var sw = ev.target.closest("[data-v]");
+          if (sw) {
+            applyInspector(c, sw.getAttribute("data-v"));
+            closePop();
+            return;
+          }
+          if (ev.target.closest("[data-none]")) {
+            applyInspector(c, "none");
+            closePop();
+            return;
+          }
+          if (ev.target.closest("[data-eye]")) {
+            closePop();
+            new window.EyeDropper().open().then(function (r) {
+              if (r && r.sRGBHex) applyInspector(c, String(r.sRGBHex).toLowerCase().slice(0, 7));
+            }).catch(function () {});
+          }
+        };
+      });
+    }
+
+    if (inspector) {
+      inspector.addEventListener("pointerdown", function (e) {
+        e.stopPropagation();
+      });
+      inspector.addEventListener("keydown", function (e) {
+        e.stopPropagation();
+        if (e.key === "Enter" && e.target.tagName === "INPUT") e.target.blur();
+        if (e.key === "Escape") {
+          inspKey = "";
+          e.target.blur();
+          stage.focus({ preventScroll: true });
+        }
+        // ↑/↓ в числовом поле — ±1 (с Shift — ±10), как во Figma.
+        if ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.target.getAttribute("data-k")) {
+          var v = parseNum(e.target.value);
+          if (v == null) return;
+          e.preventDefault();
+          e.target.value = r1(v + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1));
+          applyInspector(e.target.getAttribute("data-k"), e.target.value);
+        }
+      });
+      inspector.addEventListener("change", function (e) {
+        var t = e.target;
+        if (t.getAttribute("data-k")) applyInspector(t.getAttribute("data-k"), t.value);
+        else if (t.getAttribute("data-hex")) {
+          var v = String(t.value).trim().toLowerCase();
+          if (/^[0-9a-f]{6}$/.test(v)) v = "#" + v;
+          if (/^#[0-9a-f]{3}$/.test(v)) v = "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+          if (/^#[0-9a-f]{6}$/.test(v)) applyInspector(t.getAttribute("data-hex"), v);
+          else if (!v && (t.getAttribute("data-hex") === "fill" || t.getAttribute("data-hex") === "stroke")) applyInspector(t.getAttribute("data-hex"), "none");
+        }
+      });
+      inspector.addEventListener("focusout", function () {
+        setTimeout(function () {
+          if (!inspector.contains(document.activeElement)) {
+            inspKey = "";
+            renderInspector(selList());
+          }
+        }, 0);
+      });
+      inspector.addEventListener("click", function (e) {
+        var pick = e.target.closest("[data-pick]");
+        if (pick) {
+          openColorPop(pick, pick.getAttribute("data-pick"));
+          return;
+        }
+        var al = e.target.closest("[data-al]");
+        if (al) {
+          applyStyle(isAlignable, { align: al.getAttribute("data-al") });
+          return;
+        }
+        var b = e.target.closest("[data-act]");
+        if (!b) return;
+        var a = b.getAttribute("data-act");
+        if (a === "dup") duplicateSel();
+        else if (a === "front") reorderSel(true);
+        else if (a === "back") reorderSel(false);
+        else if (a === "delete") deleteSel();
+        else if (a === "bold") applyStyle(isTextual, { bold: !common(selList(), function (x) {
+          return !!(x.style && x.style.bold);
+        }) || null });
+        else if (a === "shadow") {
+          var has = selList().some(function (x) {
+            return SHADOW_RE.test(String((x.style || {}).shadow || ""));
+          });
+          applyStyle(function () {
+            return true;
+          }, { shadow: has ? null : "0 4 12 #00000040" });
+        } else if (a === "device") {
+          var fakeAnchor = b;
+          openPop(fakeAnchor, function (box) {
+            box.innerHTML = DEVICES.map(function (d) {
+              return '<button type="button" class="lb-menu-item" data-dev="' + d.id + '">' + esc(d.title) + "<kbd>" + d.w + " × " + d.h + "</kbd></button>";
+            }).join("");
+            box.onclick = function (ev) {
+              var m = ev.target.closest("[data-dev]");
+              if (!m) return;
+              var dev = DEVICES.filter(function (d) {
+                return d.id === m.getAttribute("data-dev");
+              })[0];
+              closePop();
+              begin();
+              applyFields(isType("frame"), function () {
+                return { w: dev.w, h: dev.h, device: dev.id };
+              });
+              syncFrames();
+              commit();
+            };
+          });
+        }
+      });
     }
 
     function positionProps() {
@@ -3070,13 +3448,23 @@
     }
 
     function nudge(dx, dy) {
-      var list = selList();
-      if (!list.length) return;
+      if (!selected.size) return;
       begin();
-      list.forEach(function (el) {
-        patch(el.id, moved(el, dx, dy, null));
-      });
+      moveBy(withFrameKids(Array.from(selected)), dx, dy);
+      syncFrames();
       commit();
+    }
+
+    /** Сдвиг набора элементов (экран — вместе с содержимым); стрелки между ними остаются прилипшими. */
+    function moveBy(ids, dx, dy) {
+      var moving = {};
+      ids.forEach(function (id) {
+        moving[id] = 1;
+      });
+      ids.forEach(function (id) {
+        var el = getEl(id);
+        if (el) patch(id, moved(el, dx, dy, moving));
+      });
     }
 
     function shiftWaypoints(wps, dx, dy) {

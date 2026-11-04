@@ -30,7 +30,10 @@ GANTT_UNITS = ("day", "week")
 PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", "pink", "white")
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
-_STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight")
+_STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight",
+               "opacity", "shadow")
+# Тень (макет): «x y размытие #rrggbbaa».
+_SHADOW_RE = re.compile(r"^-?\d{1,3} -?\d{1,3} \d{1,3} #[0-9a-fA-F]{8}$")
 _COLOR_KEYS = ("fill", "stroke", "textColor", "highlight")
 _HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -374,6 +377,13 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         for k in _STYLE_KEYS:
             v = style.get(k)
             if v is None:
+                continue
+            if k == "opacity":
+                st[k] = _num(v, 1, 0, 1)
+                continue
+            if k == "shadow":
+                if isinstance(v, str) and _SHADOW_RE.match(v.strip()):
+                    st[k] = v.strip().lower()
                 continue
             if k in _COLOR_KEYS:
                 # Цвет — ключ палитры или точный #rrggbb (вставка из Miro / FigJam); остальное — в атрибуты не пускаем.

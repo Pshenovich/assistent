@@ -266,3 +266,13 @@ class BoardDesignModeTests(unittest.TestCase):
         self.assertIn("Главная", board_doc.board_plain_text(body))
         svg = board_doc.render_board_svg(body)
         self.assertIn(">Главная</text>", svg)
+
+
+class BoardLookTests(unittest.TestCase):
+    """Макет: непрозрачность и тень («x y размытие #rrggbbaa»)."""
+
+    def test_opacity_and_shadow(self) -> None:
+        st = board_doc._clean_element("a", dict(A, style={"opacity": 0.5, "shadow": "0 4 12 #00000040"}))["style"]
+        self.assertEqual(st, {"opacity": 0.5, "shadow": "0 4 12 #00000040"})
+        st = board_doc._clean_element("a", dict(A, style={"opacity": 7, "shadow": "0 4 12 red;}"}))["style"]
+        self.assertEqual(st, {"opacity": 1})
