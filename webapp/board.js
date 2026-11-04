@@ -1605,6 +1605,18 @@
       range.selectNodeContents(textEl);
       var r = range.getBoundingClientRect();
       if (!r.width && !r.height) return null;
+      // Заданный межстрочный интервал (из Figma) — высота = строки × интервал, а не высота самих букв.
+      var lh = parseFloat(getComputedStyle(textEl).lineHeight);
+      if (isFinite(lh) && lh > 0) {
+        var tops = [];
+        Array.prototype.forEach.call(range.getClientRects(), function (q) {
+          if (!q.height) return;
+          if (!tops.some(function (t) {
+            return Math.abs(t - q.top) < (lh * view.z) / 2;
+          })) tops.push(q.top);
+        });
+        if (tops.length) return Math.max(r.height / view.z, tops.length * lh);
+      }
       return r.height / view.z;
     }
 
@@ -2819,6 +2831,21 @@
       var range = document.createRange();
       range.selectNodeContents(t);
       if (!(opts2 && opts2.selectAll)) range.collapse(false);
+      // Двойной клик по тексту — курсор туда, куда кликнули (как во Figma), а не в конец.
+      var at = opts2 && opts2.at;
+      if (at && !(opts2 && opts2.selectAll)) {
+        var cr = null;
+        if (document.caretRangeFromPoint) cr = document.caretRangeFromPoint(at.clientX, at.clientY);
+        else if (document.caretPositionFromPoint) {
+          var cp = document.caretPositionFromPoint(at.clientX, at.clientY);
+          if (cp) {
+            cr = document.createRange();
+            cr.setStart(cp.offsetNode, cp.offset);
+            cr.collapse(true);
+          }
+        }
+        if (cr && t.contains(cr.startContainer)) range = cr;
+      }
       var sel = window.getSelection();
       sel.removeAllRanges();
       sel.addRange(range);
@@ -7784,7 +7811,7 @@
           schedule();
           return;
         }
-        if (el && TEXTUAL[el.type]) startEdit(id, { selectAll: false });
+        if (el && TEXTUAL[el.type]) startEdit(id, { selectAll: false, at: { clientX: e.clientX, clientY: e.clientY } });
         else if (el && (BLOCKS[el.type] || el.type === "frame")) startEdit(id, { at: e });
         else if (el && el.type === "vector" && mode === "design") editVector(id);
         return;

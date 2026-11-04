@@ -844,7 +844,8 @@ function fromFigma(msg, uid) {
       var pb = n.stackPaddingBottom != null ? n.stackPaddingBottom : pt;
       var just = n.stackPrimaryAlignItems === "SPACE_BETWEEN" || n.stackPrimaryAlignItems === "SPACE_EVENLY" ? "between" : SIDE[n.stackPrimaryAlignItems] || "start";
       var al = SIDE[n.stackCounterAlignItems] || "start";
-      var fitM = /RESIZE_TO_FIT/.test(String(n.stackPrimarySizing || ""));
+      // Нет поля «размер по главной оси» — у Figma это «по содержимому» (явно пишется только FIXED).
+      var fitM = n.stackPrimarySizing == null || /RESIZE_TO_FIT/.test(String(n.stackPrimarySizing));
       var fitC = /RESIZE_TO_FIT/.test(String(n.stackCounterSizing || ""));
       var hw = dir === "v" ? fitC : fitM;
       var hh = dir === "v" ? fitM : fitC;
