@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
 from assistant.realtime import notify as realtime_notify
 from assistant.stores import notes as notes_store
 from assistant.stores import share_links as share_links_store
@@ -18,6 +19,7 @@ MAX_QUOTE_LEN = 2000
 MAX_CTX_LEN = 80
 
 
+@sqlite_conn.schema_once(lambda: notes_store._conn())  # type: ignore[attr-defined]
 def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
     conn.execute(

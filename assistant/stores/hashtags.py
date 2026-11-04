@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
 from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
@@ -19,6 +20,7 @@ _HASHTAG_RE = re.compile(
 )
 
 
+@sqlite_conn.schema_once(lambda: notes_store._conn())  # type: ignore[attr-defined]
 def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
     conn.execute(
@@ -197,20 +199,29 @@ def hashtags_by_items(
     if not normalized:
         return {}
     out: dict[tuple[str, str], list[dict[str, Any]]] = {k: [] for k in normalized}
+    by_kind: dict[str, list[str]] = {}
+    for kind, iid in normalized:
+        by_kind.setdefault(kind, []).append(iid)
+    # Один запрос на тип и пачку id (раньше — по запросу на каждую запись списка).
     with _LOCK:
         cur = _conn().cursor()
-        for kind, iid in normalized:
-            cur.execute(
-                """
-                SELECT h.id, h.name, h.created_at, h.updated_at
-                FROM hashtag_links l
-                JOIN hashtags h ON h.id = l.hashtag_id AND h.user_id = l.user_id
-                WHERE l.user_id = ? AND l.item_kind = ? AND l.item_id = ?
-                ORDER BY LOWER(h.name) ASC
-                """,
-                (uid, kind, iid),
-            )
-            out[(kind, iid)] = [_row_to_dict(r) for r in cur.fetchall()]
+        for kind, ids in by_kind.items():
+            for i in range(0, len(ids), 500):
+                chunk = ids[i : i + 500]
+                cur.execute(
+                    f"""
+                    SELECT l.item_id, h.id, h.name, h.created_at, h.updated_at
+                    FROM hashtag_links l
+                    JOIN hashtags h ON h.id = l.hashtag_id AND h.user_id = l.user_id
+                    WHERE l.user_id = ? AND l.item_kind = ? AND l.item_id IN ({",".join("?" * len(chunk))})
+                    ORDER BY LOWER(h.name) ASC
+                    """,
+                    (uid, kind, *chunk),
+                )
+                for r in cur.fetchall():
+                    row = _row_to_dict(r)
+                    row.pop("item_id", None)
+                    out[(kind, str(r["item_id"]))].append(row)
     return out
 
 
@@ -284,6 +295,25 @@ def sync_item_hashtags(
     return set_item_hashtags(user_id, item_kind, item_id, names)
 
 
+def sync_item_hashtags_if_changed(
+    user_id: int | str,
+    item_kind: str,
+    item_id: int | str,
+    current: list[dict[str, Any]],
+    *texts: str,
+) -> bool:
+    """Как sync_item_hashtags, но пишет в базу, только если набор хэштегов в тексте другой.
+
+    current — уже прочитанные хэштеги записи (hashtags_by_items). Список документов зовёт это
+    на каждое открытие: без проверки это был DELETE + INSERT + commit на каждый документ.
+    """
+    names = extract_hashtag_names(*texts)
+    if {n.casefold() for n in names} == {str(h.get("name") or "").casefold() for h in current}:
+        return False
+    set_item_hashtags(user_id, item_kind, item_id, names)
+    return True
+
+
 def delete_item_links(user_id: int | str, item_kind: str, item_id: int | str) -> None:
     uid = str(int(user_id))
     try:
@@ -314,13 +344,13 @@ def _append_token_to_body(body: str, name: str) -> str:
     return ((body or "").rstrip() + " " + token).strip()
 
 
-def migrate_extra_tags_to_hashtags(user_id: int | str) -> None:
-    """Лишние теги (после перехода на 1 проект) становятся хэштегами."""
+def migrate_extra_tags_to_hashtags(user_id: int | str) -> bool:
+    """Лишние теги (после перехода на 1 проект) становятся хэштегами. True — что-то перенесено."""
     from assistant.stores import tags as tags_store
 
     extras = tags_store.take_extra_tag_links(user_id)
     if not extras:
-        return
+        return False
     uid = str(int(user_id))
     for extra in extras:
         kind = extra["item_kind"]
@@ -351,3 +381,4 @@ def migrate_extra_tags_to_hashtags(user_id: int | str) -> None:
                 (new_body, uid, int(iid)),
             )
             _conn().commit()
+    return True

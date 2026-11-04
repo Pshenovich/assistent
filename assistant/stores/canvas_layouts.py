@@ -11,6 +11,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
 from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
@@ -18,6 +19,7 @@ MAX_PER_USER = 30
 MAX_NAME = 60
 
 
+@sqlite_conn.schema_once(lambda: notes_store._conn())  # type: ignore[attr-defined]
 def _conn():
     conn = notes_store._conn()  # type: ignore[attr-defined]
     conn.execute(

@@ -6,6 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from assistant.lib import sqlite_conn
 from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
@@ -14,6 +15,7 @@ _MAX_NAME_LEN = 40
 _VALID_KINDS = frozenset({"local", "journal"})
 
 
+@sqlite_conn.schema_once(lambda: notes_store._conn())  # type: ignore[attr-defined]
 def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
     conn.execute(

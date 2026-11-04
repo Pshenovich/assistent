@@ -7,8 +7,10 @@
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from pathlib import Path
+from typing import Callable
 
 BUSY_TIMEOUT_MS = 30_000
 
@@ -28,3 +30,25 @@ def connect(path: str | Path, *, timeout: float = 30.0) -> sqlite3.Connection:
         # Например, база занята соседом дольше таймаута — работаем в прежнем режиме.
         print(f"[sqlite] WAL не включился path={path} err={e!r}")
     return conn
+
+
+def schema_once(base: Callable[[], sqlite3.Connection]):
+    """Декоратор для _conn() хранилищ поверх общего соединения: схема (CREATE … IF NOT EXISTS, ALTER) —
+    один раз на соединение, а не на каждый вызов. base() — общее соединение; сменилось (другая база,
+    тесты) — схема прогоняется заново."""
+
+    def deco(init: Callable[[], sqlite3.Connection]) -> Callable[[], sqlite3.Connection]:
+        ready: list[sqlite3.Connection | None] = [None]
+
+        @functools.wraps(init)
+        def wrapper() -> sqlite3.Connection:
+            conn = base()
+            if ready[0] is conn:
+                return conn
+            out = init()
+            ready[0] = out
+            return out
+
+        return wrapper
+
+    return deco

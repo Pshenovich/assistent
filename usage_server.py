@@ -2239,7 +2239,8 @@ async def _finish_miniapp_principal(
     principal: _MiniappPrincipal, *, enforce_access: bool
 ) -> _MiniappPrincipal:
     try:
-        await run_in_threadpool(_remember_principal_profile, principal)
+        if not _profile_recently_saved(principal):
+            await run_in_threadpool(_remember_principal_profile, principal)
     except Exception:
         pass
     return _enforce_miniapp_access(principal) if enforce_access else principal
@@ -3468,6 +3469,25 @@ def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
     if _owner_can_share_item(uid, kind, item_id):
         return str(uid)
     return None
+
+
+_PROFILE_SEEN: dict[int, tuple[tuple[Any, ...], float]] = {}
+_PROFILE_SEEN_TTL_SEC = 600.0
+
+
+def _profile_recently_saved(principal: _MiniappPrincipal) -> bool:
+    """Тот же профиль уже сохраняли недавно — не ходим в базу на каждый запрос API."""
+    u = principal.user or {}
+    key = tuple(str(u.get(k) or "") for k in ("username", "first_name", "last_name", "photo_url"))
+    uid = int(principal.telegram_user_id)
+    now = time.monotonic()
+    hit = _PROFILE_SEEN.get(uid)
+    if hit and hit[0] == key and now - hit[1] < _PROFILE_SEEN_TTL_SEC:
+        return True
+    if len(_PROFILE_SEEN) > 5000:
+        _PROFILE_SEEN.clear()
+    _PROFILE_SEEN[uid] = (key, now)
+    return False
 
 
 def _remember_principal_profile(principal: _MiniappPrincipal) -> None:
@@ -10700,6 +10720,14 @@ async def miniapp_notes_bundle(
     except Exception as e:
         print(f"[miniapp_notes] journal_fail err={e!r}")
         journal_err = "Не удалось загрузить журнал. Попробуйте обновить страницу позже."
+    # Перенос расшифровок может создать документы — до чтения списка, чтобы хватило одного чтения.
+    try:
+        from assistant.services.transcription_notes_migrate import migrate_user_if_needed
+
+        await run_in_threadpool(migrate_user_if_needed, uid)
+    except Exception as e:
+        print(f"[miniapp_notes] transcription_migrate_fail err={e!r}")
+
     local_err: str | None = None
     tags_err: str | None = None
     all_tags: list[dict[str, Any]] = []
@@ -10723,13 +10751,6 @@ async def miniapp_notes_bundle(
         out_journal.append(item)
 
     try:
-        from assistant.services.transcription_notes_migrate import migrate_user_if_needed
-
-        await run_in_threadpool(migrate_user_if_needed, uid)
-    except Exception as e:
-        print(f"[miniapp_notes] transcription_migrate_fail err={e!r}")
-
-    try:
         from assistant.services import transcription_notes as tnotes
 
         transcriptions = await run_in_threadpool(
@@ -10744,39 +10765,38 @@ async def miniapp_notes_bundle(
         from assistant.stores import notes as notes_store
         from assistant.stores import tags as tags_store
 
-        hashtags_store.migrate_extra_tags_to_hashtags(uid)
-        fresh_notes = notes_store.list_notes(uid, limit=lim)
-        local_notes[:] = fresh_notes
+        if hashtags_store.migrate_extra_tags_to_hashtags(uid):
+            # Миграция дописала хэштеги в тела — перечитываем список (обычно ничего не переносится).
+            local_notes[:] = notes_store.list_notes(uid, limit=lim)
         tag_items: list[tuple[str, str]] = []
         for n in local_notes:
             tag_items.append(("local", str(n.get("id"))))
         for row in transcriptions:
             tag_items.append(("local", str(row.get("id"))))
         mapping = tags_store.tags_by_items(uid, tag_items)
-        for n in local_notes:
-            body = str(n.get("body") or n.get("description") or "")
-            # Не гоняем мегабайтные base64-тела через extract hashtags на каждый /notes.
-            if len(body) <= _HASHTAG_SYNC_BODY_MAX:
-                hashtags_store.sync_item_hashtags(
-                    uid,
-                    "local",
-                    n.get("id"),
-                    str(n.get("title") or ""),
-                    body,
-                )
-        for row in transcriptions:
-            body = str(
-                row.get("body") or row.get("description") or row.get("preview") or ""
-            )
-            if len(body) <= _HASHTAG_SYNC_BODY_MAX:
-                hashtags_store.sync_item_hashtags(
-                    uid,
-                    "local",
-                    row.get("id"),
-                    str(row.get("title") or ""),
-                    body,
-                )
+        # Хэштеги из текста — в базу только при расхождении (документы, созданные ботом или расшифровкой
+        # мимо сохранения, так «долечиваются»), без записи на каждое открытие списка.
         hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
+        changed = False
+        for row, body in [
+            (n, str(n.get("body") or n.get("description") or "")) for n in local_notes
+        ] + [
+            (r, str(r.get("body") or r.get("description") or r.get("preview") or "")) for r in transcriptions
+        ]:
+            # Не гоняем мегабайтные base64-тела через extract hashtags на каждый /notes.
+            if len(body) > _HASHTAG_SYNC_BODY_MAX:
+                continue
+            if hashtags_store.sync_item_hashtags_if_changed(
+                uid,
+                "local",
+                row.get("id"),
+                hash_mapping.get(("local", str(row.get("id"))), []),
+                str(row.get("title") or ""),
+                body,
+            ):
+                changed = True
+        if changed:
+            hash_mapping = hashtags_store.hashtags_by_items(uid, tag_items)
         for n in local_notes:
             key = ("local", str(n.get("id")))
             _apply_project_fields(n, mapping.get(key, []))
