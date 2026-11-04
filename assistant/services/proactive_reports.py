@@ -290,7 +290,7 @@ def weekly_card(uid: int, *, now: Optional[datetime] = None) -> Optional[dict[st
             "tag": "📊 итоги недели",
             "urgency": 1,
             "title": f"{note.get('title')} — готово",
-            "source": "заметка в проекте «От ассистента»",
+            "source": "документ в проекте «От ассистента»",
             "ask": f"Итоги недели: {note.get('title')}",
             "note": {"id": nid, "kind": "note", "title": note.get("title")},
             "actions": [{"label": "Открыть", "act": "open_note", "primary": True}],

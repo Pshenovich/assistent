@@ -225,7 +225,7 @@ def set_sheet_order(note: dict[str, Any], order: list[Any]) -> list[dict[str, An
     current = sheet_order_ids(note)
     want = [str(x).strip() for x in order or []]
     if sorted(want) != sorted(current) or len(set(want)) != len(want):
-        raise SheetError("Порядок листов устарел — обновите заметку")
+        raise SheetError("Порядок листов устарел — обновите документ")
     extras = [x for x in want if x != str(PRIMARY_SHEET_ID)]
     with _LOCK:
         conn = _conn()
@@ -556,7 +556,7 @@ def rename_primary(owner_user_id: int | str, note: dict[str, Any], title: str, *
         raise SheetError("Укажите название листа")
     updated = notes_store.update_note(owner_user_id, int(note["id"]), primary_sheet_title=t, actor_user_id=actor_user_id)
     if not updated:
-        raise SheetError("Заметка не найдена")
+        raise SheetError("Документ не найден")
     return primary_sheet(updated)
 
 
@@ -567,7 +567,7 @@ def delete_primary(owner_user_id: int | str, note: dict[str, Any], *, actor_user
         raise SheetError("Лист «Саммари» у встречи удалить нельзя")
     nxt = next((x for x in list_extra_sheets(int(note["id"])) if _normalize_kind(x.get("kind")) == SHEET_KIND_DOC), None)
     if nxt is None:
-        raise SheetError("Это единственный текстовый лист — его нельзя удалить, можно удалить заметку")
+        raise SheetError("Это единственный текстовый лист — его нельзя удалить, можно удалить документ")
     updated = notes_store.update_note(
         owner_user_id,
         int(note["id"]),
@@ -577,7 +577,7 @@ def delete_primary(owner_user_id: int | str, note: dict[str, Any], *, actor_user
         actor_user_id=actor_user_id,
     )
     if not updated:
-        raise SheetError("Заметка не найдена")
+        raise SheetError("Документ не найден")
     delete_sheet(int(note["id"]), int(nxt["id"]))
     return {"primary": primary_sheet(updated), "promoted_sheet_id": int(nxt["id"])}
 

@@ -41,7 +41,7 @@ async def handle_search(
     raw = (query or "").strip()
     q = extract_note_search_query(raw) or raw
     if not q:
-        await msg.reply_text("Напишите, что искать, например: «найди заметку про филиалы в Куркино».")
+        await msg.reply_text("Напишите, что искать, например: «найди документ про филиалы в Куркино».")
         return
     uid = int(user.id)
     matches = await asyncio.to_thread(notes_store.search_notes, uid, q, limit=5)
@@ -63,7 +63,7 @@ async def handle_search(
 def _fallback_title(text: str) -> str:
     first = (text or "").strip().split("\n", 1)[0].strip()
     if not first:
-        return "Заметка"
+        return "Документ"
     if len(first) <= 80:
         return first
     return first[:77].rstrip() + "…"
@@ -83,4 +83,4 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) 
         if formatted and (formatted.get("title") or "").strip():
             title = formatted["title"].strip()
     await asyncio.to_thread(notes_store.create_note, uid, title, body)
-    await msg.reply_text("Заметка сохранена. Откройте раздел «Заметки» в мини-приложении.")
+    await msg.reply_text("Документ сохранён. Откройте раздел «Документы» в мини-приложении.")

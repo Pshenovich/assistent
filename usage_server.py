@@ -2994,10 +2994,10 @@ def _journal_row_api(row: dict[str, Any]) -> dict[str, Any]:
 
 
 _SHARE_KIND_LABELS = {
-    "local": "Заметка",
+    "local": "Документ",
     "summarize": "Саммари",
     "obuchat_transcribe": "Транскрипция",
-    "format_note": "Заметка",
+    "format_note": "Документ",
     "answer_with_context": "Ответ",
     "digest": "Дайджест",
     "chat": "Чат",
@@ -3496,7 +3496,7 @@ def _notify_member_added(
     who = html_lib.escape(adder_name or "Участник")
     send_message(
         int(member_user_id),
-        f"{who} добавил(а) вас в заметку {link}.",
+        f"{who} добавил(а) вас в документ {link}.",
     )
 
 
@@ -3571,8 +3571,8 @@ def _discussion_item_title(owner: str, kind: str, item_id: str) -> str:
         except (TypeError, ValueError):
             note = None
         if note:
-            return str(note.get("title") or note.get("content") or "Заметка").strip() or "Заметка"
-        return "Заметка"
+            return str(note.get("title") or note.get("content") or "Документ").strip() or "Документ"
+        return "Документ"
     if kind == "chat":
         from assistant.stores import chat_threads as chat_threads_store
 
@@ -6464,7 +6464,7 @@ async def miniapp_calendar_tasks_create(
         raise HTTPException(status_code=400, detail="Укажите начало задачи")
     meeting_item = str(body.meeting_item or "").strip()
     if meeting_item and not str(body.note_id or "").isdigit():
-        raise HTTPException(status_code=400, detail="Пункт встречи — только вместе с заметкой")
+        raise HTTPException(status_code=400, detail="Пункт встречи — только вместе с документом")
     if not meeting_item:
         reused = await run_in_threadpool(
             _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
@@ -9719,7 +9719,7 @@ async def miniapp_gpt_chat(
                 # До разбора канваса: его парсер принимает и «голый» JSON.
                 clean_answer, edits = note_edits_lib.parse_blocks(str(out.get("answer") or ""))
                 if edits:
-                    out["answer"] = clean_answer or "Внёс изменения в заметку — проверьте подсвеченное."
+                    out["answer"] = clean_answer or "Внёс изменения в документ — проверьте подсвеченное."
                     out["note_edits"] = {"sheet_id": str(body.doc_sheet_id or ""), "edits": edits}
                     print(f"[note_edits] note={iid} sheet={body.doc_sheet_id} edits={len(edits)}")
                 elif "```leo-note" in str(out.get("answer") or "").lower():
@@ -10688,7 +10688,7 @@ async def miniapp_notes_bundle(
         )
     except Exception as e:
         local_notes = []
-        local_err = "Не удалось загрузить заметки. Обновите страницу чуть позже."
+        local_err = "Не удалось загрузить документы. Обновите страницу чуть позже."
         print(f"[miniapp_notes] local_fail err={e!r}")
     out_journal: list[dict[str, Any]] = []
     transcriptions: list[dict[str, Any]] = []
@@ -10943,7 +10943,7 @@ async def miniapp_note_versions(
 
     res = await run_in_threadpool(_run)
     if res is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, **res}
 
 
@@ -11074,11 +11074,11 @@ def _note_meeting_prompt_line(uid: int, kind: str, iid: str) -> str:
         names = [n for i, n in enumerate(names) if n and n not in names[:i]]
         if link:
             when = human_when(_iso_local(uid, link.get("start_iso")), _iso_local(uid, link.get("end_iso")), uid)
-            line = f"Эта заметка — материалы встречи «{link.get('summary') or 'Встреча'}» ({when})"
+            line = f"Этот документ — материалы встречи «{link.get('summary') or 'Встреча'}» ({when})"
             if link.get("event_id"):
                 line += f", event_id={link.get('event_id')}, calendar_id={link.get('calendar_id')}"
         else:
-            line = "Эта заметка — материалы созвона вне календаря"
+            line = "Этот документ — материалы созвона вне календаря"
         if names:
             line += ". Участники: " + ", ".join(names[:20])
         return line + "."
@@ -11193,7 +11193,7 @@ async def miniapp_note_meeting_get(
 
     res = await run_in_threadpool(_run)
     if res is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, **res}
 
 
@@ -11228,7 +11228,7 @@ async def miniapp_note_meeting_put(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if res is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, **res}
 
 
@@ -11266,7 +11266,7 @@ async def miniapp_note_people_add(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if people is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "people": people}
 
 
@@ -11310,7 +11310,7 @@ async def miniapp_note_meeting_candidates(
 
     res = await run_in_threadpool(_run)
     if res is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, **res}
 
 
@@ -12017,7 +12017,7 @@ async def miniapp_notes_trash_restore(
 
     res = await run_in_threadpool(_run)
     if res is None:
-        raise HTTPException(status_code=404, detail="Удалённая заметка не найдена")
+        raise HTTPException(status_code=404, detail="Удалённый документ не найден")
     return {"ok": True, **res}
 
 
@@ -12190,13 +12190,13 @@ async def miniapp_item_tags_set(
         try:
             nid = int(item_id)
         except ValueError as e:
-            raise HTTPException(status_code=400, detail="Некорректный id заметки") from e
+            raise HTTPException(status_code=400, detail="Некорректный id документа") from e
 
         def _check_local() -> bool:
             return notes_store.get_accessible_note(uid, nid, with_sharing=False) is not None
 
         if not await run_in_threadpool(_check_local):
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
     else:
         row = await run_in_threadpool(
             get_user_usage_event, str(uid), int(item_id)
@@ -12466,7 +12466,7 @@ async def miniapp_local_note_create(
 
     title = (body.title or "").strip()
     if not title:
-        raise HTTPException(status_code=400, detail="Укажите заголовок заметки")
+        raise HTTPException(status_code=400, detail="Укажите заголовок документа")
     desc = (body.description or "").strip()
     uid = int(principal.telegram_user_id)
 
@@ -12510,7 +12510,7 @@ async def miniapp_local_note_patch(
                 raise HTTPException(
                     status_code=409,
                     detail={
-                        "message": "Заметка открылась не полностью — откройте её заново, чтобы не потерять текст",
+                        "message": "Документ открылся не полностью — откройте его заново, чтобы не потерять текст",
                         "item": current,
                         "preview_overwrite": True,
                     },
@@ -12531,7 +12531,7 @@ async def miniapp_local_note_patch(
         except notes_store.NoteConflictError as e:
             raise HTTPException(
                 status_code=409,
-                detail={"message": "Заметка изменена другим участником", "item": e.note},
+                detail={"message": "Документ изменён другим участником", "item": e.note},
             ) from e
         if item is None:
             return None
@@ -12571,7 +12571,7 @@ async def miniapp_local_note_patch(
 
     item = await run_in_threadpool(_run)
     if not item:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     if yjs_saved:
         from assistant.realtime.yrooms import rooms as yjs_rooms
 
@@ -12609,7 +12609,7 @@ async def miniapp_local_note_duplicate(
 
     item = await run_in_threadpool(_run)
     if not item:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "id": item["id"], "item": item}
 
 
@@ -12632,7 +12632,7 @@ async def miniapp_local_note_copy_to_knowledge(
 
     item = await run_in_threadpool(_run)
     if not item:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "id": item["id"], "item": item}
 
 
@@ -12655,7 +12655,7 @@ async def miniapp_local_note_pin(
 
     ok = await run_in_threadpool(_run)
     if not ok:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "pinned": bool(body.pinned)}
 
 
@@ -12681,7 +12681,7 @@ async def miniapp_local_note_delete(
 
     action = await run_in_threadpool(_run)
     if action == "missing":
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     if action == "deleted":
         from assistant.stores import share_links as share_links_store
 
@@ -12702,7 +12702,7 @@ async def miniapp_local_note_get(
     uid = int(principal.telegram_user_id)
     item = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
     if not item:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     from assistant.services import transcription_notes as tnotes
 
     if tnotes.is_transcription_note(item):
@@ -12766,7 +12766,7 @@ async def miniapp_note_sheets_list(
 
     sheets = await run_in_threadpool(_run)
     if sheets is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "sheets": sheets}
 
 
@@ -12801,7 +12801,7 @@ async def miniapp_note_sheet_create(
     except note_sheets_store.SheetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     await run_in_threadpool(_memory_sheet_changed, uid, note_id)
     _track(uid, "sheet.create", kind=str(item.get("kind") or "doc"), source="manual")
     return {"ok": True, "item": item}
@@ -13090,7 +13090,7 @@ async def miniapp_local_note_pdf(
     uid = int(principal.telegram_user_id)
     note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
     if not note:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
 
     def _send() -> None:
         from assistant.skills.journal_pdf import deliver_note_pdf_sync
@@ -13188,7 +13188,7 @@ async def miniapp_local_note_export(
     uid = int(principal.telegram_user_id)
     note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
     if not note:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return await _miniapp_note_export(
         lambda: note_export_for_user(str(uid), int(note_id), body.format),
         body,
@@ -13255,7 +13255,7 @@ async def miniapp_note_sheets_order(
     except note_sheets_store.SheetError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     if sheets is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "sheets": sheets}
 
 
@@ -13273,7 +13273,7 @@ async def miniapp_note_sheet_patch(
     if note_sheets_store.is_primary_id(sheet_id):
         # Основной лист: переименовать можно, как любой; текст — через заметку.
         if body.title is None or body.description is not None or body.kind is not None:
-            raise HTTPException(status_code=400, detail="Основную правьте через заметку")
+            raise HTTPException(status_code=400, detail="Основную правьте через документ")
 
         def _rename() -> dict[str, Any] | None:
             note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
@@ -13287,7 +13287,7 @@ async def miniapp_note_sheet_patch(
         except note_sheets_store.SheetError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         if primary is None:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         return {"ok": True, "item": primary, "note_updated_at": primary.get("updated_at")}
     if body.title is None and body.description is None and body.kind is None:
         raise HTTPException(status_code=400, detail="Укажите title и/или description")
@@ -13360,7 +13360,7 @@ async def miniapp_note_sheet_patch(
     except note_sheets_store.SheetError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     if item is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     if yjs_saved:
         from assistant.realtime.yrooms import rooms as yjs_rooms
 
@@ -13410,7 +13410,7 @@ async def miniapp_note_sheet_delete(
         except note_sheets_store.SheetError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         if res is None:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         await run_in_threadpool(_memory_sheet_changed, uid, note_id)
         return {"ok": True, **res}
     try:
@@ -13425,7 +13425,7 @@ async def miniapp_note_sheet_delete(
 
     ok = await run_in_threadpool(_run)
     if ok is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     if not ok:
         raise HTTPException(status_code=404, detail="Лист не найден")
     await run_in_threadpool(_memory_sheet_changed, uid, note_id)
@@ -13442,7 +13442,7 @@ async def miniapp_note_members_list(
     uid = int(principal.telegram_user_id)
     note = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
     if not note:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return {"ok": True, "members": note.get("members") or []}
 
 
@@ -13476,7 +13476,7 @@ async def miniapp_note_team_shares_get(
     except HTTPException:
         raise
     if not data:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return data
 
 
@@ -13494,7 +13494,7 @@ async def miniapp_note_team_shares_put(
     def _run() -> dict[str, Any]:
         note = notes_store.get_note(uid, note_id)
         if not note:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         return teams_store.set_note_teams(uid, note_id, list(body.team_ids or []))
 
     try:
@@ -13529,7 +13529,7 @@ async def miniapp_note_members_add(
     def _run() -> tuple[dict[str, Any], dict[str, Any]]:
         note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
         if not note:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         owner = str(note.get("owner_user_id") or uid)
         member_id, _contact = note_members.resolve_contact_telegram_id(
             owner_user_id=uid,
@@ -13539,7 +13539,7 @@ async def miniapp_note_members_add(
             owner_username=_miniapp_tg_username(principal),
         )
         if int(member_id) == int(owner):
-            raise HTTPException(status_code=400, detail="Это владелец заметки")
+            raise HTTPException(status_code=400, detail="Это владелец документа")
         member = note_members.add_member(owner, note_id, member_id)
         fresh = notes_store.get_accessible_note(uid, note_id)
         return member, fresh or note
@@ -13583,7 +13583,7 @@ async def miniapp_note_meeting_tasks(
     def _run() -> dict[str, Any]:
         note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
         if not note:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         return meeting_tasks.rows(note)
 
     return {"ok": True, **(await run_in_threadpool(_run))}
@@ -13730,7 +13730,7 @@ async def miniapp_note_share_attendees(
     def _run() -> tuple[dict[str, Any], dict[str, Any]]:
         note = notes_store.get_note(uid, note_id)
         if not note:
-            raise HTTPException(status_code=403, detail="Поделиться может только владелец заметки")
+            raise HTTPException(status_code=403, detail="Поделиться может только владелец документа")
         res = meeting_share.share_with_attendees(uid, note_id, owner_username=_miniapp_tg_username(principal))
         return res, notes_store.get_accessible_note(uid, note_id) or note
 
@@ -13830,7 +13830,7 @@ async def miniapp_note_collab(
 
     data = await run_in_threadpool(_run)
     if not data:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     return data
 
 
@@ -14762,7 +14762,7 @@ async def miniapp_note_ai_edit(
 
         note = notes_store.get_accessible_note(uid, note_id)
         if not note:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
         scope = (
             "Change ONLY the selected fragment below (and nothing else in the note); keep everything around it as is. "
@@ -14832,7 +14832,7 @@ async def miniapp_note_board_ai(
 
         note = notes_store.get_accessible_note(uid, note_id)
         if not note:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=tg_uname)
         prompt = board_ai_lib.block_text_prompt(instruction, blocks, str(body.board_text or ""))
         out = gpt_openrouter_answer_with_context(
@@ -14871,14 +14871,14 @@ async def miniapp_note_suggest_title(
 
         note = notes_store.get_accessible_note(uid, note_id)
         if not note:
-            raise HTTPException(status_code=404, detail="Заметка не найдена")
+            raise HTTPException(status_code=404, detail="Документ не найден")
         text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(note.get("body") or ""))).strip()
         if len(text) < 40:
             return ""
         set_openrouter_usage_telegram_user(telegram_user_id=uid, telegram_username=None)
         out = gpt_openrouter_answer_with_context(
             "Придумай короткое название этой заметки: 2–5 слов, по-русски, по сути содержания, "
-            "без кавычек, без точки в конце, без слов «заметка» и «встреча», если они не несут смысла. "
+            "без кавычек, без точки в конце, без слов «заметка», «документ» и «встреча», если они не несут смысла. "
             "Ответь только названием.",
             "",
             note_title="",
@@ -14921,7 +14921,7 @@ async def miniapp_canvas_image_generate(
 
     ok = await run_in_threadpool(_check)
     if not ok:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
 
     def _gen() -> list[dict[str, str]]:
         from assistant.lib import image_style
@@ -14990,7 +14990,7 @@ def _load_web_sheet_for_edit(uid: int, note_id: int, sheet_id: str) -> tuple[dic
         raise HTTPException(status_code=400, detail="Некорректный лист") from e
     note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
     if note is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     sheet = note_sheets_store.get_extra_sheet(note_id, extra_id)
     if not sheet or web_canvas_lib.normalize_kind(sheet.get("kind")) != web_canvas_lib.SHEET_KIND_WEB:
         raise HTTPException(status_code=404, detail="Полотно не найдено")
@@ -15008,7 +15008,7 @@ def _load_board_sheet_for_read(uid: int, note_id: int, sheet_id: str) -> dict[st
         raise HTTPException(status_code=400, detail="Некорректный лист") from e
     note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
     if note is None:
-        raise HTTPException(status_code=404, detail="Заметка не найдена")
+        raise HTTPException(status_code=404, detail="Документ не найден")
     sheet = note_sheets_store.get_extra_sheet(note_id, extra_id)
     if not sheet or str(sheet.get("kind") or "") != "board":
         raise HTTPException(status_code=404, detail="Макет не найден")
@@ -15902,7 +15902,7 @@ async def miniapp_todoist_note_create(
 
     title = (body.title or "").strip()
     if not title:
-        raise HTTPException(status_code=400, detail="Укажите заголовок заметки")
+        raise HTTPException(status_code=400, detail="Укажите заголовок документа")
     desc = (body.description or "").strip()
     uid = int(principal.telegram_user_id)
     tid: str | None = None
@@ -17511,7 +17511,7 @@ async def public_share_copy(
 
     link = await _resolve_public_share_or_404(token)
     if str(link.get("item_kind") or "") != "local":
-        raise HTTPException(status_code=400, detail="В свои заметки можно добавить только заметку")
+        raise HTTPException(status_code=400, detail="В свои документы можно добавить только документ")
     owner = str(link.get("user_id") or "")
     try:
         nid = int(link.get("item_id") or 0)
@@ -17555,7 +17555,7 @@ async def public_share_request_edit(
     link = await _resolve_public_share_or_404(token)
     if str(link.get("item_kind") or "") != "local":
         raise HTTPException(
-            status_code=400, detail="Запросить редактирование можно только для заметки"
+            status_code=400, detail="Запросить редактирование можно только для документа"
         )
     owner = str(link.get("user_id") or "")
     try:

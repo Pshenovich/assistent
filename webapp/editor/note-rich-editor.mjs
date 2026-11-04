@@ -2429,7 +2429,7 @@ function mountToolbar(toolbarEl, editor) {
     var looksImage =
       /^image\//i.test(mime) || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(name);
     if (!looksImage) {
-      window.alert("В заметку можно вставить изображение (JPG, PNG, HEIC…).");
+      window.alert("В документ можно вставить изображение (JPG, PNG, HEIC…).");
       return;
     }
     if (file.size > 25 * 1024 * 1024) {
@@ -2512,7 +2512,7 @@ function mountToolbar(toolbarEl, editor) {
     item("indent", "", "indent", "Сдвинуть вправо") +
     item("outdent", "", "outdent", "Сдвинуть влево") +
     item("divider", "", "divider", "Разделитель") +
-    item("noteref", "", "noteref", "Ссылка на заметку") +
+    item("noteref", "", "noteref", "Ссылка на документ") +
     "</div>" +
     '<div class="note-tg-page hidden" data-page="heading">' +
     '<button type="button" class="note-tg-menu-item note-tg-menu-page note-tg-menu-back" data-go="main">' +
@@ -2770,7 +2770,7 @@ function mountToolbar(toolbarEl, editor) {
 
   function syncFontTarget(panel) {
     var hint = panel.querySelector("[data-font-target]");
-    if (hint) hint.textContent = fontTargetIsDoc() ? "Ко всей заметке · выделите текст, чтобы изменить часть" : "К выделенному тексту";
+    if (hint) hint.textContent = fontTargetIsDoc() ? "Ко всему документу · выделите текст, чтобы изменить часть" : "К выделенному тексту";
   }
 
   // Телефон: пока открыто меню панели, системное меню выделения («Вырезать / Скопировать»)
@@ -3146,7 +3146,7 @@ var NOTE_REF_CHIP_ICON_SVG = refSvg(
 /** Типы сущностей в «+»: порядок — как в меню. */
 var NOTE_REF_KINDS = [
   { kind: "task", label: "Задача", icon: refSvg('<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>') },
-  { kind: "note", label: "Заметка", icon: NOTE_REF_CHIP_ICON_SVG },
+  { kind: "note", label: "Документ", icon: NOTE_REF_CHIP_ICON_SVG },
   { kind: "person", label: "Человек", icon: refSvg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>') },
   { kind: "reminder", label: "Напоминание", icon: refSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>') },
 ];
@@ -3169,7 +3169,7 @@ function noteRefIconFor(refKind) {
 }
 
 function normalizeNoteRefLabel(label, refKind) {
-  var fallback = refKind && noteRefKindMeta(refKind) ? noteRefKindMeta(refKind).label : "Заметка";
+  var fallback = refKind && noteRefKindMeta(refKind) ? noteRefKindMeta(refKind).label : "Документ";
   return String(label || "").replace(/\s+/g, " ").trim() || fallback;
 }
 
@@ -3406,7 +3406,7 @@ function createNoteRefExtensions(ctx) {
               copy.className = "note-ref-suggest-copy";
               var title = document.createElement("span");
               title.className = "note-ref-suggest-label";
-              title.textContent = row.label || "Заметка";
+              title.textContent = row.label || "Документ";
               copy.appendChild(title);
               if (row.hint) {
                 var hint = document.createElement("span");
@@ -3446,7 +3446,7 @@ function createNoteRefExtensions(ctx) {
               }
               var q = document.createElement("span");
               q.className = "note-ref-suggest-query" + (ctx.refQuery ? "" : " is-placeholder");
-              q.textContent = ctx.refQuery || (meta ? "Поиск" : "Поиск: задача, заметка, человек…");
+              q.textContent = ctx.refQuery || (meta ? "Поиск" : "Поиск: задача, документ, человек…");
               head.appendChild(q);
               el.appendChild(head);
 
@@ -5929,7 +5929,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261103-boardtpl3",
+  assetVersion: "20261104-doctype1",
   Y: Y,
   mount: mount,
   mountTable: mountTable,

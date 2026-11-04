@@ -493,7 +493,7 @@ _reg(Variant(
     _r_ins_evidence,
     lambda s: _need(len(_dicts(s.get("evidence"))) >= 1, "нет фактов-доказательств"),
     prefer=lambda s: len(_dicts(s.get("evidence"))) >= 2,
-    groups=[Group("evidence", 1, 4, lambda: {"fact": "0", "text": "Факт из заметки"})],
+    groups=[Group("evidence", 1, 4, lambda: {"fact": "0", "text": "Факт из документа"})],
 ))
 
 # --- metrics
@@ -896,7 +896,7 @@ _reg(Variant(
     _r_cards,
     lambda s: _need(len(_dicts(s.get("items"))) >= 1, "нет пунктов"),
     prefer=lambda s: len(_dicts(s.get("items"))) >= 1,
-    groups=[Group("items", 1, 6, lambda: {"title": "Новый пункт", "text": "Опишите или попросите заполнить из заметки"})],
+    groups=[Group("items", 1, 6, lambda: {"title": "Новый пункт", "text": "Опишите или попросите заполнить из документа"})],
 ))
 
 

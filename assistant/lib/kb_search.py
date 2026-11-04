@@ -234,7 +234,7 @@ def score_query_against_haystack(query: str, hay: str) -> float:
 
 _NOTE_SEARCH_INTRO_RE = re.compile(
     r"^(?:найди|найти|ищи|покажи|поиск|открой|дай)\s+"
-    r"(?:мне\s+)?(?:в\s+)?заметк\w*\s*"
+    r"(?:мне\s+)?(?:в\s+)?(?:заметк\w*|документ\w*)\s*"
     r"(?:(?:про|о|об|по)\s+)?(.+)$",
     re.IGNORECASE | re.UNICODE,
 )
@@ -254,6 +254,13 @@ _NOTE_STOPWORDS = frozenset(
         "заметке",
         "заметках",
         "заметкой",
+        "документ",
+        "документа",
+        "документу",
+        "документе",
+        "документы",
+        "документах",
+        "документом",
         "про",
         "об",
         "по",
@@ -350,7 +357,7 @@ def extract_note_search_query(text: str) -> str:
         flags=re.IGNORECASE | re.UNICODE,
     ).strip()
     cleaned = re.sub(
-        r"^(?:в\s+)?заметк\w*\s+(?:(?:про|о|об|по)\s+)?",
+        r"^(?:в\s+)?(?:заметк\w*|документ\w*)\s+(?:(?:про|о|об|по)\s+)?",
         "",
         cleaned,
         flags=re.IGNORECASE | re.UNICODE,

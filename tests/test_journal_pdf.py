@@ -172,4 +172,4 @@ def test_build_note_pdf_from_local_note(tmp_path, monkeypatch):
     data, fname, caption = jp.build_note_pdf(note)
     assert data[:4] == b"%PDF"
     assert fname.startswith("zametka")
-    assert "Заметка" in caption
+    assert "Документ" in caption

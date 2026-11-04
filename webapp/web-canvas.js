@@ -1518,9 +1518,9 @@
     var variantsUi = {};
     var layouts = []; // «Мои макеты» пользователя
     var LAYOUT_HINTS = {
-      auto: "Что будет на новом слайде? Можно оставить пустым — ИИ продолжит тему по заметке",
+      auto: "Что будет на новом слайде? Можно оставить пустым — ИИ продолжит тему по документу",
       custom: "Опишите раскладку: например, слева большая цифра, справа три карточки, внизу цитата",
-      saved: "О чём слайд? ИИ заполнит сохранённый макет текстом из заметки",
+      saved: "О чём слайд? ИИ заполнит сохранённый макет текстом из документа",
     };
     var menu = null;
     var hover = null;
@@ -1598,7 +1598,7 @@
         box.setAttribute("data-for", sid);
         box.innerHTML =
           '<div class="leo-review-head"><span>Слайд ' + (i + 1) + '</span><span class="leo-review-status"></span></div>' +
-          '<div class="leo-review-row"><textarea rows="2" placeholder="Что поправить в этом слайде? Например: сократи заголовок, добавь цифры из заметки"></textarea>' +
+          '<div class="leo-review-row"><textarea rows="2" placeholder="Что поправить в этом слайде? Например: сократи заголовок, добавь цифры из документа"></textarea>' +
           '<button type="button" class="leo-review-send" title="Применить правку к этому слайду" aria-label="Применить правку к слайду ' + (i + 1) + '">' +
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>' +
           "</button></div>";

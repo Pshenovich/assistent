@@ -978,7 +978,7 @@
     if (!el && f.route && f.route.needs === "note") {
       // Кнопка живёт внутри заметки: показать, где её создать или открыть.
       el = await waitFor("notes-create", 800);
-      text = "Откройте любую заметку — " + f.where.split("→").slice(-2).join("→").trim() + ". Или создайте новую здесь.";
+      text = "Откройте любой документ — " + f.where.split("→").slice(-2).join("→").trim() + ". Или создайте новый здесь.";
     }
     if (!el) {
       guiding = false;

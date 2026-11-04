@@ -1102,8 +1102,8 @@
         var id = data && data.item && data.item.id;
         setShareActionStatus(
           data && data.copied === false
-            ? "Это ваша заметка"
-            : "Добавлено в ваши заметки"
+            ? "Это ваш документ"
+            : "Добавлено в ваши документы"
         );
         if (id) {
           window.location.href = "/webapp/?note=" + encodeURIComponent(String(id));
@@ -1181,7 +1181,7 @@
       box.appendChild(
         makeShareActionLink({
           kind: "copy",
-          label: "Добавить в свои заметки",
+          label: "Добавить в свои документы",
           onClick: function () {
             if (!loggedIn) {
               ensureLoginThen("copy").catch(function (e) {

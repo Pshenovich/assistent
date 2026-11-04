@@ -29,7 +29,7 @@ async def handle(
     question = (text or "").strip()
     if not question:
         await msg.reply_text(
-            "Задайте вопрос о ваших заметках, транскрипциях или саммари встреч."
+            "Задайте вопрос о ваших документах, транскрипциях или саммари встреч."
         )
         return
 
@@ -53,7 +53,7 @@ async def handle(
         )
         if not fragments or not journal_context.strip():
             await msg.reply_text(
-                "В заметках, транскрипциях и саммари ничего подходящего не нашёл. "
+                "В документах, транскрипциях и саммари ничего подходящего не нашёл. "
                 "Попробуйте уточнить тему или дату."
             )
             return

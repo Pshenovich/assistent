@@ -96,8 +96,8 @@ def discussion_item_title(owner: str, kind: str, item_id: str) -> str:
         except (TypeError, ValueError):
             note = None
         if note:
-            return str(note.get("title") or note.get("content") or "Заметка").strip() or "Заметка"
-        return "Заметка"
+            return str(note.get("title") or note.get("content") or "Документ").strip() or "Документ"
+        return "Документ"
     if kind == "chat":
         from assistant.stores import chat_threads as chat_threads_store
 

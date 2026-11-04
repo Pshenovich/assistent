@@ -298,7 +298,7 @@ def add_member(
         raise ValueError("Нельзя добавить владельца как участника")
     note = notes_store.get_note(owner, int(note_id))
     if not note:
-        raise ValueError("Заметка не найдена")
+        raise ValueError("Документ не найден")
     if note.get("is_knowledge") and not allow_knowledge:
         raise ValueError("Документ базы знаний нельзя расшарить участникам")
     member_role = (role or "edit").strip() or "edit"
@@ -504,7 +504,7 @@ def create_edit_request(
     owner = _uid(owner_user_id)
     req = _uid(requester_user_id)
     if owner == req:
-        raise ValueError("Вы уже владелец заметки")
+        raise ValueError("Вы уже владелец документа")
     if is_member(owner, int(note_id), req):
         raise ValueError("Редактирование уже разрешено")
     with _LOCK:

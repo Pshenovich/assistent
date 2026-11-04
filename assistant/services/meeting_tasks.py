@@ -367,7 +367,7 @@ def group_op(viewer_uid: Any, note_id: int, key: str, op: str, *, by: str) -> di
         groups = [dict(g) for g in meta.get("task_groups") or [] if isinstance(g, dict)]
         gi = next((i for i, g in enumerate(groups) if str(g.get("key") or "") == key), -1)
         if gi < 0:
-            raise LookupError("Предложение не найдено — обновите заметку")
+            raise LookupError("Предложение не найдено — обновите документ")
         live = next((g for g in suggested_groups(meta, rows(note)["items"]) if g["id"] == key), None)
         if op == "reject" or not live:
             groups[gi]["state"] = "rejected" if op == "reject" else "stale"
@@ -597,11 +597,11 @@ def _owner_note(viewer_uid: Any, note_id: int) -> tuple[str, dict[str, Any]]:
 
     note = notes_store.get_accessible_note(viewer_uid, int(note_id), with_sharing=False)
     if not note:
-        raise LookupError("Заметка не найдена")
+        raise LookupError("Документ не найден")
     owner = str(note.get("owner_user_id") or note.get("user_id") or viewer_uid)
     full = notes_store.get_note(owner, int(note_id))
     if not full:
-        raise LookupError("Заметка не найдена")
+        raise LookupError("Документ не найден")
     return owner, full
 
 
@@ -617,7 +617,7 @@ def state_for(viewer_uid: Any, note_id: int, item_id: str) -> dict[str, Any]:
     for x in rows(note)["items"]:
         if x["id"] == item_id:
             return x
-    raise LookupError("Пункт не найден — обновите заметку")
+    raise LookupError("Пункт не найден — обновите документ")
 
 
 def claim(viewer_uid: Any, note_id: int, item_id: str, create: Any, *, by: str) -> dict[str, Any]:
@@ -780,12 +780,12 @@ def nest(
         target = str(parent_item or "")
         if target:
             if target not in idx:
-                raise LookupError("Пункт не найден — обновите заметку")
+                raise LookupError("Пункт не найден — обновите документ")
             if len(_chain(par, target)) >= MAX_DEPTH:
                 target = par.get(target, "")
         for iid in item_ids:
             if iid not in idx:
-                raise LookupError("Пункт не найден — обновите заметку")
+                raise LookupError("Пункт не найден — обновите документ")
             if target and (iid == target or iid in _chain(par, target)):
                 raise ValueError("Задачу нельзя вложить в её же подзадачу")
         for iid in item_ids:
@@ -898,7 +898,7 @@ def apply(viewer_uid: Any, note_id: int, item_id: str, op: str, *, by: str, **kw
     tasks = list(meta.get("tasks") or [])
     i = _find(meta, item_id)
     if i < 0:
-        raise LookupError("Пункт не найден — обновите заметку")
+        raise LookupError("Пункт не найден — обновите документ")
     t = dict(tasks[i])
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     if op == "done":

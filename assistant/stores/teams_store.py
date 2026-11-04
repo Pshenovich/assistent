@@ -755,7 +755,7 @@ def set_note_teams(
     owner = _uid(owner_user_id)
     note = notes_store.get_note(owner, int(note_id))
     if not note:
-        raise ValueError("Заметка не найдена")
+        raise ValueError("Документ не найден")
     if not note.get("is_knowledge"):
         raise ValueError("С командой можно делиться только документами базы знаний")
     wanted: list[int] = []

@@ -189,7 +189,7 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
-  const NOTE_EDITOR_ASSET_V = "20261103-boardtpl3"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261104-doctype1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
 
@@ -556,7 +556,7 @@
     ov.className = "note-draft-conflict-overlay";
     ov.innerHTML =
       '<div class="note-draft-conflict-sheet" role="dialog" aria-modal="true">' +
-      "<p>Заметка уже изменилась на другом устройстве. Что оставить?</p>" +
+      "<p>Документ уже изменился на другом устройстве. Что оставить?</p>" +
       '<div class="note-draft-conflict-actions">' +
       '<button type="button" class="btn" data-choice="server">Оставить с сервера</button>' +
       '<button type="button" class="btn" data-choice="mine">Заменить своим текстом</button>' +
@@ -600,7 +600,7 @@
     var notifyKey = id + ":" + String(server.revision || "");
     if (noteDraftConflictNotified[notifyKey]) return;
     noteDraftConflictNotified[notifyKey] = true;
-    showNoteToast("Заметка изменилась на другом устройстве. Откройте её, чтобы выбрать версию.", {
+    showNoteToast("Документ изменился на другом устройстве. Откройте его, чтобы выбрать версию.", {
       duration: 7000,
     });
   }
@@ -1096,7 +1096,7 @@
             q.shift();
             writeOfflineQueue(q);
             console.warn("offline note_patch dropped", op, e);
-            showNoteToast("Заметку не удалось сохранить: " + (e.message || "ошибка сервера") + ". Текст остался на устройстве.", { duration: 7000 });
+            showNoteToast("Документ не удалось сохранить: " + (e.message || "ошибка сервера") + ". Текст остался на устройстве.", { duration: 7000 });
             continue;
           }
           if (isTransientApiError(e)) {
@@ -5189,7 +5189,7 @@
     }
     ov.innerHTML =
       '<div class="nl-sheet note-export-sheet" role="dialog" aria-label="Выгрузить">' +
-      '<div class="nl-sheet-title">' + (items.length > 1 ? "Выгрузить " + items.length + " заметок" : "Выгрузить заметку") + "</div>" +
+      '<div class="nl-sheet-title">' + (items.length > 1 ? "Выгрузить " + items.length + " документов" : "Выгрузить документ") + "</div>" +
       '<p class="note-export-label">Формат</p>' +
       '<span class="event-sheet-kind-switch" role="radiogroup" aria-label="Формат">' + seg(NOTE_EXPORT_FORMATS, "data-export-format", pref.format) + "</span>" +
       '<p class="note-export-label">Куда</p>' +
@@ -5259,7 +5259,7 @@
     var lineEl = document.getElementById("gpt-context-line");
     var firstLine = (gptChatState.context || "").split(/\n/)[0].trim() || (title || "").trim() || "…";
     if (firstLine.length > 42) firstLine = firstLine.slice(0, 42) + "…";
-    if (lineEl) lineEl.textContent = "Заметка: " + firstLine;
+    if (lineEl) lineEl.textContent = "Документ: " + firstLine;
 
     document.getElementById("gpt-messages").innerHTML = "";
     var mat = (gptChatState.context || "").split(/\n/)[0].trim().slice(0, 40);
@@ -6253,7 +6253,7 @@
   async function deleteLocalNoteById(noteId) {
     var id = localNoteIdFrom({ id: noteId });
     if (!id) {
-      throw new Error("Некорректный идентификатор заметки");
+      throw new Error("Некорректный идентификатор документа");
     }
     if (isAppOffline() || String(id).indexOf("tmp_") === 0) {
       removeLocalFromCache(id);
@@ -7606,7 +7606,7 @@
       parse_calendar: "Разбор встречи (календарь)",
       parse_zoom: "Разбор Zoom-встречи",
       parse_reminder: "Разбор напоминания",
-      format_note: "Оформление заметки",
+      format_note: "Оформление документа",
       ask: "Вопрос к GPT",
       obuchat_transcribe: "Транскрипция",
       summarize: "Саммари",
@@ -7820,7 +7820,7 @@
     var sections = [
       {
         id: "notes",
-        label: "Заметки",
+        label: "Документы",
         kind: "local",
         items: (function () {
           splitTranscriptionsOutOfLocalNotes(data);
@@ -9157,7 +9157,7 @@
     return d.getDate() + "." + String(d.getMonth() + 1).padStart(2, "0") + " " + hm;
   }
 
-  var VOICE_HISTORY_SOURCE = { note: "Заметка", assistant: "Лео", telegram: "Telegram" };
+  var VOICE_HISTORY_SOURCE = { note: "Документ", assistant: "Лео", telegram: "Telegram" };
 
   function renderVoiceHistory(items) {
     var list = document.getElementById("voice-history-list");
@@ -11056,7 +11056,7 @@
 
   async function deleteContact(c) {
     var label = c.name || c.email || c.telegram_username || "контакт";
-    var ok = await confirmDialog("Удалить контакт «" + label + "»? Встречи и заметки останутся.");
+    var ok = await confirmDialog("Удалить контакт «" + label + "»? Встречи и документы останутся.");
     if (!ok) return false;
     try {
       await apiFetch("/contacts/" + encodeURIComponent(c.key || c.email), { method: "DELETE" });
@@ -14520,7 +14520,7 @@
       try {
         if (navigator.clipboard) navigator.clipboard.writeText(text);
       } catch (_) {}
-      showNoteToast("Заметка закрыта — текст диктовки скопирован в буфер");
+      showNoteToast("Документ закрыт — текст диктовки скопирован в буфер");
     }
   }
 
@@ -17693,7 +17693,7 @@
           ? String((document.getElementById("note-editor-title-input") || {}).value || "").trim()
           : "";
       var src = seed.source_title || openTitle || "";
-      ctxEl.textContent = src ? "Лео учтёт контекст: «" + src + "»" : "Лео учтёт контекст заметки";
+      ctxEl.textContent = src ? "Лео учтёт контекст: «" + src + "»" : "Лео учтёт контекст документа";
     }
     bindTrackerWwa(seed);
     trackerSheet.resp = { id: "", name: "" };
@@ -20448,7 +20448,7 @@
     [
       ["upload", UPLOAD_ICON, "Добавить запись"],
       ["dictate", MIC_ICON, "Надиктовать"],
-      ["note", NOTE_ICON.replace('width="15" height="15"', 'width="20" height="20"'), "Создать заметку"],
+      ["note", NOTE_ICON.replace('width="15" height="15"', 'width="20" height="20"'), "Создать документ"],
     ].forEach(function (a) {
       var b = document.createElement("button");
       b.type = "button";
@@ -20534,7 +20534,7 @@
       head.innerHTML = it.kind === "transcription" ? WAVE_ICON : NOTE_ICON;
       var t = document.createElement("span");
       t.className = "ev-mat-title";
-      t.textContent = (it.kind === "transcription" ? "Транскрипция" : "Заметка") + " · " + (it.title || "Без названия");
+      t.textContent = (it.kind === "transcription" ? "Транскрипция" : "Документ") + " · " + (it.title || "Без названия");
       head.appendChild(t);
       var open = document.createElement("button");
       open.type = "button";
@@ -20576,7 +20576,7 @@
       empty.className = "ev-materials-empty";
       empty.textContent = eventIsPast(ev)
         ? "Пока ничего нет. Добавьте запись встречи, надиктуйте или запишите итоги."
-        : "Встреча ещё не прошла. Можно заранее создать заметку — например, повестку; после встречи сюда добавятся запись и итоги.";
+        : "Встреча ещё не прошла. Можно заранее создать документ — например, повестку; после встречи сюда добавятся запись и итоги.";
       list.appendChild(empty);
     }
   }
@@ -20794,7 +20794,7 @@
         body: JSON.stringify({ event: meetingEventPayload(ev) }),
       });
     } catch (e) {
-      showNoteToast((e && e.message) || "Не удалось создать заметку");
+      showNoteToast((e && e.message) || "Не удалось создать документ");
       return;
     }
     var item = data && data.item;
@@ -21010,7 +21010,7 @@
 
   async function unlinkNoteMeeting() {
     var id = noteMeetingState.noteId;
-    if (!id || !(await confirmDialog("Отвязать заметку от встречи?"))) return;
+    if (!id || !(await confirmDialog("Отвязать документ от встречи?"))) return;
     try {
       await apiFetch("/notes/local/" + encodeURIComponent(id) + "/meeting", { method: "DELETE" });
       noteMeetingState.meeting = null;
@@ -21479,7 +21479,7 @@
         row.innerHTML = '<span class="cm-date"></span><span class="cm-title"></span><span class="cm-acts"></span><span class="cm-meta"></span>';
         row.querySelector(".cm-date").textContent = d ? d.getDate() + " " + RU_MON[d.getMonth()] : "";
         row.querySelector(".cm-title").textContent = m.summary || m.title || "Без названия";
-        row.querySelector(".cm-meta").textContent = m.summary ? m.title : (m.kind === "transcription" ? "транскрипция" : "заметка");
+        row.querySelector(".cm-meta").textContent = m.summary ? m.title : (m.kind === "transcription" ? "транскрипция" : "документ");
         row.querySelector(".cm-acts").appendChild(contactMaterialBtn({ note_id: m.note_id, kind: m.kind, title: m.title }));
         box.appendChild(row);
       });
@@ -21498,7 +21498,7 @@
     var b = document.createElement("button");
     b.type = "button";
     b.className = "cm-btn cm-btn--" + (m.kind === "transcription" ? "tr" : "note");
-    b.innerHTML = (m.kind === "transcription" ? WAVE_ICON : NOTE_ICON) + "<span>" + (m.kind === "transcription" ? "Саммари" : "Заметка") + "</span>";
+    b.innerHTML = (m.kind === "transcription" ? WAVE_ICON : NOTE_ICON) + "<span>" + (m.kind === "transcription" ? "Саммари" : "Документ") + "</span>";
     b.title = m.title || "";
     b.addEventListener("click", function (e) {
       e.preventDefault();
@@ -21593,7 +21593,7 @@
     var b = document.createElement("button");
     b.type = "button";
     b.className = "focus-analyze" + (focusAnalyzing ? " is-busy" : "");
-    b.title = focusAnalyzing ? "Ищу новые подсказки…" : "Найти новые подсказки в заметках и итогах встреч";
+    b.title = focusAnalyzing ? "Ищу новые подсказки…" : "Найти новые подсказки в документах и итогах встреч";
     b.setAttribute("aria-label", b.title);
     b.disabled = focusAnalyzing;
     b.innerHTML = FOCUS_ANALYZE_ICON;
@@ -21610,7 +21610,7 @@
     document.querySelectorAll("#actual-focus .focus-analyze").forEach(function (b) {
       b.classList.toggle("is-busy", focusAnalyzing);
       b.disabled = focusAnalyzing;
-      b.title = focusAnalyzing ? "Ищу новые подсказки…" : "Найти новые подсказки в заметках и итогах встреч";
+      b.title = focusAnalyzing ? "Ищу новые подсказки…" : "Найти новые подсказки в документах и итогах встреч";
       b.setAttribute("aria-label", b.title);
     });
   }
@@ -22181,7 +22181,7 @@
     ico.innerHTML = DISCUSS_ICONS[isTr ? "mic" : "note"] || "";
     b.appendChild(ico);
     var txt = tinboxEl("span", "tinbox-src-text");
-    txt.appendChild(tinboxEl("span", "tinbox-src-kind", isTr ? "Из встречи" : "Из заметки"));
+    txt.appendChild(tinboxEl("span", "tinbox-src-kind", isTr ? "Из встречи" : "Из документа"));
     txt.appendChild(tinboxEl("span", "tinbox-src-title", src.title || "Без названия"));
     b.appendChild(txt);
     var chev = tinboxEl("span", "tinbox-src-chev");
@@ -24971,7 +24971,7 @@
       body.innerHTML = "";
       var sub = document.createElement("p");
       sub.className = "focus-done-sub";
-      sub.textContent = "Встречи и чаты темы попадают в бриф к встрече. Тема общая для участников связанных чатов — каждый видит только свои заметки и свои чаты.";
+      sub.textContent = "Встречи и чаты темы попадают в бриф к встрече. Тема общая для участников связанных чатов — каждый видит только свои документы и свои чаты.";
       body.appendChild(sub);
       var seg = document.createElement("div");
       seg.className = "topic-scope";
@@ -25117,7 +25117,7 @@
     ["before_meetings", "Перед встречами", "за час: материалы и открытые вопросы"],
     ["chats", "Важное из чатов", "просьбы без ответа, риски, обещания"],
     ["chat_alerts", "Срочное из чатов", "сразу пуш, если в чате что-то критичное"],
-    ["weekly", "Итоги недели", "заметка по пятницам в 18:00"],
+    ["weekly", "Итоги недели", "документ по пятницам в 18:00"],
   ];
 
   async function openProactiveSettings() {
@@ -25562,7 +25562,7 @@
       var mt = document.createElement("span");
       mt.className = "meeting-card-mats";
       if (mats.transcription) mt.insertAdjacentHTML("beforeend", '<span title="Есть транскрипция">' + WAVE_ICON + "</span>");
-      if (mats.note) mt.insertAdjacentHTML("beforeend", '<span title="Есть заметка">' + NOTE_ICON + "</span>");
+      if (mats.note) mt.insertAdjacentHTML("beforeend", '<span title="Есть документ">' + NOTE_ICON + "</span>");
       meta.appendChild(mt);
     }
 
@@ -25632,7 +25632,7 @@
     return [
       ev.meet_url ? "онлайн" : String(ev.location || "").trim(),
       others > 1 ? others + " " + pluralRu(others, "участник", "участника", "участников") : "",
-      mats.note ? "есть заметка" : "",
+      mats.note ? "есть документ" : "",
     ].filter(Boolean).join(" · ");
   }
 
@@ -27400,7 +27400,7 @@
       b.className = "note-backlink-chip";
       b.innerHTML = isTr ? WAVE_ICON : NOTE_ICON;
       var t = document.createElement("span");
-      t.textContent = title || "Заметка";
+      t.textContent = title || "Документ";
       b.appendChild(t);
       b.title = t.textContent;
       b.addEventListener("click", function (e) {
@@ -27417,7 +27417,7 @@
     label.textContent = "Источник";
     host.appendChild(label);
     host.appendChild(chips);
-    if (task.note_id) add(task.note_id, srcTitle || "Заметка", "", false);
+    if (task.note_id) add(task.note_id, srcTitle || "Документ", "", false);
     if (!task.id) return;
     apiFetch("/notes/backlinks?kind=task&id=" + encodeURIComponent(String(task.id)), { method: "GET" })
       .then(function (r) {
@@ -27581,7 +27581,7 @@
     return feed;
   }
 
-  var POSTED_REF_KIND = { task: "Задача", note: "Заметка", transcription: "Транскрипция", event: "Встреча" };
+  var POSTED_REF_KIND = { task: "Задача", note: "Документ", transcription: "Транскрипция", event: "Встреча" };
   var POSTED_REF_ICON = {
     task: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
     note: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
@@ -27665,7 +27665,7 @@
       '<div class="note-paie-plus-menu hidden"></div>' +
       '<div class="note-paie-attach-preview hidden"></div>' +
       '<div class="note-paie-toprow">' +
-      '<button type="button" class="note-paie-attach" aria-label="Добавить" title="Файл, задача, заметка, транскрипция или встреча" aria-haspopup="true" aria-expanded="false">' +
+      '<button type="button" class="note-paie-attach" aria-label="Добавить" title="Файл, задача, документ, транскрипция или встреча" aria-haspopup="true" aria-expanded="false">' +
       DISCUSS_ICONS.plus +
       "</button></div>" +
       '<div class="note-paie-composer-row">' +
@@ -27794,7 +27794,7 @@
         closeMenu();
         fileInput.click();
       });
-      [["task", DISCUSS_ICONS.taskBox, "Задачу"], ["note", DISCUSS_ICONS.note, "Заметку"], ["transcription", DISCUSS_ICONS.wave, "Транскрипцию"], ["event", DISCUSS_ICONS.cal, "Встречу"]].forEach(function (k) {
+      [["task", DISCUSS_ICONS.taskBox, "Задачу"], ["note", DISCUSS_ICONS.note, "Документ"], ["transcription", DISCUSS_ICONS.wave, "Транскрипцию"], ["event", DISCUSS_ICONS.cal, "Встречу"]].forEach(function (k) {
         addItem(menu, plusItemHtml(k[1], k[2]), function () {
           openPicker(k[0]);
         });
@@ -27819,7 +27819,7 @@
       search.type = "search";
       search.className = "note-paie-plus-search";
       search.autocomplete = "off";
-      search.placeholder = { task: "Найти задачу", note: "Найти заметку", transcription: "Найти транскрипцию", event: "Найти встречу" }[kind];
+      search.placeholder = { task: "Найти задачу", note: "Найти документ", transcription: "Найти транскрипцию", event: "Найти встречу" }[kind];
       menu.appendChild(search);
       var list = document.createElement("div");
       list.className = "note-paie-plus-notes";
@@ -30296,7 +30296,7 @@
     var apply = document.getElementById("notes-filter-apply");
     if (apply) {
       var n = notesFilterPreviewCount(f);
-      apply.textContent = n ? "Показать " + n + " " + pluralRu(n, "заметку", "заметки", "заметок") : "Ничего не найдено";
+      apply.textContent = n ? "Показать " + n + " " + pluralRu(n, "документ", "документа", "документов") : "Ничего не найдено";
       apply.disabled = !n;
     }
   }
@@ -30423,12 +30423,12 @@
       row.classList.add("is-restored");
       btn.textContent = "Открыть";
       btn.disabled = false;
-      showNoteToast("Заметка «" + String(it.title || "") + "» возвращена");
+      showNoteToast("Документ «" + String(it.title || "") + "» возвращён");
       loadNotes().catch(function () {});
     } catch (e) {
       btn.disabled = false;
       btn.textContent = "Вернуть";
-      showNoteToast((e && e.message) || "Не удалось вернуть заметку");
+      showNoteToast((e && e.message) || "Не удалось вернуть документ");
     }
   }
 
@@ -32287,7 +32287,7 @@
 
   async function uploadCanvasImageFile(file) {
     var noteId = noteSheetsNoteId();
-    if (!noteId || !file) throw new Error("Нет заметки или файла");
+    if (!noteId || !file) throw new Error("Нет документа или файла");
     var fd = new FormData();
     fd.append("file", file, file.name || "image.png");
     var res = await apiFetch(
@@ -32307,7 +32307,7 @@
   async function generateCanvasImageDataUrl(prompt, sheetId) {
     var noteId = noteSheetsNoteId();
     var text = String(prompt || "").trim();
-    if (!noteId) throw new Error("Нет заметки");
+    if (!noteId) throw new Error("Нет документа");
     if (!text) throw new Error("Введите описание картинки");
     var res = await apiFetch(
       "/notes/local/" + encodeURIComponent(String(noteId)) + "/canvas-image",
@@ -32340,7 +32340,7 @@
   function webCanvasSheetPath(sheetId) {
     var noteId = noteSheetsNoteId();
     if (!noteId || String(noteId).indexOf("tmp_") === 0) {
-      throw new Error("Заметка ещё не сохранена");
+      throw new Error("Документ ещё не сохранён");
     }
     if (isAppOffline()) throw new Error("Нет сети — правки презентации недоступны офлайн");
     return (
@@ -32998,7 +32998,7 @@
     var before = left.getHtml();
     var res = applyAiEditsToHtml(before, edits);
     if (!res.applied) {
-      showNoteToast("ИИ не нашёл, что поменять в заметке — уточните запрос");
+      showNoteToast("ИИ не нашёл, что поменять в документе — уточните запрос");
       return;
     }
     left.setHtml(res.html, { preserveCursor: true });
@@ -33086,7 +33086,7 @@
     var left = await aiEditLeftEditor(rec);
     if (!left) return;
     if (aiHtmlKey(left.getHtml()) !== aiHtmlKey(rec.after)) {
-      showNoteToast("Заметку уже меняли после этой правки — подсветить не получится");
+      showNoteToast("Документ уже меняли после этой правки — подсветить не получится");
       return;
     }
     if (isMobileNoteLayout() && isNoteDiscussionOpen()) closeNoteDiscussion();
@@ -33107,7 +33107,7 @@
     if (!left) return;
     var expect = undone ? rec.after : rec.before;
     if (aiHtmlKey(left.getHtml()) !== aiHtmlKey(expect)) {
-      showNoteToast("Заметку уже меняли после этой правки — поправьте вручную");
+      showNoteToast("Документ уже меняли после этой правки — поправьте вручную");
       return;
     }
     if (noteAiReview && noteAiReview.rec === rec) {
@@ -33162,7 +33162,7 @@
           setAiEditRecordUndone(rec, false);
         });
       } else {
-        btn("Показать в заметке", "is-primary", function () {
+        btn("Показать в документе", "is-primary", function () {
           showAiEditRecord(rec);
         });
         btn("Отменить", "", function () {
@@ -34040,7 +34040,7 @@
         noteId: currentId,
         sheetId: String(s.id),
         label: title,
-        hint: "Лист этой заметки",
+        hint: "Лист этого документа",
       });
     });
 
@@ -34057,7 +34057,7 @@
         noteId: id,
         sheetId: "",
         label: title,
-        hint: "Заметка",
+        hint: "Документ",
       });
     });
 
@@ -34421,7 +34421,7 @@
         if (!items.length) return;
         var label = document.createElement("span");
         label.className = "event-sheet-row-label";
-        label.textContent = items.length > 1 ? "Заметки" : "Заметка";
+        label.textContent = items.length > 1 ? "Документы" : "Документ";
         host.appendChild(label);
         var chips = document.createElement("span");
         chips.className = "note-backlinks";
@@ -34656,8 +34656,8 @@
       createBtn.setAttribute("aria-label", "Загрузить транскрипцию");
       createBtn.setAttribute("title", "Новая транскрипция");
     } else {
-      createBtn.setAttribute("aria-label", "Создать заметку");
-      createBtn.setAttribute("title", "Новая заметка");
+      createBtn.setAttribute("aria-label", "Создать документ");
+      createBtn.setAttribute("title", "Новый документ");
     }
     syncKnowledgeCreateFab();
   }
@@ -35191,7 +35191,7 @@
       addMenuItem("Поделиться", function () {
         shareChatThread(thread);
       });
-      addMenuItem("Добавить к заметке", function () {
+      addMenuItem("Добавить к документу", function () {
         addChatThreadToNote(thread);
       });
       addMenuItem(
@@ -35417,7 +35417,7 @@
     el.textContent =
       "🧠 Память Лео: " + done + " из " + total + " материалов" +
       (pending.length ? " · догружаю «" + pending[0] + "»" + (total - done > 1 ? " и ещё " + (total - done - 1) : "") : "");
-    el.title = "Новые заметки и встречи попадают в память Лео примерно через минуту. Пока материал не загружен, Лео может его не знать.";
+    el.title = "Новые документы и встречи попадают в память Лео примерно через минуту. Пока материал не загружен, Лео может его не знать.";
     el.classList.remove("hidden");
     leoMemoryTimer = setTimeout(refreshLeoMemoryStatus, 30000);
   }
@@ -35959,12 +35959,12 @@
       live.className = "note-editor-members-live";
       live.textContent =
         online.length === 1
-          ? online[0].name + " сейчас в заметке"
+          ? online[0].name + " сейчас в документе"
           : online
               .map(function (p) {
                 return p.name;
               })
-              .join(", ") + " сейчас в заметке";
+              .join(", ") + " сейчас в документе";
       row.appendChild(live);
     }
   }
@@ -37230,7 +37230,7 @@
     var noteId = currentOpenNoteId();
     if (!wrap || wrap._shareKind !== "local" || !noteId) return;
     if (String(noteId).indexOf("tmp_") === 0) {
-      showNoteToast("Заметка ещё сохраняется — попробуйте через пару секунд");
+      showNoteToast("Документ ещё сохраняется — попробуйте через пару секунд");
       return;
     }
     if (noteHistory) closeNoteHistory();
@@ -37376,8 +37376,8 @@
     var filterEl = ov.querySelector(".nh-filter");
     var sheets = nhSheetsForFilter();
     filterEl.innerHTML = "";
-    var opts = [{ key: "all", title: "Вся заметка" }].concat(sheets);
-    if (opts.length <= 2) opts = [{ key: "all", title: "Вся заметка" }];
+    var opts = [{ key: "all", title: "Весь документ" }].concat(sheets);
+    if (opts.length <= 2) opts = [{ key: "all", title: "Весь документ" }];
     opts.forEach(function (o) {
       var b = document.createElement("button");
       b.type = "button";
@@ -37660,7 +37660,7 @@
     var what = key === NOTE_SHEET_MAIN ? "«Основной»" : "листа «" + String(v.sheet_title || "Лист") + "»";
     var msg = live
       ? "Восстановить версию от " + nhStamp(nhDate(v)) + "?\n\nТекст " + what + " станет как в этой версии. Текущий текст не пропадёт — он сохранится в истории, и восстановление можно отменить."
-      : "Вернуть удалённый лист «" + String(v.sheet_title || "Лист") + "»?\n\nОн появится в заметке новым листом.";
+      : "Вернуть удалённый лист «" + String(v.sheet_title || "Лист") + "»?\n\nОн появится в документе новым листом.";
     if (!(await confirmDialog(msg))) return;
     if (noteHistory !== h) return;
     h.restoring = true;
@@ -37905,7 +37905,7 @@
             : "Убрать из списка"
           : isKb
             ? "Удалить документ"
-            : "Удалить заметку";
+            : "Удалить документ";
       addItem(
         deleteLabel,
         async function () {
@@ -37914,10 +37914,10 @@
             wrap._isNoteOwner === false
               ? isKb
                 ? "Убрать документ из списка?"
-                : "Убрать заметку из списка?"
+                : "Убрать документ из списка?"
               : isKb
                 ? "Удалить документ?"
-                : "Удалить заметку?";
+                : "Удалить документ?";
           if (!(await confirmDialog(msg))) return;
           try {
             await deleteLocalNoteById(shareId);
@@ -37978,7 +37978,7 @@
       if (gptComposerChipCount(noteGptEditor())) {
         return "Спросите про выделенный текст…";
       }
-      return isChatThread ? "Задайте вопрос…" : "Спросите или попросите изменить заметку…";
+      return isChatThread ? "Задайте вопрос…" : "Спросите или попросите изменить документ…";
     }
     if (mode === "research") {
       return gptComposerChipCount(noteGptEditor())
@@ -38371,7 +38371,7 @@
       noteReply.classList.add("is-nav");
       noteReply.setAttribute("role", "button");
       noteReply.setAttribute("tabindex", "0");
-      noteReply.title = "Показать в заметке";
+      noteReply.title = "Показать в документе";
       noteReply.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -38523,10 +38523,10 @@
   }
 
   var BOARD_TEMPLATE_ASK = {
-    scheme: "Схема по заметке",
-    gantt: "Гант по заметке",
-    org: "Оргструктура по заметке",
-    table: "Таблица по заметке",
+    scheme: "Схема по документу",
+    gantt: "Гант по документу",
+    org: "Оргструктура по документу",
+    table: "Таблица по документу",
   };
 
   /** «На моих данных»: чат с Лео и чип шаблона в поле ввода; отправит сам человек (можно добавить заметку «+»). */
@@ -38535,7 +38535,7 @@
     if (!label) return;
     openNoteDiscussion({ mode: "gpt", focus: true });
     setTimeout(function () {
-      if (insertGptTemplateChip(tplId, label)) showNoteToast("Отправьте — Лео соберёт по листам заметки. Другую заметку добавьте через «+»");
+      if (insertGptTemplateChip(tplId, label)) showNoteToast("Отправьте — Лео соберёт по листам документа. Другой документ добавьте через «+»");
     }, 60);
   }
 
@@ -38986,14 +38986,14 @@
       '<div class="note-paie-plus-page" data-plus-page="root">' +
       '<p class="note-menu-label">Добавить к сообщению</p>' +
       notePlusItem("file", "file", "Файл или фото") +
-      notePlusItem("note", "note", "Заметку") +
-      notePlusItem("chat", "chat", "Чат этой заметки") +
+      notePlusItem("note", "note", "Документ") +
+      notePlusItem("chat", "chat", "Чат этого документа") +
       notePlusItem("transcription", "wave", "Транскрипцию") +
       notePlusItem("summary", "sum", "Саммари") +
       "</div>" +
       '<div class="note-paie-plus-page hidden" data-plus-page="chats">' +
       '<button type="button" class="note-paie-plus-back" data-plus-back="chats">‹ Назад</button>' +
-      '<div class="note-paie-plus-notes" id="note-paie-plus-chats" role="listbox" aria-label="Чаты заметки"></div>' +
+      '<div class="note-paie-plus-notes" id="note-paie-plus-chats" role="listbox" aria-label="Чаты документа"></div>' +
       "</div>" +
       '<div class="note-paie-plus-page hidden" data-plus-page="notes">' +
       '<button type="button" class="note-paie-plus-back" id="note-paie-plus-back">‹ Назад</button>' +
@@ -39460,7 +39460,7 @@
       return ao - bo;
     });
     var MODE_META = {
-      gpt: ["spark", "Отвечает и правит заметку"],
+      gpt: ["spark", "Отвечает и правит документ"],
       research: ["globe", "Ищет в интернете, отчёт с источниками"],
       paie: ["people", "Четыре роли обсуждают и дают решение"],
       comment: ["people", "Сообщение участникам, ИИ не отвечает"],
@@ -40122,7 +40122,7 @@
     } else {
       title =
         sanitizeNoteTitle((note && (note.title || note.content)) || "") ||
-        String((note && (note.title || note.content)) || "Заметка");
+        String((note && (note.title || note.content)) || "Документ");
     }
     list.push({
       id: id,
@@ -40441,7 +40441,7 @@
     if (!chats.length) {
       var empty = document.createElement("p");
       empty.className = "note-paie-plus-empty";
-      empty.textContent = "В этой заметке пока нет других чатов с сообщениями";
+      empty.textContent = "В этом документе пока нет других чатов с сообщениями";
       list.appendChild(empty);
       return;
     }
@@ -41443,7 +41443,7 @@
     } else if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
       title =
         sanitizeNoteTitle(noteSheetState.rightNote.title || "") ||
-        String(noteSheetState.rightNote.title || "Заметка");
+        String(noteSheetState.rightNote.title || "Документ");
     }
     if (label) label.textContent = title;
     if (btn) btn.title = title;
@@ -41467,7 +41467,7 @@
         var cur = currentDiscussChatId();
         var chatObj = cur && cur > 0 ? noteChatById(cur) || {} : {};
         var members = ((wrap && wrap._noteMembers) || []).length;
-        if (cur === COMMENTS_CHAT_ID) subText = "Участники заметки · без ИИ";
+        if (cur === COMMENTS_CHAT_ID) subText = "Участники документа · без ИИ";
         else if (chatObj.visibility === "private" || (cur === 0 && wrap && wrap._newChatVisibility === "private")) {
           subText = "Личный · видите только вы";
         } else {
@@ -41573,8 +41573,8 @@
     var createBtn = document.createElement("button");
     createBtn.type = "button";
     createBtn.className = "note-pane-switch-create";
-    createBtn.setAttribute("aria-label", "Новая заметка");
-    createBtn.title = "Новая заметка";
+    createBtn.setAttribute("aria-label", "Новый документ");
+    createBtn.title = "Новый документ";
     createBtn.innerHTML =
       '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
     createBtn.addEventListener("click", function (e) {
@@ -41691,7 +41691,7 @@
     if (noteSheetsEnabled() || otherSheets.length) {
       var sheetsLabel = document.createElement("div");
       sheetsLabel.className = "note-pane-switch-label";
-      sheetsLabel.textContent = "Листы заметки";
+      sheetsLabel.textContent = "Листы документа";
       menu.appendChild(sheetsLabel);
     }
     otherSheets.forEach(function (s) {
@@ -41727,7 +41727,7 @@
     if (noteSheetState.rightMode === "note" && noteSheetState.rightNote) {
       var openTitle =
         sanitizeNoteTitle(noteSheetState.rightNote.title || "") ||
-        String(noteSheetState.rightNote.title || "Заметка");
+        String(noteSheetState.rightNote.title || "Документ");
       addItem(openTitle, true, function () {
         closeNotePaneSwitchMenu();
       }, "note");
@@ -41735,7 +41735,7 @@
     var sep = document.createElement("div");
     sep.className = "note-pane-switch-sep";
     menu.appendChild(sep);
-    addItem("Открыть другую заметку", false, function () {
+    addItem("Открыть другой документ", false, function () {
       renderNotePaneOpenNotePicker("", { resetProjectFilter: true });
       ensurePaneOpenNoteCandidates().then(function () {
         ensureUserTagsLoaded().finally(function () {
@@ -41807,7 +41807,7 @@
     if (noteSheetState.rightNotePersistTimer) clearTimeout(noteSheetState.rightNotePersistTimer);
     noteSheetState.rightNotePersistTimer = setTimeout(function () {
       persistRightForeignNote().catch(function (e) {
-        setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
+        setNoteEditorSaveHint(e.message || "Не удалось сохранить документ");
       });
     }, 1500);
   }
@@ -41979,7 +41979,7 @@
   async function fetchNoteForRightPane(item) {
     var kind = item.kind === "knowledge" ? "local" : item.kind || "local";
     var id = String(item.id || "");
-    if (!id) throw new Error("Нет id заметки");
+    if (!id) throw new Error("Нет id документа");
     if (kind === "journal") {
       var jres = await apiFetch("/notes/journal/" + encodeURIComponent(id), { method: "GET" });
       var jit = (jres && jres.item) || item.raw || {};
@@ -42022,16 +42022,16 @@
     try {
       var res = await apiFetch("/notes/local", {
         method: "POST",
-        body: JSON.stringify({ title: "Новая заметка", description: "" }),
+        body: JSON.stringify({ title: "Новый документ", description: "" }),
       });
       var item = (res && res.item) || null;
-      if (!item || item.id == null) throw new Error("Не удалось создать заметку");
+      if (!item || item.id == null) throw new Error("Не удалось создать документ");
       prependLocalInCache(item);
       if (notesDataCache) renderNotesPanesFromData(notesDataCache);
       await openNoteInRightPane({
         kind: "local",
         id: item.id,
-        title: item.title || "Новая заметка",
+        title: item.title || "Новый документ",
         raw: item,
       });
     } catch (e) {
@@ -42852,7 +42852,7 @@
   // Основной лист переименовывается так же (PATCH sheets/main); текст его — в самой заметке.
   async function persistPrimarySheetTitle(title) {
     var noteId = noteSheetsNoteId();
-    if (!noteId || String(noteId).indexOf("tmp_") === 0) throw new Error("Сначала сохраните заметку");
+    if (!noteId || String(noteId).indexOf("tmp_") === 0) throw new Error("Сначала сохраните документ");
     var res = await apiFetch("/notes/local/" + encodeURIComponent(String(noteId)) + "/sheets/main", {
       method: "PATCH",
       body: JSON.stringify({ title: title }),
@@ -42980,7 +42980,7 @@
     })[0];
     if (!next) {
       renderNoteSheetChips();
-      alert("Это единственный текстовый лист — его нельзя удалить. Можно удалить заметку целиком.");
+      alert("Это единственный текстовый лист — его нельзя удалить. Можно удалить документ целиком.");
       return;
     }
     var ok = await confirmYesNoDialog(
@@ -43967,7 +43967,7 @@
     addItem("Лист", "Текст и правки", "doc");
     addItem("Доска", "Схемы, блоки и стрелки", "board");
     addItem("Макет", "Экраны приложения для разработки", "design");
-    addItem("Презентация", "Слайды по заметке", "web");
+    addItem("Презентация", "Слайды по документу", "web");
     // В body: панель обсуждения — отдельный слой (z-index 220) поверх окна заметки (100),
     // внутри окна заметки меню уходило под неё.
     document.body.appendChild(menu);
@@ -44125,7 +44125,7 @@
     opts = opts || {};
     var noteId = await ensureNoteIdForSheets();
     if (!noteId) {
-      showNoteToast("Сначала сохраните заметку");
+      showNoteToast("Сначала сохраните документ");
       return;
     }
     var kindRaw = String(opts.kind || "doc").toLowerCase();
@@ -45548,7 +45548,7 @@
         title = getNoteEditorTitle().trim();
       } catch (_) {}
     }
-    return title || fallback || "заметке";
+    return title || fallback || "документе";
   }
 
   function beginNoteAgentSession(kind, itemId, mode, title) {
@@ -45807,7 +45807,7 @@
       if (t.length > 80) t = t.slice(0, 79) + "…";
       return t;
     }
-    return "Заметка";
+    return "Документ";
   }
 
   function titleFromAnswerHtml(html) {
@@ -45816,7 +45816,7 @@
     var text = String(tmp.textContent || "")
       .replace(/\s+/g, " ")
       .trim();
-    if (!text) return "Заметка";
+    if (!text) return "Документ";
     if (text.length > 80) text = text.slice(0, 79) + "…";
     return text;
   }
@@ -45872,7 +45872,7 @@
     var inst = getActiveNoteRichEditor();
     if (inst && typeof inst.appendHtml === "function") {
       inst.appendHtml(clean);
-      showNoteToast("Добавлено в заметку");
+      showNoteToast("Добавлено в документ");
       shareHaptic();
       return true;
     }
@@ -45887,11 +45887,11 @@
     var inst = getActiveNoteRichEditor();
     if (inst && typeof inst.appendText === "function") {
       inst.appendText(raw);
-      showNoteToast("Добавлено в заметку");
+      showNoteToast("Добавлено в документ");
       shareHaptic();
       return;
     }
-    showNoteToast("Не удалось вставить в заметку");
+    showNoteToast("Не удалось вставить в документ");
   }
 
   async function createNoteFromAnswerHtml(html) {
@@ -45911,7 +45911,7 @@
           method: "POST",
           body: body,
         });
-        showOfflineSavedToast("Заметка создана офлайн");
+        showOfflineSavedToast("Документ создан офлайн");
         shareHaptic();
         return;
       }
@@ -45922,7 +45922,7 @@
       var created = (createRes && createRes.item) || { id: createRes && createRes.id, title: title };
       prependLocalInCache(created);
       if (notesDataCache) renderNotesPanesFromData(notesDataCache);
-      showNoteToast("Заметка создана");
+      showNoteToast("Документ создан");
       shareHaptic();
     } catch (e) {
       if (isTransientApiError(e)) {
@@ -45936,7 +45936,7 @@
           method: "POST",
           body: body,
         });
-        showOfflineSavedToast("Заметка создана офлайн");
+        showOfflineSavedToast("Документ создан офлайн");
         shareHaptic();
         return;
       }
@@ -46056,7 +46056,7 @@
         }),
       });
       closeNoteLinkPicker();
-      showNoteToast("Ответ добавлен в комментарии заметки");
+      showNoteToast("Ответ добавлен в комментарии документа");
       shareHaptic();
     } catch (e) {
       alert(e.message || String(e));
@@ -46377,8 +46377,8 @@
         discussSelectionBtn("clarify", "clarify", "Уточнить") +
         discussSelectionBtn("task", "task", "Задача") +
         discussSelectionBtn("copy", "copy", "Копировать") +
-        discussSelectionBtn("into-note", "into-note", "В заметку") +
-        discussSelectionBtn("create-note", "create-note", "Создать заметку");
+        discussSelectionBtn("into-note", "into-note", "В документ") +
+        discussSelectionBtn("create-note", "create-note", "Создать документ");
       function stopSel(e) {
         e.preventDefault();
         e.stopPropagation();
@@ -47646,7 +47646,7 @@
       range = api.rangeForAnchor(root, q, (comment && comment.prefix) || "", (comment && comment.suffix) || "");
     } catch (_) {}
     if (!range) {
-      showNoteToast("Этого фрагмента в заметке уже нет");
+      showNoteToast("Этого фрагмента в документе уже нет");
       return false;
     }
     if (isMobileNoteLayout() && isNoteDiscussionOpen()) closeNoteDiscussion();
@@ -47777,7 +47777,7 @@
   function jumpToNoteFragment(frag) {
     var hit = findNoteFragment(frag);
     if (!hit) {
-      showNoteToast(frag.el ? "Этого блока на доске уже нет" : "Этого фрагмента в заметке уже нет");
+      showNoteToast(frag.el ? "Этого блока на доске уже нет" : "Этого фрагмента в документе уже нет");
       return false;
     }
     if (hit.board) {
@@ -48022,7 +48022,7 @@
             noteReply.classList.add("is-nav");
             noteReply.setAttribute("role", "button");
             noteReply.setAttribute("tabindex", "0");
-            noteReply.title = "Показать в заметке";
+            noteReply.title = "Показать в документе";
             noteReply.addEventListener("click", function (e) {
               e.preventDefault();
               e.stopPropagation();
@@ -48099,9 +48099,9 @@
       menu.innerHTML =
         discussMenuItem("reply", "reply", "Ответить") +
         discussMenuItem("task", "task", "Создать задачу") +
-        discussMenuItem("into-note", "note", "В заметку") +
-        discussMenuItem("create-note", "note", "Создать заметку") +
-        discussMenuItem("link", "link", "Связать с заметкой") +
+        discussMenuItem("into-note", "note", "В документ") +
+        discussMenuItem("create-note", "note", "Создать документ") +
+        discussMenuItem("link", "link", "Связать с документом") +
         discussMenuItem("copy", "copy", "Копировать") +
         discussMenuItem("delete", "trash", "Удалить", "note-discuss-menu-item--danger");
       actions.appendChild(more);
@@ -48249,7 +48249,7 @@
       var h = document.createElement("h4");
       h.textContent = "Комментариев пока нет";
       var p = document.createElement("p");
-      p.textContent = "Их видят все участники заметки. ИИ здесь не отвечает.";
+      p.textContent = "Их видят все участники документа. ИИ здесь не отвечает.";
       box.appendChild(h);
       box.appendChild(p);
       return box;
@@ -48317,7 +48317,7 @@
       box.appendChild(chatChips);
       return box;
     }
-    title.textContent = "Спросите про эту заметку";
+    title.textContent = "Спросите про этот документ";
     var hint = document.createElement("p");
     var wrap = document.getElementById("note-editor-more-wrap");
     var shared =
@@ -48325,7 +48325,7 @@
         ? !(wrap && wrap._newChatVisibility === "private")
         : chatNow !== null && (noteChatById(chatNow) || {}).visibility !== "private";
     hint.textContent =
-      "ИИ видит текст и таблицы заметки и может их править." + (shared ? " Чат видят все участники." : "");
+      "ИИ видит текст и таблицы документа и может их править." + (shared ? " Чат видят все участники." : "");
     box.appendChild(title);
     box.appendChild(hint);
     var html = "";
@@ -48403,7 +48403,7 @@
     { title: "Разобрать макет", open: true, items: [
       ["Разбери экран по UX", "Разбери экран по UX: что непонятно, что мелко, где не хватает контраста или единообразия"],
       ["Задание разработчику", "Напиши задание разработчику по экранам макета: элементы, поведение, состояния, размеры и цвета"],
-      ["Сверить с требованиями", "Сверь макет с требованиями из заметки: что есть, чего не хватает, что расходится"],
+      ["Сверить с требованиями", "Сверь макет с требованиями из документа: что есть, чего не хватает, что расходится"],
       ["Опечатки и состояния", "Найди опечатки и пропущенные состояния: пустой список, ошибка, загрузка, длинный текст"],
     ] },
     { title: "Внести правки", open: false, items: [
@@ -48994,7 +48994,7 @@
     if (!list) return;
     list.innerHTML = "";
     if (noteSheetsEnabled() && noteSheetState.sheets.length) {
-      appendContextMenuSection(list, "Листы заметки");
+      appendContextMenuSection(list, "Листы документа");
       var selectedSheets = {};
       selectedContextSheetIds().forEach(function (id) {
         selectedSheets[id] = true;
@@ -49430,7 +49430,7 @@
     var on = noteChatsEnabled();
     btn.classList.toggle("is-chats", on);
     // Чаты открываются из названия; кнопка справа — листы заметки.
-    var label = on ? "Листы заметки" : "Новый контекст GPT";
+    var label = on ? "Листы документа" : "Новый контекст GPT";
     var unread = on ? noteChatsUnreadTotal() : 0;
     var badge = btn.querySelector(".note-chats-badge");
     if (badge) badge.classList.add("hidden");
@@ -49770,7 +49770,7 @@
     });
     newSec.appendChild(newBtn);
 
-    var shared = section(NOTE_CHAT_ICONS.shared, "Общие", "Видят все участники заметки");
+    var shared = section(NOTE_CHAT_ICONS.shared, "Общие", "Видят все участники документа");
     var comments = chats.filter(function (c) {
       return Number(c.id) === COMMENTS_CHAT_ID;
     })[0] || { id: COMMENTS_CHAT_ID, title: "Комментарии" };
@@ -49833,7 +49833,7 @@
     } else if (current.can_edit) {
       var isShared = current.visibility === "shared";
       cardText.textContent = isShared
-        ? "Этот чат общий — его видят все участники заметки"
+        ? "Этот чат общий — его видят все участники документа"
         : "Этот чат личный — его видите только вы";
       card.appendChild(cardText);
       var toggle = document.createElement("button");
@@ -50031,7 +50031,7 @@
         syncNotePaneHeader();
       }
       renderNoteChatsMenu();
-      showNoteToast(visibility === "shared" ? "Чат виден всем участникам заметки" : "Чат виден только вам");
+      showNoteToast(visibility === "shared" ? "Чат виден всем участникам документа" : "Чат виден только вам");
     } catch (e) {
       showNoteToast((e && e.message) || "Не удалось изменить доступ");
     }
@@ -51016,14 +51016,14 @@
             tries += 1;
             if (sameNote) {
               setNotePaeiStatus(
-                (data.progress && data.progress.label) || "PAIE разбирает заметку…",
+                (data.progress && data.progress.label) || "PAIE разбирает документ…",
                 data.progress
               );
             }
             if (tries > 180) {
               if (sameNote) {
                 live._paeiRunning = false;
-                setNotePaeiStatus("PAIE всё ещё работает. Обновите заметку чуть позже.");
+                setNotePaeiStatus("PAIE всё ещё работает. Обновите документ чуть позже.");
               }
               if (meta) endNoteAgentSession(meta.kind, meta.itemId);
               finishPoll();
@@ -51104,7 +51104,7 @@
     syncNoteCommentsPanel();
     ensureNotePaieThread();
     openNoteDiscussion({ mode: "paie" });
-    setNotePaeiStatus("Анализ заметки…", { label: "Анализ заметки…", pct: 10 });
+    setNotePaeiStatus("Анализ документа…", { label: "Анализ документа…", pct: 10 });
     ensureDiscussionKnowledgeNotes()
       .then(ensureDiscussChat)
       .then(function () {
@@ -51293,7 +51293,7 @@
           );
           ensureNotePaieThread();
           setNotePaeiStatus(
-            (data.progress && data.progress.label) || "PAIE разбирает заметку…",
+            (data.progress && data.progress.label) || "PAIE разбирает документ…",
             data.progress
           );
           pollNotePaei(notePaeiPath());
@@ -51345,7 +51345,7 @@
             if (tries > 180) {
               if (sameNote) {
                 live._researchRunning = false;
-                setNotePaeiStatus("Research всё ещё работает. Обновите заметку чуть позже.");
+                setNotePaeiStatus("Research всё ещё работает. Обновите документ чуть позже.");
               }
               if (meta) endNoteAgentSession(meta.kind, meta.itemId);
               finishPoll();
@@ -51431,8 +51431,8 @@
     beginNoteAgentSession(kind, itemId, "research", sessionTitle);
     ensureNotePaieThread();
     openNoteDiscussion({ mode: "research" });
-    setNotePaeiStatus(body ? "Ищу в вебе…" : "Исследую заметку…", {
-      label: body ? "Ищу в вебе…" : "Исследую заметку…",
+    setNotePaeiStatus(body ? "Ищу в вебе…" : "Исследую документ…", {
+      label: body ? "Ищу в вебе…" : "Исследую документ…",
       pct: 12,
     });
     appendOptimisticUserMessage(body, quote);
@@ -51686,7 +51686,7 @@
         '<p class="ns-hint" id="ns-access-hint">Любой со ссылкой сможет читать</p>' +
         '<button type="button" class="btn ns-primary" id="note-share-sheet-copy">Скопировать ссылку</button>' +
         '<div id="note-share-links-block" class="note-share-links-block hidden">' +
-        '<p class="ns-label" id="note-share-links-label">Ссылки на эту заметку</p>' +
+        '<p class="ns-label" id="note-share-links-label">Ссылки на этот документ</p>' +
         '<div id="note-share-links-list" class="note-share-links-list"></div>' +
         "</div>" +
         "</section>" +
@@ -51697,7 +51697,7 @@
         '<input id="note-share-member-input" type="text" class="field-input" placeholder="Добавить из контактов" autocomplete="off" />' +
         '<div id="note-share-member-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
         "</div>" +
-        '<p id="note-share-members-hint" class="ns-hint">Участники видят заметку у себя в списке и могут её редактировать.</p>' +
+        '<p id="note-share-members-hint" class="ns-hint">Участники видят документ у себя в списке и могут его редактировать.</p>' +
         "</div>" +
         "</section>" +
         "</div>";
@@ -51747,7 +51747,7 @@
     if (accessSeg) accessSeg.classList.toggle("hidden", isChat);
     syncShareAccessHint();
     var linksLabel = document.getElementById("note-share-links-label");
-    if (linksLabel) linksLabel.textContent = isChat ? "Ссылки на этот чат" : "Ссылки на эту заметку";
+    if (linksLabel) linksLabel.textContent = isChat ? "Ссылки на этот чат" : "Ссылки на этот документ";
     var addBox = ov.querySelector(".note-share-member-add");
     if (addBox) addBox.classList.toggle("hidden", isChat && wrap._isNoteOwner === false);
     setSharePane(supportsMembers && initialPane === "people" ? "people" : "link");
@@ -51762,7 +51762,7 @@
           ? wrap._isNoteOwner === false
             ? "Добавлять участников может только автор чата."
             : "Участники видят чат во вкладке «Чаты», пишут в него и получают ответы ассистента."
-          : "Участники видят заметку у себя в списке и могут её редактировать.";
+          : "Участники видят документ у себя в списке и могут его редактировать.";
     }
     paintShareMembersList();
     paintShareSheetPicker();
@@ -51919,7 +51919,7 @@
     var ids = (link && link.sheet_ids) || [];
     var ctx = getShareCtx();
     if (ctx && ctx._shareKind === "chat") return "Весь чат";
-    if (!ids.length) return "Вся заметка";
+    if (!ids.length) return "Весь документ";
     var byId = {};
     shareSheetOptions().forEach(function (s) {
       byId[String(s.id)] = s.title || (isPrimarySheetId(s.id) ? "Основная" : "Лист");
@@ -52339,7 +52339,7 @@
     var kind = wrap && wrap._shareKind;
     var itemId = wrap && wrap._shareId;
     if (!kind || !itemId) return;
-    if (!(await confirmDialog(kind === "local" ? "Отключить все ссылки на эту заметку?" : "Закрыть публичный доступ по ссылке?"))) return;
+    if (!(await confirmDialog(kind === "local" ? "Отключить все ссылки на этот документ?" : "Закрыть публичный доступ по ссылке?"))) return;
     try {
       await apiFetch(
         "/notes/" + encodeURIComponent(kind) + "/" + encodeURIComponent(itemId) + "/share",
@@ -52573,7 +52573,7 @@
     var body = String(text || "").trim();
     if (!body) return;
     if (!draft || !draft.quote) {
-      alert("Выделите текст в заметке, чтобы оставить комментарий");
+      alert("Выделите текст в документе, чтобы оставить комментарий");
       return;
     }
     try {
@@ -52937,7 +52937,7 @@
   function openNoteEditorModal(title) {
     var ov = document.getElementById("note-editor-overlay");
     var titleEl = document.getElementById("note-editor-modal-title");
-    if (titleEl) titleEl.textContent = title || "Заметка";
+    if (titleEl) titleEl.textContent = title || "Документ";
     if (ov) {
       ov.classList.add("note-editor-overlay--fullscreen");
       ov.classList.remove("hidden");
@@ -53290,7 +53290,7 @@
         openNoteDetail(res.item, { isLocal: true });
       })
       .catch(function (err) {
-        showNoteToast((err && err.message) || "Не удалось открыть заметку");
+        showNoteToast((err && err.message) || "Не удалось открыть документ");
       });
   }
 
@@ -53748,7 +53748,7 @@
           if (notesDataCache) renderNotesPanesFromData(notesDataCache);
         }
       }
-      showNoteToast(isKnowledgeNoteItem(item) ? "Документ скопирован" : "Заметка скопирована");
+      showNoteToast(isKnowledgeNoteItem(item) ? "Документ скопирован" : "Документ скопирован");
     } catch (e) {
       alert(e.message || String(e));
     }
@@ -53787,12 +53787,12 @@
       n && n.is_owner === false
         ? isKb
           ? "Убрать документ из списка?"
-          : "Убрать заметку из списка?"
+          : "Убрать документ из списка?"
         : isKb
           ? "Удалить документ?"
           : isTranscriptionNoteItem(n)
             ? "Удалить транскрипцию?"
-            : "Удалить заметку?";
+            : "Удалить документ?";
     if (!(await confirmDialog(msg))) return;
     try {
       await deleteLocalNoteById(id);
@@ -53839,7 +53839,7 @@
         ? '<p class="muted empty-hint">Ищем во всём тексте заметок…</p>'
         : localAll.length && (notesSearchQuery.trim() || notesActiveProjectId || notesFilterActiveCount())
           ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект, #хэштег или фильтр.</p>'
-          : '<p class="muted empty-hint">Заметок пока нет — нажмите «+», чтобы написать или надиктовать первую. Ещё заметку можно создать в чате с ботом.</p>';
+          : '<p class="muted empty-hint">Документов пока нет — нажмите «+», чтобы создать первый: лист, доску, макет или презентацию. Ещё документ можно создать в чате с ботом.</p>';
     } else {
       appendNotesListGrouped(pn, local, function (n) {
         var id = String(localNoteIdFrom(n) || "");
@@ -54080,7 +54080,7 @@
 
   function notesListGroupOf(n) {
     if (n.pinned) return "Закреплённые";
-    if (notesSortKey() === "title") return "Все заметки";
+    if (notesSortKey() === "title") return "Все документы";
     var d = notesListParseDate(notesListDateOf(n));
     if (!d) return "Раньше";
     var diff = Math.round((notesListDayStart(new Date()) - notesListDayStart(d)) / 86400000);
@@ -54119,7 +54119,7 @@
     var last = null;
     items.forEach(function (n) {
       var g = notesListGroupOf(n);
-      if (g !== last && !(g === "Все заметки" && last === null)) {
+      if (g !== last && !(g === "Все документы" && last === null)) {
         var h = document.createElement("div");
         h.className = "notes-list-group";
         h.textContent = g;
@@ -54358,7 +54358,7 @@
           ? "Убрано из списка"
           : isTranscription
             ? "Транскрипция удалена"
-            : "Заметка удалена";
+            : "Документ удалён";
     var node = document.createElement("span");
     node.className = "note-toast-copy";
     node.appendChild(document.createTextNode(label + " · "));
@@ -55001,7 +55001,7 @@
     if (bar) bar.classList.toggle("hidden", !on);
     var n = notesSelectedCount();
     var count = document.getElementById("notes-select-count");
-    if (count) count.textContent = n ? "Выбрано " + n : "Выберите заметки";
+    if (count) count.textContent = n ? "Выбрано " + n : "Выберите документы";
     if (bar) {
       bar.querySelectorAll("[data-select-act]").forEach(function (b) {
         b.disabled = !n;
@@ -55408,7 +55408,7 @@
     opts = opts || {};
     var clean = stripJournalEmbeddedFooters(sanitizeNoteBody(body));
     if (!clean) {
-      return '<p class="muted small">Пустая заметка</p>';
+      return '<p class="muted small">Пустой документ</p>';
     }
     if (looksLikeMarkdown(clean)) {
       var mdHtml =
@@ -55882,7 +55882,7 @@
           }
         }
         if (n && n.body_preview_only && !(fresh && fresh.body != null)) {
-          showNoteToast("Не удалось загрузить заметку полностью — попробуйте ещё раз");
+          showNoteToast("Не удалось загрузить документ полностью — попробуйте ещё раз");
           return;
         }
         openLocalNoteDetailReady(n, opts, noteIsCreate, noteId);
@@ -55892,7 +55892,7 @@
         // В списке только превью (первые 600 символов) — открывать его на редактирование нельзя:
         // сохранение затёрло бы полный текст. Без сети показываем, что не загрузилось.
         if (n && n.body_preview_only) {
-          showNoteToast("Нет связи — заметка не загрузилась полностью. Попробуйте ещё раз");
+          showNoteToast("Нет связи — документ не загрузился полностью. Попробуйте ещё раз");
           if (notesSplitCurrentId === noteId) notesSplitCurrentId = "";
           syncNotesSplitLayout();
           return;
@@ -55955,7 +55955,7 @@
         ? "Заголовок документа"
         : isTranscriptionNoteItem(n)
           ? "Заголовок"
-          : "Заголовок заметки"
+          : "Заголовок документа"
     );
     moveProjectPickerToMeta(wrap);
     if (isKnowledge && noteId) {
@@ -56399,7 +56399,7 @@
             setNoteEditorSaveHint("");
           })
           .catch(function (e) {
-            setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
+            setNoteEditorSaveHint(e.message || "Не удалось сохранить документ");
           });
       }, noteSaveDelayMs());
     }
@@ -56417,7 +56417,7 @@
       }
       var fields = readFields();
       if (!fields.title) {
-        alert(isKnowledge ? "Введите заголовок документа" : "Введите заголовок заметки");
+        alert(isKnowledge ? "Введите заголовок документа" : "Введите заголовок документа");
         var titleEl = document.getElementById("note-editor-title-input");
         if (titleEl) titleEl.focus();
         return false;
@@ -56486,12 +56486,12 @@
       noteIsCreate
         ? isKnowledge
           ? "Новый документ"
-          : "Новая заметка"
+          : "Новый документ"
         : isKnowledge
           ? "Документ"
           : isTranscriptionNoteItem(n)
             ? "Транскрипция"
-            : "Заметка"
+            : "Документ"
     );
     var generatingSummary =
       isTranscriptionNoteItem(n) &&
@@ -56746,7 +56746,7 @@
       "</p>" +
       '<div class="note-fabric-card">' +
       '<textarea id="td-title" class="note-fabric-input note-fabric-input--title" rows="2" spellcheck="true" placeholder="Заголовок"></textarea>' +
-      '<textarea id="td-desc" class="note-fabric-input note-fabric-input--body" rows="8" spellcheck="true" placeholder="Текст заметки…"></textarea>' +
+      '<textarea id="td-desc" class="note-fabric-input note-fabric-input--body" rows="8" spellcheck="true" placeholder="Текст документа…"></textarea>' +
       "</div>" +
       '<button type="button" class="btn-todoist-sync" id="td-push">' +
       '<span class="btn-todoist-sync-ic" aria-hidden="true">✈</span>' +
@@ -56771,7 +56771,7 @@
           mergeTodoInCache(id, title, description);
           setNoteEditorSaveHint("");
         } catch (e) {
-          setNoteEditorSaveHint(e.message || "Не удалось сохранить заметку");
+          setNoteEditorSaveHint(e.message || "Не удалось сохранить документ");
         }
       }, 1500);
     }
@@ -56785,7 +56785,7 @@
       var title = (wrap.querySelector("#td-title").value || "").trim();
       var description = (wrap.querySelector("#td-desc").value || "").trim();
       if (!title) {
-        alert("Введите заголовок заметки");
+        alert("Введите заголовок документа");
         wrap.querySelector("#td-title").focus();
         return;
       }
@@ -56832,7 +56832,7 @@
     foot.addEventListener("click", function () {
       var t = (wrap.querySelector("#td-title").value || "").trim();
       var d = (wrap.querySelector("#td-desc").value || "").trim();
-      openGptChat("Заметка", (t + (d ? "\n\n" + d : "")).trim());
+      openGptChat("Документ", (t + (d ? "\n\n" + d : "")).trim());
     });
 
     async function runDelete() {
@@ -56847,7 +56847,7 @@
       }
     }
 
-    openNotesDetail(isCreate ? "Новая заметка" : "Заметка", wrap, foot);
+    openNotesDetail(isCreate ? "Новый документ" : "Документ", wrap, foot);
     var del = document.getElementById("notes-detail-del");
     if (del) {
       if (isCreate || !id) {
@@ -57373,7 +57373,7 @@
           if (notesDataCache) renderNotesPanesFromData(notesDataCache);
         }
         var items = [
-          { label: "Все заметки", hint: String(counts.all || ""), icon: !notesActiveProjectId ? "check" : "folder", active: !notesActiveProjectId, onClick: function () { pick(0); } },
+          { label: "Все документы", hint: String(counts.all || ""), icon: !notesActiveProjectId ? "check" : "folder", active: !notesActiveProjectId, onClick: function () { pick(0); } },
         ];
         getUserTagsFromCache().forEach(function (t) {
           var on = notesActiveProjectId !== "none" && Number(notesActiveProjectId) === Number(t.id);

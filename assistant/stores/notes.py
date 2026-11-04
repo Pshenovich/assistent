@@ -514,7 +514,7 @@ def create_note(
 
 class NoteConflictError(Exception):
     def __init__(self, note: dict[str, Any]) -> None:
-        super().__init__("Заметка изменена другим участником")
+        super().__init__("Документ изменён другим участником")
         self.note = note
 
 

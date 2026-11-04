@@ -463,7 +463,7 @@ def rule_prep(events: list[dict[str, Any]], kinds: dict[str, dict[str, int]], no
                 "tag": "📝 скоро встреча",
                 "urgency": 3,
                 "title": f"{when} — {ev.get('summary') or 'встреча'}",
-                "source": ", ".join(others[:3]) + (" · есть заметка встречи" if has_note else " · повестки нет")
+                "source": ", ".join(others[:3]) + (" · есть документ встречи" if has_note else " · повестки нет")
                 + (f" · переписка: «{threads[0]['subject']}»" + (f" и ещё {len(threads) - 1}" if len(threads) > 1 else "")
                    if threads else ""),
                 "ask": f"Подготовка к встрече «{ev.get('summary')}» {_hm(st, tz)} с {', '.join(others[:5])}"

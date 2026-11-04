@@ -122,11 +122,13 @@ ZOOM_INSTANT_PHRASES: tuple[str, ...] = (
 )
 NOTE_INTRO_PHRASES: tuple[str, ...] = (
     "добавь в заметки",
+    "добавь в документы",
     "заметка",
+    "документ:",
 )
 NOTE_SEARCH_INTRO_RE = re.compile(
     r"^(?:найди|найти|ищи|покажи|поиск)\s+"
-    r"(?:мне\s+)?(?:в\s+)?заметк\w*\s*"
+    r"(?:мне\s+)?(?:в\s+)?(?:заметк\w*|документ\w*)\s*"
     r"(?:про|о|об|по)?\s*(.+)$",
     re.IGNORECASE | re.UNICODE,
 )

@@ -145,7 +145,7 @@ def _operation_label(op: str) -> str:
     if op == "obuchat_transcribe":
         return "Транскрипция"
     if op == "note":
-        return "Заметка"
+        return "Документ"
     return op or "Запись"
 
 

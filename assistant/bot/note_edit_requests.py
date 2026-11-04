@@ -63,7 +63,7 @@ async def handle_note_edit_callback(
         link = note_members.note_title_link_html(title, int(req["note_id"]))
         send_message(
             int(req["requester_user_id"]),
-            f"Вам открыто редактирование заметки {link}.",
+            f"Вам открыто редактирование документа {link}.",
         )
         return
     text = f"Запрос на редактирование отклонён: {title} — {who}."
@@ -73,5 +73,5 @@ async def handle_note_edit_callback(
         pass
     send_message(
         int(req["requester_user_id"]),
-        f"Автор отклонил запрос на редактирование заметки «{html_escape(title)}».",
+        f"Автор отклонил запрос на редактирование документа «{html_escape(title)}».",
     )

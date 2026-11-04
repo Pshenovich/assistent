@@ -64,7 +64,7 @@ def test_invitee_opens_call_note_from_notification_link(env):
     assert resp.status_code == 200
 
     [(to, text)] = [m for m in sent if m[0] == invitee]
-    assert "добавил(а) вас в заметку" in text
+    assert "добавил(а) вас в документ" in text
     href = re.search(r'href="([^"]+)"', text).group(1).replace("&amp;", "&")
     url = urlparse(href)
     assert url.path == "/webapp/"

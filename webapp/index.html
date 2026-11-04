@@ -366,7 +366,7 @@
         <div id="notes-root">
           <div class="notes-subtabs-row">
             <div class="subtab-bar" role="tablist" aria-label="Тип записей" data-tour="saved-tabs">
-              <button type="button" class="subtab-btn active" data-subtab="notes">Заметки</button>
+              <button type="button" class="subtab-btn active" data-subtab="notes">Документы</button>
               <button type="button" class="subtab-btn" data-subtab="chats" data-tour="subtab-chats">Чаты</button>
               <button type="button" class="subtab-btn" data-subtab="transcriptions" data-tour="subtab-transcriptions">Транскрипции</button>
             </div>
@@ -455,15 +455,15 @@
         </div>
         <div id="notes-split-placeholder" class="notes-split-placeholder" aria-hidden="true">
           <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg>
-          <p>Выберите заметку слева</p>
-          <small>или нажмите «+», чтобы создать новую</small>
+          <p>Выберите документ слева</p>
+          <small>или нажмите «+», чтобы создать новый</small>
         </div>
         <button
           type="button"
           id="notes-create-btn" data-tour="notes-create"
           class="notes-fab hidden"
-          aria-label="Создать заметку"
-          title="Новая заметка"
+          aria-label="Создать документ"
+          title="Новый документ"
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true">
             <path d="M12 5v14M5 12h14" />
@@ -488,7 +488,7 @@
           </button>
           <button type="button" class="actual-create-menu-btn" data-notes-create="dictate" data-tour="notes-dictate" role="menuitem">
             <span class="actual-create-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
-            <span class="actual-create-copy"><b>Надиктовать</b><small>Новая заметка с включённым микрофоном</small></span>
+            <span class="actual-create-copy"><b>Надиктовать</b><small>Новый документ с включённым микрофоном</small></span>
           </button>
         </div>
         <div id="notes-detail" class="notes-detail hidden">
@@ -1070,7 +1070,7 @@
               <div id="contacts-empty" class="pf-empty hidden">
                 <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg></span>
                 <p class="pf-empty-title">Пока нет контактов</p>
-                <p class="pf-empty-text">Добавьте коллег — Лео подставит их в гостей встреч и узнает в заметках.</p>
+                <p class="pf-empty-text">Добавьте коллег — Лео подставит их в гостей встреч и узнает в документах.</p>
                 <button type="button" class="pf-btn" id="contacts-empty-add">Добавить контакт</button>
               </div>
               <p id="contacts-nothing" class="pf-hint hidden">Никого не нашли.</p>
@@ -1118,7 +1118,7 @@
                     <span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Новый агент</span></span></span>
                   </button>
                 </div>
-                <p class="pf-hint">Агенты появляются в обсуждении заметки — позовите нужного через @.</p>
+                <p class="pf-hint">Агенты появляются в обсуждении документа — позовите нужного через @.</p>
               </div>
               <p id="agents-err" class="error hidden"></p>
             </div>
@@ -2050,7 +2050,7 @@
           <span></span>
         </div>
         <div class="modal-body notes-trash-body">
-          <p class="notes-filter-hint">Удалённые заметки хранятся 30 дней — вместе с листами и проектом.</p>
+          <p class="notes-filter-hint">Удалённые документы хранятся 30 дней — вместе с листами и проектом.</p>
           <div id="notes-trash-list" class="notes-trash-list"></div>
         </div>
       </div>
@@ -2126,7 +2126,7 @@
                 <input type="text" id="contacts-f-aliases" class="pf-input" autocomplete="off" placeholder="Аня, Анечка" />
               </label>
             </div>
-            <p class="pf-hint">Через запятую. Лео узнает человека по любому из этих имён в заметках и встречах.</p>
+            <p class="pf-hint">Через запятую. Лео узнает человека по любому из этих имён в документах и встречах.</p>
           </div>
           <div class="pf-group contacts-form-teams">
             <p class="pf-group-title">Команды</p>
@@ -2302,7 +2302,7 @@
   </div>
 
   <div id="note-editor-overlay" class="modal-overlay hidden" aria-hidden="true">
-    <div class="note-pane-resizer" id="note-editor-resizer" role="separator" aria-orientation="vertical" aria-label="Ширина заметки" tabindex="0"></div>
+    <div class="note-pane-resizer" id="note-editor-resizer" role="separator" aria-orientation="vertical" aria-label="Ширина документа" tabindex="0"></div>
     <div class="modal modal--sheet note-editor-sheet" role="dialog" aria-modal="true" aria-labelledby="note-editor-modal-title">
       <div class="modal-form note-editor-modal-form">
         <div id="note-editor-web-back-bar" class="note-editor-web-back-bar hidden">
@@ -2312,7 +2312,7 @@
           <div id="note-editor-tags-wrap" class="note-editor-pad note-editor-pad--tags hidden"></div>
         </div>
         <div class="modal-header note-editor-modal-header" aria-hidden="true">
-          <h2 id="note-editor-modal-title" class="modal-title">Заметка</h2>
+          <h2 id="note-editor-modal-title" class="modal-title">Документ</h2>
         </div>
         <div class="modal-body note-editor-modal-body">
           <div id="note-editor-modal-body" class="note-editor-modal-content"></div>
@@ -2441,7 +2441,7 @@
               <path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6" />
             </svg>
           </button>
-          <div id="note-chats-menu" class="note-pane-switch-menu note-chats-menu hidden" role="menu" aria-label="Чаты заметки"></div>
+          <div id="note-chats-menu" class="note-pane-switch-menu note-chats-menu hidden" role="menu" aria-label="Чаты документа"></div>
         </div>
       </div>
       <div id="credits-bar" class="credits-bar hidden" tabindex="0" role="meter" aria-label="Кредиты ИИ на сегодня" aria-valuemin="0" aria-valuemax="100">
@@ -2465,7 +2465,7 @@
     <div class="note-link-backdrop" id="note-link-backdrop"></div>
     <div class="note-link-sheet" role="dialog" aria-modal="true" aria-labelledby="note-link-title">
       <div class="note-link-head">
-        <h3 id="note-link-title" class="note-link-title">Связать с заметкой</h3>
+        <h3 id="note-link-title" class="note-link-title">Связать с документом</h3>
         <button type="button" class="btn-text" id="note-link-cancel">Отмена</button>
       </div>
       <input type="search" id="note-link-search" class="note-link-search" placeholder="Поиск заметок" autocomplete="off" />
@@ -2495,22 +2495,22 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261029-spktools" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
   <script src="/webapp/board-geom.js?v=20261104-design42" defer></script>
   <script src="/webapp/board-blocks.js?v=20261103-boardtpl" defer></script>
-  <script src="/webapp/board-templates.js?v=20261103-boardtpl" defer></script>
+  <script src="/webapp/board-templates.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/board-import.js?v=20261104-design42" defer></script>
   <script src="/webapp/board-figma.js?v=20261104-design42" defer></script>
   <script src="/webapp/board.js?v=20261104-design42" defer></script>
-  <script src="/webapp/app.js?v=20261104-doctype1" defer></script>
+  <script src="/webapp/app.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261023-reply1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261030-orgui1" defer></script>
-  <script src="/webapp/onboarding.js?v=20261101-onb7" defer></script>
+  <script src="/webapp/onboarding.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>
 </html>

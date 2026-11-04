@@ -102,13 +102,13 @@ def _note_chat_transcript(user_id: int | str, sid: str) -> tuple[str, str]:
     owner = str(note.get("owner_user_id") or note.get("user_id") or "")
     viewer = str(int(user_id))
     if chat_id == note_chats.COMMENTS_CHAT_ID:
-        title = "Комментарии к заметке «" + str(note.get("title") or "Заметка") + "»"
+        title = "Комментарии к документу «" + str(note.get("title") or "Документ") + "»"
     else:
         chat = note_chats.chat_for_item(chat_id, owner, "local", str(note_id))
         if not note_chats.can_view(chat, viewer):
             return "", ""
         assert chat is not None
-        title = "Чат заметки «" + str(note.get("title") or "Заметка") + "»"
+        title = "Чат документа «" + str(note.get("title") or "Документ") + "»"
     rows = [
         r
         for r in note_chats.visible_comments(owner, "local", str(note_id), viewer)

@@ -419,7 +419,7 @@ def link_to_comment(
                 raise ValueError("Файл не найден")
             item = _row_to_dict(row)
             if item["owner_user_id"] != owner or item["item_kind"] != kind or item["item_id"] != iid:
-                raise ValueError("Файл не относится к этой заметке")
+                raise ValueError("Файл не относится к этому документу")
             if item["author_user_id"] != author:
                 raise ValueError("Нельзя прикрепить чужой файл")
             if item["comment_id"] not in (None, comment_id):

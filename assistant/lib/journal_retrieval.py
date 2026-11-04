@@ -14,7 +14,7 @@ _CONTEXT_MAX_CHARS = 12000
 _FRAGMENT_TEXT_MAX = 3500
 
 _SOURCE_LABELS = {
-    "note": "Заметка",
+    "note": "Документ",
     "transcript": "Транскрипция",
     "summary": "Саммари",
 }
