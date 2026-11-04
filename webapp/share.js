@@ -44,6 +44,15 @@
       .join("");
   }
 
+  // Всё, что идёт в innerHTML со страницы ссылки, — через белый список NoteHtml.
+  // Нет очистки (старый note-html.js в кэше) — показываем текстом, а не сырой HTML.
+  function cleanHtml(html) {
+    var api = window.NoteHtml;
+    if (api && typeof api.sanitizeHtml === "function") return api.sanitizeHtml(html);
+    var text = new DOMParser().parseFromString(String(html || ""), "text/html").body.textContent;
+    return plainToHtml(text);
+  }
+
   function renderRichText(raw) {
     var api = window.NoteHtml;
     var html = String(raw || "");
@@ -56,7 +65,7 @@
     if (typeof api.enrichForDisplay === "function") {
       html = api.enrichForDisplay(html, { interactive: false });
     }
-    return html;
+    return cleanHtml(html);
   }
 
   // Чат по ссылке: лента реплик (имя · время), ответы ассистента — с разметкой.
@@ -112,6 +121,7 @@
       if (typeof api.enrichForDisplay === "function") {
         html = api.enrichForDisplay(html, { interactive: false });
       }
+      html = cleanHtml(html);
       return html || (canvases.length ? "" : "<p>—</p>");
     }
     return '<pre class="transcript">' + escapeHtml(raw || "—") + "</pre>";

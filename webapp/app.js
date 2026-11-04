@@ -55036,10 +55036,14 @@
     }
   }
 
+  // Экранирует и кавычки: результат вставляется и в текст, и в значения атрибутов ("…").
   function escapeHtml(s) {
-    const d = document.createElement("div");
-    d.textContent = s == null ? "" : String(s);
-    return d.innerHTML;
+    return (s == null ? "" : String(s))
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function htmlToPlainText(htmlStr) {
@@ -55134,8 +55138,12 @@
         var mdLink = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
         if (mdLink) {
           var label = mdLink[1];
-          var href = safeHttpUrl(mdLink[2]) || String(mdLink[2] || "").trim();
-          if (/^https?:\/\//i.test(href) || /^mailto:/i.test(href) || /^tg:\/\//i.test(href)) {
+          // Только разобранный http(s) или строгий mailto:/tg:// — сырая строка в href не попадает.
+          var rawHref = String(mdLink[2] || "").trim();
+          var href =
+            safeHttpUrl(rawHref) ||
+            (/^(mailto:|tg:\/\/)[^\s"'<>`]+$/i.test(rawHref) ? rawHref : "");
+          if (href) {
             return (
               '<a href="' +
               escapeHtml(href) +

@@ -3256,6 +3256,7 @@ def _safe_share_return_path(raw: str | None) -> str | None:
 
 
 def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
+    from assistant.lib.rich_html import sanitize_rich_html
     from assistant.stores import share_links as share_links_store
 
     kind = str(link.get("item_kind") or "")
@@ -3286,7 +3287,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "operation": None,
             "label": _SHARE_KIND_LABELS["local"],
             "title": title[:500],
-            "body": body[:120000],
+            "body": sanitize_rich_html(body[:120000]),
             "canvases": canvases,
             "boards": boards,
             "updated_at": note.get("updated_at"),
@@ -3323,7 +3324,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "operation": op,
             "label": _SHARE_KIND_LABELS.get(op, "Документ"),
             "title": title[:500],
-            "body": journal_text_from_raw(raw_s)[:120000],
+            "body": sanitize_rich_html(journal_text_from_raw(raw_s)[:120000]),
             "updated_at": item.get("ts_utc"),
             "access": share_links_store.normalize_access(link.get("access")),
         }
@@ -3347,7 +3348,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "operation": "chat_digest",
             "label": _SHARE_KIND_LABELS.get("digest", "Дайджест"),
             "title": title[:500],
-            "body": body[:120000],
+            "body": sanitize_rich_html(body[:120000]),
             "updated_at": row.get("generated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,
@@ -3380,7 +3381,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
                 {
                     "author": "Лео" if is_assistant else (str(row.get("author_name") or "").strip() or "Участник"),
                     "is_gpt": is_assistant,
-                    "body": body,
+                    "body": sanitize_rich_html(body) if is_assistant else body,
                     "created_at": row.get("created_at"),
                 }
             )
