@@ -1471,8 +1471,10 @@
         world.appendChild(node);
         orderDirty = true;
       }
-      node.className = "lb-el lb-t-" + el.type + (el.group ? " is-grouped" : "");
       var isEditing = editing && editing.id === id;
+      // Перерисовка во время правки (раскладка автолэйаута, цвет) не снимает «правится»: без него текст
+      // не ловит щелчки, и щелчок по нему завершал правку.
+      node.className = "lb-el lb-t-" + el.type + (el.group ? " is-grouped" : "") + (isEditing ? " is-editing" : "");
       var textEl;
       if (el.type === "line") {
         var ls = lineSvg(el);
