@@ -4230,6 +4230,12 @@ def _prepare_miniapp_voice_audio(
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                # Формат и протоколы — фиксированные: иначе ffmpeg сам угадает формат файла пользователя,
+                # и плейлист HLS под видом .webm заставит сервер ходить по ссылкам из него (SSRF).
+                "-protocol_whitelist",
+                "file",
+                "-f",
+                "matroska",
                 "-i",
                 str(src),
                 "-vn",

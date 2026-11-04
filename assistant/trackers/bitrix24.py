@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from assistant.lib import safe_http
 from assistant.trackers.base import (
     Board,
     CreatedTask,
@@ -56,9 +57,14 @@ _AUTH_ERRORS = ("invalid_token", "NO_AUTH_FOUND", "expired_token", "INVALID_CRED
 
 def call(base: str, method: str, params: dict[str, Any] | None = None) -> Any:
     try:
-        r = requests.post(f"{base}{method}.json", json=params or {}, timeout=30)
+        # Адрес портала задаёт пользователь — только публичные адреса (SSRF), редиректы с той же проверкой.
+        r = safe_http.post(f"{base}{method}.json", json=params or {}, timeout=30)
+    except safe_http.BlockedAddress as e:
+        raise TrackerError("Адрес портала ведёт во внутреннюю сеть — такой вебхук не подключаем.") from e
     except requests.RequestException as e:
-        raise TrackerError(f"Битрикс24 не отвечает: {e}") from e
+        # Текст ошибки (хост, порт, причина отказа) пользователю не показываем — только в лог.
+        print(f"[trackers] bitrix {method} network error: {type(e).__name__}")
+        raise TrackerError("Битрикс24 не отвечает — проверьте адрес портала и попробуйте ещё раз.") from e
     try:
         data = r.json()
     except ValueError:

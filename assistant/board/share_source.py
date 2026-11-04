@@ -63,9 +63,8 @@ def normalize_share_url(raw: str) -> str:
 
 
 def share_api_url(token: str, source: str = "") -> str:
-    parsed = urlparse((source or "").strip())
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}/api/public/share/{token}"
+    # Только наш сервер: хост из присланной ссылки не используем (иначе запрос уходит куда угодно — SSRF,
+    # а чужой хост подменяет документ в кэше для того же токена).
     return f"{public_base_url()}/api/public/share/{token}"
 
 

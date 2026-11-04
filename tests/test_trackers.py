@@ -297,14 +297,14 @@ class _Resp:
 
 
 def test_call_scope_error_with_401_is_not_reported_as_bad_webhook(monkeypatch):
-    monkeypatch.setattr(b24.requests, "post", lambda *a, **k: _Resp(401, {
+    monkeypatch.setattr(b24.safe_http, "post", lambda *a, **k: _Resp(401, {
         "error": "insufficient_scope", "error_description": "The request requires higher privileges"}))
     with pytest.raises(TrackerError, match="не хватает прав «Пользователи»"):
         b24.call(HOOK, "user.current")
 
 
 def test_call_auth_error_shows_bitrix_reason(monkeypatch):
-    monkeypatch.setattr(b24.requests, "post", lambda *a, **k: _Resp(401, {
+    monkeypatch.setattr(b24.safe_http, "post", lambda *a, **k: _Resp(401, {
         "error": "INVALID_CREDENTIALS", "error_description": "Invalid request credentials"}))
     with pytest.raises(TrackerError, match=r"не принят.*Invalid request credentials"):
         b24.call(HOOK, "user.current")
@@ -370,3 +370,11 @@ def test_meeting_nesting_goes_to_tracker(fake, monkeypatch):
     mt.nest(UID, nid, ["ibbbbbbbbb2"], None, by="Вова")  # вынули — в Битриксе снова самостоятельная
     usage_server._tracker_sync_meeting(UID, nid, "bitrix24", by="Вова")
     assert updates == [{"taskId": 4812, "fields": {"PARENT_ID": 0}}]
+
+
+def test_call_refuses_internal_address_without_leaking_details():
+    """Вебхук на внутренний адрес (SSRF): запрос не уходит, текст ошибки без хоста и порта."""
+    with pytest.raises(TrackerError) as ei:
+        b24.call("http://127.0.0.1:8080/rest/1/x/", "user.current")
+    assert "внутреннюю сеть" in str(ei.value)
+    assert "8080" not in str(ei.value)

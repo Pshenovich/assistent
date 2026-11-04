@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import requests
 
 from assistant.config import URL_MAX_DOWNLOAD_BYTES
+from assistant.lib import safe_http
 
 _MEDIA_CONTENT_PREFIXES = ("audio/", "video/", "application/octet-stream")
 _HTML_MARKERS = ("text/html", "application/xhtml")
@@ -134,7 +135,12 @@ def download_url_bytes(url: str) -> tuple[bytes, str]:
     except ValueError:
         raise
 
-    with requests.get(u, stream=True, timeout=120, allow_redirects=True) as r:
+    # Ссылка от пользователя: только публичные адреса (не 127.0.0.1, не внутренняя сеть, не метаданные).
+    try:
+        resp = safe_http.get(u, stream=True, timeout=120)
+    except safe_http.BlockedAddress as e:
+        raise ValueError("Эта ссылка ведёт во внутреннюю сеть — такие не открываем.") from e
+    with resp as r:
         r.raise_for_status()
         cl = r.headers.get("Content-Length")
         if cl:

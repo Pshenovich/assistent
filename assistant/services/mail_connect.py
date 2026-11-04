@@ -130,6 +130,17 @@ def connect(uid: int, body: dict[str, Any]) -> dict[str, Any]:
     if body.get("imap_host"):
         cfg = {"imap_host": str(body["imap_host"]).strip(), "imap_port": int(body.get("imap_port") or 993),
                "smtp_host": str(body.get("smtp_host") or "").strip(), "smtp_port": int(body.get("smtp_port") or 465)}
+        # Сервер указан вручную: только публичный адрес (иначе по ошибкам входа сканируют внутреннюю сеть).
+        from assistant.lib import safe_http
+
+        for host_key, port_key in (("imap_host", "imap_port"), ("smtp_host", "smtp_port")):
+            if not cfg[host_key]:
+                continue
+            try:
+                safe_http.check_public_host(cfg[host_key], cfg[port_key])
+            except Exception as e:
+                raise ConnectError("Не удалось подключиться к серверу почты — проверьте адрес.", step="server",
+                                   code="server") from e
     else:
         d = detect(email)
         if d["needs_server"]:

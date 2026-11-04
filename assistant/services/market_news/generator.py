@@ -15,13 +15,14 @@ import json
 import re
 import threading
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from string import Template
 from typing import Any, Optional
+
+from assistant.lib import safe_http
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_SOURCES = HERE / "default_sources.json"
@@ -59,15 +60,19 @@ def load_default_sources() -> dict[str, Any]:
     return json.loads(DEFAULT_SOURCES.read_text(encoding="utf-8"))
 
 
-def fetch_url(url: str, timeout: int = 20) -> bytes:
-    class _Redirect308(urllib.request.HTTPRedirectHandler):
-        def http_error_308(self, request, fp, code, msg, headers):  # noqa: ANN001
-            return self.http_error_301(request, fp, code, msg, headers)
+FEED_MAX_BYTES = 5 * 1024 * 1024
 
-    opener = urllib.request.build_opener(_Redirect308)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with opener.open(req, timeout=timeout) as resp:
-        return resp.read()
+
+def fetch_url(url: str, timeout: int = 20) -> bytes:
+    # Свои источники организации задаёт пользователь — только публичные адреса (SSRF).
+    with safe_http.get(url, timeout=timeout, stream=True, headers={"User-Agent": USER_AGENT}) as resp:
+        resp.raise_for_status()
+        out = bytearray()
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            out.extend(chunk)
+            if len(out) > FEED_MAX_BYTES:
+                raise ValueError("Лента слишком большая")
+        return bytes(out)
 
 
 def text_from_html(value: str) -> str:

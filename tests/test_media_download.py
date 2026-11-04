@@ -40,8 +40,9 @@ class MediaDownloadTests(unittest.TestCase):
             "https://disk.yandex.ru/i/xXDSjiRh2cNqcA",
         )
 
+    @patch("assistant.lib.media_download.safe_http.get")
     @patch("assistant.lib.media_download.requests.get")
-    def test_download_url_bytes_resolves_yandex_before_stream(self, mock_get: MagicMock) -> None:
+    def test_download_url_bytes_resolves_yandex_before_stream(self, mock_get: MagicMock, mock_safe_get: MagicMock) -> None:
         api_resp = MagicMock()
         api_resp.status_code = 200
         api_resp.json.return_value = {
@@ -59,14 +60,21 @@ class MediaDownloadTests(unittest.TestCase):
         file_resp.__enter__ = MagicMock(return_value=file_resp)
         file_resp.__exit__ = MagicMock(return_value=False)
 
-        mock_get.side_effect = [api_resp, file_resp]
+        mock_get.return_value = api_resp  # API Яндекс.Диска — фиксированный адрес
+        mock_safe_get.return_value = file_resp  # сам файл — по ссылке, через safe_http
 
         data, fname = media_download.download_url_bytes(
             "https://disk.yandex.ru/i/xXDSjiRh2cNqcA"
         )
         self.assertEqual(data, b"abcdef")
         self.assertEqual(fname, "meet.mp4")
-        self.assertEqual(mock_get.call_count, 2)
+        self.assertEqual(mock_get.call_count, 1)
+        self.assertIn("downloader.disk.yandex.ru", mock_safe_get.call_args[0][0])
+
+    def test_download_url_bytes_refuses_internal_address(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            media_download.download_url_bytes("http://127.0.0.1:8080/dashboard")
+        self.assertIn("внутреннюю сеть", str(cm.exception))
 
     def test_google_drive_links_resolve_to_direct_download(self):
         fid = "190tb2UxgzqOtswgyg_lWbQHL7TUb_xbp"
@@ -83,7 +91,7 @@ class MediaDownloadTests(unittest.TestCase):
             self.assertEqual(media_download.resolve_download_url(url), (direct, None), url)
         self.assertIsNone(media_download.google_drive_file_id("https://drive.google.com/drive/folders/abc"))
 
-    @patch("assistant.lib.media_download.requests.get")
+    @patch("assistant.lib.media_download.safe_http.get")
     def test_google_drive_private_file_explains_access(self, mock_get):
         resp = MagicMock()
         resp.headers = {"Content-Type": "text/html; charset=utf-8"}
