@@ -323,6 +323,14 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         self.assertEqual(els["h"]["layout"], "g 8 0 0 0 0 start start h c3")
         self.assertEqual((els["k"]["grow"], els["k"]["ratio"]), ("w", True))
 
+    def test_hidden_and_locked(self) -> None:
+        body = json.dumps({"v": 1, "elements": {
+            "f": {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 100, "h": 100, "hidden": True, "locked": True},
+            "t": {"id": "t", "type": "text", "x": 10, "y": 10, "w": 80, "h": 20, "text": "Секрет", "frame": "f"}}})
+        els = board_doc.parse_board(body)["elements"]
+        self.assertEqual((els["f"]["hidden"], els["f"]["locked"]), (True, True))
+        self.assertNotIn("Секрет", board_doc.render_board_svg(body))  # содержимое скрытого фрейма не рисуется
+
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}
         inner = {"id": "f2", "type": "frame", "x": 10, "y": 10, "w": 100, "h": 100, "frame": "f1"}

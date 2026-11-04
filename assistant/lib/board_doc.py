@@ -384,6 +384,10 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["grow"] = raw["grow"]
     if raw.get("ratio") is True:
         el["ratio"] = True
+    # Слои: скрыт с доски / заблокирован от правки.
+    for k in ("hidden", "locked"):
+        if raw.get(k) is True:
+            el[k] = True
     if raw.get("autoW") is True and etype == "text":
         el["autoW"] = True  # текст «ширина по содержимому» — без переноса строк
     for k in ("minW", "maxW", "minH", "maxH"):
@@ -914,7 +918,18 @@ def render_board_svg(body: Any) -> str:
         '<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" '
         'orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="context-stroke"/></marker></defs>',
     ]
+    def _hidden(e: dict[str, Any]) -> bool:
+        seen = 0
+        while e and seen < 30:
+            if e.get("hidden"):
+                return True
+            e = elements.get(e.get("frame") or "")
+            seen += 1
+        return False
+
     for el in sorted(elements.values(), key=lambda e: float(e.get("z") or 0)):
+        if _hidden(el):
+            continue  # скрыт в слоях (сам или его фрейм)
         st = el.get("style") or {}
         stroke = _attr(_ink(st.get("stroke")))
         sw = _num(st.get("strokeWidth"), 2, 0, 40)

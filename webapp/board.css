@@ -2258,3 +2258,84 @@ html[data-theme="light"] .leo-board {
   font: 600 11px var(--lb-font);
   text-anchor: middle;
 }
+
+/* Слои: прокрутка вбок при глубокой вложенности; «глаз» и «замок» — справа у каждой строки. */
+.lb-llist {
+  overflow-x: auto;
+}
+
+.lb-layer {
+  position: relative;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+.lb-lname {
+  flex: 1 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.lb-lacts {
+  position: sticky;
+  right: 0;
+  display: flex;
+  flex: none;
+  gap: 0;
+  margin-left: 8px;
+  padding-left: 4px;
+  border-radius: 6px;
+  background: var(--lb-panel);
+  opacity: 0;
+}
+
+.lb-layer:hover .lb-lacts,
+.lb-layer.is-hidden .lb-lacts,
+.lb-layer.is-locked .lb-lacts {
+  opacity: 1;
+}
+
+.lb-layer.is-sel .lb-lacts {
+  background: color-mix(in srgb, var(--lb-accent) 14%, var(--lb-panel));
+}
+
+.lb-lact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--lb-muted);
+  cursor: pointer;
+}
+
+.lb-lact svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lb-lact:hover {
+  color: var(--lb-text);
+  background: color-mix(in srgb, var(--lb-text) 8%, transparent);
+}
+
+/* Скрытый / заблокированный: кнопка-признак видна всегда, вторая — по наведению. */
+.lb-layer .lb-lact:not(.is-on) {
+  visibility: hidden;
+}
+
+.lb-layer:hover .lb-lact {
+  visibility: visible;
+}
+
+.lb-layer.is-hidden .lb-lname,
+.lb-layer.is-hidden .lb-licon,
+.lb-layer.is-dim .lb-lname,
+.lb-layer.is-dim .lb-licon {
+  opacity: 0.45;
+}

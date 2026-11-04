@@ -556,6 +556,8 @@
     if (el.frame) o.frame = el.frame;
     if (el.grow) o.grow = el.grow;
     if (el.autoW) o.autoW = true;
+    if (el.hidden) o.hidden = true;
+    if (el.locked) o.locked = true;
     ["minW", "maxW", "minH", "maxH"].forEach(function (k) {
       if (el[k] > 0) o[k] = r2(el[k]);
     });
@@ -971,12 +973,20 @@
       });
     }
 
+    /** Скрыли / показали фрейм (в т. ч. отменой) — его содержимое перерисовать. */
+    function redrawKidsOf(entry) {
+      entry.forEach(function (ch) {
+        if (!!(ch.before && ch.before.hidden) !== !!(ch.after && ch.after.hidden)) withFrameKids([ch.id]).forEach(markDirty);
+      });
+    }
+
     function undo() {
       finishEdit();
       dropPen();
       var entry = undoStack.pop();
       if (!entry) return;
       applyEntry(entry, false);
+      redrawKidsOf(entry);
       redoStack.push(entry);
       renderHistoryBar();
     }
@@ -986,6 +996,9 @@
       dropPen();
       var entry = redoStack.pop();
       if (!entry) return;
+      setTimeout(function () {
+        redrawKidsOf(entry);
+      }, 0);
       applyEntry(entry, true);
       undoStack.push(entry);
       renderHistoryBar();
@@ -1265,6 +1278,8 @@
       if (el && node) applyLook(node, el);
       // Вектор на время правки точек скрыт: его рисует перо поверх (см. penOverlay).
       if (node) node.style.visibility = penPath && penPath.editId === id ? "hidden" : "";
+      // Скрытый в слоях — не показывается и не ловит клики.
+      if (node) node.style.display = el && isHidden(el) ? "none" : "";
     }
 
     var SHADOW_RE = /^(-?\d{1,3}) (-?\d{1,3}) (\d{1,3}) (#[0-9a-f]{8})$/i;
@@ -2772,7 +2787,23 @@
     function hitId(target) {
       var node = target && target.closest ? target.closest(".lb-el") : null;
       if (!node || !world.contains(node)) return "";
-      return node.getAttribute("data-id") || "";
+      var id = node.getAttribute("data-id") || "";
+      // Заблокированный слой на доске не выделяется и не двигается (только в панели слоёв).
+      return id && isLocked(getEl(id)) ? "" : id;
+    }
+
+    /** Скрыт / заблокирован сам или внутри скрытого / заблокированного фрейма. */
+    function inherits(el, k) {
+      for (var q = el, g = 0; q && g < 30; q = q.frame ? els.get(q.frame) : null, g++) if (q[k]) return true;
+      return false;
+    }
+
+    function isHidden(el) {
+      return !!el && inherits(el, "hidden");
+    }
+
+    function isLocked(el) {
+      return !!el && inherits(el, "locked");
     }
 
     /** Фигура под точкой (для прилипания концов линий): верхняя по z, с запасом. */
@@ -5165,7 +5196,7 @@
       }
       var kids = layerKids();
       var key = JSON.stringify([Array.from(els.values()).map(function (e) {
-        return [e.id, e.z, e.frame, e.group, e.name, e.type, e.type === "frame" ? 0 : String(e.text || "").slice(0, 48)];
+        return [e.id, e.z, e.frame, e.group, e.name, e.type, e.type === "frame" ? 0 : String(e.text || "").slice(0, 48), e.hidden, e.locked];
       }), Array.from(selected), layersFold, mode]);
       if (key === layersKey || (layersEl.contains(document.activeElement) && document.activeElement.isContentEditable)) return;
       layersKey = key;
@@ -5178,11 +5209,21 @@
         var sel = isGroup ? n.members.every(function (m) {
           return selected.has(m.id);
         }) : selected.has(el.id);
+        var members = isGroup ? n.members : [el];
+        var hid = members.every(function (m) {
+          return m.hidden;
+        });
+        var lck = members.every(function (m) {
+          return m.locked;
+        });
         rows.push('<div class="lb-layer' + (sel ? " is-sel" : "") + (el && el.type === "frame" ? " is-frame" : "") + (isGroup ? " is-group" : "") +
+          (hid ? " is-hidden" : "") + (lck ? " is-locked" : "") + (!hid && members.every(isHidden) ? " is-dim" : "") +
           '" data-lid="' + esc(n.id) + '" draggable="true" style="--d:' + depth + '">' +
           '<span class="lb-lcaret' + (hasKids ? "" : " is-none") + (fold ? "" : " is-open") + '" data-caret="1">' + (hasKids ? icon("caret") : "") + "</span>" +
           '<span class="lb-licon">' + icon(isGroup ? "group" : TYPE_ICON[el.type] || "rect") + "</span>" +
-          '<span class="lb-lname"' + (el && el.type === "frame" ? ' data-rename="1"' : "") + ">" + esc(isGroup ? "Группа" : layerName(el)) + "</span></div>");
+          '<span class="lb-lname"' + (el && el.type === "frame" ? ' data-rename="1"' : "") + ">" + esc(isGroup ? "Группа" : layerName(el)) + "</span>" +
+          '<span class="lb-lacts"><button type="button" class="lb-lact' + (lck ? " is-on" : "") + '" data-lact="locked" title="' + (lck ? "Разблокировать" : "Заблокировать") + '">' + icon(lck ? "lock" : "unlock") + "</button>" +
+          '<button type="button" class="lb-lact' + (hid ? " is-on" : "") + '" data-lact="hidden" title="' + (hid ? "Показать" : "Скрыть") + '">' + icon(hid ? "eyeOff" : "eye") + "</button></span></div>");
         if (!hasKids || fold) return;
         if (isGroup) n.members.forEach(function (m) {
           row({ kind: "el", id: m.id, el: m, z: m.z || 0 }, depth + 1);
@@ -5298,6 +5339,27 @@
         var r = e.target.closest("[data-lid]");
         if (!r) return;
         var lid = r.getAttribute("data-lid");
+        var la = e.target.closest("[data-lact]");
+        if (la && !readOnly) {
+          // Глаз / замок: на объект (у группы — на всех), содержимое фрейма наследует.
+          var k = la.getAttribute("data-lact");
+          var ids1 = layerIds(lid);
+          var on = !ids1.every(function (id) {
+            return getEl(id) && getEl(id)[k];
+          });
+          begin();
+          ids1.forEach(function (id) {
+            var f = {};
+            f[k] = on || undefined;
+            patch(id, f);
+            withFrameKids([id]).forEach(markDirty);
+            if (on) selected.delete(id);
+          });
+          commit();
+          layersKey = "";
+          schedule();
+          return;
+        }
         if (e.target.closest("[data-caret]")) {
           layersFold[lid] = !layersFold[lid];
           renderLayers();
@@ -6918,7 +6980,9 @@
     }
 
     function startMove(base, ids, hit) {
-      ids = withFrameKids(ids);
+      ids = withFrameKids(ids).filter(function (id) {
+        return !isLocked(getEl(id));
+      });
       var list = ids.map(getEl).filter(Boolean);
       begin();
       var moving = {};
@@ -7176,6 +7240,7 @@
         marquee = { x: Math.min(a.x, p.x), y: Math.min(a.y, p.y), w: Math.abs(p.x - a.x), h: Math.abs(p.y - a.y) };
         var hit = new Set(g.keep);
         els.forEach(function (el) {
+          if (isHidden(el) || isLocked(el)) return;
           var b = G.elBounds(el, getEl);
           if (!b) return;
           // Экран — только если рамка накрыла его целиком (иначе рамкой внутри экрана не выделить содержимое).
@@ -8679,7 +8744,7 @@
         set[id] = 1;
       });
       var list = sortedEls().filter(function (el) {
-        return set[el.id];
+        return set[el.id] && !isHidden(el);
       });
       if (!list.length) return null;
       var top = ids.map(getEl).filter(Boolean);
