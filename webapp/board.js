@@ -927,6 +927,7 @@
       changeTimer = 0;
       if (destroyed || typeof o.onChange !== "function") return;
       o.onChange(getJson());
+      devSchedulePreviews();
     }
 
     function put(el) {
@@ -4085,9 +4086,234 @@
     var expScale = 2;
     var inspDown = null; // {pending} — кнопка мыши нажата на панели свойств
     var inspUp = null;
+    // ---- Для разработчика: вкладка «Код», ссылка для ИИ-агентов (MCP), PNG-превью фреймов ----
+    // Код генерирует сервер (assistant/lib/design_spec.py) по текущему состоянию фрейма — один генератор
+    // для инспектора, HTTP API и MCP. Превью фреймов клиент шлёт, только когда у листа есть ссылка разработчика.
+    var dev = { tab: "design", link: null, linkLoaded: false, previews: false, sigs: {}, code: null, codeKey: "", codeTop: "", busy: false, err: "", timer: 0, pvTimer: 0, pvBusy: false, ver: 0 };
+    try {
+      if (localStorage.getItem("leo-board-insp-tab") === "code") dev.tab = "code";
+    } catch (_) {}
+
+    function devOn() {
+      return mode === "design" && !readOnly && typeof o.design === "function";
+    }
+
+    function devRefresh() {
+      dev.ver++;
+      inspKey = "";
+      renderInspector(selList());
+    }
+
+    function topFrameOf(el) {
+      var f = el && el.type === "frame" ? el : el ? frameOf(el) : null;
+      for (var g = 0; f && frameOf(f) && g < 40; g++) f = frameOf(f);
+      return f || null;
+    }
+
+    function inFrame(el, top) {
+      for (var q = el, g = 0; q && g < 40; q = frameOf(q), g++) if (q.id === top.id) return true;
+      return false;
+    }
+
+    /** Фрейм с содержимым в формате тела листа; картинки — без данных (для кода хватит типа), если не full. */
+    function frameDoc(top, full) {
+      var elements = {};
+      els.forEach(function (el) {
+        if (!inFrame(el, top)) return;
+        var s0 = serializeEl(el, getEl, pathOptsOf);
+        if (el.type === "image" && !full && s0.src) s0 = Object.assign({}, s0, { src: String(s0.src).slice(0, String(s0.src).indexOf(",") + 1) });
+        elements[el.id] = s0;
+      });
+      return JSON.stringify({ v: 1, mode: "design", elements: elements });
+    }
+
+    function devLoadLink() {
+      if (!devOn() || dev.linkLoaded) return;
+      dev.linkLoaded = true;
+      o.design("GET", "/design-link").then(function (r) {
+        dev.link = (r && r.link) || null;
+        dev.previews = !!(r && r.previews);
+        dev.sigs = (r && r.sigs) || {};
+        if (dev.tab === "code") devRefresh();
+        devSchedulePreviews(1500);
+      }).catch(function () {
+        dev.linkLoaded = false;
+      });
+    }
+
+    function devFetchCode(top) {
+      var body = frameDoc(top, false);
+      var key = top.id + "|" + body;
+      if (key === dev.codeKey && (dev.code || dev.busy)) return;
+      dev.codeKey = key;
+      dev.codeTop = top.id;
+      if (dev.timer) clearTimeout(dev.timer);
+      dev.timer = setTimeout(function () {
+        dev.timer = 0;
+        dev.busy = true;
+        o.design("POST", "/design", { body: body, frame: top.id, format: "code" }).then(function (r) {
+          if (dev.codeKey !== key) return;
+          dev.busy = false;
+          dev.code = r;
+          dev.err = "";
+          devRefresh();
+        }).catch(function (e) {
+          if (dev.codeKey !== key) return;
+          dev.busy = false;
+          dev.code = null;
+          dev.err = (e && e.message) || "Не удалось получить код";
+          devRefresh();
+        });
+      }, dev.code ? 300 : 0);
+    }
+
+    function copyText(text, done) {
+      var ok = function () {
+        notify(done || "Скопировано");
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(ok, function () {
+          notify("Не удалось скопировать");
+        });
+      } else notify("Не удалось скопировать");
+    }
+
+    function mcpCommand(url) {
+      return "claude mcp add --transport http orbita-design " + url;
+    }
+
+    function devCodeHtml(list) {
+      var h = [];
+      var one = list.length === 1 ? list[0] : null;
+      var top = one ? topFrameOf(one) : null;
+      if (one && top) {
+        devFetchCode(top);
+        var nd = dev.code && dev.codeTop === top.id && dev.code.nodes ? dev.code.nodes[one.id] : null;
+        var nm = one.type === "frame" ? one.name || "Фрейм" : one.name || ({ text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", image: "Картинка", vector: "Вектор" }[one.type] || "Слой");
+        h.push('<div class="lb-isec"><div class="lb-ilabel"><span>' + esc(nm) + '</span><span class="lb-idim">' + r1(one.w) + " × " + r1(one.h) + "</span></div>" +
+          (nd ? '<pre class="lb-icode">' + esc(nd.css) + "</pre>" +
+            '<button type="button" class="lb-ibtn is-wide" data-act="devCopyCss">Копировать CSS</button>'
+            : '<div class="lb-inote">' + (dev.err ? esc(dev.err) : one.type === "line" || one.type === "pen" ? "Линия — внутри HTML фрейма (SVG)" : "Собираю код…") + "</div>") +
+          "</div>");
+        h.push('<div class="lb-isec"><div class="lb-ilabel"><span>Фрейм «' + esc(top.name || "Фрейм") + "»</span></div>" +
+          '<div class="lb-irow"><button type="button" class="lb-ibtn is-wide" data-act="devCopyCode"' + (dev.code && dev.codeTop === top.id ? "" : " disabled") + ">HTML + CSS</button>" +
+          '<button type="button" class="lb-ibtn is-wide" data-act="devPage">Скачать .html</button></div></div>');
+      } else {
+        h.push('<div class="lb-isec"><div class="lb-inote">' + (list.length > 1 ? "Выделите один слой — покажу его CSS." : one ? "Объект вне фрейма — код собирается по фреймам." : "Выделите фрейм или слой — покажу CSS, а весь фрейм можно забрать в HTML.") + "</div></div>");
+      }
+      // Ссылка для агентов: Claude Code / Cursor читают макет по MCP.
+      devLoadLink();
+      var L = dev.link;
+      h.push('<div class="lb-isec"><div class="lb-ilabel"><span>ИИ-агентам и разработчикам</span></div>' +
+        (L
+          ? '<div class="lb-inote">Агент читает этот макет по MCP: фреймы, размеры, цвета, шрифты, HTML/CSS и картинки. Только чтение.</div>' +
+            '<pre class="lb-icode is-cmd">' + esc(mcpCommand(L.mcp_url)) + "</pre>" +
+            '<div class="lb-irow"><button type="button" class="lb-ibtn is-wide" data-act="devCopyCmd">Команда Claude Code</button>' +
+            '<button type="button" class="lb-ibtn is-wide" data-act="devCopyUrl">Адрес MCP</button></div>' +
+            '<button type="button" class="lb-ibtn is-wide lb-danger" data-act="devRevoke">Отозвать ссылку</button>'
+          : '<div class="lb-inote">Ссылка для Claude Code, Cursor и других агентов: они прочитают макет и сверстают экраны. Только чтение, можно отозвать.</div>' +
+            '<button type="button" class="lb-ibtn is-wide" data-act="devCreate"' + (dev.linkLoaded ? "" : " disabled") + ">Создать ссылку для агента</button>") +
+        "</div>");
+      return h.join("");
+    }
+
+    function devAct(a) {
+      var one = selList().length === 1 ? selList()[0] : null;
+      var top = one ? topFrameOf(one) : null;
+      if (a === "devCopyCss") {
+        var nd = dev.code && dev.code.nodes && one ? dev.code.nodes[one.id] : null;
+        if (nd) copyText(nd.css, "CSS скопирован");
+      } else if (a === "devCopyCode" && dev.code) {
+        copyText((dev.code.font_link ? dev.code.font_link + "\n\n" : "") + dev.code.html + "\n\n<style>\n" + dev.code.css + "\n</style>\n", "HTML и CSS скопированы");
+      } else if (a === "devPage" && top) {
+        o.design("POST", "/design", { body: frameDoc(top, true), frame: top.id, format: "code", images: "inline" }).then(function (c) {
+          var page = "<!doctype html>\n<html lang=\"ru\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
+            "<title>" + esc(c.name || "Фрейм") + "</title>\n" + (c.font_link || "") + "\n<style>\n" + c.css + "\n</style>\n</head>\n<body>\n" + c.html + "\n</body>\n</html>\n";
+          downloadBlob(new Blob([page], { type: "text/html" }), (String(top.name || "frame").replace(/[\\/:*?"<>|]+/g, " ").trim() || "frame") + ".html");
+        }).catch(function () {
+          notify("Не удалось собрать HTML");
+        });
+      } else if (a === "devCreate") {
+        o.design("POST", "/design-link").then(function (r) {
+          dev.link = (r && r.link) || null;
+          dev.previews = !!dev.link;
+          devRefresh();
+          if (dev.link) copyText(mcpCommand(dev.link.mcp_url), "Ссылка создана, команда для Claude Code скопирована");
+          devSchedulePreviews(200);
+        }).catch(function () {
+          notify("Не удалось создать ссылку");
+        });
+      } else if (a === "devCopyCmd" && dev.link) copyText(mcpCommand(dev.link.mcp_url), "Команда скопирована");
+      else if (a === "devCopyUrl" && dev.link) copyText(dev.link.mcp_url, "Адрес MCP скопирован");
+      else if (a === "devRevoke" && dev.link) {
+        if (!window.confirm("Отозвать ссылку? Агенты, подключённые по ней, потеряют доступ к макету.")) return;
+        o.design("DELETE", "/design-link").then(function () {
+          dev.link = null;
+          dev.linkLoaded = false;
+          devRefresh();
+          notify("Ссылка отозвана");
+        }).catch(function () {
+          notify("Не удалось отозвать ссылку");
+        });
+      }
+    }
+
+    function hashStr(str) {
+      var h1 = 0x811c9dc5;
+      for (var i = 0; i < str.length; i++) {
+        h1 ^= str.charCodeAt(i);
+        h1 = Math.imul(h1, 16777619);
+      }
+      return (h1 >>> 0).toString(36) + "." + str.length.toString(36);
+    }
+
+    /** PNG верхних фреймов, изменившихся с прошлой отправки, — агенту по ссылке разработчика. */
+    function devSchedulePreviews(delay) {
+      if (!devOn() || !dev.previews) return;
+      if (dev.pvTimer) clearTimeout(dev.pvTimer);
+      dev.pvTimer = setTimeout(devSendPreviews, delay == null ? 5000 : delay);
+    }
+
+    function devSendPreviews() {
+      dev.pvTimer = 0;
+      if (dev.pvBusy || !devOn() || !dev.previews || destroyed) return;
+      var todo = [];
+      els.forEach(function (el) {
+        if (el.type !== "frame" || frameOf(el) || el.hidden) return;
+        var sig = hashStr(frameDoc(el, false) + "|" + Array.from(els.values()).filter(function (x) {
+          return x.type === "image" && inFrame(x, el);
+        }).map(function (x) {
+          return x.id + ":" + String(x.src || "").length;
+        }).join(","));
+        if (dev.sigs[el.id] !== sig) todo.push({ id: el.id, sig: sig });
+      });
+      if (!todo.length) return;
+      dev.pvBusy = true;
+      var next = function () {
+        var t = todo.shift();
+        if (!t || destroyed) {
+          dev.pvBusy = false;
+          return;
+        }
+        var f = getEl(t.id);
+        var sv = f ? selectionSvg([t.id]) : null;
+        if (!sv) return next();
+        var k = Math.max(0.25, Math.min(2, 2400 / Math.max(sv.w, sv.h, 1)));
+        embedFonts(sv).then(function (sv2) {
+          return svgToCanvas(sv2, k, false);
+        }).then(function (c) {
+          return o.design("POST", "/design/preview", { frame: t.id, sig: t.sig, png: c.toDataURL("image/png") });
+        }).then(function () {
+          dev.sigs[t.id] = t.sig;
+        }).catch(function () {}).then(next);
+      };
+      next();
+    }
+
     function renderInspector(list) {
       if (!inspector) return;
-      if (mode !== "design" || !list.length || editing) {
+      var codeTab = dev.tab === "code" && devOn();
+      if (mode !== "design" || (!list.length && !codeTab) || editing) {
         inspector.classList.add("hidden");
         inspKey = "";
         return;
@@ -4095,7 +4321,7 @@
       var one = list.length === 1 ? list[0] : null;
       var key = JSON.stringify(list.map(function (e) {
         return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, e.grow, e.ratio, padSplit];
-      }));
+      })) + "|" + dev.tab + (codeTab ? "|" + dev.ver : "");
       inspector.classList.remove("hidden");
       // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
       var ae = document.activeElement;
@@ -4107,6 +4333,14 @@
         return;
       }
       inspKey = key;
+      // Вкладки как во Figma: «Дизайн» — свойства, «Код» — CSS слоя, HTML фрейма, ссылка для агентов.
+      var tabs = devOn() ? '<div class="lb-itabs" role="tablist">' +
+        '<button type="button" role="tab" data-tab="design" class="' + (codeTab ? "" : "is-on") + '">Дизайн</button>' +
+        '<button type="button" role="tab" data-tab="code" class="' + (codeTab ? "is-on" : "") + '">Код</button></div>' : "";
+      if (codeTab) {
+        inspector.innerHTML = tabs + devCodeHtml(list);
+        return;
+      }
       var types = {};
       list.forEach(function (e) {
         types[e.type] = 1;
@@ -4133,6 +4367,7 @@
         return e.group || "";
       });
       if (grp) title = "Группа";
+      if (tabs) h.push(tabs);
       h.push('<div class="lb-ihead">' + esc(title) + "</div>");
       if (!one) {
         // Несколько объектов (или группа) — общая рамка: X/Y двигают всё, W/H растягивают.
@@ -5933,6 +6168,21 @@
         }, 0);
       });
       inspector.addEventListener("click", function (e) {
+        var tab = e.target.closest("[data-tab]");
+        if (tab) {
+          dev.tab = tab.getAttribute("data-tab") === "code" ? "code" : "design";
+          try {
+            localStorage.setItem("leo-board-insp-tab", dev.tab);
+          } catch (_) {}
+          inspKey = "";
+          renderInspector(selList());
+          return;
+        }
+        var dv = e.target.closest("[data-act^='dev']");
+        if (dv) {
+          devAct(dv.getAttribute("data-act"));
+          return;
+        }
         var pick = e.target.closest("[data-pick]");
         if (pick) {
           openColorPop(pick, pick.getAttribute("data-pick"));

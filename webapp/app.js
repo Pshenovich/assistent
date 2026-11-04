@@ -32034,6 +32034,15 @@
       onOpenChat: openNoteDiscussionFromToolbar,
       // Шаблон «На моих данных» — Лео собирает его в чате по листам заметки.
       onTemplateAsk: askBoardTemplate,
+      // Макет для разработчика: код фрейма, ссылка для ИИ-агентов (MCP), превью фреймов.
+      design: function (method, suffix, payload) {
+        var nid = noteSheetsNoteId();
+        if (!nid || isPrimarySheetId(sid)) return Promise.reject(new Error("Лист ещё не сохранён"));
+        return apiFetch("/notes/local/" + encodeURIComponent(nid) + "/sheets/" + encodeURIComponent(sid) + suffix, {
+          method: method,
+          body: payload ? JSON.stringify(payload) : undefined,
+        });
+      },
       // Автор новых стикеров (подпись внизу стикера) и его фото — как в комментариях.
       me: boardAuthorMe(),
       decorateAvatar: function (img, author) {

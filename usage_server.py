@@ -14952,6 +14952,188 @@ def _load_web_sheet_for_edit(uid: int, note_id: int, sheet_id: str) -> tuple[dic
     return note, extra_id, sheet
 
 
+def _load_board_sheet_for_read(uid: int, note_id: int, sheet_id: str) -> dict[str, Any]:
+    """Лист-доска (макет), который пользователь может читать, или HTTPException."""
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    try:
+        extra_id = int(sheet_id)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Некорректный лист") from e
+    note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+    if note is None:
+        raise HTTPException(status_code=404, detail="Заметка не найдена")
+    sheet = note_sheets_store.get_extra_sheet(note_id, extra_id)
+    if not sheet or str(sheet.get("kind") or "") != "board":
+        raise HTTPException(status_code=404, detail="Макет не найден")
+    return sheet
+
+
+def design_response(board_body: str, frame: str, fmt: str, images: str = "assets", asset: str = "") -> Response:
+    """Общий ответ «макет для разработчика» (личный API и ссылка разработчика):
+    frames — список фреймов; spec — дерево; code — HTML/CSS; page — готовая страница; svg; asset — картинка."""
+    import base64
+
+    from assistant.lib import board_doc as board_doc_lib
+    from assistant.lib import design_spec
+
+    fmt = (fmt or "frames").strip().lower()
+    if fmt == "frames":
+        return JSONResponse({"frames": design_spec.list_frames(board_body)})
+    if fmt == "asset":
+        el = (board_doc_lib.parse_board(board_body)["elements"] or {}).get(asset)
+        src = str((el or {}).get("src") or "")
+        if not el or el.get("type") != "image" or "," not in src:
+            raise HTTPException(status_code=404, detail="Картинка не найдена")
+        head, b64 = src.split(",", 1)
+        mime = head[5:].split(";", 1)[0] or "image/png"
+        return Response(content=base64.b64decode(b64), media_type=mime, headers={"Cache-Control": "private, max-age=60"})
+    if not frame:
+        raise HTTPException(status_code=400, detail="Укажите фрейм: frame=<id или имя>")
+    images = "inline" if images == "inline" else "assets"
+    if fmt == "spec":
+        out = design_spec.frame_spec(board_body, frame)
+        if out is not None:
+            out["outline"] = design_spec.spec_outline(out)
+    elif fmt == "code":
+        out = design_spec.frame_code(board_body, frame, images=images)
+    elif fmt == "page":
+        page = design_spec.frame_page(board_body, frame, images="inline")
+        if page is None:
+            raise HTTPException(status_code=404, detail="Фрейм не найден")
+        return HTMLResponse(page, headers={"Content-Security-Policy": "script-src 'none'"})
+    elif fmt == "svg":
+        svg = design_spec.frame_svg(board_body, frame)
+        if svg is None:
+            raise HTTPException(status_code=404, detail="Фрейм не найден")
+        return Response(content=svg, media_type="image/svg+xml", headers={"Content-Security-Policy": "script-src 'none'"})
+    else:
+        raise HTTPException(status_code=400, detail="format: frames | spec | code | page | svg | asset")
+    if out is None:
+        raise HTTPException(status_code=404, detail="Фрейм не найден")
+    return JSONResponse(out)
+
+
+@miniapp_router.get("/notes/local/{note_id}/sheets/{sheet_id}/design")
+async def miniapp_design_inspect(
+    note_id: int,
+    sheet_id: str,
+    frame: str = "",
+    format: str = "frames",
+    images: str = "assets",
+    asset: str = "",
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Response:
+    """Макет для разработчика: фреймы, спецификация, HTML/CSS, SVG, картинки."""
+    uid = int(principal.telegram_user_id)
+    sheet = await run_in_threadpool(_load_board_sheet_for_read, uid, note_id, sheet_id)
+    return await run_in_threadpool(design_response, str(sheet.get("body") or ""), frame, format, images, asset)
+
+
+class _DesignInspectBody(BaseModel):
+    body: str = Field(default="", max_length=16 * 1024 * 1024)  # текущее состояние доски (ещё не сохранённое)
+    frame: str = ""
+    format: str = "code"
+    images: str = "assets"
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/design")
+async def miniapp_design_inspect_live(
+    note_id: int,
+    sheet_id: str,
+    body: _DesignInspectBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> Response:
+    """То же, что GET, но по присланному телу доски — инспектор видит правки, которые ещё не сохранились."""
+    uid = int(principal.telegram_user_id)
+    sheet = await run_in_threadpool(_load_board_sheet_for_read, uid, note_id, sheet_id)
+    src = body.body or str(sheet.get("body") or "")
+    return await run_in_threadpool(design_response, src, body.frame, body.format, body.images, "")
+
+
+def _design_link_out(link: dict[str, Any] | None) -> dict[str, Any] | None:
+    from assistant.lib.webapp_public import public_base_url
+
+    if not link:
+        return None
+    base = public_base_url()
+    tok = link["token"]
+    return {
+        "token": tok,
+        "mcp_url": f"{base}/mcp/design/{tok}",
+        "api_url": f"{base}/api/design/{tok}",
+        "created_at": link.get("created_at"),
+        "last_used_at": link.get("last_used_at"),
+    }
+
+
+@miniapp_router.get("/notes/local/{note_id}/sheets/{sheet_id}/design-link")
+async def miniapp_design_link_get(
+    note_id: int, sheet_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Ссылка разработчика на макет (своя) и подписи превью фреймов, уже лежащих на сервере."""
+    from assistant.stores import design_links
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(_load_board_sheet_for_read, uid, note_id, sheet_id)
+    link = await run_in_threadpool(design_links.get_link, uid, note_id, sheet_id)
+    shared = link is not None or await run_in_threadpool(design_links.has_link, note_id, sheet_id)
+    sigs = await run_in_threadpool(design_links.preview_sigs, note_id, sheet_id) if shared else {}
+    return {"link": _design_link_out(link), "previews": shared, "sigs": sigs}
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/design-link")
+async def miniapp_design_link_create(
+    note_id: int, sheet_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import design_links
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(_load_board_sheet_for_read, uid, note_id, sheet_id)
+    link = await run_in_threadpool(design_links.create_or_get, uid, note_id, sheet_id)
+    _track(uid, "design.dev_link", op="create")
+    return {"link": _design_link_out(link)}
+
+
+@miniapp_router.delete("/notes/local/{note_id}/sheets/{sheet_id}/design-link")
+async def miniapp_design_link_revoke(
+    note_id: int, sheet_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import design_links
+
+    uid = int(principal.telegram_user_id)
+    ok = await run_in_threadpool(design_links.revoke, uid, note_id, sheet_id)
+    return {"ok": ok}
+
+
+class _DesignPreviewBody(BaseModel):
+    frame: str
+    sig: str = ""
+    png: str  # base64 (можно data:image/png;base64,…)
+
+
+@miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/design/preview")
+async def miniapp_design_preview(
+    note_id: int, sheet_id: str, body: _DesignPreviewBody, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """PNG фрейма от клиента — агент по ссылке разработчика видит, как выглядит экран."""
+    import base64
+    import binascii
+
+    from assistant.stores import design_links
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(_load_board_sheet_for_read, uid, note_id, sheet_id)
+    raw = body.png.split(",", 1)[1] if body.png.startswith("data:") else body.png
+    try:
+        png = base64.b64decode(raw, validate=True)
+        await run_in_threadpool(design_links.save_preview, note_id, sheet_id, body.frame, png, body.sig)
+    except (binascii.Error, ValueError) as e:
+        raise HTTPException(status_code=400, detail="Нужен PNG до 4 МБ") from e
+    return {"ok": True}
+
+
 @miniapp_router.post("/notes/local/{note_id}/sheets/{sheet_id}/canvas-op")
 async def miniapp_canvas_op(
     note_id: int,
@@ -17541,6 +17723,75 @@ async def public_book_page(token: str) -> HTMLResponse:
     html = html.replace("{{DURATION_CLASS}}", duration_class)
     html = html.replace("{{META_JSON}}", meta_json)
     return HTMLResponse(content=html, headers=dict(_SHARE_PAGE_NO_CACHE))
+
+
+def _design_source(token: str):
+    """Токен разработчика → источник макета для MCP / HTTP API (или 404)."""
+    from assistant.lib import design_mcp
+    from assistant.stores import design_links
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import notes as notes_store
+
+    link = design_links.resolve(token)
+    if not link:
+        raise HTTPException(status_code=404, detail="Ссылка не найдена или отозвана")
+    note_id, sheet_id = link["note_id"], link["sheet_id"]
+    # Доступ по ссылке живёт, пока у выдавшего есть доступ к заметке.
+    note = notes_store.get_accessible_note(int(link["user_id"]), note_id, with_sharing=False)
+    sheet = note_sheets_store.get_extra_sheet(note_id, int(sheet_id)) if note else None
+    if not note or not sheet or str(sheet.get("kind") or "") != "board":
+        raise HTTPException(status_code=404, detail="Макет недоступен")
+    title = " · ".join(t for t in (str(note.get("title") or "").strip(), str(sheet.get("title") or "").strip()) if t)
+
+    def _body() -> str:
+        fresh = note_sheets_store.get_extra_sheet(note_id, int(sheet_id)) or {}
+        return str(fresh.get("body") or "")
+
+    def _preview(frame_id: str):
+        p = design_links.get_preview(note_id, sheet_id, frame_id)
+        return p["png"] if p else None
+
+    return design_mcp.DesignSource(title=title or "Макет", load_body=_body, load_preview=_preview), link
+
+
+@app.post("/mcp/design/{token}")
+async def design_mcp_endpoint(token: str, request: Request) -> Response:
+    """MCP (Streamable HTTP, без SSE) для агентов: claude mcp add --transport http orbita <этот URL>."""
+    from assistant.lib import design_mcp
+
+    src, _link = await run_in_threadpool(_design_source, token)
+    try:
+        payload = json.loads(await request.body() or b"null")
+    except ValueError:
+        return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
+    out = await run_in_threadpool(design_mcp.handle_payload, src, payload)
+    if out is None:
+        return Response(status_code=202)
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/mcp/design/{token}")
+async def design_mcp_get(token: str) -> Response:
+    # Поток событий сервер не открывает — только запрос-ответ (спецификация MCP: 405).
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@app.get("/api/design/{token}")
+async def design_public_api(token: str, frame: str = "", format: str = "frames", asset: str = "") -> Response:
+    """HTTP API ссылки разработчика: frames | spec | code | page | svg | png | asset."""
+    from assistant.stores import design_links
+
+    src, link = await run_in_threadpool(_design_source, token)
+    body = await run_in_threadpool(src.load_body)
+    if (format or "").lower() == "png":
+        from assistant.lib import design_spec
+
+        fr = design_spec.find_frame(body, frame)
+        prev = await run_in_threadpool(design_links.get_preview, link["note_id"], link["sheet_id"], fr["id"]) if fr else None
+        if not prev:
+            raise HTTPException(status_code=404, detail="Превью нет — откройте макет в Орбите")
+        return Response(content=prev["png"], media_type="image/png", headers={"Cache-Control": "no-store"})
+    return await run_in_threadpool(design_response, body, frame, format, "assets", asset)
 
 
 @app.get("/share/{token}")

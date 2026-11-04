@@ -907,11 +907,16 @@ def _svg_composite(el: dict[str, Any]) -> str:
     return "".join(out)
 
 
-def render_board_svg(body: Any) -> str:
-    """Статичный SVG доски (без правки): фигуры, подписи, линии по сохранённым точкам."""
+def render_board_svg(body: Any, *, view: Optional[tuple[float, float, float, float]] = None, labels: bool = True) -> str:
+    """Статичный SVG доски (без правки): фигуры, подписи, линии по сохранённым точкам.
+    view — своя рамка (x, y, w, h) вместо границ всего содержимого; labels=False — без имён фреймов."""
     elements = parse_board(body)["elements"]
-    x0, y0, x1, y1 = _bounds(elements)
-    w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
+    if view:
+        x0, y0, w, h = view
+        w, h = max(1.0, w), max(1.0, h)
+    else:
+        x0, y0, x1, y1 = _bounds(elements)
+        w, h = max(1.0, x1 - x0), max(1.0, y1 - y0)
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{x0:.1f} {y0:.1f} {w:.1f} {h:.1f}" '
         f'width="{w:.0f}" height="{h:.0f}" font-family="system-ui, sans-serif">',
@@ -979,9 +984,15 @@ def render_board_svg(body: Any) -> str:
                 rx = min(_num(st.get("radius"), 8, 0, 1e4), ew / 2, eh / 2)
                 out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
         elif t == "frame":
-            fs = f'stroke="{stroke}" stroke-width="{sw}"' if st.get("strokeWidth") else 'stroke="#d0d5dd" stroke-width="1"'
-            out.append(f'<path d="{_rounded_d(x, y, ew, eh, _radii(st, ew, eh, 0))}" fill="{_attr(fill or "#ffffff")}" {fs}/>')
-            if el.get("name"):
+            if el.get("frame") or (labels is False):
+                # Фрейм макета: заливка и рамка — только свои (вложенные фреймы из Figma часто прозрачные).
+                fs = f'stroke="{stroke}" stroke-width="{sw}"' if st.get("strokeWidth") and stroke != "none" else 'stroke="none"'
+                ff = fill_attr if "fill" in st else ("none" if el.get("frame") else "#ffffff")
+            else:
+                fs = f'stroke="{stroke}" stroke-width="{sw}"' if st.get("strokeWidth") else 'stroke="#d0d5dd" stroke-width="1"'
+                ff = _attr(fill or "#ffffff")
+            out.append(f'<path d="{_rounded_d(x, y, ew, eh, _radii(st, ew, eh, 0))}" fill="{ff}" {fs}/>')
+            if el.get("name") and labels:
                 out.append(f'<text x="{x}" y="{y - 10}" font-size="14" fill="#6b7280">{html.escape(str(el["name"]))}</text>')
         elif t == "text" and fill:
             out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="2" fill="{fill_attr}"/>')

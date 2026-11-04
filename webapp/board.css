@@ -1453,6 +1453,61 @@ html[data-theme="light"] .leo-board {
   font-weight: 600;
 }
 
+.lb-itabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px 4px;
+}
+
+.lb-itabs button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--lb-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.lb-itabs button:hover {
+  color: var(--lb-text);
+}
+
+.lb-itabs button.is-on {
+  background: var(--lb-accent-soft);
+  color: var(--lb-text);
+}
+
+.lb-icode {
+  margin: 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 8px;
+  color: var(--lb-text);
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre;
+  user-select: text;
+  scrollbar-width: thin;
+}
+
+.lb-icode.is-cmd {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.lb-inote {
+  color: var(--lb-muted);
+  line-height: 1.45;
+}
+
+.lb-idim {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
 .lb-isec {
   display: flex;
   flex-direction: column;
@@ -1591,6 +1646,13 @@ html[data-theme="light"] .leo-board {
 .lb-ibtn.is-wide {
   width: 100%;
   justify-content: flex-start;
+}
+
+.lb-irow > .lb-ibtn.is-wide {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  justify-content: center;
 }
 
 .lb-iseg .lb-ibtn {
