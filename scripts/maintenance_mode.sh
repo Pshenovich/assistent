@@ -2,6 +2,8 @@
 # Страница «Орбита на обслуживании» вместо сайта (на сервере, от root). Данные не трогает.
 #
 #   bash maintenance_mode.sh on    — остановить сервисы Орбиты, все домены → страница-заглушка (503)
+#   bash maintenance_mode.sh public — то же, но на getorbita.me работают лендинг, /privacy, /terms, /zoom,
+#                                     /docs/ и /webapp/legal/ (им данные не нужны; веб-сервер остаётся запущен)
 #   bash maintenance_mode.sh cert  — после того как DNS смотрит сюда: https-сертификаты (certbot)
 #   bash maintenance_mode.sh off   — вернуть сайты Орбиты (сервисы запускает деплой или systemctl start)
 #
@@ -50,9 +52,14 @@ HTML
 }
 
 case "${1:-}" in
-  on)
+  on|public)
     page
-    systemctl stop assistant-bot assistant-worker assistant-usage executive-board-bot 2>/dev/null || true
+    if [[ "$1" == public ]]; then
+      systemctl stop assistant-bot assistant-worker executive-board-bot 2>/dev/null || true
+      systemctl start assistant-usage
+    else
+      systemctl stop assistant-bot assistant-worker assistant-usage executive-board-bot 2>/dev/null || true
+    fi
     # Сайты Орбиты снимаем (запоминаем, какие были), ставим заглушку на все домены.
     if [[ ! -f "$SAVED" ]]; then
       : > "$SAVED"
@@ -74,9 +81,38 @@ server {
     location / { return 503; }
 }
 NGINX
+    if [[ "$1" == public ]]; then
+      # getorbita.me: публичные страницы — из веб-сервера, всё остальное — заглушка.
+      sed -i 's/ getorbita.me www.getorbita.me;/;/' "$SITE"
+      cat >> "$SITE" <<'NGINX'
+server {
+    listen 80;
+    listen [::]:80;
+    server_name www.getorbita.me;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://getorbita.me$request_uri; }
+}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name getorbita.me;
+    server_tokens off;
+    root /var/www/leo-maintenance;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location = /index.html { internal; add_header Retry-After 3600 always; add_header Cache-Control "no-store" always; }
+    error_page 503 /index.html;
+    location / { return 503; }
+    location = / { rewrite ^ /orbita break; proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ~ ^/(orbita|privacy|terms|zoom|favicon\.ico|robots\.txt)$ { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ^~ /docs/ { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+    location ^~ /webapp/legal/ { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto $scheme; }
+    location = /webapp/styles.css { proxy_pass http://127.0.0.1:8080; proxy_set_header Host $host; }
+}
+NGINX
+    fi
     ln -sf "$SITE" /etc/nginx/sites-enabled/leo-maintenance
     nginx -t && systemctl reload nginx
-    echo "maintenance: on (сняты сайты: $(tr '\n' ' ' < "$SAVED"))"
+    echo "maintenance: $1 (сняты сайты: $(tr '\n' ' ' < "$SAVED"))"
     ;;
   cert)
     args=()
