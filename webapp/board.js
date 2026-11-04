@@ -228,6 +228,12 @@
     vaT: '<path d="M4 4h12"/><path d="M10 7v9M7 10l3-3 3 3"/>',
     vaM: '<path d="M4 10h12"/><path d="M10 3v4M10 13v4M8 5l2 2 2-2M8 15l2-2 2 2"/>',
     vaB: '<path d="M4 16h12"/><path d="M10 4v9M7 10l3 3 3-3"/>',
+    dirV: '<path d="M10 3v14M6 13l4 4 4-4"/>',
+    dirH: '<path d="M3 10h14M13 6l4 4-4 4"/>',
+    gapV: '<path d="M4 4h12M4 16h12"/><path d="M10 7v6"/>',
+    gapH: '<path d="M4 4v12M16 4v12"/><path d="M7 10h6"/>',
+    padH: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M6 7v6M14 7v6"/>',
+    padV: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M6 7h8M6 13h8"/>',
     blurFx: '<circle cx="10" cy="10" r="6.5" stroke-dasharray="2 2.2"/><circle cx="10" cy="10" r="2.5"/>',
     link: '<path d="M8.5 11.5a3 3 0 004.2 0l2.6-2.6a3 3 0 00-4.2-4.2l-1 1"/><path d="M11.5 8.5a3 3 0 00-4.2 0l-2.6 2.6a3 3 0 004.2 4.2l1-1"/>',
     flipH: '<path d="M10 3v14" stroke-dasharray="2 2"/><path d="M7.5 6L3 14h4.5zM12.5 6l4.5 8h-4.5z"/>',
@@ -560,6 +566,7 @@
     } else if (el.type === "frame") {
       if (el.name) o.name = String(el.name);
       if (el.device) o.device = el.device;
+      if (el.layout) o.layout = el.layout;
     } else if (el.type === "table") {
       o.html = String(el.html || "");
     } else if (el.type === "card") {
@@ -843,6 +850,13 @@
 
     function commit() {
       if (!tx) return;
+      // Автолэйаут: перед закрытием шага — разложить затронутые экраны (тем же шагом отмены).
+      if (tx.depth === 1 && !tx.laying) {
+        tx.laying = true;
+        try {
+          relayout(Array.from(tx.before.keys()));
+        } catch (_) {}
+      }
       tx.depth--;
       if (tx.depth > 0) return;
       var entry = [];
@@ -1573,6 +1587,13 @@
         localChanged(el.id);
         dirty.add(el.id);
         schedule();
+        // Текст в автолэйауте вырос — соседи сдвигаются (без шага отмены, как сама подгонка высоты).
+        if (el.frame && !tx) {
+          var fr0 = getEl(el.frame);
+          if (fr0 && fr0.layout) setTimeout(function () {
+            if (!tx && getEl(el.id)) relayout([el.id]);
+          }, 0);
+        }
       }
     }
 
@@ -4030,6 +4051,38 @@
             '<button type="button" class="lb-ibtn" data-act="flipH" title="Отразить по горизонтали (⇧H)">' + icon("flipH") + "</button>" +
             '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div>") + "</div>");
       }
+      if (one && one.type === "frame") {
+        // Автолэйаут (как во Figma): направление, промежуток, отступы, выравнивание 3×3, «обнимать содержимое».
+        var LA = parseLayout(one.layout);
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Автолэйаут' +
+          (LA ? '<button type="button" class="lb-ibtn lb-iadd" data-act="alDel" title="Убрать автолэйаут">' + icon("minus") + "</button>"
+            : '<button type="button" class="lb-ibtn lb-iadd" data-act="alAdd" title="Добавить автолэйаут (⇧A)">' + icon("plus") + "</button>") + "</div>");
+        if (LA) {
+          var Hd = LA.dir === "h";
+          var cells = "";
+          ["start", "center", "end"].forEach(function (r) {
+            ["start", "center", "end"].forEach(function (c) {
+              // Вертикальный: строки — главная ось, столбцы — поперечная; горизонтальный — наоборот.
+              var m = Hd ? c : r;
+              var cr = Hd ? r : c;
+              var on = LA.align === cr && (LA.justify === m || LA.justify === "between");
+              cells += '<button type="button" class="lb-lcell' + (on ? " is-on" : "") + '" data-act="alCell" data-lc="' + cr + '" data-lm="' + m + '" title="Выровнять"><i></i></button>';
+            });
+          });
+          h.push('<div class="lb-irow"><span class="lb-iseg">' +
+              '<button type="button" class="lb-ibtn' + (!Hd ? " is-on" : "") + '" data-act="alDir" data-ldir="v" title="Вертикально">' + icon("dirV") + "</button>" +
+              '<button type="button" class="lb-ibtn' + (Hd ? " is-on" : "") + '" data-act="alDir" data-ldir="h" title="Горизонтально">' + icon("dirH") + "</button></span>" +
+              numField("lgap", icon(Hd ? "gapH" : "gapV"), LA.justify === "between" ? undefined : LA.gap, { title: "Промежуток", html: true, ph: "Авто" }) + "</div>" +
+            '<div class="lb-ilayout"><div class="lb-lgrid">' + cells + "</div><div class=\"lb-lside\">" +
+              '<div class="lb-irow">' + numField("lpadh", icon("padH"), LA.pad[3] === LA.pad[1] ? LA.pad[3] : undefined, { title: "Отступ слева и справа", html: true, ph: "Разные" }) + "</div>" +
+              '<div class="lb-irow">' + numField("lpadv", icon("padV"), LA.pad[0] === LA.pad[2] ? LA.pad[0] : undefined, { title: "Отступ сверху и снизу", html: true, ph: "Разные" }) + "</div>" +
+              '<button type="button" class="lb-ibtn is-wide' + (LA.justify === "between" ? " is-on" : "") + '" data-act="alBetween" title="Равномерно по всей длине">Между</button>' +
+            "</div></div>" +
+            '<div class="lb-irow"><button type="button" class="lb-ibtn is-wide' + (LA.hug.indexOf("w") >= 0 ? " is-on" : "") + '" data-act="hugW" title="Ширина по содержимому">Ширина по содержимому</button></div>' +
+            '<div class="lb-irow"><button type="button" class="lb-ibtn is-wide' + (LA.hug.indexOf("h") >= 0 ? " is-on" : "") + '" data-act="hugH" title="Высота по содержимому">Высота по содержимому</button></div>');
+        }
+        h.push("</div>");
+      }
       // Выравнивание: несколько объектов — между собой (группа как одно целое), один в экране — по экрану.
       if (list.length > 1 || (one && frameOf(one))) {
         h.push('<div class="lb-isec"><div class="lb-ilabel">Выравнивание' + (list.length > 1 ? "" : " по экрану") + '</div><div class="lb-ialign">' +
@@ -4206,6 +4259,11 @@
           var fw = {};
           fw[k] = n;
           if (cur.type === "frame" && cur.device) fw.device = undefined;
+          var LH = cur.type === "frame" ? parseLayout(cur.layout) : null;
+          if (LH && LH.hug.indexOf(k) >= 0) {
+            LH.hug = LH.hug.replace(k, "") || "none";
+            fw.layout = layoutStr(LH);
+          }
           // Прижат к нижнему (правому) краю экрана и не к верхнему (левому) — растёт вверх (влево), как во Figma.
           var pk = k === "w" ? "x" : "y";
           if (f && !cur.rot) {
@@ -4234,6 +4292,15 @@
           var so = {};
           so[ok] = n == null ? undefined : n >= 100 ? null : Math.max(0, n) / 100;
           if (n != null) patch(cur.id, { style: so });
+        } else if (k === "lgap" || k === "lpadh" || k === "lpadv") {
+          var LL = cur.type === "frame" ? parseLayout(cur.layout) : null;
+          if (!LL || n == null || n < 0) return;
+          if (k === "lgap") {
+            LL.gap = n;
+            if (LL.justify === "between") LL.justify = "start";
+          } else if (k === "lpadh") LL.pad[1] = LL.pad[3] = n;
+          else LL.pad[0] = LL.pad[2] = n;
+          patch(cur.id, { layout: layoutStr(LL) });
         } else if (k === "fontFamily") {
           var fam = String(raw || "").trim();
           var fsx = { fontFamily: fam && FONT_RE.test(fam) ? fam : null };
@@ -4372,6 +4439,214 @@
         var rot = (((k.rot || 0) + delta) % 360 + 540) % 360 - 180;
         patch(k.id, { x: kc.x - k.w / 2, y: kc.y - k.h / 2, rot: Math.round(rot * 10) / 10 || undefined });
       });
+    }
+
+    // ---- автолэйаут экрана: «dir gap pt pr pb pl align justify hug» ----
+    // dir h|v; align — по поперечной оси start|center|end; justify — по главной start|center|end|between; hug none|w|h|wh.
+    function parseLayout(str) {
+      var p = String(str || "").trim().split(/\s+/);
+      if (p[0] !== "h" && p[0] !== "v") return null;
+      var n = function (i) {
+        var v = Number(p[i]);
+        return isFinite(v) && v >= 0 ? v : 0;
+      };
+      return {
+        dir: p[0], gap: n(1), pad: [n(2), n(3), n(4), n(5)],
+        align: /^(start|center|end)$/.test(p[6]) ? p[6] : "start",
+        justify: /^(start|center|end|between)$/.test(p[7]) ? p[7] : "start",
+        hug: /^(none|w|h|wh)$/.test(p[8]) ? p[8] : "none",
+      };
+    }
+
+    function layoutStr(L) {
+      return [L.dir, r1(L.gap), r1(L.pad[0]), r1(L.pad[1]), r1(L.pad[2]), r1(L.pad[3]), L.align, L.justify, L.hug].join(" ");
+    }
+
+    function layoutKids(f) {
+      var out = [];
+      els.forEach(function (e) {
+        if (e.frame === f.id && e.type !== "line" && e.type !== "pen") out.push(e);
+      });
+      return out;
+    }
+
+    /** Разложить содержимое экрана по правилам (порядок — по положению вдоль главной оси). */
+    function applyLayout(fid) {
+      var f = getEl(fid);
+      var L = f && f.type === "frame" ? parseLayout(f.layout) : null;
+      if (!L) return;
+      var H = L.dir === "h";
+      var kids = layoutKids(f).sort(function (a, b) {
+        return H ? a.x + a.w / 2 - (b.x + b.w / 2) : a.y + a.h / 2 - (b.y + b.h / 2);
+      });
+      var sizeM = function (e) {
+        return H ? e.w : e.h;
+      };
+      var sizeC = function (e) {
+        return H ? e.h : e.w;
+      };
+      var pMs = H ? L.pad[3] : L.pad[0];
+      var pMe = H ? L.pad[1] : L.pad[2];
+      var pCs = H ? L.pad[0] : L.pad[3];
+      var pCe = H ? L.pad[2] : L.pad[1];
+      var sum = kids.reduce(function (a, e) {
+        return a + sizeM(e);
+      }, 0);
+      var total = sum + L.gap * Math.max(0, kids.length - 1);
+      var maxC = kids.reduce(function (a, e) {
+        return Math.max(a, sizeC(e));
+      }, 0);
+      var fw = f.w;
+      var fh = f.h;
+      var hugW = L.hug.indexOf("w") >= 0;
+      var hugH = L.hug.indexOf("h") >= 0;
+      if (kids.length) {
+        if (hugW) fw = H ? total + pMs + pMe : maxC + pCs + pCe;
+        if (hugH) fh = H ? maxC + pCs + pCe : total + pMs + pMe;
+      } else {
+        if (hugW) fw = Math.max(1, L.pad[1] + L.pad[3]);
+        if (hugH) fh = Math.max(1, L.pad[0] + L.pad[2]);
+      }
+      fw = Math.max(1, r1(fw));
+      fh = Math.max(1, r1(fh));
+      if (fw !== f.w || fh !== f.h) f = patch(f.id, { w: fw, h: fh, device: undefined });
+      var availM = (H ? f.w : f.h) - pMs - pMe;
+      var availC = (H ? f.h : f.w) - pCs - pCe;
+      var gap = L.gap;
+      var pos = pMs;
+      if (L.justify === "center") pos += (availM - total) / 2;
+      else if (L.justify === "end") pos += availM - total;
+      else if (L.justify === "between" && kids.length > 1) gap = (availM - sum) / (kids.length - 1);
+      kids.forEach(function (k) {
+        var c = pCs + (L.align === "center" ? (availC - sizeC(k)) / 2 : L.align === "end" ? availC - sizeC(k) : 0);
+        var nx = f.x + (H ? pos : c);
+        var ny = f.y + (H ? c : pos);
+        var dx = r1(nx - k.x);
+        var dy = r1(ny - k.y);
+        if (dx || dy) moveBy(withFrameKids([k.id]), dx, dy);
+        pos += sizeM(k) + gap;
+      });
+    }
+
+    /** Какие экраны с автолэйаутом затронула правка (и их внешние — у «обнимающих» меняется размер). */
+    function relayout(ids) {
+      var todo = {};
+      var add = function (id) {
+        for (var f = getEl(id), g = 0; f && g < 20; f = frameOf(f), g++) if (f.type === "frame" && f.layout) todo[f.id] = 1;
+      };
+      ids.forEach(function (id) {
+        var el = getEl(id);
+        if (el) {
+          if (el.type === "frame") add(el.id);
+          if (el.frame) add(el.frame);
+        }
+        var before = tx && tx.before.get(id);
+        if (before && before.frame) add(before.frame); // ушёл из экрана — экран пересобрать
+      });
+      var list = Object.keys(todo).map(getEl).filter(Boolean).sort(function (a, b) {
+        return frameDepth(b) - frameDepth(a); // сначала вложенные
+      });
+      list.forEach(function (f) {
+        applyLayout(f.id);
+      });
+    }
+
+    /** ⇧A: экрану — автолэйаут; выделенным объектам — новый экран-обёртка с автолэйаутом (как во Figma). */
+    function addAutoLayout() {
+      var list = selList().filter(function (e) {
+        return e.type !== "line" && e.type !== "pen";
+      });
+      if (!list.length || readOnly) return;
+      var guess = function (items) {
+        if (items.length < 2) return { dir: "v", gap: 8 };
+        // Направление — куда разбросаны центры: стопка — вертикально, ряд — горизонтально.
+        var cx = items.map(function (e) {
+          return e.x + e.w / 2;
+        });
+        var cy = items.map(function (e) {
+          return e.y + e.h / 2;
+        });
+        var H = Math.max.apply(null, cx) - Math.min.apply(null, cx) > Math.max.apply(null, cy) - Math.min.apply(null, cy);
+        var s0 = items.slice().sort(function (a, c) {
+          return H ? a.x - c.x : a.y - c.y;
+        });
+        var gaps = [];
+        for (var i = 1; i < s0.length; i++) gaps.push(H ? s0[i].x - (s0[i - 1].x + s0[i - 1].w) : s0[i].y - (s0[i - 1].y + s0[i - 1].h));
+        gaps.sort(function (a, c) {
+          return a - c;
+        });
+        return { dir: H ? "h" : "v", gap: Math.max(0, Math.round(gaps[Math.floor(gaps.length / 2)] || 0)) };
+      };
+      begin();
+      if (list.length === 1 && list[0].type === "frame") {
+        var f = list[0];
+        if (f.layout) {
+          commit();
+          return;
+        }
+        var kids = layoutKids(f);
+        var g0 = guess(kids);
+        var kb = kids.length ? G.unionBounds(kids.map(function (e) {
+          return G.elBounds(e, getEl);
+        })) : null;
+        var pad = kb ? [kb.y - f.y, f.x + f.w - (kb.x + kb.w), f.y + f.h - (kb.y + kb.h), kb.x - f.x].map(function (v) {
+          return Math.max(0, Math.round(v));
+        }) : [16, 16, 16, 16];
+        patch(f.id, { layout: layoutStr({ dir: g0.dir, gap: g0.gap, pad: pad, align: "start", justify: "start", hug: "none" }) });
+        relayout([f.id]);
+      } else {
+        // Обёртка: экран вокруг выделенного, они — внутри, размер по содержимому.
+        var b = G.unionBounds(list.map(function (e) {
+          return G.elBounds(e, getEl);
+        }));
+        var g1 = guess(list);
+        var parent = frameOf(list[0]);
+        var wrap = newEl("frame", G.pt(b.x, b.y), {
+          w: b.w, h: b.h, name: "Автолэйаут", style: { fill: "#ffffff", fillOff: true, radius: 0 },
+          layout: layoutStr({ dir: g1.dir, gap: g1.gap, pad: [0, 0, 0, 0], align: "start", justify: "start", hug: "wh" }),
+          z: Math.min.apply(null, list.map(function (e) {
+            return e.z || 0;
+          })) - 0.5,
+        });
+        if (parent) wrap.frame = parent.id;
+        put(wrap);
+        list.forEach(function (e) {
+          patch(e.id, { frame: wrap.id, group: undefined });
+        });
+        relayout([wrap.id]);
+        setSelection([wrap.id]);
+      }
+      commit();
+    }
+
+    function layoutAct(a, b) {
+      var f = selList()[0];
+      if (!f || f.type !== "frame") return;
+      var L = parseLayout(f.layout);
+      begin();
+      if (a === "alAdd") {
+        commit();
+        addAutoLayout();
+        return;
+      }
+      if (!L) return commit();
+      if (a === "alDel") patch(f.id, { layout: undefined });
+      else {
+        if (a === "alDir") L.dir = b.getAttribute("data-ldir");
+        else if (a === "alCell") {
+          L.align = b.getAttribute("data-lc");
+          if (L.justify !== "between") L.justify = b.getAttribute("data-lm");
+        } else if (a === "alBetween") L.justify = L.justify === "between" ? "start" : "between";
+        else if (a === "hugW" || a === "hugH") {
+          var w = L.hug.indexOf("w") >= 0;
+          var h = L.hug.indexOf("h") >= 0;
+          if (a === "hugW") w = !w;
+          else h = !h;
+          L.hug = w && h ? "wh" : w ? "w" : h ? "h" : "none";
+        }
+        patch(f.id, { layout: layoutStr(L) });
+      }
+      commit();
     }
 
     // ---- панель слоёв (слева): экраны → группы → объекты, сверху — верхние по порядку ----
@@ -5200,6 +5475,7 @@
         } else if (a === "flipH" || a === "flipV") flipSel(a === "flipH");
         else if (a === "group") groupSel();
         else if (a === "fxAdd") openFxMenu(b);
+        else if (/^(alAdd|alDel|alDir|alCell|alBetween|hugW|hugH)$/.test(a)) layoutAct(a, b);
         else if (a === "export") exportSelection(expFmt, expScale);
         else if (a === "link") {
           var lk = selList()[0];
@@ -6799,6 +7075,13 @@
       }
       guides = [];
       if (!el0.rot && !free && !(ratio && dir[0] && dir[1])) snapResize(g, f, dir, el0.type === "text" || BLOCKS[el0.type]);
+      // Тянут край «обнимающего» экрана — по этой оси размер становится фиксированным (как во Figma).
+      var LR = el0.type === "frame" ? parseLayout(el0.layout) : null;
+      if (LR && LR.hug !== "none") {
+        if (dir[0]) LR.hug = LR.hug.replace("w", "");
+        if (dir[1]) LR.hug = LR.hug.replace("h", "");
+        f.layout = layoutStr(Object.assign(LR, { hug: LR.hug || "none" }));
+      }
       patch(g.id, f);
     }
 
@@ -7227,6 +7510,8 @@
         zoomBy(1.25);
       } else if ((k === "-" || k === "_") && !mod) {
         zoomBy(0.8);
+      } else if (mode === "design" && e.shiftKey && !mod && !e.altKey && e.code === "KeyA" && selected.size && !readOnly) {
+        addAutoLayout();
       } else if (mode === "design" && e.shiftKey && !mod && !e.altKey && (e.code === "KeyH" || e.code === "KeyV") && selected.size && !readOnly) {
         // Как во Figma: ⇧H — отразить по горизонтали, ⇧V — по вертикали.
         flipSel(e.code === "KeyH");

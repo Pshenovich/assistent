@@ -2079,3 +2079,57 @@ html[data-theme="light"] .leo-board {
   flex: 1 1 0;
   min-width: 0;
 }
+
+/* Автолэйаут: сетка выравнивания 3×3 и отступы рядом. */
+.lb-ilayout {
+  display: flex;
+  gap: 6px;
+}
+
+.lb-lgrid {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(3, 22px);
+  grid-template-rows: repeat(3, 22px);
+  gap: 2px;
+  padding: 4px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-lcell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lb-lcell i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--lb-text) 35%, transparent);
+}
+
+.lb-lcell:hover {
+  background: color-mix(in srgb, var(--lb-text) 8%, transparent);
+}
+
+.lb-lcell.is-on i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--lb-accent);
+}
+
+.lb-lside {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}

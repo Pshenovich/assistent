@@ -34,6 +34,7 @@ _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "te
                "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign",
                "fillGrad", "strokeGrad", "blur", "bgBlur",
                "fontFamily", "fontWeight", "lineHeight", "letterSpacing", "valign", "deco", "textCase")
+_LAYOUT_RE = re.compile(r"^(h|v)( \d{1,5}(\.\d)?){5} (start|center|end) (start|center|end|between) (none|w|h|wh)$")
 # Градиент: «linear|radial угол #rrggbbaa@позиция …» (2–8 точек).
 _GRAD_RE = re.compile(r"^(linear|radial) -?\d{1,3}( #[0-9a-fA-F]{8}@\d{1,3}){2,8}$")
 # Скругления углов по отдельности: «левый-верхний правый-верхний правый-нижний левый-нижний».
@@ -493,6 +494,10 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         device = _str(raw.get("device"), 24).strip()
         if device:
             el["device"] = device
+        # Автолэйаут: «h|v промежуток отступы×4 выравнивание распределение обнимать».
+        layout = str(raw.get("layout") or "").strip()
+        if _LAYOUT_RE.match(layout):
+            el["layout"] = layout
     elif etype == "vector":
         vec = _clean_vector(raw)
         if not vec:

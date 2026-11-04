@@ -311,6 +311,13 @@ class BoardCornersAndNestingTests(unittest.TestCase):
                          ("Golos Text", 600, 24, -2, "bottom", "upper"))
         self.assertNotIn("deco", st)
 
+    def test_frame_layout(self) -> None:
+        good = {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 100, "h": 100, "layout": "v 12 16 16 16 16 center start wh"}
+        bad = dict(good, id="g", layout="v 12 16 left")
+        els = board_doc.parse_board(json.dumps({"v": 1, "elements": {"f": good, "g": bad}}))["elements"]
+        self.assertEqual(els["f"]["layout"], "v 12 16 16 16 16 center start wh")
+        self.assertNotIn("layout", els["g"])
+
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}
         inner = {"id": "f2", "type": "frame", "x": 10, "y": 10, "w": 100, "h": 100, "frame": "f1"}
