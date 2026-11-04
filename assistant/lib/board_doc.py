@@ -34,7 +34,7 @@ _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "te
                "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign",
                "fillGrad", "strokeGrad", "blur", "bgBlur",
                "fontFamily", "fontWeight", "lineHeight", "letterSpacing", "valign", "deco", "textCase")
-_LAYOUT_RE = re.compile(r"^(h|v)( \d{1,5}(\.\d)?){5} (start|center|end) (start|center|end|between) (none|w|h|wh)$")
+_LAYOUT_RE = re.compile(r"^(h|v|g)( \d{1,5}(\.\d)?){5} (start|center|end) (start|center|end|between) (none|w|h|wh)( (wrap|c\d{1,2}))?$")
 # Градиент: «linear|radial угол #rrggbbaa@позиция …» (2–8 точек).
 _GRAD_RE = re.compile(r"^(linear|radial) -?\d{1,3}( #[0-9a-fA-F]{8}@\d{1,3}){2,8}$")
 # Скругления углов по отдельности: «левый-верхний правый-верхний правый-нижний левый-нижний».
@@ -379,6 +379,11 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
     tied = etype == "line" and any(isinstance(raw.get(k), dict) and raw[k].get("el") for k in ("start", "end"))
     if raw.get("frame") and raw.get("frame") != eid and not tied:
         el["frame"] = _str(raw.get("frame"))
+    # Ребёнок автолэйаута: «заполнить» по ширине/высоте; замок пропорций.
+    if raw.get("grow") in ("w", "h", "wh"):
+        el["grow"] = raw["grow"]
+    if raw.get("ratio") is True:
+        el["ratio"] = True
     if raw.get("text"):
         el["text"] = _str(raw.get("text"), MAX_TEXT)
     style = raw.get("style")

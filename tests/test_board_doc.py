@@ -317,6 +317,11 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         els = board_doc.parse_board(json.dumps({"v": 1, "elements": {"f": good, "g": bad}}))["elements"]
         self.assertEqual(els["f"]["layout"], "v 12 16 16 16 16 center start wh")
         self.assertNotIn("layout", els["g"])
+        grid = dict(good, id="h", layout="g 8 0 0 0 0 start start h c3")
+        kid = {"id": "k", "type": "rect", "x": 0, "y": 0, "w": 10, "h": 10, "frame": "f", "grow": "w", "ratio": True}
+        els = board_doc.parse_board(json.dumps({"v": 1, "elements": {"f": good, "h": grid, "k": kid}}))["elements"]
+        self.assertEqual(els["h"]["layout"], "g 8 0 0 0 0 start start h c3")
+        self.assertEqual((els["k"]["grow"], els["k"]["ratio"]), ("w", True))
 
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}

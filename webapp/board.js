@@ -228,6 +228,11 @@
     vaT: '<path d="M4 4h12"/><path d="M10 7v9M7 10l3-3 3 3"/>',
     vaM: '<path d="M4 10h12"/><path d="M10 3v4M10 13v4M8 5l2 2 2-2M8 15l2-2 2 2"/>',
     vaB: '<path d="M4 16h12"/><path d="M10 4v9M7 10l3 3 3-3"/>',
+    gridFlow: '<rect x="3.5" y="3.5" width="5" height="5" rx="1"/><rect x="11.5" y="3.5" width="5" height="5" rx="1"/><rect x="3.5" y="11.5" width="5" height="5" rx="1"/><rect x="11.5" y="11.5" width="5" height="5" rx="1"/>',
+    wrap: '<path d="M3 6h11a3 3 0 010 6H8"/><path d="M10 9.5L7.5 12l2.5 2.5"/><path d="M3 15h3"/>',
+    cols: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M8 4v12M12 4v12"/>',
+    lock: '<rect x="5" y="9" width="10" height="8" rx="1.5"/><path d="M7 9V6.5a3 3 0 016 0V9"/>',
+    unlock: '<rect x="5" y="9" width="10" height="8" rx="1.5"/><path d="M7 9V6.5a3 3 0 015.6-1.5"/>',
     autoLayout: '<rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 7h6M7 10h6M7 13h6"/>',
     free: '<rect x="3.5" y="3.5" width="5" height="5" rx="1"/><rect x="11.5" y="11.5" width="5" height="5" rx="1"/><path d="M8.5 6h3v2M11.5 14h-3v-2"/>',
     padL: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><path d="M6.5 7v6"/>',
@@ -535,6 +540,8 @@
     if (el.rot) o.rot = r2(el.rot);
     if (el.group) o.group = el.group;
     if (el.frame) o.frame = el.frame;
+    if (el.grow) o.grow = el.grow;
+    if (el.ratio) o.ratio = true;
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
@@ -3995,7 +4002,7 @@
       }
       var one = list.length === 1 ? list[0] : null;
       var key = JSON.stringify(list.map(function (e) {
-        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, padSplit];
+        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, e.grow, e.ratio, padSplit];
       }));
       inspector.classList.remove("hidden");
       // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
@@ -4061,10 +4068,18 @@
             '<button type="button" class="lb-ibtn" data-act="flipV" title="Отразить по вертикали (⇧V)">' + icon("flipV") + "</button></div></div>");
         // Размеры; у фрейма — автолэйаут вокруг них: поток, «фикс./обнимать», выравнивание и промежуток, отступы.
         var LA = one.type === "frame" ? parseLayout(one.layout) : null;
-        var sizeField = function (k, label, val, hug) {
-          if (!LA) return numField(k, label, val, { title: k === "h" && one.type === "text" ? "Высота текста — по содержимому" : label });
+        // Режим размера: фикс.; «обним.» — у фрейма с автолэйаутом; «заполн.» — у ребёнка автолэйаута.
+        var PL = f ? parseLayout(f.layout) : null;
+        var sizeField = function (k, label, val) {
+          var modes = [["fixed", "Фикс."]];
+          if (LA) modes.push(["hug", "Обним."]);
+          if (PL) modes.push(["fill", "Заполн."]);
+          var curM = LA && LA.hug.indexOf(k) >= 0 ? "hug" : PL && grows(one, k) ? "fill" : "fixed";
+          if (modes.length < 2) return numField(k, label, val, { title: k === "h" && one.type === "text" ? "Высота текста — по содержимому" : label });
           return '<div class="lb-if lb-ifsel" title="' + label + '"><span>' + label + '</span><input type="text" inputmode="decimal" data-k="' + k + '" value="' + esc(String(val)) + '">' +
-            '<select data-k="hug' + label + '"><option value="fixed"' + (hug ? "" : " selected") + '>Фикс.</option><option value="hug"' + (hug ? " selected" : "") + ">Обним.</option></select></div>";
+            '<select data-k="size' + label + '">' + modes.map(function (m) {
+              return '<option value="' + m[0] + '"' + (curM === m[0] ? " selected" : "") + ">" + m[1] + "</option>";
+            }).join("") + "</select></div>";
         };
         h.push('<div class="lb-isec"><div class="lb-ilabel">' + (one.type === "frame" ? "Автолэйаут" : "Размеры") +
           (one.type === "frame" ? '<button type="button" class="lb-ibtn lb-iadd' + (LA ? " is-on" : "") + '" data-act="' + (LA ? "alDel" : "alAdd") + '" title="' +
@@ -4074,12 +4089,16 @@
           h.push('<div class="lb-isub">Поток</div><div class="lb-irow"><span class="lb-iseg">' +
             '<button type="button" class="lb-ibtn' + (!LA ? " is-on" : "") + '" data-act="alDir" data-ldir="" title="Свободно">' + icon("free") + "</button>" +
             '<button type="button" class="lb-ibtn' + (dirNow === "v" ? " is-on" : "") + '" data-act="alDir" data-ldir="v" title="Вертикально">' + icon("dirV") + "</button>" +
-            '<button type="button" class="lb-ibtn' + (dirNow === "h" ? " is-on" : "") + '" data-act="alDir" data-ldir="h" title="Горизонтально">' + icon("dirH") + "</button></span></div>" +
+            '<button type="button" class="lb-ibtn' + (dirNow === "h" ? " is-on" : "") + '" data-act="alDir" data-ldir="h" title="Горизонтально">' + icon("dirH") + "</button>" +
+            '<button type="button" class="lb-ibtn' + (dirNow === "g" ? " is-on" : "") + '" data-act="alDir" data-ldir="g" title="Сетка">' + icon("gridFlow") + "</button></span>" +
+            (dirNow === "h" ? '<button type="button" class="lb-ibtn' + (LA.wrap ? " is-on" : "") + '" data-act="alWrap" title="Перенос на новую строку">' + icon("wrap") + "</button>" : "") +
+            (dirNow === "g" ? numField("lcols", icon("cols"), LA.cols, { title: "Колонки", html: true }) : "") + "</div>" +
             '<div class="lb-isub">Размеры</div>');
         }
-        h.push('<div class="lb-irow">' + sizeField("w", "W", r1(one.w), LA && LA.hug.indexOf("w") >= 0) + sizeField("h", "H", r1(one.h), LA && LA.hug.indexOf("h") >= 0) + "</div>");
+        h.push('<div class="lb-irow">' + sizeField("w", "W", r1(one.w)) + sizeField("h", "H", r1(one.h)) +
+          '<button type="button" class="lb-ibtn' + (one.ratio ? " is-on" : "") + '" data-act="ratio" title="Сохранять пропорции">' + icon(one.ratio ? "lock" : "unlock") + "</button></div>");
         if (LA) {
-          var Hd = LA.dir === "h";
+          var Hd = LA.dir !== "v";
           var cells = "";
           ["start", "center", "end"].forEach(function (r) {
             ["start", "center", "end"].forEach(function (c) {
@@ -4291,6 +4310,12 @@
             LH.hug = LH.hug.replace(k, "") || "none";
             fw.layout = layoutStr(LH);
           }
+          // Ввели размер вручную — «заполнить» по этой оси снимается; с замком — вторая сторона пропорционально.
+          if (grows(cur, k)) fw.grow = String(cur.grow).replace(k, "") || undefined;
+          if (cur.ratio && cur[k] > 0) {
+            var ok2 = k === "w" ? "h" : "w";
+            fw[ok2] = r1(cur[ok2] * (n / cur[k]));
+          }
           // Прижат к нижнему (правому) краю экрана и не к верхнему (левому) — растёт вверх (влево), как во Figma.
           var pk = k === "w" ? "x" : "y";
           if (f && !cur.rot) {
@@ -4319,6 +4344,28 @@
           var so = {};
           so[ok] = n == null ? undefined : n >= 100 ? null : Math.max(0, n) / 100;
           if (n != null) patch(cur.id, { style: so });
+        } else if (k === "sizeW" || k === "sizeH") {
+          var axs = k === "sizeW" ? "w" : "h";
+          var own = cur.type === "frame" ? parseLayout(cur.layout) : null;
+          var fz = {};
+          if (own) {
+            var hw0 = own.hug.indexOf("w") >= 0;
+            var hh0 = own.hug.indexOf("h") >= 0;
+            if (axs === "w") hw0 = raw === "hug";
+            else hh0 = raw === "hug";
+            own.hug = hw0 && hh0 ? "wh" : hw0 ? "w" : hh0 ? "h" : "none";
+            fz.layout = layoutStr(own);
+          }
+          var gr = String(cur.grow || "").replace(axs, "");
+          if (raw === "fill") gr += axs;
+          fz.grow = gr ? (gr.indexOf("w") >= 0 ? "w" : "") + (gr.indexOf("h") >= 0 ? "h" : "") : undefined;
+          patch(cur.id, fz);
+        } else if (k === "lcols") {
+          var LG = cur.type === "frame" ? parseLayout(cur.layout) : null;
+          if (LG && n != null && n >= 1) {
+            LG.cols = Math.min(24, Math.round(n));
+            patch(cur.id, { layout: layoutStr(LG) });
+          }
         } else if (/^(lgap|lgapm|lpadh|lpadv|lpt|lpr|lpb|lpl|hugW|hugH)$/.test(k)) {
           var LL = cur.type === "frame" ? parseLayout(cur.layout) : null;
           if (!LL) return;
@@ -4486,21 +4533,26 @@
     // dir h|v; align — по поперечной оси start|center|end; justify — по главной start|center|end|between; hug none|w|h|wh.
     function parseLayout(str) {
       var p = String(str || "").trim().split(/\s+/);
-      if (p[0] !== "h" && p[0] !== "v") return null;
+      if (p[0] !== "h" && p[0] !== "v" && p[0] !== "g") return null;
       var n = function (i) {
         var v = Number(p[i]);
         return isFinite(v) && v >= 0 ? v : 0;
       };
+      var ex = p[9] || "";
       return {
         dir: p[0], gap: n(1), pad: [n(2), n(3), n(4), n(5)],
         align: /^(start|center|end)$/.test(p[6]) ? p[6] : "start",
         justify: /^(start|center|end|between)$/.test(p[7]) ? p[7] : "start",
         hug: /^(none|w|h|wh)$/.test(p[8]) ? p[8] : "none",
+        // Перенос строк (горизонтальный) и число колонок сетки.
+        wrap: ex === "wrap",
+        cols: /^c\d{1,2}$/.test(ex) ? Math.max(1, Number(ex.slice(1))) : 2,
       };
     }
 
     function layoutStr(L) {
-      return [L.dir, r1(L.gap), r1(L.pad[0]), r1(L.pad[1]), r1(L.pad[2]), r1(L.pad[3]), L.align, L.justify, L.hug].join(" ");
+      var ex = L.dir === "g" ? "c" + Math.max(1, Math.min(24, Math.round(L.cols || 2))) : L.dir === "h" && L.wrap ? "wrap" : "";
+      return [L.dir, r1(L.gap), r1(L.pad[0]), r1(L.pad[1]), r1(L.pad[2]), r1(L.pad[3]), L.align, L.justify, L.hug].concat(ex ? [ex] : []).join(" ");
     }
 
     function layoutKids(f) {
@@ -4511,62 +4563,187 @@
       return out;
     }
 
-    /** Разложить содержимое экрана по правилам (порядок — по положению вдоль главной оси). */
+    function grows(e, ax) {
+      return String(e.grow || "").indexOf(ax) >= 0;
+    }
+
+    /** Поставить ребёнка на место (с его содержимым) и, если надо, задать размер. */
+    function placeKid(k, x, y, w, h) {
+      var dx = r1(x - k.x);
+      var dy = r1(y - k.y);
+      if (dx || dy) moveBy(withFrameKids([k.id]), dx, dy);
+      var f = {};
+      if (w != null && Math.abs(r1(w) - k.w) > 0.05) f.w = Math.max(1, r1(w));
+      if (h != null && Math.abs(r1(h) - k.h) > 0.05) f.h = Math.max(1, r1(h));
+      if (f.w != null || f.h != null) {
+        if (k.type === "frame" && k.device) f.device = undefined;
+        patch(k.id, f);
+        if (k.type === "frame" && k.layout) applyLayout(k.id); // свой автолэйаут — под новый размер
+      }
+    }
+
+    /** Разложить содержимое фрейма по правилам. Порядок — по положению вдоль главной оси (или явный order). */
     function applyLayout(fid, order) {
       var f = getEl(fid);
       var L = f && f.type === "frame" ? parseLayout(f.layout) : null;
       if (!L) return;
+      if (L.dir === "g" || (L.dir === "h" && L.wrap)) return applyFlow(f, L, order);
       var H = L.dir === "h";
+      var MA = H ? "w" : "h"; // главная ось
+      var CA = H ? "h" : "w";
       var kids = layoutKids(f).sort(function (a, b) {
         if (order) return order.indexOf(a.id) - order.indexOf(b.id);
         return H ? a.x + a.w / 2 - (b.x + b.w / 2) : a.y + a.h / 2 - (b.y + b.h / 2);
       });
-      var sizeM = function (e) {
-        return H ? e.w : e.h;
+      var hugM = L.hug.indexOf(MA) >= 0;
+      var hugC = L.hug.indexOf(CA) >= 0;
+      // «Заполнить» у ребёнка не действует по оси, где фрейм сам «обнимает» содержимое.
+      var gm = function (k) {
+        return !hugM && grows(k, MA);
       };
-      var sizeC = function (e) {
-        return H ? e.h : e.w;
+      var gc = function (k) {
+        return !hugC && grows(k, CA);
       };
       var pMs = H ? L.pad[3] : L.pad[0];
       var pMe = H ? L.pad[1] : L.pad[2];
       var pCs = H ? L.pad[0] : L.pad[3];
       var pCe = H ? L.pad[2] : L.pad[1];
+      var gaps = L.gap * Math.max(0, kids.length - 1);
+      var sumAll = kids.reduce(function (a, e) {
+        return a + e[MA];
+      }, 0);
+      var maxC = kids.reduce(function (a, e) {
+        return Math.max(a, e[CA]);
+      }, 0);
+      var sz = { w: f.w, h: f.h };
+      if (hugM) sz[MA] = kids.length ? sumAll + gaps + pMs + pMe : Math.max(1, pMs + pMe);
+      if (hugC) sz[CA] = kids.length ? maxC + pCs + pCe : Math.max(1, pCs + pCe);
+      sz.w = Math.max(1, r1(sz.w));
+      sz.h = Math.max(1, r1(sz.h));
+      if (sz.w !== f.w || sz.h !== f.h) f = patch(f.id, { w: sz.w, h: sz.h, device: undefined });
+      var availM = f[MA] - pMs - pMe;
+      var availC = f[CA] - pCs - pCe;
+      // Заполняющие делят свободное место поровну.
+      var fixed = kids.reduce(function (a, e) {
+        return a + (gm(e) ? 0 : e[MA]);
+      }, 0);
+      var nGrow = kids.filter(gm).length;
+      var each = nGrow ? Math.max(1, (availM - fixed - gaps) / nGrow) : 0;
+      var sizeM = function (k) {
+        return gm(k) ? each : k[MA];
+      };
+      var sizeC = function (k) {
+        return gc(k) ? availC : k[CA];
+      };
       var sum = kids.reduce(function (a, e) {
         return a + sizeM(e);
       }, 0);
-      var total = sum + L.gap * Math.max(0, kids.length - 1);
-      var maxC = kids.reduce(function (a, e) {
-        return Math.max(a, sizeC(e));
-      }, 0);
-      var fw = f.w;
-      var fh = f.h;
-      var hugW = L.hug.indexOf("w") >= 0;
-      var hugH = L.hug.indexOf("h") >= 0;
-      if (kids.length) {
-        if (hugW) fw = H ? total + pMs + pMe : maxC + pCs + pCe;
-        if (hugH) fh = H ? maxC + pCs + pCe : total + pMs + pMe;
-      } else {
-        if (hugW) fw = Math.max(1, L.pad[1] + L.pad[3]);
-        if (hugH) fh = Math.max(1, L.pad[0] + L.pad[2]);
-      }
-      fw = Math.max(1, r1(fw));
-      fh = Math.max(1, r1(fh));
-      if (fw !== f.w || fh !== f.h) f = patch(f.id, { w: fw, h: fh, device: undefined });
-      var availM = (H ? f.w : f.h) - pMs - pMe;
-      var availC = (H ? f.h : f.w) - pCs - pCe;
+      var total = sum + gaps;
       var gap = L.gap;
       var pos = pMs;
-      if (L.justify === "center") pos += (availM - total) / 2;
-      else if (L.justify === "end") pos += availM - total;
-      else if (L.justify === "between" && kids.length > 1) gap = (availM - sum) / (kids.length - 1);
+      if (!nGrow) {
+        if (L.justify === "center") pos += (availM - total) / 2;
+        else if (L.justify === "end") pos += availM - total;
+        else if (L.justify === "between" && kids.length > 1) gap = (availM - sum) / (kids.length - 1);
+      }
+      kids.forEach(function (k0) {
+        var k = getEl(k0.id);
+        var m = sizeM(k);
+        var c = sizeC(k);
+        var cpos = pCs + (L.align === "center" ? (availC - c) / 2 : L.align === "end" ? availC - c : 0);
+        var size = {};
+        size[MA] = gm(k) ? m : null;
+        size[CA] = gc(k) ? c : null;
+        placeKid(k, f.x + (H ? pos : cpos), f.y + (H ? cpos : pos), size.w, size.h);
+        pos += m + gap;
+      });
+    }
+
+    /** Перенос строк (горизонтальный) и сетка: строки по ширине фрейма; в сетке — колонки равной ширины. */
+    function applyFlow(f, L, order) {
+      var grid = L.dir === "g";
+      var kids = layoutKids(f).sort(function (a, b) {
+        if (order) return order.indexOf(a.id) - order.indexOf(b.id);
+        // Порядок чтения: сверху вниз, слева направо (строка — по центру по вертикали с допуском).
+        var dy = a.y + a.h / 2 - (b.y + b.h / 2);
+        return Math.abs(dy) > Math.min(a.h, b.h) / 2 ? dy : a.x - b.x;
+      });
+      var hugW = L.hug.indexOf("w") >= 0;
+      var hugH = L.hug.indexOf("h") >= 0;
+      var cols = Math.max(1, L.cols || 2);
+      var maxW = kids.reduce(function (a, e) {
+        return Math.max(a, e.w);
+      }, 0);
+      var W = f.w;
+      if (hugW) {
+        // «Обнимать» по ширине: сетка — колонки по самому широкому, перенос — всё в одну строку.
+        W = grid ? cols * maxW + L.gap * (cols - 1) + L.pad[1] + L.pad[3] : kids.reduce(function (a, e) {
+          return a + e.w;
+        }, 0) + L.gap * Math.max(0, kids.length - 1) + L.pad[1] + L.pad[3];
+      }
+      var availW = W - L.pad[1] - L.pad[3];
+      var cellW = grid ? Math.max(1, (availW - L.gap * (cols - 1)) / cols) : 0;
+      // Строки.
+      var rows = [];
+      var row = [];
+      var used = 0;
       kids.forEach(function (k) {
-        var c = pCs + (L.align === "center" ? (availC - sizeC(k)) / 2 : L.align === "end" ? availC - sizeC(k) : 0);
-        var nx = f.x + (H ? pos : c);
-        var ny = f.y + (H ? c : pos);
-        var dx = r1(nx - k.x);
-        var dy = r1(ny - k.y);
-        if (dx || dy) moveBy(withFrameKids([k.id]), dx, dy);
-        pos += sizeM(k) + gap;
+        var w = grid ? (grows(k, "w") ? cellW : Math.min(k.w, cellW)) : k.w;
+        var full = grid ? row.length >= cols : row.length && used + L.gap + w > availW + 0.5;
+        if (full) {
+          rows.push(row);
+          row = [];
+          used = 0;
+        }
+        row.push({ k: k, w: w });
+        used += (row.length > 1 ? L.gap : 0) + w;
+      });
+      if (row.length) rows.push(row);
+      var heights = rows.map(function (r) {
+        return r.reduce(function (a, it) {
+          return Math.max(a, it.k.h);
+        }, 0);
+      });
+      var contentH = heights.reduce(function (a, h) {
+        return a + h;
+      }, 0) + L.gap * Math.max(0, rows.length - 1);
+      var Hh = hugH ? contentH + L.pad[0] + L.pad[2] : f.h;
+      W = Math.max(1, r1(W));
+      Hh = Math.max(1, r1(Hh));
+      if (W !== f.w || Hh !== f.h) f = patch(f.id, { w: W, h: Hh, device: undefined });
+      var y = f.y + L.pad[0];
+      // Сетка: вертикально — по «распределению»; перенос: по горизонтали — распределение, в строке по вертикали — выравнивание.
+      if (!hugH && grid) {
+        var freeH = f.h - L.pad[0] - L.pad[2] - contentH;
+        if (L.justify === "center") y += freeH / 2;
+        else if (L.justify === "end") y += freeH;
+      }
+      rows.forEach(function (r, ri) {
+        var rowW = r.reduce(function (a, it) {
+          return a + it.w;
+        }, 0) + L.gap * (r.length - 1);
+        var x = f.x + L.pad[3];
+        var gap = L.gap;
+        if (!grid) {
+          var free = availW - rowW;
+          if (L.justify === "center") x += free / 2;
+          else if (L.justify === "end") x += free;
+          else if (L.justify === "between" && r.length > 1) gap = (availW - rowW + L.gap * (r.length - 1)) / (r.length - 1);
+        }
+        r.forEach(function (it, i) {
+          var k = getEl(it.k.id);
+          var cx = grid ? f.x + L.pad[3] + i * (cellW + L.gap) : x;
+          var cw = grid ? cellW : it.w;
+          var kh = grows(k, "h") ? heights[ri] : k.h;
+          // В ячейке: по горизонтали — выравнивание, по вертикали — сверху строки.
+          var ox = grid ? (L.align === "center" ? (cw - it.w) / 2 : L.align === "end" ? cw - it.w : 0) : 0;
+          var oy = !grid && !grows(k, "h") ? (L.align === "center" ? (heights[ri] - k.h) / 2 : L.align === "end" ? heights[ri] - k.h : 0) : 0;
+          // Текст шире ячейки — по ширине ячейки (он переносится по строкам), остальное сохраняет размер.
+          var kw = grid && (grows(k, "w") || (k.type === "text" && k.w > cellW)) ? cellW : null;
+          placeKid(k, cx + ox, y + oy, kw, grows(k, "h") ? kh : null);
+          x += it.w + gap;
+        });
+        y += heights[ri] + L.gap;
       });
     }
 
@@ -4579,9 +4756,15 @@
         return frameOf(e) === f;
       })) return false;
       var H = L.dir === "h";
-      var step = H ? dx : dy;
+      var flow = L.dir === "g" || (H && L.wrap);
+      // Сетка: ←→ — на одну ячейку, ↑↓ — на строку; перенос — на одну позицию; иначе — только вдоль оси.
+      var step = flow ? (dx ? Math.sign(dx) : Math.sign(dy) * (L.dir === "g" ? L.cols : 1)) : Math.sign(H ? dx : dy);
       if (!step) return true; // поперёк оси в автолэйауте не двигаем
       var kids = layoutKids(f).sort(function (a, b) {
+        if (flow) {
+          var d = a.y + a.h / 2 - (b.y + b.h / 2);
+          return Math.abs(d) > Math.min(a.h, b.h) / 2 ? d : a.x - b.x;
+        }
         return H ? a.x - b.x : a.y - b.y;
       }).map(function (e) {
         return e.id;
@@ -4593,7 +4776,7 @@
         return !selected.has(id);
       });
       var first = kids.indexOf(sel[0]);
-      var at = Math.max(0, Math.min(rest.length, first + (step > 0 ? 1 : -1)));
+      var at = Math.max(0, Math.min(rest.length, first + step));
       var order = rest.slice(0, at).concat(sel, rest.slice(at));
       if (order.join() === kids.join()) return true;
       begin();
@@ -4739,6 +4922,7 @@
           L.align = b.getAttribute("data-lc");
           if (L.justify !== "between") L.justify = b.getAttribute("data-lm");
         } else if (a === "alBetween") L.justify = L.justify === "between" ? "start" : "between";
+        else if (a === "alWrap") L.wrap = !L.wrap;
         else if (a === "hugW" || a === "hugH") {
           var w = L.hug.indexOf("w") >= 0;
           var h = L.hug.indexOf("h") >= 0;
@@ -5577,7 +5761,12 @@
         } else if (a === "flipH" || a === "flipV") flipSel(a === "flipH");
         else if (a === "group") groupSel();
         else if (a === "fxAdd") openFxMenu(b);
-        else if (/^(alAdd|alDel|alDir|alCell|alBetween|hugW|hugH|padSplit)$/.test(a)) layoutAct(a, b);
+        else if (/^(alAdd|alDel|alDir|alCell|alBetween|alWrap|hugW|hugH|padSplit)$/.test(a)) layoutAct(a, b);
+        else if (a === "ratio") applyFields(function () {
+          return true;
+        }, function (x) {
+          return { ratio: x.ratio ? undefined : true };
+        });
         else if (a === "export") exportSelection(expFmt, expScale);
         else if (a === "link") {
           var lk = selList()[0];
@@ -7151,7 +7340,7 @@
       if (dir[1] > 0) y1 = Math.max(lp.y, 8);
       var w = x1 - x0;
       var h = y1 - y0;
-      var ratio = el0.type === "image" || el0.type === "sticky" ? !keepRatio : keepRatio;
+      var ratio = el0.type === "image" || el0.type === "sticky" || el0.ratio ? !keepRatio : keepRatio;
       if (ratio && dir[0] && dir[1] && el0.w > 0 && el0.h > 0) {
         var k = Math.max(w / el0.w, h / el0.h);
         w = el0.w * k;
@@ -7179,6 +7368,12 @@
       guides = [];
       if (!el0.rot && !free && !(ratio && dir[0] && dir[1])) snapResize(g, f, dir, el0.type === "text" || BLOCKS[el0.type]);
       // Тянут край «обнимающего» экрана — по этой оси размер становится фиксированным (как во Figma).
+      if (el0.grow) {
+        var gg = String(el0.grow);
+        if (dir[0]) gg = gg.replace("w", "");
+        if (dir[1]) gg = gg.replace("h", "");
+        f.grow = gg || undefined;
+      }
       var LR = el0.type === "frame" ? parseLayout(el0.layout) : null;
       if (LR && LR.hug !== "none") {
         if (dir[0]) LR.hug = LR.hug.replace("w", "");

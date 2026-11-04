@@ -1322,10 +1322,15 @@ html[data-theme="light"] .leo-board {
   pointer-events: none; /* по фону экрана — рамка выделения, как во Figma; экран берут за подпись */
 }
 
+/* Фрейм без своей обводки — без служебной рамки (как во Figma); видна только подсветка при наведении. */
 .lb-t-frame .lb-frame-bg:not(.has-stroke) {
-  stroke: var(--lb-panel-border);
-  stroke-width: 1;
+  stroke: none;
   vector-effect: non-scaling-stroke;
+}
+
+.lb-t-frame:hover .lb-frame-bg:not(.has-stroke) {
+  stroke: var(--lb-accent);
+  stroke-width: 1;
 }
 
 .lb-frame-head {
@@ -2134,15 +2139,6 @@ html[data-theme="light"] .leo-board {
   min-width: 0;
 }
 
-/* Вложенный фрейм (в т. ч. автолэйаут) без своей обводки — без тонкой рамки, как во Figma; при наведении — подсветка. */
-.lb-t-frame.is-nested .lb-frame-bg:not(.has-stroke) {
-  stroke: none;
-}
-
-.lb-t-frame.is-nested:hover .lb-frame-bg:not(.has-stroke) {
-  stroke: var(--lb-accent);
-  stroke-width: 1;
-}
 
 /* Панель как во Figma: подписи групп, поле с выбором режима, флажок. */
 .lb-isub {
