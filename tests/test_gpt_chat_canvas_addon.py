@@ -195,3 +195,70 @@ def test_context_prefix_puts_open_note_after_note():
     assert out.index("ЗАМЕТКА") < out.index("<open-note>")
     assert same_note_text("Первый пункт плана", "1: Первый пункт плана | x")
     assert not same_note_text("Совсем другой лист с цифрами выручки", "Первый пункт плана")
+
+
+DESIGN_MARK = "## Макет (лист «Макет»"
+DRAW_MARK = "## Рисовать экраны на макете"
+
+
+@pytest.fixture
+def design_env(monkeypatch):
+    from assistant.stores import note_sheets as note_sheets_store
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("CREDITS_ENFORCE", "0")
+    monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
+    monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
+    calls: list[tuple[str, str]] = []
+    intents: list[str] = []
+
+    def fake_answer(question, context="", **kw):
+        calls.append((str(kw.get("system") or ""), str(question) + str(context)))
+        intents.append(str(kw.get("intent_text") or ""))
+        return {"answer": "Ок", "images": [], "model": "m"}
+
+    monkeypatch.setattr(miniapp_shims, "gpt_openrouter_answer_with_context", fake_answer)
+    uid = next(_ids)
+    note = notes_store.create_note(uid, "Приложение", "требования")
+    body = json.dumps({"v": 1, "mode": "design", "elements": {
+        "s": {"type": "frame", "name": "Экран входа", "x": 0, "y": 0, "w": 393, "h": 852, "z": 1},
+        "t": {"type": "text", "frame": "s", "x": 20, "y": 40, "w": 200, "h": 30, "z": 2, "text": "Добро пожаловать"}}},
+        ensure_ascii=False)
+    sheet = note_sheets_store.create_sheet(note, "Макет", body, kind="board")
+    client = TestClient(usage_server.app, raise_server_exceptions=False)
+
+    def ask(message: str, **extra) -> tuple[str, str]:
+        r = client.post(
+            "/api/miniapp/gpt/chat",
+            headers=_headers(uid),
+            json={"message": message, "item_kind": "local", "item_id": str(note["id"]),
+                  "board_sheet_id": str(sheet["id"]), **extra},
+        )
+        assert r.status_code == 200, r.text
+        return calls[-1]
+
+    ask.intents = intents
+    return ask
+
+
+def test_open_design_plain_question_sends_no_design(design_env):
+    system, prompt = design_env("сделай саммари заметки")
+    assert DESIGN_MARK not in system and DRAW_MARK not in system and BOARD_MARK not in system
+    assert "Экран входа" not in prompt  # дерево экранов не уходит
+
+
+def test_open_design_review_sends_tree_without_draw(design_env):
+    system, prompt = design_env("разбери экран по UX")
+    assert DESIGN_MARK in system and DRAW_MARK not in system
+    assert "Экран входа" in prompt and "Добро пожаловать" in prompt
+
+
+def test_open_design_layer_chip_counts_as_design(design_env):
+    system, prompt = design_env("что скажешь?", board_layers=["t"])
+    assert DESIGN_MARK in system and "выделил" in prompt
+
+
+def test_open_design_draw_request_sends_draw_addon(design_env):
+    system, _ = design_env("нарисуй экран регистрации")
+    assert DESIGN_MARK in system and DRAW_MARK in system
+    assert design_env.intents[-1] == ""  # «нарисуй экран» на макете — слои, а не генерация картинки

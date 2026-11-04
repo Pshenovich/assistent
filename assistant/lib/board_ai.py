@@ -127,15 +127,15 @@ def design_system_addon() -> str:
 - опечатки и пропущенные состояния: пустой список, ошибка, загрузка, длинный текст, нет сети.
 Не выдумывай того, чего нет в дереве; чего не видно — так и скажи.
 
-Правки — только существующих слоёв, одним блоком (после него — одно короткое предложение, что изменено):
+Правки слоёв — одним блоком (после него — одно короткое предложение, что изменено):
 ```leo-board
 {"action":"update","sheet_id":"123","layers":[
   {"id":"t1","text":"Продолжить"},{"id":"r1","fill":"#2463b0"},{"id":"t2","textColor":"#ffffff"},
   {"id":"r2","stroke":"#d0d5dd"},{"id":"g1","hidden":true},{"id":"f3","name":"Кнопка «Войти»"}]}
 ```
 - Поля: text — новый текст слоя; name — имя слоя; fill / textColor / stroke — цвет #rrggbb; hidden — true / false.
-- Только id из дерева (и из «Скрытые слои»). Новых экранов и слоёв не создавай, ничего не двигай и не удаляй —
-  скажи, что это пока делается руками.
+- Только id из дерева (и из «Скрытые слои»). Ничего не двигай и не удаляй — скажи, что это пока делается руками.
+  Новые экраны и элементы — только если ниже есть раздел «Рисовать экраны на макете».
 - «Переименуй слои» — понятные короткие имена по смыслу, по-русски: «Кнопка „Войти“», «Поле e-mail», «Карточка ассистента».
 - Если просят разбор — блок не нужен. Схемы (nodes / edges) на макете не рисуй.
 """.strip()
@@ -188,8 +188,15 @@ def _color_value(raw: Any) -> Optional[str]:
 
 
 def update_design(board: dict[str, Any], action: dict[str, Any]) -> str:
-    """Правки слоёв макета: текст, имя, цвета, видимость. Геометрию и состав не трогаем."""
+    """Правки слоёв макета: текст, имя, цвета, видимость; новые экраны (screens) и дорисовка (add).
+    id для пересборки автолэйаута на клиенте — в action["_relayout"]."""
     elements = board["elements"]
+    if action.get("screens") or action.get("add"):
+        from assistant.lib import design_draw
+
+        body, ids = design_draw.apply_draw({"v": 1, "mode": "design", "elements": elements}, action)
+        action["_relayout"] = ids
+        elements = board_doc.parse_board(body)["elements"]
     for raw in (action.get("layers") or [])[:MAX_LAYER_EDITS]:
         if not isinstance(raw, dict):
             continue
@@ -1197,8 +1204,8 @@ def apply_action(note: dict[str, Any], action: dict[str, Any], note_sheets_mod: 
             )
         if not (action.get("nodes")) and not has_blocks(action):
             return None
-    if action.get("layers") and not action.get("nodes"):
-        return None  # правки слоёв без открытого макета — некуда применять
+    if (action.get("layers") or action.get("screens") or action.get("add")) and not action.get("nodes"):
+        return None  # правки и экраны макета без открытого макета — некуда применять
     nodes = action.get("nodes") if isinstance(action.get("nodes"), list) else []
     if not nodes and not has_blocks(action):
         return None

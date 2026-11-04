@@ -9527,6 +9527,7 @@ async def miniapp_gpt_chat(
                 if hint:
                     system_text = (system_text.rstrip() + "\n\n" + hint).strip() if system_text else hint
         canvas_enabled = kind == "local" and bool(iid)
+        design_need = ""  # просьба про открытый макет: "work" | "draw" | ""
         note_text_for_model = (body.note_text or "").strip()
         doc_view = str(body.doc_view or "").strip()
         note_edit_enabled = kind == "local" and bool(iid) and bool(doc_view)
@@ -9601,16 +9602,23 @@ async def miniapp_gpt_chat(
                 if not board_sheet or str(board_sheet.get("kind") or "") != "board":
                     board_sheet = None
             design_open = bool(board_sheet) and board_ai_lib.is_design(board_sheet.get("body") or "")
-            if design_open:
-                # Макет: разбор экранов и правки существующих слоёв (схемы на макете не рисуем).
+            # Макет уходит модели, только если просьба про него (слова о экранах/слоях/правках или чип слоя):
+            # дерево экранов и инструкции — тысячи токенов, обычному вопросу при открытом макете они не нужны.
+            from assistant.lib import design_draw as design_draw_lib
+
+            design_need = design_draw_lib.design_intent(q, bool(body.board_layers)) if design_open else ""
+            if design_need:
+                # Макет: разбор экранов и правки слоёв; рисование — только по просьбе нарисовать (схемы на макете не рисуем).
                 system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.design_system_addon()).strip()
+                if design_need == "draw":
+                    system_text = (system_text.rstrip() + "\n\n" + design_draw_lib.draw_addon()).strip()
                 prompt = (
                     prompt.rstrip() + "\n\n" + board_ai_lib.design_prompt_block(
                         open_board_id, str(board_sheet.get("title") or ""), board_sheet.get("body") or "",
                         [str(x) for x in (body.board_layers or [])][:40],
                     )
                 ).strip()
-            else:
+            elif not design_open:
                 if open_board_id or board_tpl or board_ai_lib.looks_like_board_request(q):
                     system_text = (system_text.rstrip() + "\n\n" + board_ai_lib.system_addon()).strip()
                 if board_tpl:
@@ -9626,8 +9634,8 @@ async def miniapp_gpt_chat(
             # Просьба нарисовать доску (и шаблон доски) — не повод генерировать картинку.
             from assistant.lib import board_ai as board_ai_lib
 
-            if str(getattr(body, "board_template", "") or "").strip():
-                return ""
+            if str(getattr(body, "board_template", "") or "").strip() or design_need:
+                return ""  # шаблон доски или макет: «нарисуй экран» — это слои макета, а не картинка
             return "" if board_ai_lib.looks_like_board_request(text) else text
 
         system_text = leo_agent.append_system(system_text, auto_hint)
@@ -9697,6 +9705,8 @@ async def miniapp_gpt_chat(
                                 "title": str(sheet.get("title") or ""),
                                 "kind": "board",
                                 "revision": sheet.get("revision"),
+                                # Макет: новые экраны и фреймы — клиент пересоберёт автолэйаут по реальным текстам и покажет.
+                                "relayout": [str(x) for x in (act.get("_relayout") or [])][:200] or None,
                             })
                     board_failed = not board_applied
                     print(f"[board_ai] note={iid} actions={len(b_actions)} applied={len(board_applied)}")

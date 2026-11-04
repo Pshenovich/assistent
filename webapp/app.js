@@ -33987,8 +33987,12 @@
           if (!shown.isYjsAttached()) shown.setJson(json);
         } else {
           await switchLeftSheet(sid);
+          shown = String(noteSheetState.leftId) === sid ? noteSheetState.leftBoard : null;
         }
-        showNoteToast(last.action === "update" ? "Доска обновлена" : "Доска готова");
+        // Макет: Лео нарисовал экраны — автолэйаут по реальным текстам и показать новый экран.
+        var re = Array.isArray(last.relayout) ? last.relayout : [];
+        if (shown && re.length && typeof shown.relayoutFrames === "function") shown.relayoutFrames(re, re[0]);
+        showNoteToast(re.length ? "Макет обновлён" : last.action === "update" ? "Доска обновлена" : "Доска готова");
       } else if (sheet && isWebSheet(sheet)) {
         if (String(noteSheetState.leftId) === sid) {
           reloadLeftWebCanvasHtml(sheet);

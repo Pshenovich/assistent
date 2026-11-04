@@ -10110,6 +10110,25 @@
       getMode: function () {
         return mode;
       },
+      // Лео нарисовал экраны: пересобрать их автолэйаут по реальным текстам и показать первый.
+      // Элементы могут прийти позже (через Yjs) — ждём их до 5 с.
+      relayoutFrames: function (ids, reveal) {
+        var tries = 0;
+        (function go() {
+          if (destroyed) return;
+          var have = (ids || []).filter(function (id) {
+            return !!getEl(id);
+          });
+          if (!have.length && tries++ < 25) return setTimeout(go, 200);
+          if (!have.length || tx) return;
+          // Два прохода: после первого подгоняются высоты текстов (рендер), второй раскладывает начисто.
+          relayout(have);
+          setTimeout(function () {
+            if (!tx && !destroyed) relayout(have.filter(getEl));
+            if (reveal && getEl(reveal)) revealElement(reveal);
+          }, 120);
+        })();
+      },
       isEditing: function () {
         return !!editing || !!gesture;
       },
