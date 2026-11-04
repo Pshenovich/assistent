@@ -9428,6 +9428,14 @@ async def miniapp_gpt_chat(
         prompt = q or "Опиши вложение и ответь по нему."
         kind = str(body.item_kind or "").strip()
         iid = str(body.item_id or "").strip()
+        if kind == "local" and iid:
+            # Документ — только доступный (свой или общий): иначе его листы, правки и холсты
+            # не уходят модели и не применяются.
+            try:
+                if not _notes_store_mod().get_accessible_note(uid, int(iid), with_sharing=False):
+                    iid = ""
+            except (TypeError, ValueError):
+                iid = ""
         if not images:
             from assistant.stores import comment_files as _cf
 
@@ -9572,7 +9580,7 @@ async def miniapp_gpt_chat(
                 iter(web_canvas_lib.selection_sheet_ids(canvas_sel_dumps)), ""
             )
             ctx_sheet_html = ""
-            if ctx_sheet_id.isdigit():
+            if kind == "local" and iid and ctx_sheet_id.isdigit():
                 try:
                     from assistant.stores import note_sheets as note_sheets_store
 
@@ -9593,7 +9601,7 @@ async def miniapp_gpt_chat(
             if board_tpl not in board_ai_lib.TEMPLATES:
                 board_tpl = ""
             board_sheet = None
-            if open_board_id.isdigit():
+            if kind == "local" and iid and open_board_id.isdigit():
                 try:
                     from assistant.stores import note_sheets as note_sheets_store
 
