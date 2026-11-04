@@ -9634,9 +9634,10 @@ async def miniapp_gpt_chat(
             # Просьба нарисовать доску (и шаблон доски) — не повод генерировать картинку.
             from assistant.lib import board_ai as board_ai_lib
 
+            # Не пустая строка: пустую генератор картинок заменяет всем вопросом («нарисуй…» → картинка).
             if str(getattr(body, "board_template", "") or "").strip() or design_need:
-                return ""  # шаблон доски или макет: «нарисуй экран» — это слои макета, а не картинка
-            return "" if board_ai_lib.looks_like_board_request(text) else text
+                return "(доска)"  # шаблон доски или макет: «нарисуй экран» — это слои макета, а не картинка
+            return "(доска)" if board_ai_lib.looks_like_board_request(text) else text
 
         system_text = leo_agent.append_system(system_text, auto_hint)
         meeting_line = _note_meeting_prompt_line(uid, kind, iid)

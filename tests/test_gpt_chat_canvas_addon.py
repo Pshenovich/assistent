@@ -261,4 +261,8 @@ def test_open_design_layer_chip_counts_as_design(design_env):
 def test_open_design_draw_request_sends_draw_addon(design_env):
     system, _ = design_env("нарисуй экран регистрации")
     assert DESIGN_MARK in system and DRAW_MARK in system
-    assert design_env.intents[-1] == ""  # «нарисуй экран» на макете — слои, а не генерация картинки
+    # «нарисуй экран» на макете — слои, а не генерация картинки: генератор картинок видит не просьбу, а пометку.
+    from assistant.stores.comment_files import wants_image_delivery
+
+    assert design_env.intents[-1] and not wants_image_delivery(design_env.intents[-1], has_source=False, answer="")
+    assert wants_image_delivery("нарисуй экран регистрации", has_source=False, answer="")  # без пометки — была бы картинка

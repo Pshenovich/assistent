@@ -61,55 +61,124 @@ def design_intent(text: str, has_layers: bool = False) -> str:
 
 
 def draw_addon() -> str:
-    return """
+    from assistant.lib import ui_icons
+
+    return ("""
 ## Рисовать экраны на макете
 Новый экран (или несколько) — ключ screens в том же блоке ```leo-board (action=update, sheet_id макета).
 Координат нет: дерево компонентов, раскладку автолэйаутом и размеры считает Лео.
+
+ГЛАВНОЕ — стиль существующих экранов. Если на макете уже есть такой элемент (нижнее меню, шапка, поле, кнопка,
+карточка, строка списка, иконка) — НЕ рисуй заново, а скопируй его по id из дерева: {"type":"copy","from":"id"}.
+- "texts": {"id текста внутри копии": "новый текст"} — заменить подписи; "text": "…" — заменить первый текст;
+- "set": {"id слоя внутри копии": {"fill":"#rrggbb","textColor":"#rrggbb","stroke":"#rrggbb","hidden":true}} —
+  например, в нижнем меню сделать активной другую вкладку (перенести цвет активной вкладки).
+Новое (чего на макете нет) — компонентами ниже; цвета текста, фон, поля, карточки, скругления и шрифт Лео возьмёт
+из существующих экранов сам, свои цвета указывай, только если просят.
 ```leo-board
 {"action":"update","sheet_id":"123","screens":[{"name":"Вход","device":"iphone","padding":[56,24,32,24],"gap":16,
  "children":[
-  {"type":"text","text":"Вход","size":28,"weight":700},
+  {"type":"header","title":"Вход","back":true},
   {"type":"text","text":"Введите e-mail и пароль","color":"muted"},
-  {"type":"input","label":"E-mail","placeholder":"name@mail.ru"},
-  {"type":"input","label":"Пароль","placeholder":"••••••••"},
+  {"type":"input","label":"E-mail","placeholder":"name@mail.ru","icon":"mail"},
+  {"type":"input","label":"Пароль","placeholder":"••••••••","icon":"lock"},
   {"type":"link","text":"Забыли пароль?","align":"right"},
   {"type":"spacer"},
   {"type":"button","text":"Войти"},
-  {"type":"row","justify":"center","children":[{"type":"text","text":"Нет аккаунта?","color":"muted"},{"type":"link","text":"Регистрация"}]}]}]}
+  {"type":"copy","from":"id_нижнего_меню_с_другого_экрана","set":{"id_активной_иконки":{"fill":"#…"}}}]}]}
 ```
 Компоненты (type):
 - text {text, size 15, weight 400|500|600|700, color: "ink"|"muted"|"accent"|#rrggbb, align left|center|right};
   link {text} — текст-ссылка цветом акцента;
-- button {text, variant: primary|secondary|ghost}; input {label?, placeholder}; image {label, h} — заглушка картинки;
-  avatar {size 48}; icon {name} — квадрат 24 под иконку; divider; spacer — забирает свободное место по высоте;
-- row {children, gap 8, justify start|center|end|between, align center} — в строку; column {children, gap 8};
-  grid {children, columns 2, gap 12}; card {children, gap 8, padding 16} — карточка;
-- list {items:[{title, subtitle?, avatar?:true}]}; header {title, back?:true, action?:"Готово"} — шапка экрана;
-  tabbar {items:["Главная","Поиск","Профиль"], active 0} — нижние вкладки.
-- У любого: name — имя слоя (по смыслу, по-русски), fill — заливка #rrggbb, grow:true — растянуть в строке.
-Экран: name, device iphone|android|ipad|laptop|desktop (по умолчанию iphone), fill, padding [верх, право, низ, лево],
-gap, children. Цвета и шрифт Лео возьмёт из уже нарисованных экранов (акцент — accent экрана или самый частый цвет кнопок).
+- button {text, variant: primary|secondary|ghost, icon?}; input {label?, placeholder, icon?}; image {label, h} — заглушка;
+  icon {icon, size 24, color?} — векторная иконка; avatar {size 48}; divider; spacer — свободное место по высоте;
+- row {children, gap 8, justify start|center|end|between, align center}; column {children, gap 8};
+  grid {children, columns 2, gap 12}; card {children, gap 8, padding 16};
+- list {items:[{title, subtitle?, value?, icon?, avatar?:true, chevron?:true}]};
+  header {title, back?:true, action?:"Готово", action_icon?:"иконка"};
+  tabbar {items:[{"title":"Главная","icon":"home"}, …], active 0} — только если на макете нет своего нижнего меню.
+- У любого: name — имя слоя по-русски, fill — заливка, grow:true — растянуть в строке.
+Иконки (icon) — только из списка: """ + ", ".join(ui_icons.available()) + """.
+Иконку текстом («✎», «›», эмодзи) не рисуй — бери из списка.
+Экран: name, device iphone|android|ipad|laptop|desktop (по умолчанию iphone), fill, padding [верх, право, низ, лево], gap, children.
 Дорисовать в существующий фрейм: "add":[{"into":"id_фрейма","after":"id_слоя (необязательно)","children":[…]}].
 Пиши реальные тексты по смыслу заметки, без «Lorem ipsum». Один экран — до ~40 компонентов.
-""".strip()
+""").strip()
 
 
 # ---- Стиль макета: акцент, шрифт ----
 
-def style_of(elements: dict[str, dict[str, Any]]) -> dict[str, str]:
-    """Акцент и шрифт уже нарисованных экранов (самые частые), иначе — по умолчанию."""
-    fills: dict[str, int] = {}
+def _lum(hex6: str) -> float:
+    r, g, b = (int(hex6[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _top(counts: dict[str, int], pred=lambda c: True) -> Optional[str]:
+    items = [(k, v) for k, v in counts.items() if pred(k)]
+    return max(items, key=lambda kv: kv[1])[0] if items else None
+
+
+def style_of(elements: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Стиль уже нарисованных экранов: акцент, шрифт, цвета текста, фон, поверхности, обводки, скругления."""
+    hexre = re.compile(r"^#[0-9a-f]{6}$")
+    accents: dict[str, int] = {}
     fonts: dict[str, int] = {}
+    inks: dict[str, int] = {}
+    bgs: dict[str, int] = {}
+    surfaces: dict[str, int] = {}
+    borders: dict[str, int] = {}
+    radii: list[float] = []
+    btn_radii: list[float] = []
+    input_radii: list[float] = []
     for el in elements.values():
         st = el.get("style") or {}
+        t = el.get("type")
         f = str(st.get("fill") or "").lower()
-        if re.match(r"^#[0-9a-f]{6}$", f) and _saturated(f) and el.get("type") in ("frame", "rect"):
-            fills[f] = fills.get(f, 0) + 1
+        top = t == "frame" and not (el.get("frame") and el["frame"] in elements)
+        w, h = float(el.get("w") or 0), float(el.get("h") or 0)
+        rad = float(st.get("radius") or 0)
+        roundish = rad >= min(w, h) / 2 - 0.5 and abs(w - h) < 2  # кружки (кнопки-иконки) — не образец скругления
+        sc = str(st.get("stroke") or "").lower()
+        stroked = t in ("frame", "rect") and hexre.match(sc) and float(st.get("strokeWidth") or 0) > 0 and not st.get("strokeOff")
+        if stroked and not roundish and w > 120 and 32 <= h <= 72:
+            input_radii.append(rad)  # поле ввода: широкое, невысокое, с рамкой
+        if hexre.match(f) and not st.get("fillOff"):
+            if top:
+                bgs[f] = bgs.get(f, 0) + 1
+            elif t in ("frame", "rect"):
+                if _saturated(f):
+                    accents[f] = accents.get(f, 0) + 1
+                    if float(st.get("radius") or 0) > 0:
+                        btn_radii.append(float(st["radius"]))
+                elif _lum(f) > 0.8:
+                    surfaces[f] = surfaces.get(f, 0) + 1
+                    if rad > 0 and not roundish and w > 120 and h > 72:
+                        radii.append(rad)  # карточка / блок
+        if stroked and not roundish and not _saturated(sc):
+            borders[sc] = borders.get(sc, 0) + 1  # рамка — нейтральная, у полей и карточек
         if st.get("fontFamily"):
             fonts[str(st["fontFamily"])] = fonts.get(str(st["fontFamily"]), 0) + 1
-    accent = max(fills, key=fills.get) if fills else ACCENT
-    font = max(fonts, key=fonts.get) if fonts else FONT
-    return {"accent": accent, "font": font}
+        tc = str(st.get("textColor") or "").lower()
+        if el.get("text") and hexre.match(tc):
+            inks[tc] = inks.get(tc, 0) + len(str(el.get("text")))
+    ink = _top(inks, lambda c: _lum(c) < 0.35) or INK
+    muted = _top(inks, lambda c: c != ink and 0.25 < _lum(c) < 0.8) or MUTED
+    bg = _top(bgs) or "#ffffff"
+    mid = lambda xs, d: sorted(xs)[len(xs) // 2] if xs else d  # noqa: E731
+    return {
+        "accent": _top(accents) or ACCENT,
+        "font": _top(fonts) or FONT,
+        "ink": ink,
+        "muted": muted,
+        "placeholder": PLACEHOLDER,
+        "bg": bg,
+        "surface": _top(surfaces, lambda c: c != bg) or ("#ffffff" if bg != "#ffffff" else SURFACE),
+        "border": _top(borders) or BORDER,
+        "radius": mid(radii, 16.0),
+        "btn_radius": mid(btn_radii, 12.0),
+        "input_radius": mid(input_radii, 12.0),
+        "_els": elements,
+    }
 
 
 def _saturated(hex6: str) -> bool:
@@ -121,7 +190,7 @@ def _saturated(hex6: str) -> bool:
 # ---- Узлы раскладки ----
 
 class _N:
-    """Узел раскладки: frame (с автолэйаутом или без), text, rect, ellipse."""
+    """Узел раскладки: frame (с автолэйаутом или без), text, rect, ellipse, vector (иконка), clone (копия слоя)."""
 
     def __init__(self, kind: str, name: str = "") -> None:
         self.kind = kind
@@ -140,13 +209,18 @@ class _N:
         self.autow = False
         self.x = self.y = self.w = self.h = 0.0
         self.id = ""
+        self.vec: Optional[dict[str, Any]] = None  # vector: {"vb", "paths"}
+        self.src = ""  # clone: id исходного слоя
+        self.over: dict[str, Any] = {}  # clone: {"texts": {id: текст}, "set": {id: {fill, textColor, …}}}
+        self.role = ""  # "button" — в строке по ширине подписи
 
 
 def _color(raw: Any, theme: dict[str, str], default: str) -> str:
     v = str(raw or "").strip().lower()
     if re.match(r"^#[0-9a-f]{6}$", v):
         return v
-    return {"ink": INK, "muted": MUTED, "accent": theme["accent"], "white": "#ffffff", "surface": SURFACE}.get(v, default)
+    return {"ink": theme["ink"], "muted": theme["muted"], "accent": theme["accent"], "white": "#ffffff",
+            "surface": theme["surface"], "bg": theme["bg"], "border": theme["border"]}.get(v, default)
 
 
 def _num(raw: Any, default: float, lo: float = 0, hi: float = 4000) -> float:
@@ -170,11 +244,11 @@ def _pad(raw: Any, default: list[float]) -> list[float]:
     return list(default)
 
 
-def _text(text: Any, theme: dict[str, str], *, size: float = 15, weight: int = 400, color: str = INK,
+def _text(text: Any, theme: dict[str, Any], *, size: float = 15, weight: int = 400, color: str = "",
           align: str = "left", name: str = "", hug: bool = False) -> _N:
     n = _N("text", name)
     n.text = str(text or "").strip()[:2000] or " "
-    n.style = {"fontSize": size, "textColor": color, "align": align if align in ("left", "center", "right") else "left",
+    n.style = {"fontSize": size, "textColor": color or theme["ink"], "align": align if align in ("left", "center", "right") else "left",
                "fontFamily": theme["font"], "lineHeight": round(size * 1.35, 1)}
     if weight != 400:
         n.style["fontWeight"] = weight
@@ -198,7 +272,22 @@ def _frame(dir_: str, name: str, *, gap: float = 8, pad: Optional[list[float]] =
     return n
 
 
-def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Optional[_N]:
+def _icon(name: Any, theme: dict[str, Any], color: str = "", size: float = 24, label: str = "") -> _N:
+    """Иконка из набора VK Icons (вектор); нет такой — серый квадрат-заглушка того же размера."""
+    from assistant.lib import ui_icons
+
+    vec = ui_icons.vector(name, color or theme["ink"])
+    n = _N("vector" if vec else "rect", label or f"Иконка «{str(name or '')[:30]}»")
+    if vec:
+        n.vec = vec
+        n.style = {}
+    else:
+        n.style = {"fill": "#d1d5db", "radius": 6, "strokeWidth": 0}
+    n.sw = n.sh = ("fixed", size)
+    return n
+
+
+def _build(raw: Any, theme: dict[str, Any], depth: int, budget: list[int]) -> Optional[_N]:
     """Компонент модели → узел раскладки (компоненты разворачиваются во фреймы и тексты)."""
     if not isinstance(raw, dict) or depth > MAX_DEPTH or budget[0] <= 0:
         return None
@@ -206,6 +295,7 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
     t = str(raw.get("type") or "text").strip().lower()
     name = str(raw.get("name") or "").strip()[:120]
     acc = theme["accent"]
+    ink, muted, surface, border, ph = theme["ink"], theme["muted"], theme["surface"], theme["border"], theme["placeholder"]
 
     def kids(items: Any, into: _N) -> _N:
         for c in (items if isinstance(items, list) else [])[:60]:
@@ -218,37 +308,43 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
     if t in ("text", "title", "heading", "paragraph", "label"):
         size = _num(raw.get("size"), 28 if t in ("title", "heading") else 15, 8, 120)
         weight = int(_num(raw.get("weight"), 700 if t in ("title", "heading") else 400, 100, 900) // 100 * 100)
-        n = _text(raw.get("text"), theme, size=size, weight=weight, color=_color(raw.get("color"), theme, INK),
+        n = _text(raw.get("text"), theme, size=size, weight=weight, color=_color(raw.get("color"), theme, ink),
                   align=str(raw.get("align") or "left"), name=name or "Текст")
     elif t == "link":
         n = _text(raw.get("text"), theme, size=_num(raw.get("size"), 15, 8, 60), weight=500, color=_color(raw.get("color"), theme, acc),
                   align=str(raw.get("align") or "left"), name=name or "Ссылка")
     elif t == "button":
         variant = str(raw.get("variant") or "primary").lower()
-        fill = _color(raw.get("fill"), theme, acc if variant == "primary" else SURFACE if variant == "secondary" else "none")
+        fill = _color(raw.get("fill"), theme, acc if variant == "primary" else surface if variant == "secondary" else "none")
         if variant == "ghost" and not raw.get("fill"):
             fill = "none"
         n = _frame("h", name or f"Кнопка «{str(raw.get('text') or '')[:40]}»", gap=8, pad=[14, 20, 14, 20], align="center", justify="center", fill=fill)
-        n.style["radius"] = _num(raw.get("radius"), 12, 0, 200)
-        color = "#ffffff" if variant == "primary" and fill != "none" else acc if variant == "ghost" else INK
+        n.role = "button"
+        n.style["radius"] = _num(raw.get("radius"), theme["btn_radius"], 0, 200)
+        if raw.get("icon"):
+            n.kids.append(_icon(raw.get("icon"), theme, "#ffffff" if variant == "primary" and fill != "none" else acc, 20))
+        color = "#ffffff" if variant == "primary" and fill != "none" else acc if variant == "ghost" else ink
         n.kids.append(_text(raw.get("text") or "Кнопка", theme, size=16, weight=600, color=_color(raw.get("color"), theme, color),
                             align="center", name="Подпись"))
     elif t == "input":
         field = _frame("h", "Поле", gap=8, pad=[14, 16, 14, 16], align="center", fill="#ffffff")
-        field.style.update({"radius": 10, "stroke": "#d0d5dd", "strokeWidth": 1, "strokeAlign": "inside"})
+        field.style.update({"radius": theme["input_radius"], "stroke": border, "strokeWidth": 1, "strokeAlign": "inside",
+                            "fill": "#ffffff"})
+        if raw.get("icon"):
+            field.kids.append(_icon(raw.get("icon"), theme, muted, 20))
         field.kids.append(_text(raw.get("placeholder") or raw.get("value") or "", theme, size=15,
-                                color=INK if raw.get("value") else PLACEHOLDER, name="Подсказка"))
+                                color=ink if raw.get("value") else ph, name="Подсказка"))
         label = str(raw.get("label") or "").strip()
         if label:
             n = _frame("v", name or f"Поле «{label[:40]}»", gap=6)
-            n.kids += [_text(label, theme, size=13, weight=500, color=MUTED, name="Название поля"), field]
+            n.kids += [_text(label, theme, size=13, weight=500, color=muted, name="Название поля"), field]
         else:
             field.name = name or "Поле ввода"
             n = field
     elif t == "image":
         n = _N("rect", name or f"Картинка «{str(raw.get('label') or '')[:40]}»")
         n.text = str(raw.get("label") or "Картинка")[:200]
-        n.style = {"fill": SURFACE, "radius": _num(raw.get("radius"), 12, 0, 400), "strokeWidth": 0, "fontSize": 13, "textColor": MUTED,
+        n.style = {"fill": surface, "radius": _num(raw.get("radius"), 12, 0, 400), "strokeWidth": 0, "fontSize": 13, "textColor": muted,
                    "fontFamily": theme["font"]}
         n.sw = ("fixed", _num(raw.get("w"), 0, 0, 4000)) if raw.get("w") else ("fill",)
         n.sh = ("fixed", _num(raw.get("h"), 160, 16, 2000))
@@ -258,13 +354,24 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
         n.style = {"fill": "#d1d5db", "strokeWidth": 0}
         n.sw = n.sh = ("fixed", size)
     elif t == "icon":
-        size = _num(raw.get("size"), 24, 8, 200)
-        n = _N("rect", name or f"Иконка «{str(raw.get('name') or raw.get('label') or '')[:30]}»")
-        n.style = {"fill": "#d1d5db", "radius": 6, "strokeWidth": 0}
-        n.sw = n.sh = ("fixed", size)
+        n = _icon(raw.get("icon") or raw.get("name"), theme, _color(raw.get("color"), theme, ink), _num(raw.get("size"), 24, 8, 200),
+                  name if raw.get("icon") else "")
+    elif t == "copy":
+        # Копия слоя с другого экрана (нижнее меню, шапка, поле, карточка) — точный стиль макета.
+        src = theme["_els"].get(str(raw.get("from") or ""))
+        if not src or src.get("type") in ("line", "pen"):
+            return None
+        n = _N("clone", name or str(src.get("name") or ""))
+        n.src = src["id"]
+        texts = raw.get("texts") if isinstance(raw.get("texts"), dict) else {}
+        n.over = {"texts": {str(k): str(v)[:2000] for k, v in texts.items()},
+                  "set": raw.get("set") if isinstance(raw.get("set"), dict) else {},
+                  "text": str(raw["text"])[:2000] if raw.get("text") is not None else None}
+        n.sw = ("fill",) if "w" in str(src.get("grow") or "") or raw.get("grow") is True else ("fixed", float(src["w"]))
+        n.sh = ("fixed", float(src["h"]))
     elif t == "divider":
         n = _N("rect", name or "Разделитель")
-        n.style = {"fill": BORDER, "radius": 0, "strokeWidth": 0}
+        n.style = {"fill": border, "radius": 0, "strokeWidth": 0}
         n.sw = ("fill",)
         n.sh = ("fixed", 1)
     elif t == "spacer":
@@ -278,9 +385,12 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
                    pad=_pad(raw.get("padding"), [16, 16, 16, 16] if card else [0, 0, 0, 0]),
                    align=str(raw.get("align") or ("center" if t == "row" else "start")),
                    justify=str(raw.get("justify") or "start"),
-                   fill=_color(raw.get("fill"), theme, "#ffffff" if card else "none"))
+                   fill=_color(raw.get("fill"), theme, (theme["surface"] if theme["bg"] == "#ffffff" else "#ffffff") if card else "none"))
         if card:
-            n.style.update({"radius": _num(raw.get("radius"), 16, 0, 200), "stroke": BORDER, "strokeWidth": 1, "strokeAlign": "inside"})
+            n.style["radius"] = _num(raw.get("radius"), theme["radius"], 0, 200)
+            if n.style.get("fill") in (theme["bg"], "none"):
+                # Карточка сливается с фоном — тонкая рамка; иначе (белая на сером) — без рамки, как на макете.
+                n.style.update({"stroke": border, "strokeWidth": 1, "strokeAlign": "inside"})
         n.cols = int(_num(raw.get("columns"), 2, 1, 12))
         kids(raw.get("children"), n)
         if t == "row":
@@ -288,12 +398,19 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
                 if k.kind == "text":
                     k.sw = ("hug",)
                     k.autow = True
+                elif k.role == "button" and k.sw == ("fill",) and not k.over.get("grow"):
+                    k.sw = ("hug",)  # кнопка в строке — по ширине подписи
+                    for q in k.kids:
+                        if q.kind == "text":
+                            q.sw, q.autow = ("hug",), True
     elif t == "list":
         n = _frame("v", name or "Список", gap=0)
         items = raw.get("items") if isinstance(raw.get("items"), list) else []
         for i, it in enumerate(items[:30]):
             it = it if isinstance(it, dict) else {"title": str(it)}
             row = _frame("h", f"Пункт «{str(it.get('title') or '')[:40]}»", gap=12, pad=[12, 0, 12, 0], align="center")
+            if it.get("icon"):
+                row.kids.append(_icon(it.get("icon"), theme, acc, 24))
             if it.get("avatar"):
                 av = _N("ellipse", "Аватар")
                 av.style = {"fill": "#d1d5db", "strokeWidth": 0}
@@ -302,35 +419,44 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
             col = _frame("v", "Текст пункта", gap=2)
             col.kids.append(_text(it.get("title") or "", theme, size=16, weight=500, name="Заголовок"))
             if it.get("subtitle"):
-                col.kids.append(_text(it.get("subtitle"), theme, size=14, color=MUTED, name="Подзаголовок"))
+                col.kids.append(_text(it.get("subtitle"), theme, size=14, color=muted, name="Подзаголовок"))
             row.kids.append(col)
             if it.get("value"):
-                row.kids.append(_text(it.get("value"), theme, size=15, color=MUTED, hug=True, name="Значение"))
+                row.kids.append(_text(it.get("value"), theme, size=15, color=muted, hug=True, name="Значение"))
+            if it.get("chevron") or it.get("action"):
+                row.kids.append(_icon(it.get("action") if isinstance(it.get("action"), str) else "chevron_right", theme, muted, 20))
             n.kids.append(row)
             if i < len(items[:30]) - 1:
                 d = _N("rect", "Разделитель")
-                d.style = {"fill": BORDER, "radius": 0, "strokeWidth": 0}
+                d.style = {"fill": border, "radius": 0, "strokeWidth": 0}
                 d.sw, d.sh = ("fill",), ("fixed", 1)
                 n.kids.append(d)
     elif t == "header":
         n = _frame("h", name or "Шапка", gap=8, pad=[8, 0, 8, 0], align="center", justify="between")
-        left = _text("‹" if raw.get("back") else "", theme, size=24, weight=400, color=acc, hug=True, name="Назад")
-        right = _text(raw.get("action") or "", theme, size=16, weight=500, color=acc, hug=True, name="Действие")
+        left = _icon("chevron_left", theme, ink, 24, "Назад") if raw.get("back") else _frame("h", "Слева", gap=0)
+        if not raw.get("back"):
+            left.sw, left.sh = ("fixed", 24), ("fixed", 24)
+        if raw.get("action_icon"):
+            right = _icon(raw.get("action_icon"), theme, ink, 24, "Действие")
+        elif raw.get("action"):
+            right = _text(raw.get("action"), theme, size=16, weight=500, color=acc, hug=True, name="Действие")
+        else:
+            right = _frame("h", "Справа", gap=0)
+            right.sw, right.sh = ("fixed", 24), ("fixed", 24)
         title = _text(raw.get("title") or "", theme, size=17, weight=600, align="center", name="Заголовок")
         n.kids = [left, title, right]
     elif t == "tabbar":
         n = _frame("h", name or "Нижние вкладки", gap=0, pad=[8, 8, 8, 8], align="center", justify="between", fill="#ffffff")
-        n.style.update({"stroke": BORDER, "strokeWidth": 1, "strokeAlign": "inside", "radius": 16})
+        n.style.update({"stroke": border, "strokeWidth": 1, "strokeAlign": "inside", "radius": 16})
         items = raw.get("items") if isinstance(raw.get("items"), list) else []
         active = int(_num(raw.get("active"), 0, 0, 20))
         for i, it in enumerate(items[:6]):
             label = it if isinstance(it, str) else str((it or {}).get("title") or "")
+            icon_name = "" if isinstance(it, str) else str((it or {}).get("icon") or "")
             tab = _frame("v", f"Вкладка «{label[:30]}»", gap=4, align="center")
             tab.sw = ("hug",)
-            ic = _N("rect", "Иконка")
-            ic.style = {"fill": acc if i == active else "#d1d5db", "radius": 6, "strokeWidth": 0}
-            ic.sw = ic.sh = ("fixed", 24)
-            tab.kids = [ic, _text(label, theme, size=11, weight=500, color=acc if i == active else MUTED, hug=True, name="Подпись")]
+            ic = _icon(icon_name or "square_4", theme, acc if i == active else muted, 24)
+            tab.kids = [ic, _text(label, theme, size=11, weight=500, color=acc if i == active else muted, hug=True, name="Подпись")]
             n.kids.append(tab)
     if n is None:
         return None
@@ -340,6 +466,7 @@ def _build(raw: Any, theme: dict[str, str], depth: int, budget: list[int]) -> Op
     if raw.get("grow") is True:
         n.sw = ("fill",)
         n.autow = False
+        n.over["grow"] = True
     if raw.get("w") and t not in ("image", "avatar", "icon"):
         n.sw = ("fixed", _num(raw.get("w"), 100, 1, 4000))
     if raw.get("h") and t not in ("image", "spacer", "avatar", "icon"):
@@ -502,8 +629,92 @@ def _layout_str(n: _N) -> str:
     return out + (f" c{n.cols}" if n.dir == "g" else "")
 
 
-def _emit(n: _N, parent: Optional[_N], z: list[float], out: dict[str, dict[str, Any]]) -> None:
-    n.id = n.id or "lb" + secrets.token_hex(6)
+def _new_id() -> str:
+    return "lb" + secrets.token_hex(6)
+
+
+def _emit_clone(n: _N, parent: Optional[_N], z: list[float], out: dict[str, dict[str, Any]], els: dict[str, dict[str, Any]]) -> None:
+    """Копия слоя (с содержимым): новые id, сдвиг на место узла, замена текстов и цветов."""
+    from assistant.lib import design_spec
+
+    src = els.get(n.src)
+    if not src:
+        return
+    sub = design_spec._subtree(els, src["id"]) if src.get("type") == "frame" else {src["id"]: src}  # noqa: SLF001
+    ids = {old: _new_id() for old in sub}
+    n.id = ids[src["id"]]
+    dx, dy = n.x - float(src["x"]), n.y - float(src["y"])
+    texts = n.over.get("texts") or {}
+    sets = n.over.get("set") or {}
+    first_text = n.over.get("text")
+    for old in sorted(sub, key=lambda k: float(sub[k].get("z") or 0)):
+        e = json.loads(json.dumps(sub[old]))
+        z[0] += 1
+        e.update({"id": ids[old], "z": z[0]})
+        if e.get("type") == "line":
+            # Линия (стрелка в иконке): точки в мировых координатах — сдвинуть; путь клиент пересчитает.
+            e["points"] = [[round(p[0] + dx, 2), round(p[1] + dy, 2)] for p in e.get("points") or []]
+            if e.get("waypoints"):
+                e["waypoints"] = [[round(p[0] + dx, 2), round(p[1] + dy, 2)] for p in e["waypoints"]]
+            for k in ("start", "end"):
+                end = e.get(k)
+                if isinstance(end, dict) and end.get("el"):
+                    if end["el"] in ids:
+                        end["el"] = ids[end["el"]]
+                    else:
+                        e.pop(k, None)
+            e.pop("d", None)
+        e["x"], e["y"] = round(float(e["x"]) + dx, 1), round(float(e["y"]) + dy, 1)
+        e.pop("locked", None)
+        if old == src["id"]:
+            e["w"] = n.w
+            if parent is not None:
+                e["frame"] = parent.id
+                grow = "w" if n.sw[0] == "fill" and parent.dir in ("v", "h", "g") else ""
+                if grow:
+                    e["grow"] = grow
+                else:
+                    e.pop("grow", None)
+            else:
+                e.pop("frame", None)
+            if n.name:
+                e["name"] = n.name
+        elif e.get("frame") in ids:
+            e["frame"] = ids[e["frame"]]
+        if old in texts and e.get("type") not in ("frame", "image", "vector"):
+            e["text"] = texts[old]
+        elif first_text is not None and e.get("text") is not None and e.get("type") != "frame":
+            e["text"] = first_text
+            first_text = None
+        ov = sets.get(old) if isinstance(sets.get(old), dict) else {}
+        st = dict(e.get("style") or {})
+        for k in ("fill", "textColor", "stroke"):
+            v = str(ov.get(k) or "").strip().lower()
+            if re.match(r"^#[0-9a-f]{6}$", v) or v == "none":
+                st[k] = v
+                if k != "textColor":
+                    st.pop(k + "Off", None)
+                    st.pop(k + "Grad", None)
+                if e.get("type") == "vector" and k == "fill":
+                    e["paths"] = [dict(p, fill=v) if p.get("fill") else p for p in e.get("paths") or []]
+                if e.get("type") == "vector" and k == "stroke":
+                    e["paths"] = [dict(p, stroke=v) if p.get("stroke") else p for p in e.get("paths") or []]
+        if "hidden" in ov:
+            if ov["hidden"] is True:
+                e["hidden"] = True
+            else:
+                e.pop("hidden", None)
+        if st:
+            e["style"] = st
+        out[e["id"]] = e
+
+
+def _emit(n: _N, parent: Optional[_N], z: list[float], out: dict[str, dict[str, Any]],
+          els: Optional[dict[str, dict[str, Any]]] = None) -> None:
+    if n.kind == "clone":
+        _emit_clone(n, parent, z, out, els or {})
+        return
+    n.id = n.id or _new_id()
     z[0] += 1
     el: dict[str, Any] = {"id": n.id, "type": n.kind, "x": n.x, "y": n.y, "w": n.w, "h": n.h, "z": z[0]}
     if n.name:
@@ -530,10 +741,14 @@ def _emit(n: _N, parent: Optional[_N], z: list[float], out: dict[str, dict[str, 
             el["autoW"] = True
     elif n.text:
         el["text"] = n.text
+    if n.kind == "vector" and n.vec:
+        el.update(n.vec)
+        if parent is not None:
+            el["ratio"] = True
     el["style"] = st
     out[n.id] = el
     for k in n.kids:
-        _emit(k, n, z, out)
+        _emit(k, n, z, out, els)
 
 
 # ---- Применение к макету ----
@@ -551,6 +766,7 @@ def add_screens(elements: dict[str, dict[str, Any]], screens: Any) -> list[str]:
     z = [max([float(e.get("z") or 0) for e in elements.values()] + [0])]
     budget = [MAX_NODES]
     made: list[str] = []
+    frames: list[str] = []
     for raw in (screens if isinstance(screens, list) else [])[:6]:
         if not isinstance(raw, dict):
             continue
@@ -563,7 +779,7 @@ def add_screens(elements: dict[str, dict[str, Any]], screens: Any) -> list[str]:
         if raw.get("accent"):
             local["accent"] = _color(raw.get("accent"), theme, theme["accent"])
         scr = _frame("v", str(raw.get("name") or "Экран")[:120], gap=_num(raw.get("gap"), 16, 0, 400),
-                     pad=_pad(raw.get("padding"), [56, 24, 32, 24]), fill=_color(raw.get("fill"), local, "#ffffff"))
+                     pad=_pad(raw.get("padding"), [56, 24, 32, 24]), fill=_color(raw.get("fill"), local, local["bg"]))
         scr.sw, scr.sh = ("fixed", sw), ("fixed", sh)
         for c in (raw.get("children") if isinstance(raw.get("children"), list) else [])[:80]:
             k = _build(c, local, 1, budget)
@@ -577,14 +793,16 @@ def add_screens(elements: dict[str, dict[str, Any]], screens: Any) -> list[str]:
         _fill_heights(scr)
         _place(scr, x0, y0)
         out: dict[str, dict[str, Any]] = {}
-        _emit(scr, None, z, out)
+        _emit(scr, None, z, out, elements)
         out[scr.id]["device"] = str(raw.get("device") or "iphone").lower() if scr.h == sh else ""
         if not out[scr.id]["device"]:
             out[scr.id].pop("device")
         elements.update(out)
         made.append(scr.id)
+        # Все новые фреймы с автолэйаутом (и копии) — клиент пересоберёт их по реальным текстам.
+        frames += [k for k, e in out.items() if e.get("type") == "frame" and e.get("layout") and k != scr.id]
         x0 += scr.w + 100
-    return made
+    return made + frames
 
 
 def add_into(elements: dict[str, dict[str, Any]], adds: Any) -> list[str]:
@@ -629,7 +847,7 @@ def add_into(elements: dict[str, dict[str, Any]], adds: Any) -> list[str]:
             fake = _N("frame")
             fake.id, fake.dir = parent["id"], pdir if pdir in ("v", "h", "g") else ""
             out: dict[str, dict[str, Any]] = {}
-            _emit(n, fake, z, out)
+            _emit(n, fake, z, out, elements)
             elements.update(out)
             touched.append(n.id)
         touched.append(parent["id"])
