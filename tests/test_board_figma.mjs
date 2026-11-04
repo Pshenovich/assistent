@@ -137,7 +137,7 @@ assert.deepEqual(net.paths, [{ d: "M0 0L20 10", stroke: "#1a2659", sw: 2, cap: "
   assert.deepEqual([tx.type, tx.frame, tx.x, tx.y, tx.text, tx.style.textColor, tx.style.fontFamily, tx.style.fontWeight], ["text", fr.id, 116, 62, "Заголовок", "#1a1a1a", "Inter", 600]);
   assert.equal(rc.grow, "w"); // STRETCH поперёк вертикального — «заполнить» по ширине
   assert.deepEqual([rc.style.radii, rc.style.stroke, rc.style.strokeWidth, rc.style.strokeAlign, rc.style.fillGrad], ["8 8 0 0", "#0000ff", 2, "inside", "linear 0 #ff0000ff@0 #0000ffff@100"]);
-  assert.equal(im.text, "Картинка из Figma");
+  assert.equal(im.text || im.name, "Картинка из Figma"); // маленькая заглушка — без подписи, но узнаётся по имени
 }
 assert.equal(F.isFigma("<p>нет</p>"), false);
 assert.equal(await F.fromHtml('<span data-buffer="<!--(figma)AAAA(/figma)-->">', () => "x"), null);

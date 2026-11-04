@@ -377,23 +377,35 @@
   }
 
   /** Подключить шрифт (один раз); cb — когда загрузился (пересчитать высоту текстов). */
-  function ensureFont(f, cb) {
+  function fontSpecs(f) {
     var fi = fontInfo(f);
-    if (!fi || typeof document === "undefined") return;
+    if (fi) return [typeof fi.w === "string" ? fi.w : fi.w[0] + ".." + fi.w[1]];
+    // Шрифт не из списка (пришёл из Figma): пробуем Google Fonts с разными наборами начертаний.
+    return ["100..900", "300;400;500;600;700", "400;500;600;700", "400;700", ""];
+  }
+
+  function ensureFont(f, cb) {
+    if (!f || !FONT_RE.test(f) || typeof document === "undefined") return;
     if (!fontLoads[f]) {
-      var spec = typeof fi.w === "string" ? fi.w : fi.w[0] + ".." + fi.w[1];
-      var link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = "https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + ":wght@" + spec + "&display=swap";
-      document.head.appendChild(link);
+      var specs = fontSpecs(f);
       fontLoads[f] = new Promise(function (resolve) {
-        link.onload = function () {
-          var ws = fontWeights(f);
-          Promise.all(ws.map(function (w) {
-            return document.fonts && document.fonts.load ? document.fonts.load(w + ' 16px "' + f + '"', "Аб").catch(function () {}) : null;
-          })).then(resolve, resolve);
+        var tryAt = function (i) {
+          if (i >= specs.length) return resolve();
+          var link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = "https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + (specs[i] ? ":wght@" + specs[i] : "") + "&display=swap";
+          link.onload = function () {
+            Promise.all([300, 400, 500, 600, 700].map(function (w) {
+              return document.fonts && document.fonts.load ? document.fonts.load(w + ' 16px "' + f + '"', "Аб").catch(function () {}) : null;
+            })).then(resolve, resolve);
+          };
+          link.onerror = function () {
+            link.remove();
+            tryAt(i + 1);
+          };
+          document.head.appendChild(link);
         };
-        link.onerror = resolve;
+        tryAt(0);
       });
     }
     if (cb) fontLoads[f].then(cb);
@@ -541,6 +553,11 @@
     if (el.group) o.group = el.group;
     if (el.frame) o.frame = el.frame;
     if (el.grow) o.grow = el.grow;
+    if (el.autoW) o.autoW = true;
+    ["minW", "maxW", "minH", "maxH"].forEach(function (k) {
+      if (el[k] > 0) o[k] = r2(el[k]);
+    });
+    if (el.name && el.type !== "frame") o.name = String(el.name).slice(0, 120);
     if (el.ratio) o.ratio = true;
     if (el.text) o.text = String(el.text);
     if (el.style) {
@@ -1093,12 +1110,14 @@
       div.style.color = color;
       div.style.textAlign = alignOf(el);
       div.style.fontFamily = fontStack(st.fontFamily);
-      if (st.fontFamily && fontInfo(st.fontFamily)) ensureFont(st.fontFamily, refitFonts);
+      if (st.fontFamily) ensureFont(st.fontFamily, refitFonts);
       div.style.lineHeight = Number(st.lineHeight) > 0 ? Number(st.lineHeight) + "px" : "";
       div.style.letterSpacing = st.letterSpacing ? Number(st.letterSpacing) / 100 + "em" : "";
       div.style.textDecoration = st.deco === "underline" ? "underline" : st.deco === "strike" ? "line-through" : "";
       div.style.textTransform = st.textCase === "upper" ? "uppercase" : st.textCase === "lower" ? "lowercase" : st.textCase === "title" ? "capitalize" : "";
       div.style.justifyContent = st.valign === "top" ? "flex-start" : st.valign === "bottom" ? "flex-end" : "";
+      // Текст «ширина по содержимому» (из Figma) не переносится: другой шрифт не ломает строку.
+      div.style.whiteSpace = el.autoW ? "pre" : "";
     }
 
     /** Шрифт догрузился — тексты с ним перерисовать (высота текста по содержимому меняется). */
@@ -1271,19 +1290,18 @@
     function clipToFrame(node, el) {
       var f = frameOf(el);
       var turned = false;
-      for (var q = f, gq = 0; q && gq < 20; q = frameOf(q), gq++) if (q.rot || q.noclip) turned = true;
-      // Повёрнутый экран: прямоугольник обрезки не совпал бы с ним — не обрезаем.
-      if (!f || el.rot || turned) {
+      for (var q = f, gq = 0; q && gq < 20; q = frameOf(q), gq++) if (q.rot) turned = true;
+      // Видимая область — пересечение внешних фреймов, кроме тех, где снят флажок «Обрезать содержимое».
+      var box = null;
+      for (var p = f, guard = 0; p && guard < 20 && !turned && !el.rot; p = frameOf(p), guard++) {
+        if (p.noclip) continue;
+        box = box ? { x1: Math.max(box.x1, p.x), y1: Math.max(box.y1, p.y), x2: Math.min(box.x2, p.x + p.w), y2: Math.min(box.y2, p.y + p.h) }
+          : { x1: p.x, y1: p.y, x2: p.x + p.w, y2: p.y + p.h };
+      }
+      // Повёрнутый фрейм: прямоугольник обрезки не совпал бы с ним — не обрезаем.
+      if (!box) {
         if (node.style.clipPath) node.style.clipPath = "";
         return;
-      }
-      // Видимая область — пересечение всех внешних экранов.
-      var box = { x1: f.x, y1: f.y, x2: f.x + f.w, y2: f.y + f.h };
-      for (var p = frameOf(f), guard = 0; p && guard < 20; p = frameOf(p), guard++) {
-        box.x1 = Math.max(box.x1, p.x);
-        box.y1 = Math.max(box.y1, p.y);
-        box.x2 = Math.min(box.x2, p.x + p.w);
-        box.y2 = Math.min(box.y2, p.y + p.h);
       }
       var t = box.y1 - el.y;
       var l = box.x1 - el.x;
@@ -3358,7 +3376,8 @@
     }
 
     /** Вставленная схема (Miro): в центр экрана, одним шагом отмены, видна целиком и выделена. */
-    function placeImported(list) {
+    function placeImported(list, opts) {
+      opts = opts || {};
       finishEdit();
       var b = boundsOfList(list);
       if (!b) return;
@@ -3366,6 +3385,12 @@
       var c = toWorld(r.left + r.width / 2, r.top + r.height / 2, r);
       var dx = Math.round(c.x - (b.x + b.w / 2));
       var dy = Math.round(c.y - (b.y + b.h / 2));
+      // Макет из Figma — на свободное место справа от всего (не поверх чужих фреймов).
+      var cb = opts.keepFrames ? contentBounds() : null;
+      if (cb) {
+        dx = Math.round(cb.x + cb.w + 160 - b.x);
+        dy = Math.round(cb.y - b.y);
+      }
       var z = topZ();
       begin();
       list.forEach(function (el, i) {
@@ -3375,7 +3400,8 @@
         el.z = z + i;
         put(el);
       });
-      syncFrames();
+      // Принадлежность к фреймам пришла из Figma — геометрией не пересчитываем (вылезающее за край остаётся внутри).
+      if (!opts.keepFrames) syncFrames();
       commit();
       setTool("select");
       flushNow();
@@ -3384,8 +3410,13 @@
       var tl = toScreen(G.pt(nb.x, nb.y));
       var br = toScreen(G.pt(nb.x + nb.w, nb.y + nb.h));
       if (tl.x < 0 || tl.y < 0 || br.x > r.width || br.y > r.height) fitBounds(nb);
+      var ids0 = {};
+      list.forEach(function (e) {
+        ids0[e.id] = 1;
+      });
+      // Выделены верхние вставленные (содержимое фреймов — вместе с ними).
       setSelection(list.filter(function (e) {
-        return e.type !== "line";
+        return e.type !== "line" && !(e.frame && ids0[e.frame]);
       }).map(function (e) {
         return e.id;
       }));
@@ -3468,7 +3499,7 @@
       }
       // Выделена заглушка картинки (из Miro) — картинка встаёт на её место и в её размер.
       var slot = selList().length === 1 ? selList()[0] : null;
-      if (!(slot && slot.type === "rect" && /^Картинка из (Miro|Figma)/.test(String(slot.text || "")))) slot = null;
+      if (!(slot && slot.type === "rect" && /^Картинка из (Miro|Figma)/.test(String(slot.text || slot.name || "")))) slot = null;
       return readFileAsDataUrl(file).then(compressImage).then(function (img) {
         if (!img) {
           notify("Не удалось открыть картинку");
@@ -4629,11 +4660,19 @@
       }, 0);
       var nGrow = kids.filter(gm).length;
       var each = nGrow ? Math.max(1, (availM - fixed - gaps) / nGrow) : 0;
+      // Мин./макс. размеры (из Figma): «заполнить» не сжимает меньше минимума и не растит больше максимума.
+      var lim = function (k, ax, v) {
+        var mn = k[ax === "w" ? "minW" : "minH"];
+        var mx = k[ax === "w" ? "maxW" : "maxH"];
+        if (mx > 0) v = Math.min(v, mx);
+        if (mn > 0) v = Math.max(v, mn);
+        return v;
+      };
       var sizeM = function (k) {
-        return gm(k) ? each : k[MA];
+        return gm(k) ? lim(k, MA, each) : k[MA];
       };
       var sizeC = function (k) {
-        return gc(k) ? availC : k[CA];
+        return gc(k) ? lim(k, CA, availC) : k[CA];
       };
       var sum = kids.reduce(function (a, e) {
         return a + sizeM(e);
@@ -6403,7 +6442,7 @@
       }
       // Выделена заглушка картинки и в буфере есть картинка — она и вставляется (на место заглушки).
       var one = selList().length === 1 ? selList()[0] : null;
-      if (files.length && one && one.type === "rect" && /^Картинка из (Miro|Figma)/.test(String(one.text || ""))) {
+      if (files.length && one && one.type === "rect" && /^Картинка из (Miro|Figma)/.test(String(one.text || one.name || ""))) {
         insertImageFile(files[0]);
         return;
       }
@@ -6421,7 +6460,7 @@
         window.LeoBoardFigma.fromHtml(htmlAll, uid).then(function (fig) {
           if (destroyed) return;
           if (fig && fig.elements.length) {
-            placeImported(fig.elements);
+            placeImported(fig.elements, { keepFrames: fig.source === "Figma" });
             notifyImported(fig);
           } else if (plain.trim()) {
             notify("Не удалось разобрать схему FigJam — вставлен текст");
@@ -6651,8 +6690,33 @@
       els.forEach(function (el) {
         if (el.frame && tied(el)) patch(el.id, { frame: undefined });
       });
+      // Принадлежность меняется только у того, что двигали в этом шаге (как во Figma): объект, вылезающий
+      // за край своего фрейма (обрезка, автолэйаут), не выпадает из него от чужих правок. Едет вместе
+      // со своим фреймом — тоже остаётся. Новый фрейм забирает свободные объекты под собой.
+      var touched = null;
+      if (tx) {
+        touched = {};
+        var fresh = [];
+        tx.before.forEach(function (before, id) {
+          touched[id] = 1;
+          var cur = getEl(id);
+          if (!before && cur && cur.type === "frame") fresh.push(cur);
+        });
+        if (fresh.length) els.forEach(function (el) {
+          if (touched[el.id] || el.frame) return;
+          var bb = G.elBounds(el, getEl);
+          if (!bb) return;
+          var cx0 = bb.x + bb.w / 2;
+          var cy0 = bb.y + bb.h / 2;
+          if (fresh.some(function (f) {
+            return cx0 >= f.x && cx0 <= f.x + f.w && cy0 >= f.y && cy0 <= f.y + f.h;
+          })) touched[el.id] = 1;
+        });
+      }
       var order = Array.from(els.values()).filter(function (el) {
-        return !tied(el);
+        if (tied(el)) return false;
+        if (!touched) return true;
+        return touched[el.id] && !(el.frame && touched[el.frame]);
       }).sort(function (a, b) {
         var fa = a.type === "frame" ? 0 : 1;
         var fb = b.type === "frame" ? 0 : 1;
@@ -8524,8 +8588,10 @@
           attrs += ' filter="url(#' + fid + ')"';
         }
         // Содержимое экрана обрезается по экрану.
+        // Ближайший внешний фрейм с обрезкой (без флажка «Обрезать» — пропускаем).
         var f = frameOf(el);
-        if (f && set[f.id] && !f.rot && !f.noclip && !el.rot) {
+        while (f && f.noclip) f = frameOf(f);
+        if (f && set[f.id] && !f.rot && !el.rot) {
           var cid = "clip-" + f.id;
           if (!defs.some(function (d) {
             return d.indexOf('id="' + cid + '"') >= 0;
@@ -8578,7 +8644,7 @@
       var fams = {};
       list.forEach(function (el) {
         var f = el.style && el.style.fontFamily;
-        if (f && fontInfo(f) && el.text) fams[f] = 1;
+        if (f && FONT_RE.test(f) && el.text) fams[f] = 1;
       });
       return { svg: svg, w: w, h: h, fonts: Object.keys(fams) };
     }
@@ -8603,11 +8669,14 @@
         });
       };
       return Promise.all(sv.fonts.map(function (f) {
-        var fi = fontInfo(f);
-        var spec = typeof fi.w === "string" ? fi.w : fi.w[0] + ".." + fi.w[1];
-        return fetch("https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + ":wght@" + spec + "&display=swap").then(function (r) {
-          return r.text();
-        }).then(function (css) {
+        var specs = fontSpecs(f);
+        var getCss = function (i) {
+          if (i >= specs.length) return Promise.resolve("");
+          return fetch("https://fonts.googleapis.com/css2?family=" + encodeURIComponent(f).replace(/%20/g, "+") + (specs[i] ? ":wght@" + specs[i] : "") + "&display=swap").then(function (r) {
+            return r.ok ? r.text() : getCss(i + 1);
+          });
+        };
+        return getCss(0).then(function (css) {
           // Только кириллица и латиница: остальные наборы знаков тексту макета не нужны, а файл раздувают.
           var blocks = css.split("/* ").filter(function (b) {
             return /^(cyrillic|latin) \*\//.test(b);

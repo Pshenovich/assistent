@@ -384,6 +384,14 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["grow"] = raw["grow"]
     if raw.get("ratio") is True:
         el["ratio"] = True
+    if raw.get("autoW") is True and etype == "text":
+        el["autoW"] = True  # текст «ширина по содержимому» — без переноса строк
+    for k in ("minW", "maxW", "minH", "maxH"):
+        v = _num(raw.get(k), 0, 0, 1e5)
+        if v > 0:
+            el[k] = v
+    if etype != "frame" and raw.get("name"):
+        el["name"] = _str(raw.get("name"), 120).strip()
     if raw.get("text"):
         el["text"] = _str(raw.get("text"), MAX_TEXT)
     style = raw.get("style")

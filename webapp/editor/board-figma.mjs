@@ -594,7 +594,8 @@ function fromFigma(msg, uid) {
       return s + p.d.length;
     }, 0);
     if (d > 400000) return null;
-    return Object.assign({ id: uid(), type: "vector" }, b, { vb: [Math.max(0.01, b.w), Math.max(0.01, b.h)], paths: paths.slice(0, 200) });
+    // Нулевая сторона (линия-разделитель) — 1 px, иначе масштаб по ней раздувает обводку.
+    return Object.assign({ id: uid(), type: "vector" }, b, { w: Math.max(1, b.w), h: Math.max(1, b.h), vb: [Math.max(1, b.w), Math.max(1, b.h)], paths: paths.slice(0, 200) });
   }
 
   function box(n, world) {
@@ -886,6 +887,13 @@ function fromFigma(msg, uid) {
       if (parentFrame) el.frame = parentFrame;
       if (groupId) el.group = groupId;
       if (n && n.proportionsConstrained) el.ratio = true;
+      // Ограничения размера (мин./макс. ширина и высота) — для «заполнить» в автолэйауте.
+      var mn = n && n.minSize && n.minSize.value;
+      var mx = n && n.maxSize && n.maxSize.value;
+      if (mn && mn.x > 0) el.minW = r1(mn.x);
+      if (mn && mn.y > 0) el.minH = r1(mn.y);
+      if (mx && mx.x > 0) el.maxW = r1(mx.x);
+      if (mx && mx.y > 0) el.maxH = r1(mx.y);
       add(el, n ? gid(n.guid) : "");
       return el;
     };
@@ -944,15 +952,20 @@ function fromFigma(msg, uid) {
         var tp = top(n.fillPaints);
         if (tp && tp.type === "SOLID") tst.textColor = hexOf(tp.color);
         if (n.opacity != null && n.opacity < 0.999) tst.opacity = Math.round(n.opacity * 1000) / 1000;
-        put(withGrow(Object.assign({ id: uid(), type: "text", text: textOf(n.textData) }, b, { style: tst })), n, parentFrame, groupId);
+        var tel = withGrow(Object.assign({ id: uid(), type: "text", text: textOf(n.textData) }, b, { style: tst }));
+        if (n.textAutoResize === "WIDTH_AND_HEIGHT") tel.autoW = true;
+        put(tel, n, parentFrame, groupId);
         return;
       }
       if (type === "RECTANGLE" || type === "ROUNDED_RECTANGLE" || type === "ELLIPSE") {
         var kind = type === "ELLIPSE" ? "ellipse" : "rect";
         var img = hasImage(n);
         if (img) imageSlots++;
-        var el = withGrow(Object.assign({ id: uid(), type: kind, text: img ? "Картинка из Figma" : "" }, b, { style: styleOf(n, kind) }));
+        // Подпись — только на крупной заглушке (на аватарке она не помещается).
+        var big = b.w >= 96 && b.h >= 40;
+        var el = withGrow(Object.assign({ id: uid(), type: kind, text: img && big ? "Картинка из Figma" : "" }, b, { style: styleOf(n, kind) }));
         if (img) Object.assign(el.style, { textColor: "#6b7280", fontSize: 12 });
+        if (img && !big) el.name = "Картинка из Figma";
         put(el, n, parentFrame, groupId);
         return;
       }
