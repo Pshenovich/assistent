@@ -3351,6 +3351,7 @@
         return;
       }
       if (e.pointerId !== g.pointerId) return;
+      if (!e.__autoPan) keepAutoPan(g, e);
       var dxs = e.clientX - g.sx;
       var dys = e.clientY - g.sy;
       if (!g.moved && Math.abs(dxs) + Math.abs(dys) < (e.pointerType === "touch" ? 6 : 3)) return;
@@ -3422,6 +3423,52 @@
         gesture = Object.assign(g, { kind: "end", id: ln2.id, which: "p1", created: true });
         doEnd(gesture, p, e.altKey, e.shiftKey);
       }
+    }
+
+    // ---- автопрокрутка у края: тянем рамку, блок, стрелку — доска едет сама ----
+    var AUTO_PAN_EDGE = 36;
+    var AUTO_PAN_MAX = 18;
+    var AUTO_PAN_KINDS = { marquee: 1, move: 1, create: 1, end: 1, resize: 1, gscale: 1, label: 1, wp: 1, seg: 1, gbar: 1, connect: 1 };
+    var autoPan = null; // {frame (таймер ~60 к/с), ev}
+
+    function keepAutoPan(g, e) {
+      if (!AUTO_PAN_KINDS[g.kind]) return stopAutoPan();
+      var ev = { clientX: e.clientX, clientY: e.clientY, pointerId: e.pointerId, pointerType: e.pointerType, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey, ctrlKey: e.ctrlKey, __autoPan: true };
+      if (!panSpeed(ev)) return stopAutoPan();
+      if (autoPan) {
+        autoPan.ev = ev;
+        return;
+      }
+      autoPan = { ev: ev, frame: setTimeout(autoPanTick, 16) };
+    }
+
+    /** Скорость по близости к краю доски (px за кадр); null — курсор не у края. */
+    function panSpeed(ev) {
+      var r = stageRect();
+      var sp = function (d) {
+        return d < AUTO_PAN_EDGE ? Math.ceil(AUTO_PAN_MAX * (1 - Math.max(0, d) / AUTO_PAN_EDGE)) : 0;
+      };
+      var vx = sp(ev.clientX - r.left) - sp(r.right - ev.clientX);
+      var vy = sp(ev.clientY - r.top) - sp(r.bottom - ev.clientY);
+      return vx || vy ? { x: vx, y: vy } : null;
+    }
+
+    function autoPanTick() {
+      if (!autoPan || destroyed) return;
+      var g = gesture;
+      var v = g && AUTO_PAN_KINDS[g.kind] ? panSpeed(autoPan.ev) : null;
+      if (!v) return stopAutoPan();
+      view.x += v.x;
+      view.y += v.y;
+      applyView();
+      // Точка под курсором на доске сдвинулась — жест продолжается, как будто мышь двигали.
+      onPointerMove(autoPan.ev);
+      if (autoPan) autoPan.frame = setTimeout(autoPanTick, 16);
+    }
+
+    function stopAutoPan() {
+      if (autoPan && autoPan.frame) clearTimeout(autoPan.frame);
+      autoPan = null;
     }
 
     /** Option/Alt при перетаскивании — тянем копию, оригинал остаётся на месте (как в Miro). */
@@ -3749,6 +3796,7 @@
     }
 
     function endGesture(cancelled, p, e) {
+      stopAutoPan();
       var g = gesture;
       if (!g) return;
       gesture = null;
