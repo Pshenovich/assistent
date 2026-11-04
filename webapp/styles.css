@@ -8990,10 +8990,16 @@ html.note-discussion-sheet-open #note-discussion-sheet-toolbar {
   mask: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%226%22%20y%3D%222.5%22%20width%3D%2212%22%20height%3D%2219%22%20rx%3D%222.5%22%2F%3E%3Cpath%20d%3D%22M10.5%2018h3%22%2F%3E%3C%2Fsvg%3E") center / contain no-repeat;
 }
 
-/* Доска — во всю ширину заметки, без боковых полей (заголовок и вкладки листов остаются с отступами). */
-#note-editor-overlay.is-web-canvas-open .note-editor-pad--body.is-board-mode > .note-web-canvas-host {
-  margin-left: calc(-1 * var(--note-editor-pad-x, 16px));
-  margin-right: calc(-1 * var(--note-editor-pad-x, 16px));
+/* Доска — во всю ширину заметки, без боковых полей: поля снимаем у контейнера (внутренние обёртки
+   режут вылезающее), а заголовку, метке проекта и вкладкам листов возвращаем отступ. */
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-content:has(.note-editor-pad--body.is-board-mode) {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+#note-editor-overlay.is-web-canvas-open .note-editor-modal-content:has(.note-editor-pad--body.is-board-mode) .note-editor-pad--title-in-body {
+  padding-left: var(--note-editor-pad-x, 16px);
+  padding-right: var(--note-editor-pad-x, 16px);
 }
 
 /* Холст (webapp/board.css) в редакторе заметки и в правой панели */
