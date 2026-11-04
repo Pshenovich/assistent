@@ -35,3 +35,6 @@ webapp/node_modules/
 .edge-sync/
 note_versions.sqlite
 *.sqlite.gz
+mail_secret.key
+mail_attachments/
+assistant/integrations/telemost_mail_state/

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -93,11 +94,20 @@ def _fernet() -> Any:
         from assistant.stores import notes as notes_store
 
         path = Path(notes_store._db_path()).parent / "mail_secret.key"
-        if path.is_file():
-            key = path.read_text(encoding="utf-8").strip()
+        try:
+            # Атомарно и только для владельца: бот и сайт стартуют вместе — ключ должен быть один.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            key = ""
+            for _ in range(50):  # другой процесс мог только что создать файл и ещё не дописать ключ
+                key = path.read_text(encoding="utf-8").strip()
+                if key:
+                    break
+                time.sleep(0.02)
         else:
             key = Fernet.generate_key().decode()
-            path.write_text(key, encoding="utf-8")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(key)
             os.chmod(path, 0o600)
     _FERNET = Fernet(key.encode())
     return _FERNET

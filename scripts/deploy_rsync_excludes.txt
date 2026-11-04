@@ -75,3 +75,8 @@ webapp/.npm-cache/
 webapp/dev-mock-data.js
 tmp-restore/
 news/
+# Почта: ключ шифрования паролей IMAP/SMTP (без него сохранённые пароли не расшифровать), вложения черновиков,
+# какие письма Телемоста уже разобраны.
+mail_secret.key
+mail_attachments/
+assistant/integrations/telemost_mail_state/

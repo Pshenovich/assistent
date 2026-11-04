@@ -37,14 +37,24 @@ sys.path.insert(0, "scripts")
 from pathlib import Path
 import backup_dbs as b
 out = Path("/root/leo-rescue/$TS")
+# Кроме известного списка — любые *.sqlite в /opt/assistant (базы в старых местах, пути из *_DB_PATH):
+# tar ниже базы пропускает, и без этого они бы потерялись.
+skip = {".venv", ".git", ".claude", "node_modules", "telegram-bot-api"}
+found = [p for p in b.ROOT.rglob("*.sqlite") if not (set(p.relative_to(b.ROOT).parts) & skip)]
+dbs = list(dict.fromkeys(b.databases() + sorted(p for p in found if p.is_file() and p.stat().st_size > 0)))
 ok = 0
-for db in b.databases():
+for db in dbs:
     try:
         b.backup_one(db, out)
         ok += 1
     except Exception as e:
         print(f"WARN {db}: {e!r}")
-print(f"баз скопировано: {ok}")
+print(f"баз скопировано: {ok} из {len(dbs)}")
+for line in Path(".env").read_text(encoding="utf-8", errors="replace").splitlines() if Path(".env").is_file() else []:
+    k, _, v = line.partition("=")
+    v = v.strip().strip('"').strip("'")
+    if k.strip().endswith("_DB_PATH") and v and not Path(v).resolve().is_relative_to(b.ROOT):
+        print(f"WARN {k.strip()}={v} — база вне /opt/assistant, скопируйте вручную")
 PY
 tar czf /root/leo-rescue/$TS/state.tar.gz -C /opt/assistant \
   --exclude=./.venv --exclude=./.git --exclude=./.claude --exclude='*/node_modules' --exclude='*/.npm-cache' \
