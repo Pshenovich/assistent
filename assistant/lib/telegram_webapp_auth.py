@@ -22,28 +22,15 @@ def _auth_max_age_sec() -> int:
 
 
 def _bot_tokens(*, primary: str | None = None) -> list[str]:
-    """Основные и запасные токены: initData мог быть подписан другим ботом того же продукта."""
+    """Токен бота Орбиты (явный и из TELEGRAM_BOT_TOKEN). Другие боты не подходят: у кого есть их токен
+    (или initData их мини-аппов), тот подписал бы вход в Орбиту под любым пользователем."""
     seen: set[str] = set()
     out: list[str] = []
-
-    def add(tok: str) -> None:
-        t = (tok or "").strip().strip("'").strip('"')
+    for tok in (primary or "", os.getenv("TELEGRAM_BOT_TOKEN") or ""):
+        t = tok.strip().strip("'").strip('"')
         if t and t not in seen:
             seen.add(t)
             out.append(t)
-
-    add(primary or "")
-    for key in (
-        "TELEGRAM_BOT_TOKEN",
-        "TG_DONATELLO_BOT_TOKEN",
-        "TELEGRAM_WEBAPP_AUTH_EXTRA_TOKENS",
-    ):
-        raw = (os.getenv(key) or "").strip()
-        if not raw:
-            continue
-        parts = raw.split(",") if key.endswith("EXTRA_TOKENS") else [raw]
-        for p in parts:
-            add(p)
     return out
 
 

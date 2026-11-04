@@ -81,11 +81,13 @@ def test_bad_auth_date_is_rejected(auth_date):
         auth.parse_and_validate_init_data(_sign(_fields(auth_date=auth_date)))
 
 
-def test_donatello_and_extra_tokens_are_accepted(monkeypatch):
+def test_other_bots_tokens_are_rejected(monkeypatch):
+    """initData, подписанный другим ботом (доска, запасные токены), — не вход в Орбиту."""
     monkeypatch.setenv("TG_DONATELLO_BOT_TOKEN", DONATELLO)
     monkeypatch.setenv("TELEGRAM_WEBAPP_AUTH_EXTRA_TOKENS", " '333:EXTRA-A' , \"444:EXTRA-B\" ")
     for token in (DONATELLO, "333:EXTRA-A", "444:EXTRA-B"):
-        assert auth.user_payload_from_init_data(_sign(_fields(), token))["id"] == 42
+        with pytest.raises(ValueError, match="подпись"):
+            auth.parse_and_validate_init_data(_sign(_fields(), token))
 
 
 def test_unknown_bot_token_is_rejected(monkeypatch):
