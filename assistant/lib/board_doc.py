@@ -31,7 +31,7 @@ PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", 
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
 _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight",
-               "opacity", "shadow", "radii")
+               "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign")
 # Скругления углов по отдельности: «левый-верхний правый-верхний правый-нижний левый-нижний».
 _RADII_RE = re.compile(r"^\d{1,5}(\.\d{1,2})?( \d{1,5}(\.\d{1,2})?){3}$")
 # Тень (макет): «x y размытие #rrggbbaa».
@@ -383,8 +383,16 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
             v = style.get(k)
             if v is None:
                 continue
-            if k == "opacity":
+            if k in ("opacity", "fillOpacity", "strokeOpacity"):
                 st[k] = _num(v, 1, 0, 1)
+                continue
+            if k in ("fillOff", "strokeOff"):
+                if v is True:
+                    st[k] = True
+                continue
+            if k == "strokeAlign":
+                if v in ("inside", "outside"):
+                    st[k] = v
                 continue
             if k == "radii":
                 if isinstance(v, str) and _RADII_RE.match(v.strip()):
@@ -858,8 +866,10 @@ def render_board_svg(body: Any) -> str:
         st = el.get("style") or {}
         stroke = _attr(_ink(st.get("stroke")))
         sw = _num(st.get("strokeWidth"), 2, 0, 40)
-        if sw == 0:
+        if sw == 0 or st.get("strokeOff"):
             stroke = "none"
+        elif st.get("strokeOpacity") is not None and st["strokeOpacity"] < 1:
+            stroke += f'" stroke-opacity="{st["strokeOpacity"]}'
         dash = ' stroke-dasharray="8 6"' if st.get("dash") == "dashed" else (' stroke-dasharray="2 5"' if st.get("dash") == "dotted" else "")
         t = el["type"]
         x, y, ew, eh = el["x"], el["y"], el["w"], el["h"]
@@ -892,7 +902,9 @@ def render_board_svg(body: Any) -> str:
         if t == "sticky":
             sf = str(st.get("fill") or "yellow")
             fill = sf if _HEX_RE.match(sf) else _STICKY.get(sf, _STICKY["yellow"])
-        fill_attr = _attr(fill) if fill else "none"
+        fill_attr = _attr(fill) if fill and not st.get("fillOff") else "none"
+        if fill_attr != "none" and st.get("fillOpacity") is not None and st["fillOpacity"] < 1:
+            fill_attr += f'" fill-opacity="{st["fillOpacity"]}'
         if t == "rect":
             if st.get("radii"):
                 out.append(f'<path d="{_rounded_d(x, y, ew, eh, _radii(st, ew, eh, 8))}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')

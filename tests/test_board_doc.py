@@ -291,6 +291,13 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         svg = board_doc.render_board_svg(_board(dict(A, style={"radii": "0 20 0 0"})))
         self.assertIn("A20.0 20.0 0 0 1", svg)
 
+    def test_paint_style_keys(self) -> None:
+        body = json.dumps({"v": 1, "elements": {"r": {"id": "r", "type": "rect", "x": 0, "y": 0, "w": 10, "h": 10, "style": {
+            "fill": "#ff0000", "fillOpacity": 0.5, "fillOff": True, "strokeOff": "yes", "strokeAlign": "inside", "strokeOpacity": 7}}}})
+        st = board_doc.parse_board(body)["elements"]["r"]["style"]
+        self.assertEqual((st["fillOpacity"], st["fillOff"], st["strokeAlign"], st["strokeOpacity"]), (0.5, True, "inside", 1))
+        self.assertNotIn("strokeOff", st)  # только True
+
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}
         inner = {"id": "f2", "type": "frame", "x": 10, "y": 10, "w": 100, "h": 100, "frame": "f1"}

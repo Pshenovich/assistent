@@ -1497,6 +1497,13 @@ html[data-theme="light"] .leo-board {
   font-size: 11px;
 }
 
+.lb-inspector input,
+.lb-pop input {
+  /* Safari: в поле внутри user-select:none нет курсора — поле «в фокусе», а ввода нет. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .lb-if input {
   width: 100%;
   min-width: 0;
@@ -1706,4 +1713,102 @@ html[data-theme="light"] .leo-board {
 
 .lb-overlay .lb-pen-hdot {
   fill: var(--lb-accent);
+}
+
+/* Панель свойств как во Figma: иконки в полях, строка цвета с %, «глаз» и «—», положение обводки. */
+.lb-if span svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.lb-isuf {
+  flex: none;
+  color: var(--lb-muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.lb-ispacer {
+  flex: none;
+  width: 28px;
+}
+
+.lb-ipaint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.lb-ipaint .lb-icolor {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.lb-ipaint .lb-ibtn {
+  background: transparent;
+  min-width: 26px;
+  padding: 0 4px;
+}
+
+.lb-ipaint .lb-ibtn:hover {
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-ipaint.is-off .lb-icolor {
+  opacity: 0.45;
+}
+
+.lb-icolor-op {
+  flex: none;
+  width: 30px;
+  padding-left: 6px;
+  border: 0;
+  border-left: 1px solid var(--lb-panel-border);
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.lb-iadd {
+  min-width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  color: var(--lb-text);
+}
+
+.lb-iadd:hover {
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-iselect {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-iselect select {
+  width: 100%;
+  min-width: 0;
+  padding: 0 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.lb-overlay .lb-pen-pt.is-sel {
+  fill: var(--lb-accent);
+}
+
+.lb-overlay .lb-pen-pt.is-end {
+  stroke-width: 2.5;
 }
