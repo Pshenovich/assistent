@@ -31514,7 +31514,16 @@
     var sr = sheet.getBoundingClientRect();
     // Отступы — от краёв окна заметки (CSS вычитает поля контейнера сам: у доски и обычного листа они разные).
     // Слева — кнопка «‹» постоянного размера: отступ задан в CSS (--head-l: 52px), замер не нужен.
-    var r = more && more.offsetParent ? sr.right - more.getBoundingClientRect().left + 12 : 0;
+    // Зазор до первой кнопки: у кнопок-иконок свои поля (~8 px), итог — как между самими иконками.
+    var firstBtn = more ? more.querySelector("button:not(.hidden)") : null;
+    var inner = 0;
+    if (firstBtn) {
+      var svg = firstBtn.querySelector("svg");
+      if (svg) inner = svg.getBoundingClientRect().left - firstBtn.getBoundingClientRect().left;
+    }
+    var gap = more ? parseFloat(getComputedStyle(more).columnGap) || 0 : 0;
+    // Между иконками визуально gap + 2·поле; от «Проекта» до иконки — зазор + поле → зазор = gap + поле.
+    var r = more && more.offsetParent ? sr.right - more.getBoundingClientRect().left + Math.round(gap + inner) : 0;
     if (r > 0) sheet.style.setProperty("--head-r", Math.round(r) + "px");
     if (back && !back.getAttribute("title")) back.setAttribute("title", "К списку");
     if (back && !back.getAttribute("aria-label")) back.setAttribute("aria-label", "К списку");
