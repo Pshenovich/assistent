@@ -207,3 +207,30 @@ class OrgsStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_verified_emails_ignore_mailbox_on_custom_imap_server(tmp_path, monkeypatch):
+    """Свой IMAP-сервер принимает любой логин — адрес на нём не подтверждён (вход в организацию по домену)."""
+    from assistant.stores import mail_accounts
+    from assistant.stores import notes as notes_store
+
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    monkeypatch.setenv("USER_PREFS_DIR", str(tmp_path / "users"))
+    monkeypatch.setenv("MAIL_SECRET_KEY", "")
+    for mod in (notes_store, mail_accounts):
+        mod._CONN = None
+    mail_accounts._FERNET = None
+    uid = 555
+    mail_accounts.upsert(uid, provider="imap", email="ceo@victimcorp.com", auth="password",
+                         imap_host="imap.evil.example", secret="x")
+    mail_accounts.upsert(uid, provider="yandex", email="me@company360.ru", auth="password",
+                         imap_host="imap.yandex.ru", secret="x")
+    mail_accounts.upsert(uid, provider="gmail", email="boss@workspace.io", auth="password", secret="x")
+    mail_accounts.upsert(uid, provider="yandex", email="vova@yandex.ru", auth="oauth_yandex")
+    got = orgs_store.verified_emails(uid)
+    assert "ceo@victimcorp.com" not in got
+    assert {"me@company360.ru", "boss@workspace.io", "vova@yandex.ru"} <= set(got)
+    assert "victimcorp.com" not in orgs_store.user_domains(uid)
+    for mod in (notes_store, mail_accounts):
+        mod._CONN = None
+    mail_accounts._FERNET = None

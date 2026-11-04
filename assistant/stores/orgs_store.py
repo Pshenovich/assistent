@@ -134,8 +134,25 @@ def _uid(user_id: int | str) -> str:
 # ---------- личность пользователя: подтверждённые адреса и домены ----------
 
 
+def _mail_account_verified(acc: dict) -> bool:
+    """Ящик подтверждает адрес, только если вход проверил известный сервер (или OAuth).
+
+    IMAP-сервер, указанный вручную, может принять любой логин — такой ящик читать почту не мешает,
+    но владение адресом (вход в организацию по домену, приглашения на email) не доказывает.
+    """
+    from assistant.integrations import mail_imap
+
+    if str(acc.get("auth") or "").startswith("oauth"):
+        return True
+    provider = str(acc.get("provider") or "")
+    host = str(acc.get("imap_host") or "").strip().lower().rstrip(".")
+    if not host and provider in mail_imap.PROVIDERS:
+        host = mail_imap.PROVIDERS[provider]["imap"][0]
+    return host in {p["imap"][0] for p in mail_imap.PROVIDERS.values()}
+
+
 def verified_emails(user_id: int | str) -> list[str]:
-    """Адреса, которыми пользователь владеет (вошёл через OAuth или IMAP)."""
+    """Адреса, которыми пользователь владеет (вошёл через OAuth или в ящик у известного провайдера)."""
     out: list[str] = []
     try:
         from assistant.stores import user_prefs
@@ -149,6 +166,8 @@ def verified_emails(user_id: int | str) -> list[str]:
         from assistant.stores import mail_accounts
 
         for acc in mail_accounts.list_accounts(int(user_id)):
+            if not _mail_account_verified(acc):
+                continue
             em = str(acc.get("email") or "").strip().lower()
             if "@" in em and em not in out:
                 out.append(em)
