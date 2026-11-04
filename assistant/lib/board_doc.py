@@ -31,7 +31,9 @@ PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", 
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
 _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight",
-               "opacity", "shadow")
+               "opacity", "shadow", "radii")
+# Скругления углов по отдельности: «левый-верхний правый-верхний правый-нижний левый-нижний».
+_RADII_RE = re.compile(r"^\d{1,5}(\.\d{1,2})?( \d{1,5}(\.\d{1,2})?){3}$")
 # Тень (макет): «x y размытие #rrggbbaa».
 _SHADOW_RE = re.compile(r"^-?\d{1,3} -?\d{1,3} \d{1,3} #[0-9a-fA-F]{8}$")
 _COLOR_KEYS = ("fill", "stroke", "textColor", "highlight")
@@ -367,8 +369,8 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["rot"] = _num(raw.get("rot"), 0, -360, 360)
     if raw.get("group"):
         el["group"] = _str(raw.get("group"))
-    if raw.get("frame") and etype not in ("frame", "line"):
-        el["frame"] = _str(raw.get("frame"))  # экран, в котором лежит элемент (макет)
+    if raw.get("frame") and etype != "line" and raw.get("frame") != eid:
+        el["frame"] = _str(raw.get("frame"))  # экран, в котором лежит элемент (макет); у экрана — внешний экран
     if raw.get("text"):
         el["text"] = _str(raw.get("text"), MAX_TEXT)
     style = raw.get("style")
@@ -380,6 +382,10 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
                 continue
             if k == "opacity":
                 st[k] = _num(v, 1, 0, 1)
+                continue
+            if k == "radii":
+                if isinstance(v, str) and _RADII_RE.match(v.strip()):
+                    st[k] = v.strip()
                 continue
             if k == "shadow":
                 if isinstance(v, str) and _SHADOW_RE.match(v.strip()):
@@ -710,6 +716,24 @@ def _svg_text(x: float, y: float, text: str, fs: float = 13, color: str = "#1118
             f'dominant-baseline="middle"{w}>{html.escape(text)}</text>')
 
 
+def _radii(st: dict[str, Any], w: float, h: float, default: float) -> list[float]:
+    m = st.get("radii")
+    if isinstance(m, str) and _RADII_RE.match(m):
+        r = [float(x) for x in m.split()]
+    else:
+        r = [_num(st.get("radius"), default, 0, 1e4)] * 4
+    lim = max(0.0, min(w, h) / 2)
+    return [max(0.0, min(lim, float(v))) for v in r]
+
+
+def _rounded_d(x: float, y: float, w: float, h: float, r: list[float]) -> str:
+    tl, tr, br, bl = r
+    return (f"M{x + tl} {y}H{x + w - tr}" + (f"A{tr} {tr} 0 0 1 {x + w} {y + tr}" if tr else "") +
+            f"V{y + h - br}" + (f"A{br} {br} 0 0 1 {x + w - br} {y + h}" if br else "") +
+            f"H{x + bl}" + (f"A{bl} {bl} 0 0 1 {x} {y + h - bl}" if bl else "") +
+            f"V{y + tl}" + (f"A{tl} {tl} 0 0 1 {x + tl} {y}" if tl else "") + "Z")
+
+
 def _svg_vector(el: dict[str, Any]) -> str:
     vw, vh = el["vb"]
     st = el.get("style") or {}
@@ -867,11 +891,14 @@ def render_board_svg(body: Any) -> str:
             fill = sf if _HEX_RE.match(sf) else _STICKY.get(sf, _STICKY["yellow"])
         fill_attr = _attr(fill) if fill else "none"
         if t == "rect":
-            rx = min(_num(st.get("radius"), 8, 0, 1e4), ew / 2, eh / 2)
-            out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
+            if st.get("radii"):
+                out.append(f'<path d="{_rounded_d(x, y, ew, eh, _radii(st, ew, eh, 8))}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
+            else:
+                rx = min(_num(st.get("radius"), 8, 0, 1e4), ew / 2, eh / 2)
+                out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
         elif t == "frame":
-            rx = min(_num(st.get("radius"), 0, 0, 1e4), ew / 2, eh / 2)
-            out.append(f'<rect x="{x}" y="{y}" width="{ew}" height="{eh}" rx="{rx}" fill="{_attr(fill or "#ffffff")}" stroke="#d0d5dd" stroke-width="1"/>')
+            fs = f'stroke="{stroke}" stroke-width="{sw}"' if st.get("strokeWidth") else 'stroke="#d0d5dd" stroke-width="1"'
+            out.append(f'<path d="{_rounded_d(x, y, ew, eh, _radii(st, ew, eh, 0))}" fill="{_attr(fill or "#ffffff")}" {fs}/>')
             if el.get("name"):
                 out.append(f'<text x="{x}" y="{y - 10}" font-size="14" fill="#6b7280">{html.escape(str(el["name"]))}</text>')
         elif t == "text" and fill:

@@ -112,7 +112,10 @@ html[data-theme="light"] .leo-board {
 .lb-stage[data-tool="sticky"],
 .lb-stage[data-tool="line"],
 .lb-stage[data-tool="arrow"],
-.lb-stage[data-tool="pen"] {
+.lb-stage[data-tool="pen"],
+.lb-stage[data-tool="frame"],
+.lb-stage[data-tool="path"],
+.lb-stage[data-tool="table"] {
   cursor: crosshair;
 }
 
@@ -1312,7 +1315,7 @@ html[data-theme="light"] .leo-board {
   pointer-events: none; /* по фону экрана — рамка выделения, как во Figma; экран берут за подпись */
 }
 
-.lb-t-frame .lb-frame-bg {
+.lb-t-frame .lb-frame-bg:not(.has-stroke) {
   stroke: var(--lb-panel-border);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
@@ -1614,4 +1617,87 @@ html[data-theme="light"] .leo-board {
     width: auto;
     max-height: 42%;
   }
+}
+
+/* Поворот мышкой: зоны снаружи углов выделенного объекта */
+.lb-overlay .lb-rotzone {
+  fill: transparent;
+  stroke: none;
+  pointer-events: all;
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%3E%3Cpath%20d%3D%22M6%2013a6.5%206.5%200%201%200%202.2-4.9%22%20fill%3D%22none%22%20stroke%3D%22%23fff%22%20stroke-width%3D%224%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M6%2013a6.5%206.5%200%201%200%202.2-4.9%22%20fill%3D%22none%22%20stroke%3D%22%23000%22%20stroke-width%3D%221.6%22%20stroke-linecap%3D%22round%22%2F%3E%3Cpath%20d%3D%22M4.5%205.5l4%202.8-3.6%203z%22%20fill%3D%22%23000%22%20stroke%3D%22%23fff%22%20stroke-width%3D%220.8%22%2F%3E%3C%2Fsvg%3E") 12 12, grab;
+}
+
+/* Вложенный экран — как блок: берут за тело, подписи нет */
+.lb-t-frame.is-nested {
+  pointer-events: auto;
+}
+
+.lb-t-frame.is-nested .lb-frame-head {
+  display: none;
+}
+
+.lb-t-frame.is-nested .lb-frame-bg {
+  pointer-events: all;
+  cursor: move;
+}
+
+.lb-ialign {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.lb-ialign .lb-ibtn {
+  min-width: 0;
+}
+
+/* Alt в макете: расстояния до объекта / экрана */
+.lb-overlay .lb-measure {
+  stroke: #f24822;
+  stroke-width: 1;
+}
+
+.lb-overlay .lb-measure-box {
+  fill: none;
+  stroke: #f24822;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.lb-overlay .lb-measure-tag rect {
+  fill: #f24822;
+}
+
+.lb-overlay .lb-measure-tag text {
+  fill: #fff;
+  font: 600 11px var(--lb-font);
+  text-anchor: middle;
+}
+
+/* Перо (макет): рисуемый контур */
+.lb-overlay .lb-pen-draft {
+  fill: none;
+  stroke: var(--lb-accent);
+  stroke-width: 1.5;
+}
+
+.lb-overlay .lb-pen-rubber,
+.lb-overlay .lb-pen-handle {
+  stroke: var(--lb-accent);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.lb-overlay .lb-pen-pt {
+  fill: var(--lb-panel);
+  stroke: var(--lb-accent);
+  stroke-width: 1.5;
+}
+
+.lb-overlay .lb-pen-pt.is-first {
+  fill: var(--lb-accent);
+}
+
+.lb-overlay .lb-pen-hdot {
+  fill: var(--lb-accent);
 }

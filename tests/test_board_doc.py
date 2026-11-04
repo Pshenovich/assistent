@@ -276,3 +276,22 @@ class BoardLookTests(unittest.TestCase):
         self.assertEqual(st, {"opacity": 0.5, "shadow": "0 4 12 #00000040"})
         st = board_doc._clean_element("a", dict(A, style={"opacity": 7, "shadow": "0 4 12 red;}"}))["style"]
         self.assertEqual(st, {"opacity": 1})
+
+
+class BoardCornersAndNestingTests(unittest.TestCase):
+    """Макет: скругление каждого угла отдельно и экран внутри экрана."""
+
+    def test_radii(self) -> None:
+        st = board_doc._clean_element("a", dict(A, style={"radii": "0 20 0 4.5"}))["style"]
+        self.assertEqual(st, {"radii": "0 20 0 4.5"})
+        self.assertNotIn("style", board_doc._clean_element("a", dict(A, style={"radii": "1 2 3"})))
+        svg = board_doc.render_board_svg(_board(dict(A, style={"radii": "0 20 0 0"})))
+        self.assertIn("A20 20 0 0 1", svg)
+
+    def test_nested_frame_and_self_ref(self) -> None:
+        outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}
+        inner = {"id": "f2", "type": "frame", "x": 10, "y": 10, "w": 100, "h": 100, "frame": "f1"}
+        loop = {"id": "f3", "type": "frame", "x": 10, "y": 10, "w": 100, "h": 100, "frame": "f3"}
+        els = board_doc.parse_board(_board(outer, inner, loop))["elements"]
+        self.assertEqual(els["f2"]["frame"], "f1")
+        self.assertNotIn("frame", els["f3"])
