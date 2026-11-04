@@ -221,6 +221,10 @@
     weight: '<path d="M4 5.5h12M4 10h12M4 14.5h12" /><path d="M4 14.5h12" stroke-width="2.6"/>',
     group: '<rect x="3" y="3" width="14" height="14" rx="2" stroke-dasharray="2 2"/><rect x="6" y="6" width="4" height="4" rx="1"/><rect x="10" y="10" width="4" height="4" rx="1"/>',
     ungroup: '<rect x="3" y="3" width="6" height="6" rx="1"/><rect x="11" y="11" width="6" height="6" rx="1"/>',
+    layers: '<path d="M10 3l7 3.5-7 3.5-7-3.5z"/><path d="M3 10l7 3.5 7-3.5M3 13.5l7 3.5 7-3.5"/>',
+    caret: '<path d="M7.5 5l5 5-5 5"/>',
+    blurFx: '<circle cx="10" cy="10" r="6.5" stroke-dasharray="2 2.2"/><circle cx="10" cy="10" r="2.5"/>',
+    link: '<path d="M8.5 11.5a3 3 0 004.2 0l2.6-2.6a3 3 0 00-4.2-4.2l-1 1"/><path d="M11.5 8.5a3 3 0 00-4.2 0l-2.6 2.6a3 3 0 004.2 4.2l1-1"/>',
     flipH: '<path d="M10 3v14" stroke-dasharray="2 2"/><path d="M7.5 6L3 14h4.5zM12.5 6l4.5 8h-4.5z"/>',
     flipV: '<path d="M3 10h14" stroke-dasharray="2 2"/><path d="M6 7.5L14 3v4.5zM6 12.5l8 4.5v-4.5z"/>',
   };
@@ -295,7 +299,9 @@
       var closed = /Z\s*$/i.test(String(p.d));
       var fill = p.fill ? paint.fill(st.fill && st.fill !== "none" ? st.fill : p.fill) : st.fill && st.fill !== "none" && closed ? paint.fill(st.fill) : "none";
       if ((p.fill && st.fill === "none") || st.fillOff) fill = "none";
+      else if (paint.grad && paint.grad.fill && fill !== "none") fill = paint.grad.fill;
       var stroke = p.stroke && !st.strokeOff && !(st.strokeWidth === 0) ? paint.ink(st.stroke || p.stroke) : null;
+      if (stroke && paint.grad && paint.grad.stroke) stroke = paint.grad.stroke;
       var a = ' fill="' + (fill || "none") + '"';
       if (stroke) {
         a += ' stroke="' + stroke + '" stroke-width="' + (st.strokeWidth != null ? Number(st.strokeWidth) : p.sw || 1) + '"';
@@ -306,6 +312,65 @@
       a += opacityAttrs(st);
       return '<path d="' + String(p.d).replace(/[^MLCQZmlcqz0-9.,\s-]/g, "") + '"' + a + "/>";
     }).join("");
+  }
+
+  /** Градиент заливки / обводки: «linear|radial УГОЛ #rrggbbaa@ПОЗИЦИЯ …» (угол 0 — слева направо). */
+  var GRAD_RE = /^(linear|radial) (-?\d{1,3}) ((?:#[0-9a-f]{8}@\d{1,3} ?){2,8})$/i;
+  function parseGrad(str) {
+    var m = GRAD_RE.exec(String(str || "").trim());
+    if (!m) return null;
+    var stops = m[3].trim().split(" ").map(function (t) {
+      var q = t.split("@");
+      return { c: q[0].slice(0, 7).toLowerCase(), a: parseInt(q[0].slice(7), 16) / 255, p: Math.max(0, Math.min(100, Number(q[1]))) };
+    }).sort(function (a, b) {
+      return a.p - b.p;
+    });
+    return { type: m[1].toLowerCase(), angle: Number(m[2]), stops: stops };
+  }
+
+  function gradStr(g) {
+    return g.type + " " + Math.round(g.angle) + " " + g.stops.slice().sort(function (a, b) {
+      return a.p - b.p;
+    }).map(function (t) {
+      return t.c + ("0" + Math.round(Math.max(0, Math.min(1, t.a)) * 255).toString(16)).slice(-2) + "@" + Math.round(t.p);
+    }).join(" ");
+  }
+
+  function gradCss(g) {
+    var stops = g.stops.map(function (t) {
+      var r = parseInt(t.c.slice(1, 3), 16);
+      var gg = parseInt(t.c.slice(3, 5), 16);
+      var b = parseInt(t.c.slice(5, 7), 16);
+      return "rgba(" + r + "," + gg + "," + b + "," + Math.round(t.a * 100) / 100 + ") " + t.p + "%";
+    }).join(", ");
+    return g.type === "radial" ? "radial-gradient(circle, " + stops + ")" : "linear-gradient(" + (g.angle + 90) + "deg, " + stops + ")";
+  }
+
+  /** <defs> с градиентом (в долях рамки фигуры). */
+  function gradDef(id, g) {
+    var stops = g.stops.map(function (t) {
+      return '<stop offset="' + t.p + '%" stop-color="' + t.c + '"' + (t.a < 1 ? ' stop-opacity="' + Math.round(t.a * 1000) / 1000 + '"' : "") + "/>";
+    }).join("");
+    if (g.type === "radial") return '<radialGradient id="' + id + '" cx="0.5" cy="0.5" r="0.5">' + stops + "</radialGradient>";
+    return '<linearGradient id="' + id + '" x1="0" y1="0.5" x2="1" y2="0.5" gradientTransform="rotate(' + g.angle + ' 0.5 0.5)">' + stops + "</linearGradient>";
+  }
+
+  /** Заливка/обводка элемента градиентом: {defs, fill?, stroke?} — url(#…) вместо цвета. */
+  function gradPaint(el) {
+    var st = el.style || {};
+    var out = { defs: "" };
+    var fg = !st.fillOff && parseGrad(st.fillGrad);
+    var sg = !st.strokeOff && parseGrad(st.strokeGrad);
+    if (fg) {
+      out.defs += gradDef("lbg-" + el.id + "-f", fg);
+      out.fill = "url(#lbg-" + el.id + "-f)";
+    }
+    if (sg) {
+      out.defs += gradDef("lbg-" + el.id + "-s", sg);
+      out.stroke = "url(#lbg-" + el.id + "-s)";
+    }
+    if (out.defs) out.defs = "<defs>" + out.defs + "</defs>";
+    return out;
   }
 
   /** Непрозрачность заливки и обводки отдельно от всего объекта (как во Figma). */
@@ -383,7 +448,7 @@
     if (el.style) {
       var st = {};
       ["fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "radii", "highlight", "opacity", "shadow",
-        "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign"].forEach(function (k) {
+        "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign", "fillGrad", "strokeGrad", "blur", "bgBlur"].forEach(function (k) {
         if (el.style[k] != null) st[k] = el.style[k];
       });
       if (Object.keys(st).length) o.style = st;
@@ -648,6 +713,7 @@
       (readOnly ? "" : '<div class="lb-history"></div>') +
       '<div class="lb-props hidden"></div>' +
       (readOnly ? "" : '<div class="lb-inspector hidden" aria-label="Свойства"></div>') +
+      (readOnly ? "" : '<div class="lb-layers hidden" aria-label="Слои"></div>') +
       '<div class="lb-pop hidden"></div>' +
       '<canvas class="lb-minimap" width="180" height="120"></canvas>' +
       '<div class="lb-zoom"></div>' +
@@ -667,6 +733,7 @@
     var historyBar = root.querySelector(".lb-history");
     var propsBar = root.querySelector(".lb-props");
     var inspector = root.querySelector(".lb-inspector");
+    var layersEl = root.querySelector(".lb-layers");
     var pop = root.querySelector(".lb-pop");
     var minimap = root.querySelector(".lb-minimap");
     var zoomBar = root.querySelector(".lb-zoom");
@@ -928,6 +995,12 @@
       if (st.strokeOff) sw = 0;
       var dash = dashArray(st.dash, sw);
       var strokeA = ' stroke="' + (sw > 0 ? stroke : "none") + '" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="' + dash + '" stroke-linecap="round"' : "");
+      var gp = gradPaint(el);
+      if (gp.fill) fill = gp.fill;
+      if (gp.stroke && sw > 0) {
+        stroke = gp.stroke;
+        strokeA = ' stroke="' + stroke + '" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="' + dash + '" stroke-linecap="round"' : "");
+      }
       var aligned = sw > 0 && (st.strokeAlign === "inside" || st.strokeAlign === "outside") && (el.type === "rect" || el.type === "ellipse");
       var common = ' fill="' + fill + '"' + (aligned ? ' stroke="none"' : strokeA) + opacityAttrs(st) + ' pointer-events="all" class="lb-hit"';
       var inner = "";
@@ -947,12 +1020,12 @@
         var vb = el.vb || [w, h];
         inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" fill="transparent" pointer-events="all" class="lb-hit"/>' +
           '<g transform="scale(' + w / Math.max(0.01, vb[0]) + " " + h / Math.max(0.01, vb[1]) + ')" pointer-events="none">' +
-          vectorPaths(el, { fill: fillVar, ink: inkVar }) + "</g>";
+          vectorPaths(el, { fill: fillVar, ink: inkVar, grad: gp }) + "</g>";
       } else {
         // Текст: прозрачный, а с заливкой — плашка под текстом (подсветка из Miro).
-        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="2" fill="' + (st.fill && st.fill !== "none" && !st.fillOff ? fillVar(st.fill) : "transparent") + '"' + opacityAttrs(st) + ' pointer-events="all" class="lb-hit"/>';
+        inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="2" fill="' + (gp.fill || (st.fill && st.fill !== "none" && !st.fillOff ? fillVar(st.fill) : "transparent")) + '"' + opacityAttrs(st) + ' pointer-events="all" class="lb-hit"/>';
       }
-      return '<svg class="lb-shape" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" overflow="visible">' + inner + "</svg>";
+      return '<svg class="lb-shape" width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + " " + h + '" overflow="visible">' + gp.defs + inner + "</svg>";
     }
 
     /** Ломаная без ручных изломов обходит блоки — им нужны рамки препятствий. */
@@ -1051,7 +1124,17 @@
       var op = st.opacity != null && isFinite(st.opacity) ? Math.max(0, Math.min(1, Number(st.opacity))) : 1;
       node.style.opacity = op < 1 ? String(op) : "";
       var m = SHADOW_RE.exec(String(st.shadow || ""));
-      node.style.filter = m ? "drop-shadow(" + m[1] + "px " + m[2] + "px " + m[3] / 2 + "px " + m[4] + ")" : "";
+      var fx = [];
+      if (m) fx.push("drop-shadow(" + m[1] + "px " + m[2] + "px " + m[3] / 2 + "px " + m[4] + ")");
+      // Размытие слоя — сам объект; размытие фона — то, что под ним (стекло), по форме объекта.
+      if (Number(st.blur) > 0) fx.push("blur(" + Number(st.blur) / 2 + "px)");
+      node.style.filter = fx.join(" ");
+      var bg = Number(st.bgBlur) > 0 ? "blur(" + Number(st.bgBlur) / 2 + "px)" : "";
+      node.style.backdropFilter = bg;
+      node.style.webkitBackdropFilter = bg;
+      node.style.borderRadius = bg ? (el.type === "ellipse" ? "50%" : el.type === "rect" || el.type === "frame" ? radiiOf(st, el.w, el.h, 0).map(function (r) {
+        return r + "px";
+      }).join(" ") : "") : "";
     }
 
     /** Элемент экрана обрезается по краю экрана (как во Figma); вне экрана — как есть. */
@@ -1081,18 +1164,24 @@
       node.style.clipPath = cut || (el.style && el.style.shadow) ? "inset(" + t + "px " + r + "px " + b + "px " + l + "px)" : "";
     }
 
+    function frameShapeSvg(el) {
+      var st = el.style || {};
+      var fsw = st.strokeOff ? 0 : strokeW(st, 0);
+      var fr = radiiOf(st, el.w, el.h, 0);
+      var fgp = gradPaint(el);
+      var fStroke = fsw > 0 ? ' stroke="' + (fgp.stroke || inkVar(st.stroke || "ink")) + '" stroke-width="' + fsw + '"' + opacityAttrs(st) : "";
+      var fAligned = fsw > 0 && (st.strokeAlign === "inside" || st.strokeAlign === "outside");
+      return '<svg class="lb-shape" width="' + el.w + '" height="' + el.h + '" viewBox="0 0 ' + el.w + " " + el.h + '" overflow="visible">' +
+        fgp.defs + roundedShape(el.w, el.h, fr, ' fill="' + (st.fillOff ? "transparent" : fgp.fill || fillVar(st.fill || "#ffffff")) + '"' + opacityAttrs({ fillOpacity: st.fillOpacity }) +
+          ' class="lb-frame-bg' + (fsw > 0 ? " has-stroke" : "") + '"' + (fAligned ? "" : fStroke)) +
+        (fAligned ? alignedStroke("rect", el.w, el.h, fr, fsw, st.strokeAlign, fStroke) : "") + "</svg>";
+    }
+
     function renderFrame(node, el, isEditing) {
       var st = el.style || {};
       node.style.cssText = "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;" +
         (el.rot ? "transform:rotate(" + el.rot + "deg);" : "");
-      var fsw = st.strokeOff ? 0 : strokeW(st, 0);
-      var fr = radiiOf(st, el.w, el.h, 0);
-      var fStroke = fsw > 0 ? ' stroke="' + inkVar(st.stroke || "ink") + '" stroke-width="' + fsw + '"' + opacityAttrs(st) : "";
-      var fAligned = fsw > 0 && (st.strokeAlign === "inside" || st.strokeAlign === "outside");
-      replaceShape(node, '<svg class="lb-shape" width="' + el.w + '" height="' + el.h + '" viewBox="0 0 ' + el.w + " " + el.h + '" overflow="visible">' +
-        roundedShape(el.w, el.h, fr, ' fill="' + (st.fillOff ? "transparent" : fillVar(st.fill || "#ffffff")) + '"' + opacityAttrs({ fillOpacity: st.fillOpacity }) +
-          ' class="lb-frame-bg' + (fsw > 0 ? " has-stroke" : "") + '"' + (fAligned ? "" : fStroke)) +
-        (fAligned ? alignedStroke("rect", el.w, el.h, fr, fsw, st.strokeAlign, fStroke) : "") + "</svg>");
+      replaceShape(node, frameShapeSvg(el));
       node.classList.toggle("is-nested", !!frameOf(el));
       var head = node.querySelector(":scope > .lb-frame-head");
       if (!head) {
@@ -1546,6 +1635,12 @@
         h.push('<line class="lb-guide' + (mode === "design" ? " is-design" : "") + '" x1="' + p0.x + '" y1="' + p0.y + '" x2="' + p1.x + '" y2="' + p1.y + '"/>');
       });
       if (marquee) h.push(rectPath(marquee, "lb-marquee"));
+      if (layerHover) {
+        var hb = G.unionBounds(layerIds(layerHover).map(function (id) {
+          return G.elBounds(getEl(id), getEl);
+        }));
+        if (hb) h.push(rectPath(hb, "lb-layer-hover"));
+      }
       if (measure) h.push(measureSvg(measure.a, measure.b));
       if (penPath) h.push(penOverlay());
       remoteCursors.forEach(function (c) {
@@ -1774,7 +1869,9 @@
           setTool("select");
           return;
         } else {
-          penPath.cs.push({ pi: penPath.cs[penPath.cs.length - 1].pi, pts: [], closed: false });
+          // Выбрана точка в середине линии — новая линия начинается из неё (ответвление, как во Figma).
+          var from = sl ? penPath.cs[sl.c].pts[sl.i] : null;
+          penPath.cs.push({ pi: sl ? penPath.cs[sl.c].pi : penPath.cs[penPath.cs.length - 1].pi, pts: from ? [penPt(from.x, from.y)] : [], closed: false });
           penPath.ci = penPath.cs.length - 1;
           penPath.drawing = true;
         }
@@ -2288,6 +2385,7 @@
       exitPen();
       setTool("path");
       penPath = { cs: parsed.cs, ci: parsed.cs.length - 1, alias: parsed.alias, drawing: false, editId: id, sel: null };
+      notify("Правка точек: клик по линии — новая точка; выберите точку и кликните рядом — линия от неё; Esc — готово");
       selected.clear();
       markDirty(id);
       schedule();
@@ -3374,11 +3472,12 @@
 
     function renderZoomBar() {
       var pct = Math.round(view.z * 100) + "%";
-      var stateKey = pct + showGrid + showMap + "|" + chatBadge + "|" + mode;
+      var stateKey = pct + showGrid + showMap + "|" + chatBadge + "|" + mode + "|" + layersOn();
       if (zoomBar.getAttribute("data-pct") === stateKey) return;
       zoomBar.setAttribute("data-pct", stateKey);
       zoomBar.innerHTML =
-        (readOnly ? "" : '<span class="lb-mode" role="group" aria-label="Режим">' +
+        (readOnly ? "" : '<button type="button" class="lb-btn' + (layersOn() ? " is-on" : "") + '" data-act="layers" title="Слои">' + icon("layers") + "</button>" +
+          '<span class="lb-mode" role="group" aria-label="Режим">' +
           '<button type="button" class="lb-btn' + (mode !== "design" ? " is-on" : "") + '" data-act="mode-board" title="Режим «Доска»: схемы, стикеры, шаблоны">' + icon("modeBoard") + "</button>" +
           '<button type="button" class="lb-btn' + (mode === "design" ? " is-on" : "") + '" data-act="mode-design" title="Режим «Макет»: экраны для разработки">' + icon("modeDesign") + "</button>" +
           '</span><span class="lb-sep"></span>') +
@@ -3422,6 +3521,13 @@
       else if (act === "grid") {
         showGrid = !showGrid;
         applyView();
+      } else if (act === "layers") {
+        showLayers[mode] = !layersOn();
+        try {
+          localStorage.setItem("leo-board-layers-" + mode, showLayers[mode] ? "1" : "0");
+        } catch (_) {}
+        renderZoomBar();
+        renderLayers();
       } else if (act === "map") {
         showMap = !showMap;
         renderZoomBar();
@@ -3550,6 +3656,7 @@
     function renderProps() {
       var list = selList();
       renderInspector(list);
+      renderLayers();
       // В макете свойства — в панели справа; плавающая полоска — только у таблицы, Ганта, карточки.
       if (mode === "design" && !list.some(function (e) {
         return BLOCKS[e.type];
@@ -3720,9 +3827,14 @@
     }
 
     /** Строка цвета как во Figma: образец и hex, непрозрачность, «глаз», «—» (у линии убрать обводку нельзя). */
-    function paintRow(c, label, key, kind, opa, off, keep) {
+    function paintRow(c, label, key, kind, opa, off, keep, grad) {
       var pct = Math.round((opa == null ? 1 : Number(opa)) * 100);
-      return '<div class="lb-ipaint' + (off ? " is-off" : "") + '">' + colorField(c, label, key, kind).replace("</div>",
+      var g = parseGrad(grad);
+      var field = g
+        ? '<div class="lb-icolor" data-c="' + c + '"><button type="button" class="lb-icolor-sw" data-pick="' + c + '" title="' + esc(label) + '" style="--c:transparent;background:' + esc(gradCss(g)) + '"></button>' +
+          '<button type="button" class="lb-igrad" data-pick="' + c + '">' + (g.type === "radial" ? "Радиальный" : "Линейный") + '</button><input type="hidden" data-hex="' + c + '" value="' + g.stops[0].c + '"></div>'
+        : colorField(c, label, key, kind);
+      return '<div class="lb-ipaint' + (off ? " is-off" : "") + '">' + field.replace(/<\/div>$/,
         '<input type="text" inputmode="decimal" class="lb-icolor-op" data-k="' + c + 'Op" value="' + pct + '"' + (pct === "" ? ' placeholder="—"' : "") +
         ' title="Непрозрачность, %"><i class="lb-isuf">%</i></div>') +
         '<button type="button" class="lb-ibtn" data-act="' + c + 'Eye" title="' + (off ? "Показать" : "Скрыть") + '">' + icon(off ? "eyeOff" : "eye") + "</button>" +
@@ -3739,6 +3851,8 @@
     }
 
     var inspKey = "";
+    var expFmt = "png";
+    var expScale = 2;
     var inspDown = null; // {pending} — кнопка мыши нажата на панели свойств
     var inspUp = null;
     function renderInspector(list) {
@@ -3837,7 +3951,7 @@
         var hasFill = fillKey === undefined || (fillKey && fillKey !== "none");
         h.push('<div class="lb-isec"><div class="lb-ilabel">' + (types.text && Object.keys(types).length === 1 ? "Фон" : "Заливка") +
           (hasFill ? "" : '<button type="button" class="lb-ibtn lb-iadd" data-act="fillAdd" title="Добавить заливку">' + icon("plus") + "</button>") + "</div>" +
-          (hasFill ? paintRow("fill", "Заливка", fillKey, "fill", st("fillOpacity"), st("fillOff")) : "") + "</div>");
+          (hasFill ? paintRow("fill", "Заливка", fillKey, "fill", st("fillOpacity"), st("fillOff"), false, st("fillGrad")) : "") + "</div>");
       }
       if (all(STROKABLE)) {
         var sw = st("strokeWidth");
@@ -3845,7 +3959,7 @@
         var hasStroke = lineish || sw === undefined || (sw > 0 && st("stroke") !== "none");
         h.push('<div class="lb-isec"><div class="lb-ilabel">Обводка' +
           (hasStroke ? "" : '<button type="button" class="lb-ibtn lb-iadd" data-act="strokeAdd" title="Добавить обводку">' + icon("plus") + "</button>") + "</div>" +
-          (hasStroke ? paintRow("stroke", "Обводка", st("stroke"), "ink", st("strokeOpacity"), st("strokeOff"), lineish) +
+          (hasStroke ? paintRow("stroke", "Обводка", st("stroke"), "ink", st("strokeOpacity"), st("strokeOff"), lineish, lineish ? null : st("strokeGrad")) +
             '<div class="lb-irow">' + (all(ALIGNABLE_STROKE) ? '<label class="lb-iselect" title="Положение обводки"><select data-k="strokeAlign">' +
               [["inside", "Внутри"], ["center", "По центру"], ["outside", "Снаружи"]].map(function (o) {
                 return '<option value="' + o[0] + '"' + ((st("strokeAlign") || "center") === o[0] ? " selected" : "") + ">" + o[1] + "</option>";
@@ -3862,17 +3976,39 @@
           }).join("") + "</div></div>");
       }
       if (!types.line && !types.pen) {
+        // Эффекты (как во Figma): тень, размытие слоя, размытие фона.
         var sh = SHADOW_RE.exec(String(st("shadow") || ""));
-        h.push('<div class="lb-isec"><div class="lb-ilabel">Тень <button type="button" class="lb-ilink" data-act="shadow">' + (sh ? "убрать" : "+ добавить") + "</button></div>" +
-          (sh ? '<div class="lb-irow">' + numField("shx", "X", Number(sh[1])) + numField("shy", "Y", Number(sh[2])) + numField("shb", "Blur", Number(sh[3])) + "</div>" +
-            colorField("shc", "Цвет тени", sh[4].slice(0, 7), "ink") + '<div class="lb-irow">' + numField("sha", "%", Math.round(parseInt(sh[4].slice(7), 16) / 2.55), { title: "Непрозрачность тени" }) + "</div>" : "") + "</div>");
+        var bl = Number(st("blur")) > 0 ? Number(st("blur")) : 0;
+        var bb = Number(st("bgBlur")) > 0 ? Number(st("bgBlur")) : 0;
+        var rm = function (act) {
+          return '<button type="button" class="lb-ibtn lb-ifx-rm" data-act="' + act + '" title="Убрать">' + icon("minus") + "</button>";
+        };
+        h.push('<div class="lb-isec"><div class="lb-ilabel">Эффекты' +
+          (sh && bl && bb ? "" : '<button type="button" class="lb-ibtn lb-iadd" data-act="fxAdd" title="Добавить эффект">' + icon("plus") + "</button>") + "</div>" +
+          (sh ? '<div class="lb-ifx"><span>Тень</span>' + rm("shadow") + "</div>" +
+            '<div class="lb-irow">' + numField("shx", "X", Number(sh[1])) + numField("shy", "Y", Number(sh[2])) + numField("shb", "Blur", Number(sh[3])) + "</div>" +
+            '<div class="lb-ipaint">' + colorField("shc", "Цвет тени", sh[4].slice(0, 7), "ink").replace(/<\/div>$/,
+              '<input type="text" inputmode="decimal" class="lb-icolor-op" data-k="sha" value="' + Math.round(parseInt(sh[4].slice(7), 16) / 2.55) + '" title="Непрозрачность тени, %"><i class="lb-isuf">%</i></div>') + "</div>" : "") +
+          (bl ? '<div class="lb-ifx"><span>Размытие слоя</span>' + numField("blur", icon("blurFx"), bl, { title: "Радиус размытия", html: true }) + rm("blurOff") + "</div>" : "") +
+          (bb ? '<div class="lb-ifx"><span>Размытие фона</span>' + numField("bgBlur", icon("blurFx"), bb, { title: "Радиус размытия фона", html: true }) + rm("bgBlurOff") + "</div>" : "") +
+          "</div>");
       }
+      // Экспорт выделенного (как во Figma): формат и масштаб, скачать.
+      h.push('<div class="lb-isec"><div class="lb-ilabel">Экспорт</div><div class="lb-irow">' +
+        '<label class="lb-iselect" title="Масштаб"><select data-exp="scale">' + [1, 2, 3].map(function (k) {
+          return '<option value="' + k + '"' + (expScale === k ? " selected" : "") + ">" + k + "x</option>";
+        }).join("") + "</select></label>" +
+        '<label class="lb-iselect" title="Формат"><select data-exp="fmt">' + [["png", "PNG"], ["jpg", "JPG"], ["svg", "SVG"], ["pdf", "PDF"]].map(function (f) {
+          return '<option value="' + f[0] + '"' + (expFmt === f[0] ? " selected" : "") + ">" + f[1] + "</option>";
+        }).join("") + "</select></label></div>" +
+        '<button type="button" class="lb-ibtn is-wide lb-iexport" data-act="export">Скачать ' + (one && one.type === "frame" ? "экран" : list.length > 1 ? "выделенное" : "объект") + "</button></div>");
       var anyGroup = list.some(function (e) {
         return e.group;
       });
       h.push('<div class="lb-isec lb-iacts">' +
         (list.length > 1 && !grp ? '<button type="button" class="lb-ibtn" data-act="group" title="Сгруппировать (⌘G)">' + icon("group") + "</button>" : "") +
         (anyGroup ? '<button type="button" class="lb-ibtn" data-act="ungroup" title="Разгруппировать (⇧⌘G)">' + icon("ungroup") + "</button>" : "") +
+        (one && o.blockActions && o.blockActions.link ? '<button type="button" class="lb-ibtn" data-act="link" title="Скопировать ссылку на ' + (one.type === "frame" ? "экран" : "объект") + '">' + icon("link") + "</button>" : "") +
         '<button type="button" class="lb-ibtn" data-act="dup" title="Дублировать (⌘D)">' + icon("copy") + "</button>" +
         '<button type="button" class="lb-ibtn" data-act="front" title="На передний план (])">' + icon("front") + "</button>" +
         '<button type="button" class="lb-ibtn" data-act="back" title="На задний план ([)">' + icon("back") + "</button>" +
@@ -3959,6 +4095,16 @@
           var so = {};
           so[ok] = n == null ? undefined : n >= 100 ? null : Math.max(0, n) / 100;
           if (n != null) patch(cur.id, { style: so });
+        } else if (k === "fillGrad" || k === "strokeGrad") {
+          var gs = {};
+          gs[k] = raw && GRAD_RE.test(raw) ? raw : null;
+          if (k === "fillGrad" && gs[k] && (!cur.style || !cur.style.fill || cur.style.fill === "none")) gs.fill = "#d9d9d9";
+          patch(cur.id, { style: gs });
+        } else if (k === "blur" || k === "bgBlur") {
+          if (n == null || n < 0) return;
+          var bs = {};
+          bs[k] = Math.min(250, n) || null;
+          patch(cur.id, { style: bs });
         } else if (k === "strokeAlign") {
           patch(cur.id, { style: { strokeAlign: raw === "inside" || raw === "outside" ? raw : null } });
         } else if (k === "r0" || k === "r1" || k === "r2" || k === "r3") {
@@ -3988,6 +4134,9 @@
         } else if (k === "fill" || k === "stroke" || k === "textColor") {
           var fs = {};
           fs[k] = raw;
+          // Сплошной цвет вместо градиента.
+          if (k === "fill") fs.fillGrad = null;
+          if (k === "stroke") fs.strokeGrad = null;
           if (k === "stroke" && raw !== "none" && !(Number((cur.style || {}).strokeWidth) > 0) && cur.type !== "line") fs.strokeWidth = 1;
           if (k === "stroke" && raw === "none") {
             fs.stroke = (cur.style || {}).stroke || "ink";
@@ -4066,6 +4215,362 @@
         var kc = R(k.x + k.w / 2, k.y + k.h / 2);
         var rot = (((k.rot || 0) + delta) % 360 + 540) % 360 - 180;
         patch(k.id, { x: kc.x - k.w / 2, y: kc.y - k.h / 2, rot: Math.round(rot * 10) / 10 || undefined });
+      });
+    }
+
+    // ---- панель слоёв (слева): экраны → группы → объекты, сверху — верхние по порядку ----
+    var showLayers = { design: null, board: null };
+    var layersFold = {};
+    var layersKey = "";
+    var layerHover = "";
+    var layerDrag = null;
+
+    function layersOn() {
+      if (readOnly || !layersEl) return false;
+      if (showLayers[mode] == null) {
+        var saved = null;
+        try {
+          saved = localStorage.getItem("leo-board-layers-" + mode);
+        } catch (_) {}
+        // По умолчанию: в макете открыта (если место есть), на доске — закрыта.
+        showLayers[mode] = saved != null ? saved === "1" : mode === "design" && root.offsetWidth > 900;
+      }
+      return !!showLayers[mode];
+    }
+
+    var TYPE_RU = { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия", image: "Картинка", vector: "Вектор",
+      table: "Таблица", sticky: "Стикер", pen: "Рисунок", card: "Карточка", gantt: "Гант", frame: "Экран" };
+    var TYPE_ICON = { text: "text", rect: "rect", ellipse: "ellipse", diamond: "diamond", line: "line", image: "image", vector: "penTool",
+      table: "table", sticky: "sticky", pen: "pen", card: "child", gantt: "taskAdd", frame: "frame" };
+
+    function layerName(el) {
+      if (el.type === "frame") return el.name || "Экран";
+      if (el.type === "line" && el.arrowEnd) return el.text ? oneLine(el.text) : "Стрелка";
+      var t = el.text || el.title || el.name || "";
+      return t ? oneLine(String(t).split("\n")[0]).slice(0, 48) : TYPE_RU[el.type] || "Объект";
+    }
+
+    /** Узлы одного уровня (внутри экрана pk или на холсте ""): объекты и группы, по убыванию z. */
+    function layerNodes(pk, kids) {
+      var groups = {};
+      var out = [];
+      (kids[pk] || []).forEach(function (el) {
+        if (el.group) {
+          var g = groups[el.group];
+          if (!g) {
+            g = groups[el.group] = { kind: "group", id: "g:" + el.group, gid: el.group, members: [], z: -Infinity };
+            out.push(g);
+          }
+          g.members.push(el);
+          g.z = Math.max(g.z, el.z || 0);
+        } else out.push({ kind: "el", id: el.id, el: el, z: el.z || 0 });
+      });
+      out.forEach(function (n) {
+        if (n.kind === "group") n.members.sort(function (a, b) {
+          return (b.z || 0) - (a.z || 0);
+        });
+      });
+      return out.sort(function (a, b) {
+        return b.z - a.z;
+      });
+    }
+
+    function layerKids() {
+      var kids = {};
+      els.forEach(function (el) {
+        var pk = el.frame && els.get(el.frame) ? el.frame : "";
+        (kids[pk] = kids[pk] || []).push(el);
+      });
+      return kids;
+    }
+
+    function renderLayers() {
+      if (!layersEl) return;
+      var on = layersOn();
+      layersEl.classList.toggle("hidden", !on);
+      root.classList.toggle("has-layers", on);
+      if (!on) {
+        layersKey = "";
+        return;
+      }
+      var kids = layerKids();
+      var key = JSON.stringify([Array.from(els.values()).map(function (e) {
+        return [e.id, e.z, e.frame, e.group, e.name, e.type, e.type === "frame" ? 0 : String(e.text || "").slice(0, 48)];
+      }), Array.from(selected), layersFold, mode]);
+      if (key === layersKey || (layersEl.contains(document.activeElement) && document.activeElement.isContentEditable)) return;
+      layersKey = key;
+      var rows = [];
+      var row = function (n, depth) {
+        var isGroup = n.kind === "group";
+        var el = n.el;
+        var hasKids = isGroup || (el.type === "frame" && (kids[el.id] || []).length);
+        var fold = layersFold[n.id];
+        var sel = isGroup ? n.members.every(function (m) {
+          return selected.has(m.id);
+        }) : selected.has(el.id);
+        rows.push('<div class="lb-layer' + (sel ? " is-sel" : "") + (el && el.type === "frame" ? " is-frame" : "") + (isGroup ? " is-group" : "") +
+          '" data-lid="' + esc(n.id) + '" draggable="true" style="--d:' + depth + '">' +
+          '<span class="lb-lcaret' + (hasKids ? "" : " is-none") + (fold ? "" : " is-open") + '" data-caret="1">' + (hasKids ? icon("caret") : "") + "</span>" +
+          '<span class="lb-licon">' + icon(isGroup ? "group" : TYPE_ICON[el.type] || "rect") + "</span>" +
+          '<span class="lb-lname"' + (el && el.type === "frame" ? ' data-rename="1"' : "") + ">" + esc(isGroup ? "Группа" : layerName(el)) + "</span></div>");
+        if (!hasKids || fold) return;
+        if (isGroup) n.members.forEach(function (m) {
+          row({ kind: "el", id: m.id, el: m, z: m.z || 0 }, depth + 1);
+        });
+        else layerNodes(el.id, kids).forEach(function (c) {
+          row(c, depth + 1);
+        });
+      };
+      layerNodes("", kids).forEach(function (n) {
+        row(n, 0);
+      });
+      layersEl.innerHTML = '<div class="lb-lhead">Слои</div><div class="lb-llist">' + (rows.join("") || '<div class="lb-lempty">Пока пусто</div>') + "</div>";
+      var s0 = layersEl.querySelector(".lb-layer.is-sel");
+      if (s0 && typeof s0.scrollIntoView === "function") s0.scrollIntoView({ block: "nearest" });
+    }
+
+    function layerIds(lid) {
+      if (lid.indexOf("g:") === 0) {
+        var gid = lid.slice(2);
+        var out = [];
+        els.forEach(function (el) {
+          if (el.group === gid) out.push(el.id);
+        });
+        return out;
+      }
+      return getEl(lid) ? [lid] : [];
+    }
+
+    /** z по порядку панели (снизу вверх): экран, затем его содержимое; группы — подряд. Один шаг с перестановкой. */
+    function normalizeZ() {
+      var kids = layerKids();
+      var order = [];
+      var emit = function (pk) {
+        layerNodes(pk, kids).reverse().forEach(function (n) {
+          var list = n.kind === "group" ? n.members.slice().reverse() : [n.el];
+          list.forEach(function (el) {
+            order.push(el);
+            if (el.type === "frame") emit(el.id);
+          });
+        });
+      };
+      emit("");
+      order.forEach(function (el, i) {
+        if ((el.z || 0) !== i + 1) patch(el.id, { z: i + 1 });
+      });
+    }
+
+    /** Перетаскивание в панели: выше/ниже строки или внутрь экрана / группы. */
+    function dropLayer(dragLid, targetLid, pos) {
+      var ids = layerIds(dragLid);
+      if (!ids.length || dragLid === targetLid) return;
+      var tIds = layerIds(targetLid);
+      if (!tIds.length) return;
+      // Экран внутрь самого себя — нельзя.
+      var inside = withFrameKids(ids);
+      if (tIds.some(function (t) {
+        return inside.indexOf(t) >= 0;
+      })) return;
+      var tEl = getEl(tIds[0]);
+      var tGroup = targetLid.indexOf("g:") === 0 ? targetLid.slice(2) : "";
+      var parent;
+      var group;
+      var zRef;
+      var above = pos !== "after";
+      if (pos === "inside" && tEl.type === "frame" && !tGroup) {
+        parent = tEl.id;
+        group = undefined;
+        zRef = null; // наверх внутри экрана
+      } else if (pos === "inside" && tGroup) {
+        parent = tEl.frame && getEl(tEl.frame) ? tEl.frame : undefined;
+        group = tGroup;
+        zRef = null;
+      } else {
+        parent = tEl.frame && getEl(tEl.frame) ? tEl.frame : undefined;
+        group = tGroup ? undefined : tEl.group || undefined;
+        zRef = tGroup ? tIds.map(getEl).reduce(function (m, e) {
+          return above ? Math.max(m, e.z || 0) : Math.min(m, e.z || 0);
+        }, above ? -Infinity : Infinity) : tEl.z || 0;
+      }
+      begin();
+      var zs = Array.from(els.values()).map(function (e) {
+        return e.z || 0;
+      });
+      var top = Math.max.apply(null, zs.concat([0]));
+      var step = 0.001;
+      ids.map(getEl).filter(Boolean).sort(function (a, c) {
+        return (a.z || 0) - (c.z || 0);
+      }).forEach(function (el, i) {
+        var f = { frame: parent, group: dragLid.indexOf("g:") === 0 && !group ? el.group : group };
+        // Чуть выше (ниже) цели — порядок переносимых сохраняется; normalizeZ потом расставит целые.
+        f.z = zRef == null ? top + 1 + i * step : above ? zRef + step * (i + 1) / 10 : zRef - step * (ids.length - i) / 10;
+        patch(el.id, f);
+      });
+      // В другой экран — объект должен в нём и лежать (иначе вернётся при следующем переносе).
+      var pf = parent && getEl(parent);
+      if (pf) {
+        var b = G.unionBounds(ids.map(function (id) {
+          return G.elBounds(getEl(id), getEl);
+        }));
+        if (b && !(b.x + b.w / 2 >= pf.x && b.x + b.w / 2 <= pf.x + pf.w && b.y + b.h / 2 >= pf.y && b.y + b.h / 2 <= pf.y + pf.h)) {
+          moveBy(withFrameKids(ids), pf.x + pf.w / 2 - (b.x + b.w / 2), pf.y + pf.h / 2 - (b.y + b.h / 2));
+        }
+      }
+      normalizeZ();
+      commit();
+    }
+
+    if (layersEl) {
+      layersEl.addEventListener("pointerdown", function (e) {
+        e.stopPropagation();
+      });
+      layersEl.addEventListener("click", function (e) {
+        var r = e.target.closest("[data-lid]");
+        if (!r) return;
+        var lid = r.getAttribute("data-lid");
+        if (e.target.closest("[data-caret]")) {
+          layersFold[lid] = !layersFold[lid];
+          renderLayers();
+          return;
+        }
+        var ids = layerIds(lid);
+        if (!ids.length) return;
+        if (e.shiftKey || e.metaKey || e.ctrlKey) {
+          var next = new Set(selected);
+          var all = ids.every(function (id) {
+            return next.has(id);
+          });
+          ids.forEach(function (id) {
+            if (all) next.delete(id);
+            else next.add(id);
+          });
+          selected = next;
+        } else selected = new Set(ids); // объект в группе — только он (как вход в группу)
+        schedule();
+      });
+      layersEl.addEventListener("dblclick", function (e) {
+        var nm = e.target.closest("[data-rename]");
+        var r = e.target.closest("[data-lid]");
+        if (!nm || !r || readOnly) return;
+        var id = r.getAttribute("data-lid");
+        nm.contentEditable = "true";
+        nm.focus();
+        var rg = document.createRange();
+        rg.selectNodeContents(nm);
+        var ws = window.getSelection();
+        ws.removeAllRanges();
+        ws.addRange(rg);
+        var done = function (save) {
+          nm.removeEventListener("blur", onBlur);
+          nm.contentEditable = "false";
+          var v = nm.textContent.trim();
+          layersKey = "";
+          if (save && getEl(id)) {
+            begin();
+            patch(id, { name: v || undefined });
+            commit();
+          } else renderLayers();
+        };
+        var onBlur = function () {
+          done(true);
+        };
+        nm.addEventListener("blur", onBlur);
+        nm.addEventListener("keydown", function (ev) {
+          ev.stopPropagation();
+          if (ev.key === "Enter") {
+            ev.preventDefault();
+            nm.blur();
+          } else if (ev.key === "Escape") {
+            nm.removeEventListener("blur", onBlur);
+            done(false);
+            stage.focus({ preventScroll: true });
+          }
+        });
+      });
+      layersEl.addEventListener("mouseover", function (e) {
+        var r = e.target.closest("[data-lid]");
+        var lid = r ? r.getAttribute("data-lid") : "";
+        if (lid !== layerHover) {
+          layerHover = lid;
+          renderOverlay();
+        }
+      });
+      layersEl.addEventListener("mouseleave", function () {
+        layerHover = "";
+        renderOverlay();
+      });
+      layersEl.addEventListener("dragstart", function (e) {
+        var r = e.target.closest("[data-lid]");
+        if (!r || readOnly) return;
+        layerDrag = r.getAttribute("data-lid");
+        e.dataTransfer.effectAllowed = "move";
+        try {
+          e.dataTransfer.setData("text/plain", layerDrag);
+        } catch (_) {}
+      });
+      var dropPos = function (e, r) {
+        var lid = r.getAttribute("data-lid");
+        var rb = r.getBoundingClientRect();
+        var k = (e.clientY - rb.top) / Math.max(1, rb.height);
+        var container = lid.indexOf("g:") === 0 || r.classList.contains("is-frame");
+        if (container && k > 0.25 && k < 0.75) return "inside";
+        return k < 0.5 ? "before" : "after";
+      };
+      layersEl.addEventListener("dragover", function (e) {
+        var r = e.target.closest("[data-lid]");
+        if (!layerDrag || !r) return;
+        e.preventDefault();
+        var pos = dropPos(e, r);
+        layersEl.querySelectorAll(".is-drop-before, .is-drop-after, .is-drop-inside").forEach(function (x) {
+          x.classList.remove("is-drop-before", "is-drop-after", "is-drop-inside");
+        });
+        r.classList.add("is-drop-" + pos);
+      });
+      layersEl.addEventListener("drop", function (e) {
+        var r = e.target.closest("[data-lid]");
+        if (!layerDrag || !r) return;
+        e.preventDefault();
+        var from = layerDrag;
+        layerDrag = null;
+        dropLayer(from, r.getAttribute("data-lid"), dropPos(e, r));
+        layersKey = "";
+        renderLayers();
+      });
+      layersEl.addEventListener("dragend", function () {
+        layerDrag = null;
+        layersEl.querySelectorAll(".is-drop-before, .is-drop-after, .is-drop-inside").forEach(function (x) {
+          x.classList.remove("is-drop-before", "is-drop-after", "is-drop-inside");
+        });
+      });
+    }
+
+    /** «+» у эффектов: тень, размытие слоя, размытие фона (каких ещё нет). */
+    function openFxMenu(anchor) {
+      var list = selList();
+      var has = function (k) {
+        return list.some(function (x) {
+          return x.style && (k === "shadow" ? SHADOW_RE.test(String(x.style.shadow || "")) : Number(x.style[k]) > 0);
+        });
+      };
+      var items = [["shadow", "Тень"], ["blur", "Размытие слоя"], ["bgBlur", "Размытие фона"]].filter(function (it) {
+        return !has(it[0]);
+      });
+      openPop(anchor, function (box) {
+        box.innerHTML = items.map(function (it) {
+          return '<button type="button" class="lb-menu-item" data-fx="' + it[0] + '">' + it[1] + "</button>";
+        }).join("");
+        box.onclick = function (ev) {
+          var m = ev.target.closest("[data-fx]");
+          if (!m) return;
+          closePop();
+          var k = m.getAttribute("data-fx");
+          var sx = {};
+          if (k === "shadow") sx.shadow = "0 4 12 #00000040";
+          else sx[k] = k === "blur" ? 4 : 16;
+          applyStyle(function () {
+            return true;
+          }, sx);
+        };
       });
     }
 
@@ -4260,24 +4765,153 @@
 
     function openColorPop(anchor, c) {
       var cur = anchor.closest(".lb-icolor").querySelector("[data-hex]").value || "#000000";
+      if (!/^#[0-9a-f]{6}$/i.test(cur)) cur = "#000000";
+      var canGrad = c === "fill" || c === "stroke";
+      var g0 = canGrad ? parseGrad(common(selList(), function (x) {
+        return (x.style || {})[c + "Grad"] || "";
+      })) : null;
+      var state = { mode: g0 ? g0.type : "solid", g: g0, sel: 0 };
+      var applyG = function () {
+        applyInspector(c + "Grad", state.mode === "solid" ? null : gradStr(state.g));
+      };
       openPop(anchor, function (box) {
-        var colors = docColors();
-        box.innerHTML =
-          '<div class="lb-cpick"><input type="color" value="' + esc(/^#[0-9a-f]{6}$/i.test(cur) ? cur : "#000000") + '" data-native="1">' +
-          (window.EyeDropper ? '<button type="button" class="lb-btn" data-eye="1" title="Пипетка: цвет с экрана">' + icon("eyedrop") + "</button>" : "") +
-          (c === "fill" || c === "stroke" ? '<button type="button" class="lb-btn" data-none="1" title="Без цвета">⦸</button>' : "") + "</div>" +
-          (colors.length ? '<div class="lb-ilabel">Цвета макета</div><div class="lb-swatches">' + colors.map(function (k) {
+        var draw = function () {
+          var colors = docColors();
+          var h = [];
+          if (canGrad) {
+            h.push('<div class="lb-gtabs">' + [["solid", "Сплошной"], ["linear", "Линейный"], ["radial", "Радиальный"]].map(function (t) {
+              return '<button type="button" class="lb-gtab' + (state.mode === t[0] ? " is-on" : "") + '" data-gt="' + t[0] + '">' + t[1] + "</button>";
+            }).join("") + "</div>");
+          }
+          if (state.mode === "solid") {
+            h.push('<div class="lb-cpick"><input type="color" value="' + esc(cur) + '" data-native="1">' +
+              (window.EyeDropper ? '<button type="button" class="lb-btn" data-eye="1" title="Пипетка: цвет с экрана">' + icon("eyedrop") + "</button>" : "") +
+              (canGrad ? '<button type="button" class="lb-btn" data-none="1" title="Без цвета">⦸</button>' : "") + "</div>");
+          } else {
+            var g = state.g;
+            var st0 = g.stops[state.sel] || g.stops[0];
+            h.push('<div class="lb-gbar" style="--g:' + esc(gradCss(Object.assign({}, g, { type: "linear", angle: 0 }))) + '">' +
+              g.stops.map(function (t, i) {
+                return '<span class="lb-gstop' + (i === state.sel ? " is-on" : "") + '" data-i="' + i + '" style="left:' + t.p + "%;--c:" + t.c + '"></span>';
+              }).join("") + "</div>" +
+              '<div class="lb-cpick"><input type="color" value="' + esc(st0.c) + '" data-stopc="1">' +
+              '<input type="text" class="lb-gin" data-stopa="1" value="' + Math.round(st0.a * 100) + '" title="Непрозрачность точки, %"><i class="lb-isuf">%</i>' +
+              (g.type === "linear" ? '<input type="text" class="lb-gin" data-angle="1" value="' + g.angle + '" title="Угол, °"><i class="lb-isuf">°</i>' : "") +
+              (g.stops.length > 2 ? '<button type="button" class="lb-btn" data-delstop="1" title="Убрать точку">' + icon("minus") + "</button>" : "") +
+              "</div><div class=\"lb-ghint\">Клик по полосе — новая точка, точку можно тянуть</div>");
+          }
+          if (colors.length) h.push('<div class="lb-ilabel">Цвета макета</div><div class="lb-swatches">' + colors.map(function (k) {
             return '<button type="button" class="lb-sw" data-v="' + k + '" title="' + k + '" style="--c:' + k + '"></button>';
-          }).join("") + "</div>" : "");
-        var nat = box.querySelector("[data-native]");
-        nat.addEventListener("input", function () {
-          applyInspector(c, nat.value.toLowerCase());
-        });
+          }).join("") + "</div>");
+          box.innerHTML = h.join("");
+          var nat = box.querySelector("[data-native]");
+          if (nat) nat.addEventListener("input", function () {
+            cur = nat.value.toLowerCase();
+            applyInspector(c, cur);
+          });
+          var sc = box.querySelector("[data-stopc]");
+          if (sc) sc.addEventListener("input", function () {
+            state.g.stops[state.sel].c = sc.value.toLowerCase();
+            applyG();
+            refreshBar();
+          });
+          var sa = box.querySelector("[data-stopa]");
+          if (sa) sa.addEventListener("change", function () {
+            var v = parseNum(sa.value);
+            if (v == null) return;
+            state.g.stops[state.sel].a = Math.max(0, Math.min(100, v)) / 100;
+            applyG();
+            draw();
+          });
+          var an = box.querySelector("[data-angle]");
+          if (an) an.addEventListener("change", function () {
+            var v = parseNum(an.value);
+            if (v == null) return;
+            state.g.angle = ((Math.round(v) % 360) + 360) % 360;
+            applyG();
+          });
+          var bar = box.querySelector(".lb-gbar");
+          if (bar) bar.addEventListener("pointerdown", function (ev) {
+            ev.preventDefault();
+            var r = bar.getBoundingClientRect();
+            var at = function (x) {
+              return Math.max(0, Math.min(100, Math.round(((x - r.left) / Math.max(1, r.width)) * 100)));
+            };
+            var mk = ev.target.closest("[data-i]");
+            if (mk) state.sel = Number(mk.getAttribute("data-i"));
+            else {
+              // Новая точка — цвет как у выбранной.
+              var base = state.g.stops[state.sel] || state.g.stops[0];
+              state.g.stops.push({ c: base.c, a: base.a, p: at(ev.clientX) });
+              state.sel = state.g.stops.length - 1;
+            }
+            var stop = state.g.stops[state.sel];
+            var move = function (e2) {
+              stop.p = at(e2.clientX);
+              refreshBar();
+            };
+            var up = function () {
+              window.removeEventListener("pointermove", move);
+              window.removeEventListener("pointerup", up);
+              state.g.stops.sort(function (x, y) {
+                return x.p - y.p;
+              });
+              state.sel = state.g.stops.indexOf(stop);
+              applyG();
+              draw();
+            };
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up);
+            refreshBar();
+          });
+        };
+        var refreshBar = function () {
+          var bar = box.querySelector(".lb-gbar");
+          if (!bar) return;
+          bar.style.setProperty("--g", gradCss(Object.assign({}, state.g, { type: "linear", angle: 0, stops: state.g.stops.slice().sort(function (x, y) {
+            return x.p - y.p;
+          }) })));
+          bar.querySelectorAll("[data-i]").forEach(function (m) {
+            var t = state.g.stops[Number(m.getAttribute("data-i"))];
+            if (!t) return;
+            m.style.left = t.p + "%";
+            m.style.setProperty("--c", t.c);
+            m.classList.toggle("is-on", Number(m.getAttribute("data-i")) === state.sel);
+          });
+        };
+        draw();
         box.onclick = function (ev) {
+          var gt = ev.target.closest("[data-gt]");
+          if (gt) {
+            var mode2 = gt.getAttribute("data-gt");
+            if (mode2 === state.mode) return;
+            state.mode = mode2;
+            if (mode2 !== "solid") {
+              if (!state.g) state.g = { type: mode2, angle: 0, stops: [{ c: cur, a: 1, p: 0 }, { c: cur, a: 0, p: 100 }] };
+              state.g.type = mode2;
+              state.sel = 0;
+            }
+            applyG();
+            draw();
+            return;
+          }
           var sw = ev.target.closest("[data-v]");
           if (sw) {
-            applyInspector(c, sw.getAttribute("data-v"));
-            closePop();
+            if (state.mode === "solid") {
+              applyInspector(c, sw.getAttribute("data-v"));
+              closePop();
+            } else {
+              state.g.stops[state.sel].c = sw.getAttribute("data-v");
+              applyG();
+              draw();
+            }
+            return;
+          }
+          if (ev.target.closest("[data-delstop]") && state.g && state.g.stops.length > 2) {
+            state.g.stops.splice(state.sel, 1);
+            state.sel = 0;
+            applyG();
+            draw();
             return;
           }
           if (ev.target.closest("[data-none]")) {
@@ -4344,6 +4978,11 @@
       });
       inspector.addEventListener("change", function (e) {
         var t = e.target;
+        if (t.getAttribute("data-exp")) {
+          if (t.getAttribute("data-exp") === "fmt") expFmt = t.value;
+          else expScale = Number(t.value) || 1;
+          return;
+        }
         if (t.getAttribute("data-k")) applyInspector(t.getAttribute("data-k"), t.value);
         else if (t.getAttribute("data-hex")) {
           var v = String(t.value).trim().toLowerCase();
@@ -4392,6 +5031,15 @@
           paintAct(a);
         } else if (a === "flipH" || a === "flipV") flipSel(a === "flipH");
         else if (a === "group") groupSel();
+        else if (a === "fxAdd") openFxMenu(b);
+        else if (a === "export") exportSelection(expFmt, expScale);
+        else if (a === "link") {
+          var lk = selList()[0];
+          if (lk) o.blockActions.link([{ id: lk.id, text: lk.type === "frame" ? lk.name || "Экран" : lk.text || "", label: lk.name || lk.text || "Объект макета" }]);
+        }
+        else if (a === "blurOff" || a === "bgBlurOff") applyStyle(function () {
+          return true;
+        }, a === "blurOff" ? { blur: null } : { bgBlur: null });
         else if (a === "ungroup") ungroupSel();
         else if (a === "dup") duplicateSel();
         else if (a === "front") reorderSel(true);
@@ -6389,7 +7037,7 @@
         setSelection(Array.from(els.keys()));
       } else if (mod && (k === "d" || k === "в")) {
         if (!readOnly) duplicateSel();
-      } else if (mod && (k === "g" || k === "п")) {
+      } else if (mod && (k === "g" || k === "п" || k === "G" || k === "П" || e.code === "KeyG")) {
         if (readOnly) return;
         if (e.shiftKey) ungroupSel();
         else groupSel();
@@ -7075,6 +7723,194 @@
       });
       out.push("</svg>");
       downloadBlob(new Blob([out.join("")], { type: "image/svg+xml" }), exportName("svg"));
+    }
+
+    // ---- экспорт выделенного (макет): SVG / PNG / JPEG / PDF ----
+    /** Переменные темы → цвета светлой темы (файл не знает про CSS-переменные доски). */
+    function resolveVars(str, colors) {
+      return String(str).replace(/var\(--lb-(ink|fill|sticky)-([\w-]+)\)/g, function (_, kind, k) {
+        return kind === "ink" ? colors.ink(k) : kind === "fill" ? colors.fill(k) || "none" : colors.sticky(k);
+      }).replace(/var\(--[\w-]+\)/g, "#000000");
+    }
+
+    /** SVG выделенного: те же фигуры, что на экране (градиенты, обводка внутрь/наружу, тень и размытие — фильтрами). */
+    function selectionSvg(ids) {
+      var set = {};
+      withFrameKids(ids).forEach(function (id) {
+        set[id] = 1;
+      });
+      var list = sortedEls().filter(function (el) {
+        return set[el.id];
+      });
+      if (!list.length) return null;
+      var top = ids.map(getEl).filter(Boolean);
+      // Один экран — ровно по его рамке (вылезающее за край обрезано, как на экране).
+      var b = top.length === 1 && top[0].type === "frame" && !top[0].rot ? { x: top[0].x, y: top[0].y, w: top[0].w, h: top[0].h } : G.unionBounds(list.map(function (el) {
+        return G.elBounds(el, getEl);
+      }));
+      if (!b) return null;
+      var colors = exportColors();
+      var measure = document.createElement("canvas").getContext("2d");
+      var defs = [];
+      var out = [];
+      list.forEach(function (el) {
+        var st = el.style || {};
+        var attrs = "";
+        var op = st.opacity != null && Number(st.opacity) < 1 ? Number(st.opacity) : 1;
+        if (op < 1) attrs += ' opacity="' + op + '"';
+        var sh = SHADOW_RE.exec(String(st.shadow || ""));
+        if (sh || Number(st.blur) > 0) {
+          var fid = "fx-" + el.id;
+          defs.push('<filter id="' + fid + '" x="-50%" y="-50%" width="200%" height="200%">' +
+            (Number(st.blur) > 0 ? '<feGaussianBlur in="SourceGraphic" stdDeviation="' + Number(st.blur) / 2 + '" result="b"/>' : "") +
+            (sh ? '<feDropShadow dx="' + sh[1] + '" dy="' + sh[2] + '" stdDeviation="' + sh[3] / 2 + '" flood-color="' + sh[4].slice(0, 7) + '" flood-opacity="' +
+              Math.round((parseInt(sh[4].slice(7), 16) / 255) * 100) / 100 + '"' + (Number(st.blur) > 0 ? ' in="b"' : "") + "/>" : "") + "</filter>");
+          attrs += ' filter="url(#' + fid + ')"';
+        }
+        // Содержимое экрана обрезается по экрану.
+        var f = frameOf(el);
+        if (f && set[f.id] && !f.rot && !el.rot) {
+          var cid = "clip-" + f.id;
+          if (!defs.some(function (d) {
+            return d.indexOf('id="' + cid + '"') >= 0;
+          })) defs.push('<clipPath id="' + cid + '"><rect x="' + f.x + '" y="' + f.y + '" width="' + f.w + '" height="' + f.h + '"/></clipPath>');
+          attrs += ' clip-path="url(#' + cid + ')"';
+        }
+        var rot = el.rot && BOXED[el.type] ? ' transform="rotate(' + el.rot + " " + (el.x + el.w / 2) + " " + (el.y + el.h / 2) + ')"' : "";
+        out.push("<g" + attrs + "><g" + rot + ">");
+        if (BLOCKS[el.type]) {
+          out.push(primsSvg(blockPrims(el, colors, measure), "b" + el.id));
+        } else if (el.type === "line" || el.type === "pen" || el.type === "image") {
+          var sw = Number(st.strokeWidth) || 2;
+          var stroke = colors.ink(st.stroke);
+          if (el.type === "line") {
+            var res = G.resolveLine(el, getEl);
+            var lp = linePathOf(el, res);
+            var dash = dashArray(st.dash, sw);
+            out.push('<path d="' + lp.d + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : "") + ' stroke-linecap="round" stroke-linejoin="round"/>');
+            var size = 8 + sw * 2.5;
+            if (el.arrowEnd) out.push(headPoly(G.arrowHead(res.p1, lp.endDir, size), stroke));
+            if (el.arrowStart) out.push(headPoly(G.arrowHead(res.p0, lp.startDir, size), stroke));
+          } else if (el.type === "pen") {
+            out.push('<path d="' + G.smoothPath((el.points || []).map(function (q) {
+              return G.pt(el.x + q[0], el.y + q[1]);
+            })) + '" fill="none" stroke="' + stroke + '" stroke-width="' + (Number(st.strokeWidth) || 3) + '" stroke-linecap="round" stroke-linejoin="round"/>');
+          } else {
+            out.push('<image x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" preserveAspectRatio="none" href="' + esc(el.src || "") + '"/>');
+          }
+        } else {
+          var shape = el.type === "frame" ? frameShapeSvg(el) : shapeSvg(el);
+          // Вложенный <svg> экрана/фигуры — на место элемента; классы и hit-слои файлу не мешают.
+          out.push('<g transform="translate(' + el.x + " " + el.y + ')">' + resolveVars(shape, colors).replace(/ class="[^"]*"/g, "").replace(/ pointer-events="[^"]*"/g, "") + "</g>");
+        }
+        var tl = el.type !== "frame" && textLayout(measure, el, colors);
+        if (tl) {
+          var color = el.type === "sticky" ? "#1f2328" : colors.ink(st.textColor || "ink");
+          out.push('<text font-size="' + tl.fs + '"' + (st.bold ? ' font-weight="600"' : "") + ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") +
+            '" dominant-baseline="central">' + tl.lines.map(function (l, i) {
+              return '<tspan x="' + tl.x + '" y="' + (tl.y + i * tl.lh) + '">' + esc(l) + "</tspan>";
+            }).join("") + "</text>");
+        }
+        out.push("</g></g>");
+      });
+      var w = Math.max(1, Math.round(b.w * 100) / 100);
+      var h = Math.max(1, Math.round(b.h * 100) / 100);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="' + b.x + " " + b.y + " " + w + " " + h + '" width="' + w + '" height="' + h +
+        '" font-family="' + esc(colors.font) + '">' + (defs.length ? "<defs>" + defs.join("") + "</defs>" : "") + out.join("") + "</svg>";
+      return { svg: svg, w: w, h: h };
+    }
+
+    function exportBaseName() {
+      var one = selList().length === 1 ? selList()[0] : null;
+      var t = one && one.type === "frame" ? one.name || "Экран" : one && one.text ? String(one.text).split("\n")[0].slice(0, 40) : o.title || "Макет";
+      return String(t).replace(/[\\/:*?"<>|]+/g, " ").trim() || "Макет";
+    }
+
+    /** SVG → картинка на холсте (масштаб k); JPEG — на белом. */
+    function svgToCanvas(sv, k, opaque) {
+      return new Promise(function (resolve, reject) {
+        var img = new Image();
+        var url = URL.createObjectURL(new Blob([sv.svg], { type: "image/svg+xml" }));
+        img.onload = function () {
+          var c = document.createElement("canvas");
+          c.width = Math.max(1, Math.round(sv.w * k));
+          c.height = Math.max(1, Math.round(sv.h * k));
+          var ctx = c.getContext("2d");
+          if (opaque) {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, c.width, c.height);
+          }
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          URL.revokeObjectURL(url);
+          resolve(c);
+        };
+        img.onerror = function () {
+          URL.revokeObjectURL(url);
+          reject(new Error("svg"));
+        };
+        img.src = url;
+      });
+    }
+
+    /** Простейший PDF: одна страница размером с объект, картинка JPEG на всю страницу. */
+    function jpegToPdf(bytes, pxW, pxH, ptW, ptH) {
+      var enc = new TextEncoder();
+      var parts = [];
+      var offs = [];
+      var len = 0;
+      var push = function (x) {
+        var b = typeof x === "string" ? enc.encode(x) : x;
+        parts.push(b);
+        len += b.length;
+      };
+      var obj = function (n, body) {
+        offs[n] = len;
+        push(n + " 0 obj\n" + body + "\nendobj\n");
+      };
+      push("%PDF-1.4\n");
+      obj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+      obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+      obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + ptW + " " + ptH + "] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>");
+      offs[4] = len;
+      push("4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + pxW + " /Height " + pxH + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + bytes.length + " >>\nstream\n");
+      push(bytes);
+      push("\nendstream\nendobj\n");
+      var content = "q " + ptW + " 0 0 " + ptH + " 0 0 cm /Im0 Do Q";
+      obj(5, "<< /Length " + content.length + " >>\nstream\n" + content + "\nendstream");
+      var xref = len;
+      var x = "xref\n0 6\n0000000000 65535 f \n";
+      for (var i = 1; i <= 5; i++) x += ("0000000000" + offs[i]).slice(-10) + " 00000 n \n";
+      push(x + "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF");
+      return new Blob(parts, { type: "application/pdf" });
+    }
+
+    function exportSelection(fmt, k) {
+      var ids = Array.from(selected);
+      var sv = ids.length ? selectionSvg(ids) : null;
+      if (!sv) {
+        notify("Выделите объект или экран");
+        return;
+      }
+      var name = exportBaseName();
+      if (fmt === "svg") {
+        downloadBlob(new Blob([sv.svg], { type: "image/svg+xml" }), name + ".svg");
+        return;
+      }
+      svgToCanvas(sv, fmt === "pdf" ? Math.max(2, k) : k, fmt !== "png").then(function (c) {
+        var type = fmt === "png" ? "image/png" : "image/jpeg";
+        c.toBlob(function (blob) {
+          if (!blob) return notify("Не удалось сохранить файл");
+          if (fmt !== "pdf") {
+            downloadBlob(blob, name + (fmt === "png" ? ".png" : ".jpg"));
+            return;
+          }
+          blob.arrayBuffer().then(function (buf) {
+            downloadBlob(jpegToPdf(new Uint8Array(buf), c.width, c.height, Math.round(sv.w * 0.75 * 100) / 100, Math.round(sv.h * 0.75 * 100) / 100), name + ".pdf");
+          });
+        }, type, 0.92);
+      }).catch(function () {
+        notify("Не удалось сохранить файл");
+      });
     }
 
     // ---- документ ----

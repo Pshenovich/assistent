@@ -297,6 +297,12 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         st = board_doc.parse_board(body)["elements"]["r"]["style"]
         self.assertEqual((st["fillOpacity"], st["fillOff"], st["strokeAlign"], st["strokeOpacity"]), (0.5, True, "inside", 1))
         self.assertNotIn("strokeOff", st)  # только True
+        body = json.dumps({"v": 1, "elements": {"r": {"id": "r", "type": "rect", "x": 0, "y": 0, "w": 10, "h": 10, "style": {
+            "fillGrad": "linear 90 #ff0000ff@0 #0000ff00@100", "strokeGrad": "bad", "blur": 4, "bgBlur": -3}}}})
+        st = board_doc.parse_board(body)["elements"]["r"]["style"]
+        self.assertEqual((st["fillGrad"], st["blur"]), ("linear 90 #ff0000ff@0 #0000ff00@100", 4))
+        self.assertNotIn("strokeGrad", st)
+        self.assertNotIn("bgBlur", st)
 
     def test_nested_frame_and_self_ref(self) -> None:
         outer = {"id": "f1", "type": "frame", "x": 0, "y": 0, "w": 400, "h": 800}

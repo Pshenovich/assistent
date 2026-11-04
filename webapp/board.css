@@ -429,10 +429,11 @@ html[data-theme="light"] .leo-board {
 }
 
 .lb-tools {
-  left: 12px;
-  top: 50%;
-  flex-direction: column;
-  transform: translateY(-50%);
+  /* Как во Figma: инструменты — строкой снизу по центру, масштаб и режимы — справа вверху, слои — слева. */
+  left: 50%;
+  bottom: 12px;
+  flex-direction: row;
+  transform: translateX(-50%);
 }
 
 .lb-history {
@@ -442,7 +443,7 @@ html[data-theme="light"] .leo-board {
 
 .lb-zoom {
   right: 12px;
-  bottom: 12px;
+  top: 12px;
   align-items: center;
 }
 
@@ -450,7 +451,7 @@ html[data-theme="light"] .leo-board {
   position: absolute;
   z-index: 3;
   right: 12px;
-  bottom: 60px;
+  bottom: 12px;
   width: 180px;
   height: 120px;
   border: 1px solid var(--lb-panel-border);
@@ -1282,9 +1283,9 @@ html[data-theme="light"] .leo-board {
 }
 
 .lb-tools .lb-sep {
-  width: 22px;
-  height: 1px;
-  margin: 3px auto;
+  width: 1px;
+  height: 22px;
+  margin: auto 3px;
 }
 
 @container (max-width: 640px) {
@@ -1811,4 +1812,253 @@ html[data-theme="light"] .leo-board {
 
 .lb-overlay .lb-pen-pt.is-end {
   stroke-width: 2.5;
+}
+
+/* Градиент в палитре: вкладки, полоса с точками, угол. */
+.lb-gtabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 8px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-gtab {
+  flex: 1 1 0;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--lb-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lb-gtab.is-on {
+  background: var(--lb-panel);
+  color: var(--lb-text);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-color, #000) 18%, transparent);
+}
+
+.lb-gbar {
+  position: relative;
+  height: 18px;
+  margin: 6px 6px 10px;
+  border-radius: 4px;
+  background: var(--g), repeating-conic-gradient(color-mix(in srgb, var(--lb-text) 12%, transparent) 0 25%, transparent 0 50%) 0 0 / 8px 8px;
+  cursor: copy;
+}
+
+.lb-gstop {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--lb-panel);
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 0 1px var(--lb-panel-border);
+  transform: translate(-50%, -50%);
+  cursor: ew-resize;
+}
+
+.lb-gstop.is-on {
+  box-shadow: 0 0 0 2px var(--lb-accent);
+}
+
+.lb-gin {
+  width: 34px;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  outline: none;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+.lb-ghint {
+  margin: 4px 2px 6px;
+  color: var(--lb-muted);
+  font-size: 11px;
+}
+
+.lb-igrad {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Эффекты: строка «название + значение + убрать». */
+.lb-ifx {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.lb-ifx > span {
+  flex: 1 1 auto;
+  color: var(--lb-text);
+  font-size: 12px;
+}
+
+.lb-ifx .lb-if {
+  flex: 0 0 72px;
+}
+
+.lb-ifx-rm {
+  background: transparent;
+}
+
+.lb-gbar ~ .lb-cpick input[type="color"] {
+  width: 56px;
+}
+
+/* ---- панель слоёв ---- */
+.lb-layers {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  flex-direction: column;
+  width: 228px;
+  max-height: calc(100% - 80px);
+  box-sizing: border-box;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 12px;
+  background: var(--lb-panel);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--shadow-color, #000) 22%, transparent);
+  color: var(--lb-text);
+  font-size: 12px;
+}
+
+.lb-lhead {
+  flex: none;
+  padding: 10px 12px 6px;
+  color: var(--lb-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lb-llist {
+  overflow-y: auto;
+  padding: 0 4px 6px;
+  scrollbar-width: thin;
+}
+
+.lb-lempty {
+  padding: 6px 8px 8px;
+  color: var(--lb-muted);
+}
+
+.lb-layer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px 0 calc(4px + var(--d, 0) * 14px);
+  border-radius: 6px;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lb-layer:hover {
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+}
+
+.lb-layer.is-sel {
+  background: var(--lb-accent-soft);
+}
+
+.lb-layer.is-frame .lb-lname {
+  font-weight: 600;
+}
+
+.lb-lcaret {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  color: var(--lb-muted);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+
+.lb-lcaret.is-open {
+  transform: rotate(90deg);
+}
+
+.lb-lcaret.is-none {
+  cursor: default;
+}
+
+.lb-lcaret svg,
+.lb-licon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lb-licon {
+  display: inline-flex;
+  flex: none;
+  color: var(--lb-muted);
+}
+
+.lb-lname {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+}
+
+.lb-lname[contenteditable="true"] {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--lb-panel);
+  box-shadow: 0 0 0 1px var(--lb-accent);
+  text-overflow: clip;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.lb-layer.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--lb-accent);
+}
+
+.lb-layer.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--lb-accent);
+}
+
+.lb-layer.is-drop-inside {
+  box-shadow: inset 0 0 0 1.5px var(--lb-accent);
+}
+
+.lb-overlay .lb-layer-hover {
+  fill: none;
+  stroke: var(--lb-accent);
+  stroke-width: 1.5;
+}
+
+/* Слои открыты — пустая доска и подсказки не прячутся под панелью. */
+@container (max-width: 640px) {
+  .lb-layers {
+    top: 56px;
+    left: 8px;
+    width: min(260px, calc(100% - 16px));
+    max-height: 50%;
+  }
 }

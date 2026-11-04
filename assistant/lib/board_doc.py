@@ -31,7 +31,10 @@ PALETTE = ("ink", "gray", "red", "orange", "yellow", "green", "blue", "purple", 
 _IMAGE_PREFIXES = ("data:image/png", "data:image/jpeg", "data:image/jpg", "data:image/webp", "data:image/gif")
 _PATH_RE = re.compile(r"^[MLCQZmlcqz0-9.,\s-]{1,20000}$")
 _STYLE_KEYS = ("fill", "stroke", "strokeWidth", "dash", "fontSize", "align", "textColor", "bold", "radius", "highlight",
-               "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign")
+               "opacity", "shadow", "radii", "fillOpacity", "strokeOpacity", "fillOff", "strokeOff", "strokeAlign",
+               "fillGrad", "strokeGrad", "blur", "bgBlur")
+# Градиент: «linear|radial угол #rrggbbaa@позиция …» (2–8 точек).
+_GRAD_RE = re.compile(r"^(linear|radial) -?\d{1,3}( #[0-9a-fA-F]{8}@\d{1,3}){2,8}$")
 # Скругления углов по отдельности: «левый-верхний правый-верхний правый-нижний левый-нижний».
 _RADII_RE = re.compile(r"^\d{1,5}(\.\d{1,2})?( \d{1,5}(\.\d{1,2})?){3}$")
 # Тень (макет): «x y размытие #rrggbbaa».
@@ -389,6 +392,15 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
             if k in ("fillOff", "strokeOff"):
                 if v is True:
                     st[k] = True
+                continue
+            if k in ("fillGrad", "strokeGrad"):
+                if isinstance(v, str) and _GRAD_RE.match(v.strip()):
+                    st[k] = v.strip().lower()
+                continue
+            if k in ("blur", "bgBlur"):
+                n = _num(v, 0, 0, 250)
+                if n > 0:
+                    st[k] = n
                 continue
             if k == "strokeAlign":
                 if v in ("inside", "outside"):
