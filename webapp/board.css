@@ -115,7 +115,13 @@ html[data-theme="light"] .leo-board {
 .lb-stage[data-tool="pen"],
 .lb-stage[data-tool="frame"],
 .lb-stage[data-tool="path"],
-.lb-stage[data-tool="table"] {
+.lb-stage[data-tool="table"],
+.lb-stage[data-tool="pill"],
+.lb-stage[data-tool="cylinder"],
+.lb-stage[data-tool="triangle"],
+.lb-stage[data-tool="triangleDown"],
+.lb-stage[data-tool="parallelogram"],
+.lb-stage[data-tool="parallelogramL"] {
   cursor: crosshair;
 }
 
@@ -208,6 +214,12 @@ html[data-theme="light"] .leo-board {
 .lb-el.is-editing.lb-t-sticky > .lb-text:empty::before,
 .lb-el.is-editing.lb-t-rect > .lb-text:empty::before,
 .lb-el.is-editing.lb-t-diamond > .lb-text:empty::before,
+.lb-el.is-editing.lb-t-pill > .lb-text:empty::before,
+.lb-el.is-editing.lb-t-cylinder > .lb-text:empty::before,
+.lb-el.is-editing.lb-t-triangle > .lb-text:empty::before,
+.lb-el.is-editing.lb-t-triangleDown > .lb-text:empty::before,
+.lb-el.is-editing.lb-t-parallelogram > .lb-text:empty::before,
+.lb-el.is-editing.lb-t-parallelogramL > .lb-text:empty::before,
 .lb-el.is-editing.lb-t-ellipse > .lb-text:empty::before {
   content: "";
 }
@@ -589,6 +601,28 @@ html[data-theme="light"] .leo-board {
 .lb-row {
   display: flex;
   gap: 2px;
+}
+
+/* Набор фигур (панель инструментов и «Сменить фигуру»): сетка 3×3. */
+.lb-shapes {
+  display: grid;
+  grid-template-columns: repeat(3, 36px);
+  gap: 2px;
+}
+
+.lb-shape-tool {
+  position: relative;
+}
+
+.lb-caret {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-bottom: 4px solid currentColor;
+  opacity: 0.55;
 }
 
 .lb-menu-item {

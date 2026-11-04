@@ -29,8 +29,17 @@
   var MIN_Z = 0.1;
   var MAX_Z = 4;
   var GRID = 20;
-  var SHAPES = { rect: 1, diamond: 1, ellipse: 1 };
-  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1, vector: 1, frame: 1 };
+  // Фигуры блок-схем (доска): капсула, цилиндр, треугольники, параллелограммы — как ромб, свой контур.
+  var FLOW = ["pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
+  var SHAPES = { rect: 1, diamond: 1, ellipse: 1, pill: 1, cylinder: 1, triangle: 1, triangleDown: 1, parallelogram: 1, parallelogramL: 1 };
+  // Набор фигур в панели инструментов (одна кнопка с выпадающей сеткой) — по порядку.
+  var SHAPE_MENU = ["rect", "ellipse", "diamond", "pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
+  var SHAPE_RU = { rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", pill: "Скруглённый блок", cylinder: "Цилиндр (база данных)",
+    triangle: "Треугольник", triangleDown: "Треугольник вниз", parallelogram: "Параллелограмм (данные)", parallelogramL: "Параллелограмм влево" };
+  // Где подпись внутри фигуры: доли рамки [слева, сверху, справа, снизу] (у цилиндра сверху — ещё крышка).
+  var TEXT_BOX = { diamond: [0.22, 0, 0.22, 0], triangle: [0.24, 0.42, 0.24, 0.02], triangleDown: [0.24, 0.02, 0.24, 0.42],
+    parallelogram: [0.18, 0, 0.18, 0], parallelogramL: [0.18, 0, 0.18, 0], pill: [0.1, 0, 0.1, 0] };
+  var BOXED = { text: 1, rect: 1, diamond: 1, ellipse: 1, pill: 1, cylinder: 1, triangle: 1, triangleDown: 1, parallelogram: 1, parallelogramL: 1, sticky: 1, image: 1, table: 1, card: 1, gantt: 1, vector: 1, frame: 1 };
   // Составные блоки: свой HTML внутри узла и своя правка (таблица — редактор таблиц заметки).
   var BLOCKS = { table: 1, card: 1, gantt: 1 };
   var ALIGN_ICON = { left: "alignLeft", center: "alignCenter", right: "alignRight" };
@@ -68,12 +77,12 @@
   }
 
   function isAlignable(el) {
-    return el.type === "text" || el.type === "rect" || el.type === "diamond" || el.type === "ellipse" || el.type === "sticky";
+    return el.type === "text" || !!SHAPES[el.type] || el.type === "sticky";
   }
   // Палец вместо мыши — ручки крупнее.
   var COARSE = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(pointer: coarse)").matches : false;
-  var TEXTUAL = { text: 1, rect: 1, diamond: 1, ellipse: 1, sticky: 1, line: 1 };
-  var STROKED = { rect: 1, diamond: 1, ellipse: 1, line: 1, pen: 1, vector: 1 };
+  var TEXTUAL = Object.assign({ text: 1, sticky: 1, line: 1 }, SHAPES);
+  var STROKED = Object.assign({ line: 1, pen: 1, vector: 1 }, SHAPES);
   var IMAGE_MAX_SIDE = 1400;
   var CLIP_MIME = "application/x-leo-board";
   var CARD_PHOTO_SIDE = 400;
@@ -89,6 +98,12 @@
     text: { w: 240, h: 26, style: { fontSize: 16, textColor: "ink", align: "left" } },
     rect: { w: 180, h: 100, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
     diamond: { w: 170, h: 120, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
+    pill: { w: 200, h: 90, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
+    cylinder: { w: 150, h: 130, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
+    triangle: { w: 170, h: 150, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
+    triangleDown: { w: 170, h: 150, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
+    parallelogram: { w: 200, h: 110, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
+    parallelogramL: { w: 200, h: 110, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
     ellipse: { w: 170, h: 110, style: { stroke: "ink", fill: "none", strokeWidth: 2, fontSize: 16 } },
     sticky: { w: 200, h: 200, style: { fill: "yellow", fontSize: 16 } },
     line: { style: { stroke: "ink", strokeWidth: 2 } },
@@ -103,9 +118,16 @@
     { id: "hand", key: "h", title: "Рука (H, пробел)", icon: "hand" },
     { id: "text", key: "t", title: "Текст (T)", icon: "text" },
     { id: "sticky", key: "s", title: "Стикер (S)", icon: "sticky" },
-    { id: "rect", key: "r", title: "Прямоугольник (R)", icon: "rect" },
-    { id: "diamond", key: "d", title: "Ромб (D)", icon: "diamond" },
-    { id: "ellipse", key: "o", title: "Эллипс (O)", icon: "ellipse" },
+    // Фигуры — одной кнопкой с набором (group); клавиши R / D / O по-прежнему выбирают свою.
+    { id: "rect", key: "r", title: "Прямоугольник (R)", icon: "rect", group: "shape" },
+    { id: "diamond", key: "d", title: "Ромб (D)", icon: "diamond", group: "shape" },
+    { id: "ellipse", key: "o", title: "Эллипс (O)", icon: "ellipse", group: "shape" },
+    { id: "pill", key: "", title: "Скруглённый блок", icon: "pill", group: "shape" },
+    { id: "cylinder", key: "", title: "Цилиндр", icon: "cylinder", group: "shape" },
+    { id: "triangle", key: "", title: "Треугольник", icon: "triangle", group: "shape" },
+    { id: "triangleDown", key: "", title: "Треугольник вниз", icon: "triangleDown", group: "shape" },
+    { id: "parallelogram", key: "", title: "Параллелограмм", icon: "parallelogram", group: "shape" },
+    { id: "parallelogramL", key: "", title: "Параллелограмм влево", icon: "parallelogramL", group: "shape" },
     { id: "line", key: "l", title: "Линия (L)", icon: "line" },
     { id: "arrow", key: "a", title: "Стрелка (A)", icon: "arrow" },
     { id: "pen", key: "p", title: "Карандаш (P)", icon: "pen" },
@@ -159,6 +181,13 @@
     rect: '<rect x="3" y="5" width="14" height="10" rx="1.5"/>',
     diamond: '<path d="M10 2.5L17.5 10 10 17.5 2.5 10z"/>',
     ellipse: '<ellipse cx="10" cy="10" rx="7.5" ry="5.5"/>',
+    pill: '<rect x="2.5" y="5.5" width="15" height="9" rx="4.5"/>',
+    cylinder: '<ellipse cx="10" cy="5" rx="6" ry="2"/><path d="M4 5v10c0 1.1 2.7 2 6 2s6-.9 6-2V5"/>',
+    triangle: '<path d="M10 3.5l7 12.5H3z"/>',
+    triangleDown: '<path d="M3 4h14l-7 12.5z"/>',
+    parallelogram: '<path d="M6 5h11.5L14 15H2.5z"/>',
+    parallelogramL: '<path d="M2.5 5H14l3.5 10H6z"/>',
+    shapes: '<rect x="2.5" y="10" width="7" height="7" rx="1"/><circle cx="14" cy="6" r="3.5"/><path d="M14 11l3.5 6h-7z"/>',
     line: '<path d="M4 16L16 4"/>',
     arrow: '<path d="M4 16L16 4M9 4h7v7"/>',
     pen: '<path d="M13.5 3.5l3 3L7 16H4v-3z"/>',
@@ -1134,6 +1163,12 @@
       div.style.justifyContent = st.valign === "top" ? "flex-start" : st.valign === "bottom" ? "flex-end" : "";
       // Текст «ширина по содержимому» (из Figma) не переносится: другой шрифт не ломает строку.
       div.style.whiteSpace = el.autoW ? "pre" : "";
+      // Подпись — в «полезной» части фигуры (у треугольника — в широкой, у цилиндра — под крышкой).
+      var tb = TEXT_BOX[el.type];
+      if (el.type === "cylinder") {
+        var cap = G.capOf(el.w, el.h);
+        div.style.padding = Math.round(cap * 2 + 4) + "px 10px " + Math.round(cap + 6) + "px";
+      } else div.style.padding = tb ? Math.round(8 + tb[1] * el.h) + "px " + Math.round(8 + tb[2] * el.w) + "px " + Math.round(8 + tb[3] * el.h) + "px " + Math.round(8 + tb[0] * el.w) + "px" : "";
     }
 
     /** Шрифт догрузился — тексты с ним перерисовать (высота текста по содержимому меняется). */
@@ -1175,8 +1210,10 @@
       } else if (el.type === "ellipse") {
         inner = '<ellipse cx="' + w / 2 + '" cy="' + h / 2 + '" rx="' + w / 2 + '" ry="' + h / 2 + '"' + common + "/>";
         if (aligned) inner += alignedStroke("ellipse", w, h, null, sw, st.strokeAlign, strokeA + opacityAttrs(st));
-      } else if (el.type === "diamond") {
-        inner = '<polygon points="' + w / 2 + ",0 " + w + "," + h / 2 + " " + w / 2 + "," + h + " 0," + h / 2 + '"' + common + ' stroke-linejoin="round"/>';
+      } else if (el.type === "diamond" || FLOW.indexOf(el.type) >= 0) {
+        var sp = G.shapePathD(el.type, w, h);
+        inner = '<path d="' + sp.d + '"' + common + ' stroke-linejoin="round"/>' +
+          (sp.line && sw > 0 ? '<path d="' + sp.line + '" fill="none"' + strokeA + opacityAttrs(st) + ' pointer-events="none"/>' : "");
       } else if (el.type === "sticky") {
         inner = '<rect x="0" y="0" width="' + w + '" height="' + h + '" rx="3" fill="' + stickyVar(st.fill) + '" pointer-events="all" class="lb-hit lb-sticky-bg"/>';
       } else if (el.type === "image") {
@@ -1667,7 +1704,9 @@
       if (!th) return null;
       // Отступы подписи; у ромба и эллипса текст помещается только в средней части.
       var pad = el.type === "sticky" ? 28 : 16;
-      var need = Math.ceil(el.type === "diamond" ? th * 2 + pad : el.type === "ellipse" ? th * 1.45 + pad : th + pad);
+      var tb = TEXT_BOX[el.type];
+      var need = Math.ceil(el.type === "diamond" ? th * 2 + pad : el.type === "ellipse" ? th * 1.45 + pad :
+        el.type === "cylinder" ? th + pad + G.capOf(el.w, el.h) * 3 : tb && (tb[1] || tb[3]) ? (th + pad) / Math.max(0.3, 1 - tb[1] - tb[3]) : th + pad);
       if (need > el.h + 1) return need;
       return null;
     }
@@ -3602,10 +3641,17 @@
     }
 
     // ---- инструменты и панели ----
+    var lastShape = "rect";
     function setTool(t) {
       if (penPath && t !== "path") exitPen();
       tool = t;
       stage.setAttribute("data-tool", t);
+      var sb = toolsBar && toolsBar.querySelector(".lb-shape-tool");
+      if (sb && SHAPES[t] && mode !== "design" && t !== lastShape) {
+        lastShape = t;
+        sb.setAttribute("data-tool", t);
+        sb.innerHTML = icon(t) + '<span class="lb-caret" aria-hidden="true"></span>';
+      }
       if (toolsBar) {
         toolsBar.querySelectorAll("[data-tool]").forEach(function (b) {
           b.classList.toggle("is-on", b.getAttribute("data-tool") === t);
@@ -3619,12 +3665,40 @@
 
     function drawTools() {
       if (!toolsBar) return;
+      var grouped = false;
       toolsBar.innerHTML = toolList().map(function (t) {
+        if (t.group === "shape") {
+          if (grouped) return "";
+          grouped = true;
+          // Одна кнопка «Фигуры»: последняя выбранная фигура; нажатие — набор всех фигур.
+          return '<button type="button" class="lb-btn lb-shape-tool" data-tool="' + lastShape + '" data-act="shapes" title="Фигуры" aria-label="Фигуры" aria-haspopup="true">' +
+            icon(lastShape) + '<span class="lb-caret" aria-hidden="true"></span></button>';
+        }
         return '<button type="button" class="lb-btn" data-tool="' + t.id + '" title="' + esc(t.title) + '" aria-label="' + esc(t.title) + '">' + icon(t.icon) + "</button>";
       }).join("") + (TPL && mode !== "design" ? '<span class="lb-sep"></span><button type="button" class="lb-btn" data-act="templates" title="Шаблоны" aria-label="Шаблоны">' + icon("templates") + "</button>" : "");
       setTool(toolList().some(function (t) {
         return t.id === tool;
       }) ? tool : "select");
+    }
+
+    /** Набор фигур (как в Miro): сетка 3×3, выбор — инструмент; R / D / O — с клавиатуры. */
+    function openShapesPop(btn) {
+      openPop(btn, function (box) {
+        box.innerHTML = '<div class="lb-shapes">' + SHAPE_MENU.map(function (t) {
+          var key = (TOOLS.filter(function (x) {
+            return x.id === t;
+          })[0] || {}).key;
+          var tt = SHAPE_RU[t] + (key ? " (" + key.toUpperCase() + ")" : "");
+          return '<button type="button" class="lb-btn' + (t === tool ? " is-on" : "") + '" data-t="' + t + '" title="' + esc(tt) + '" aria-label="' + esc(tt) + '">' + icon(t) + "</button>";
+        }).join("") + "</div>";
+        box.onclick = function (ev) {
+          var b2 = ev.target.closest("[data-t]");
+          if (!b2) return;
+          setTool(b2.getAttribute("data-t"));
+          closePop();
+          stage.focus({ preventScroll: true });
+        };
+      });
     }
 
     function renderTools() {
@@ -3640,6 +3714,12 @@
         if (ta) {
           finishEdit();
           openTemplatesPop(ta);
+          return;
+        }
+        var sh = e.target.closest("[data-act=shapes]");
+        if (sh) {
+          finishEdit();
+          openShapesPop(sh);
           return;
         }
         var b = e.target.closest("[data-tool]");
@@ -4012,9 +4092,9 @@
     }
 
     // ---- панель свойств макета (справа, как во Figma) ----
-    var FILLABLE = { rect: 1, ellipse: 1, diamond: 1, frame: 1, vector: 1, sticky: 1, text: 1 };
-    var STROKABLE = { rect: 1, ellipse: 1, diamond: 1, line: 1, vector: 1, pen: 1, frame: 1 };
-    var TEXTY = { text: 1, rect: 1, ellipse: 1, diamond: 1, sticky: 1 };
+    var FILLABLE = Object.assign({ frame: 1, vector: 1, sticky: 1, text: 1 }, SHAPES);
+    var STROKABLE = Object.assign({ line: 1, vector: 1, pen: 1, frame: 1 }, SHAPES);
+    var TEXTY = Object.assign({ text: 1, sticky: 1 }, SHAPES);
     var RADIUS = { rect: 1, frame: 1 };
     var ALIGNABLE_STROKE = { rect: 1, ellipse: 1, frame: 1 };
 
@@ -4361,7 +4441,7 @@
         });
       };
       var h = [];
-      var title = one ? (one.type === "frame" ? "Фрейм" : { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия",
+      var title = one ? (one.type === "frame" ? "Фрейм" : SHAPE_RU[one.type] || { text: "Текст", line: "Линия",
         image: "Картинка", vector: "Вектор", table: "Таблица", sticky: "Стикер", pen: "Рисунок" }[one.type] || "Элемент") : "Выделено: " + list.length;
       var grp = !one && common(list, function (e) {
         return e.group || "";
@@ -5374,9 +5454,11 @@
       return !!showLayers[mode];
     }
 
-    var TYPE_RU = { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", line: "Линия", image: "Картинка", vector: "Вектор",
+    var TYPE_RU = { text: "Текст", rect: "Прямоугольник", ellipse: "Эллипс", diamond: "Ромб", pill: "Скруглённый блок", cylinder: "Цилиндр",
+      triangle: "Треугольник", triangleDown: "Треугольник", parallelogram: "Параллелограмм", parallelogramL: "Параллелограмм", line: "Линия", image: "Картинка", vector: "Вектор",
       table: "Таблица", sticky: "Стикер", pen: "Рисунок", card: "Карточка", gantt: "Гант", frame: "Фрейм" };
-    var TYPE_ICON = { text: "text", rect: "rect", ellipse: "ellipse", diamond: "diamond", line: "line", image: "image", vector: "penTool",
+    var TYPE_ICON = { text: "text", rect: "rect", ellipse: "ellipse", diamond: "diamond", pill: "pill", cylinder: "cylinder", triangle: "triangle",
+      triangleDown: "triangleDown", parallelogram: "parallelogram", parallelogramL: "parallelogramL", line: "line", image: "image", vector: "penTool",
       table: "table", sticky: "sticky", pen: "pen", card: "child", gantt: "taskAdd", frame: "frame" };
 
     function layerName(el) {
@@ -6449,8 +6531,8 @@
         });
       } else if (p === "shape") {
         openPop(b, function (box) {
-          box.innerHTML = '<div class="lb-row">' + ["rect", "diamond", "ellipse"].map(function (t) {
-            return '<button type="button" class="lb-btn" data-t="' + t + '">' + icon(t) + "</button>";
+          box.innerHTML = '<div class="lb-shapes">' + SHAPE_MENU.map(function (t) {
+            return '<button type="button" class="lb-btn" data-t="' + t + '" title="' + esc(SHAPE_RU[t]) + '">' + icon(t) + "</button>";
           }).join("") + "</div>";
           box.onclick = function (ev) {
             var t = ev.target.closest("[data-t]");
@@ -6970,7 +7052,7 @@
         startHandle(hEl.getAttribute("data-h"), base, e);
         return;
       }
-      if (tool === "rect" || tool === "diamond" || tool === "ellipse" || tool === "sticky" || tool === "text" || tool === "frame") {
+      if (SHAPES[tool] || tool === "sticky" || tool === "text" || tool === "frame") {
         e.preventDefault();
         begin();
         var el = newEl(tool, p, tool === "frame" ? { w: 1, h: 1, name: nextFrameName(), z: bottomZ() } : { w: 1, h: 1 });
@@ -8518,7 +8600,8 @@
       ctx.font = wt + " " + fs + "px " + fam;
       if ("letterSpacing" in ctx) ctx.letterSpacing = st.letterSpacing ? (Number(st.letterSpacing) / 100) * fs + "px" : "0px";
       var lh = Number(st.lineHeight) > 0 ? Number(st.lineHeight) : fs * 1.3;
-      var padX = el.type === "text" ? 0 : el.type === "diamond" ? el.w * 0.22 : 10;
+      var tbx = TEXT_BOX[el.type];
+      var padX = el.type === "text" ? 0 : tbx ? 8 + Math.max(tbx[0], tbx[2]) * el.w : 10;
       var maxW;
       var cx;
       var top;
@@ -8537,7 +8620,11 @@
       var pad = el.type === "text" ? 0 : 8;
       if (el.type === "text" || st.valign === "top") top = el.y + pad + lh / 2;
       else if (st.valign === "bottom") top = el.y + el.h - pad - lh / 2 - (lines.length - 1) * lh;
-      else top = el.y + el.h / 2 - ((lines.length - 1) * lh) / 2;
+      else {
+        var capT = el.type === "cylinder" ? G.capOf(el.w, el.h) : 0;
+        var mid = tbx ? el.y + (tbx[1] * el.h + el.h - tbx[3] * el.h) / 2 : el.y + el.h / 2 + capT / 2;
+        top = mid - ((lines.length - 1) * lh) / 2;
+      }
       return { lines: lines, x: cx, y: top, lh: lh, align: align, fs: fs, fam: fam, wt: wt, ls: st.letterSpacing ? (Number(st.letterSpacing) / 100) * fs : 0, deco: st.deco };
     }
 
@@ -8774,12 +8861,10 @@
         } else {
           var path = new Path2D();
           if (el.type === "ellipse") path.ellipse(el.x + el.w / 2, el.y + el.h / 2, el.w / 2, el.h / 2, 0, 0, Math.PI * 2);
-          else if (el.type === "diamond") {
-            path.moveTo(el.x + el.w / 2, el.y);
-            path.lineTo(el.x + el.w, el.y + el.h / 2);
-            path.lineTo(el.x + el.w / 2, el.y + el.h);
-            path.lineTo(el.x, el.y + el.h / 2);
-            path.closePath();
+          else if (el.type === "diamond" || FLOW.indexOf(el.type) >= 0) {
+            var spc = G.shapePathD(el.type, el.w, el.h, el.x, el.y);
+            path.addPath(new Path2D(spc.d));
+            if (spc.line) path.addPath(new Path2D(spc.line));
           } else if (el.type === "rect" || el.type === "sticky" || el.type === "text" || el.type === "frame") {
             var rr = el.type === "sticky" ? 3 : el.type === "text" ? 2 : radiiOf(st, el.w, el.h, el.type === "frame" ? 0 : undefined);
             if (path.roundRect) path.roundRect(el.x, el.y, el.w, el.h, rr);
@@ -8943,7 +9028,11 @@
           var fill = el.type === "sticky" ? colors.sticky(st.fill) : colors.fill(st.fill) || "none";
           var strokeAttr = el.type === "sticky" || el.type === "text" || sw <= 0 ? ' stroke="none"' : ' stroke="' + stroke + '" stroke-width="' + sw + '"' + da;
           if (el.type === "ellipse") out.push('<ellipse cx="' + (el.x + el.w / 2) + '" cy="' + (el.y + el.h / 2) + '" rx="' + el.w / 2 + '" ry="' + el.h / 2 + '" fill="' + fill + '"' + strokeAttr + "/>");
-          else if (el.type === "diamond") out.push('<polygon points="' + (el.x + el.w / 2) + "," + el.y + " " + (el.x + el.w) + "," + (el.y + el.h / 2) + " " + (el.x + el.w / 2) + "," + (el.y + el.h) + " " + el.x + "," + (el.y + el.h / 2) + '" fill="' + fill + '"' + strokeAttr + ' stroke-linejoin="round"/>');
+          else if (el.type === "diamond" || FLOW.indexOf(el.type) >= 0) {
+            var spx = G.shapePathD(el.type, el.w, el.h, el.x, el.y);
+            out.push('<path d="' + spx.d + '" fill="' + fill + '"' + strokeAttr + ' stroke-linejoin="round"/>');
+            if (spx.line && sw > 0) out.push('<path d="' + spx.line + '" fill="none"' + strokeAttr + "/>");
+          }
           else if (el.type === "rect") out.push('<path d="' + roundedPathD(el.x, el.y, el.w, el.h, radiiOf(st, el.w, el.h)) + '" fill="' + fill + '"' + strokeAttr + "/>");
           else if (el.type === "frame") out.push('<path d="' + roundedPathD(el.x, el.y, el.w, el.h, radiiOf(st, el.w, el.h, 0)) + '" fill="' + (colors.fill(st.fill || "#ffffff") || "#ffffff") + '"' + strokeAttr + "/>");
           else if (el.type !== "text" || fill !== "none") out.push('<rect x="' + el.x + '" y="' + el.y + '" width="' + el.w + '" height="' + el.h + '" rx="' + (el.type === "sticky" ? 3 : 2) + '" fill="' + fill + '"' + strokeAttr + "/>");

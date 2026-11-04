@@ -155,4 +155,19 @@ const lpath = { poly: lpoly, mid: { x: 100, y: 0 } };
 nearPt(G.labelPoint({}, lpath), 100, 0);
 nearPt(G.labelPoint({ labelT: 0.25 }, lpath), 50, 0);
 
+// Фигуры блок-схем: стрелка упирается в контур, попадание — внутри контура, точки сторон на контуре.
+const T = { id: "t", type: "triangle", x: 0, y: 0, w: 100, h: 100 };
+nearPt(G.outlinePoint(T, { x: 50, y: -100 }), 50, 0); // вершина
+nearPt(G.outlinePoint(T, { x: 50, y: 300 }), 50, 100); // основание
+assert.ok(G.contains(T, { x: 50, y: 80 }));
+assert.ok(!G.contains(T, { x: 5, y: 10 })); // угол рамки вне треугольника
+const P = { id: "p", type: "parallelogram", x: 0, y: 0, w: 200, h: 100 }; // скос 30
+nearPt(G.outlinePoint(P, { x: -500, y: 50 }), 15, 50);
+assert.ok(!G.contains(P, { x: 2, y: 2 }));
+const Pill = { id: "q", type: "pill", x: 0, y: 0, w: 200, h: 100 };
+nearPt(G.outlinePoint(Pill, { x: 500, y: 50 }), 200, 50);
+assert.ok(!G.contains(Pill, { x: 3, y: 3 }));
+assert.ok(G.shapePathD("cylinder", 100, 100).line.startsWith("M0 12"));
+assert.ok(G.shapePathD("triangleDown", 100, 80).d.includes("Q"));
+
 console.log("board geometry ok");

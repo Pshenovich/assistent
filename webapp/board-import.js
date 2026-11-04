@@ -106,6 +106,8 @@
     3: "rect", 7: "round", 4: "ellipse", 8: "diamond", 6: "diamond",
     rectangle: "rect", square: "rect", round_rectangle: "round", circle: "ellipse", ellipse: "ellipse",
     rhombus: "diamond", diamond: "diamond",
+    flow_chart_terminator: "pill", triangle: "triangle", parallelogram: "parallelogram", flow_chart_input_output: "parallelogram",
+    can: "cylinder", flow_chart_magnetic_disk: "cylinder",
   };
 
   function side(point) {

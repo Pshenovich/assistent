@@ -72,7 +72,132 @@
     return rot(pt(el.x + lp.x, el.y + lp.y), center(el), el.rot || 0);
   }
 
+  // ---- Фигуры блок-схем: контуры в локальных координатах (0..w, 0..h) ----
+  /** Скос параллелограмма (одинаковый в отрисовке, прилипании и экспорте). */
+  function skewOf(w, h) {
+    return Math.min(w * 0.25, h * 0.3);
+  }
+
+  /** Вершины многоугольной фигуры (ромб, треугольники, параллелограммы) или null. */
+  function polyOf(type, w, h) {
+    var k = skewOf(w, h);
+    switch (type) {
+      case "diamond": return [pt(w / 2, 0), pt(w, h / 2), pt(w / 2, h), pt(0, h / 2)];
+      case "triangle": return [pt(w / 2, 0), pt(w, h), pt(0, h)];
+      case "triangleDown": return [pt(0, 0), pt(w, 0), pt(w / 2, h)];
+      case "parallelogram": return [pt(k, 0), pt(w, 0), pt(w - k, h), pt(0, h)];
+      case "parallelogramL": return [pt(0, 0), pt(w - k, 0), pt(w, h), pt(k, h)];
+    }
+    return null;
+  }
+
+  /** Высота «крышки» цилиндра (эллипс сверху и снизу). */
+  function capOf(w, h) {
+    return Math.max(2, Math.min(h * 0.12, w * 0.25, 40));
+  }
+
+  function f1(v) {
+    return Math.round(v * 100) / 100;
+  }
+
+  /** Многоугольник со скруглёнными углами (радиус r, не больше трети стороны). */
+  function roundPolyD(ps, r, ox, oy) {
+    ox = ox || 0;
+    oy = oy || 0;
+    var n = ps.length;
+    var d = "";
+    for (var i = 0; i < n; i++) {
+      var p0 = ps[(i + n - 1) % n];
+      var p1 = ps[i];
+      var p2 = ps[(i + 1) % n];
+      var a = sub(p0, p1);
+      var b = sub(p2, p1);
+      var ra = Math.min(r, len(a) / 3);
+      var rb = Math.min(r, len(b) / 3);
+      var s0 = add(p1, mul(a, ra / Math.max(1e-9, len(a))));
+      var s1 = add(p1, mul(b, rb / Math.max(1e-9, len(b))));
+      d += (i ? "L" : "M") + f1(s0.x + ox) + " " + f1(s0.y + oy) + "Q" + f1(p1.x + ox) + " " + f1(p1.y + oy) + " " + f1(s1.x + ox) + " " + f1(s1.y + oy);
+    }
+    return d + "Z";
+  }
+
+  /** Контур фигуры блок-схемы: {d — заливка и обводка, line? — доп. линия без заливки} или null.
+   * ox/oy — сдвиг (для экспорта в мировых координатах). */
+  function shapePathD(type, w, h, ox, oy) {
+    ox = ox || 0;
+    oy = oy || 0;
+    if (type === "pill") {
+      var r = Math.min(w, h) / 2;
+      return { d: "M" + f1(ox + r) + " " + f1(oy) + "H" + f1(ox + w - r) + "A" + f1(r) + " " + f1(r) + " 0 0 1 " + f1(ox + w - r) + " " + f1(oy + h) +
+        "H" + f1(ox + r) + "A" + f1(r) + " " + f1(r) + " 0 0 1 " + f1(ox + r) + " " + f1(oy) + "Z" };
+    }
+    if (type === "cylinder") {
+      var c = capOf(w, h);
+      var rx = f1(w / 2);
+      return {
+        d: "M" + f1(ox) + " " + f1(oy + c) + "A" + rx + " " + f1(c) + " 0 0 1 " + f1(ox + w) + " " + f1(oy + c) + "V" + f1(oy + h - c) +
+          "A" + rx + " " + f1(c) + " 0 0 1 " + f1(ox) + " " + f1(oy + h - c) + "Z",
+        line: "M" + f1(ox) + " " + f1(oy + c) + "A" + rx + " " + f1(c) + " 0 0 0 " + f1(ox + w) + " " + f1(oy + c),
+      };
+    }
+    var ps = polyOf(type, w, h);
+    if (!ps) return null;
+    return { d: type === "diamond" ? "M" + ps.map(function (q) {
+      return f1(q.x + ox) + " " + f1(q.y + oy);
+    }).join("L") + "Z" : roundPolyD(ps, Math.min(8, Math.min(w, h) * 0.06), ox, oy) };
+  }
+
+  /** Пересечение луча из центра (направление d) с контуром фигуры — локальная точка. */
+  function localOutline(el, d) {
+    var w = Math.max(1, el.w);
+    var h = Math.max(1, el.h);
+    var c = pt(w / 2, h / 2);
+    var hw = w / 2;
+    var hh = h / 2;
+    if (Math.abs(d.x) < 1e-9 && Math.abs(d.y) < 1e-9) d = pt(1, 0);
+    var t;
+    var ps = polyOf(el.type, w, h);
+    if (el.type === "ellipse") {
+      t = 1 / Math.sqrt((d.x / hw) * (d.x / hw) + (d.y / hh) * (d.y / hh));
+    } else if (ps) {
+      t = Infinity;
+      for (var i = 0; i < ps.length; i++) {
+        var a = sub(ps[i], c);
+        var e = sub(ps[(i + 1) % ps.length], ps[i]);
+        var den = d.x * e.y - d.y * e.x;
+        if (Math.abs(den) < 1e-12) continue;
+        var tt = (a.x * e.y - a.y * e.x) / den;
+        var u = (a.x * d.y - a.y * d.x) / den;
+        if (tt > 1e-9 && u >= -1e-9 && u <= 1 + 1e-9 && tt < t) t = tt;
+      }
+      if (!isFinite(t)) t = 0;
+    } else {
+      var tx = Math.abs(d.x) > 1e-9 ? hw / Math.abs(d.x) : Infinity;
+      var ty = Math.abs(d.y) > 1e-9 ? hh / Math.abs(d.y) : Infinity;
+      t = Math.min(tx, ty);
+      if (el.type === "pill") {
+        // Капсула: за прямым участком — полукруг.
+        var r = Math.min(hw, hh);
+        var q = mul(d, t);
+        var horiz = w >= h;
+        var off = horiz ? Math.abs(q.x) - (hw - r) : Math.abs(q.y) - (hh - r);
+        if (off > 1e-9) {
+          var cc = horiz ? pt((q.x > 0 ? 1 : -1) * (hw - r), 0) : pt(0, (q.y > 0 ? 1 : -1) * (hh - r));
+          var A = d.x * d.x + d.y * d.y;
+          var B = -2 * (d.x * cc.x + d.y * cc.y);
+          var C = cc.x * cc.x + cc.y * cc.y - r * r;
+          t = (-B + Math.sqrt(Math.max(0, B * B - 4 * A * C))) / (2 * A);
+        }
+      }
+    }
+    return add(c, mul(d, t));
+  }
+
   function sidePoint(el, side) {
+    if (polyOf(el.type, 1, 1) || el.type === "pill") {
+      var n = SIDE_N[side] || SIDE_N.right;
+      return toWorld(el, localOutline(el, pt(n[0], n[1])));
+    }
     var lp = {
       top: pt(el.w / 2, 0),
       right: pt(el.w, el.h / 2),
@@ -102,23 +227,8 @@
 
   /** Точка на контуре фигуры по лучу из центра к toward (стрелка «к объекту»). */
   function outlinePoint(el, toward) {
-    var c = pt(el.w / 2, el.h / 2);
     var lt = toLocal(el, toward);
-    var d = sub(lt, c);
-    var hw = Math.max(0.5, el.w / 2);
-    var hh = Math.max(0.5, el.h / 2);
-    if (Math.abs(d.x) < 1e-9 && Math.abs(d.y) < 1e-9) d = pt(1, 0);
-    var t;
-    if (el.type === "ellipse") {
-      t = 1 / Math.sqrt((d.x / hw) * (d.x / hw) + (d.y / hh) * (d.y / hh));
-    } else if (el.type === "diamond") {
-      t = 1 / (Math.abs(d.x) / hw + Math.abs(d.y) / hh);
-    } else {
-      var tx = Math.abs(d.x) > 1e-9 ? hw / Math.abs(d.x) : Infinity;
-      var ty = Math.abs(d.y) > 1e-9 ? hh / Math.abs(d.y) : Infinity;
-      t = Math.min(tx, ty);
-    }
-    return toWorld(el, add(c, mul(d, t)));
+    return toWorld(el, localOutline(el, sub(lt, pt(Math.max(1, el.w) / 2, Math.max(1, el.h) / 2))));
   }
 
   /** Локальная точка внутри фигуры (с запасом margin) — для прилипания и попадания. */
@@ -133,6 +243,13 @@
       var dy = (lp.y - el.h / 2) / hh;
       if (el.type === "ellipse") return dx * dx + dy * dy <= 1;
       return Math.abs(dx) + Math.abs(dy) <= 1;
+    }
+    if (polyOf(el.type, 1, 1) || el.type === "pill") {
+      // Выпуклая фигура: точка не дальше контура (по лучу из центра) плюс запас.
+      var c = pt(Math.max(1, el.w) / 2, Math.max(1, el.h) / 2);
+      var v = sub(lp, c);
+      if (len(v) < 1e-9) return true;
+      return len(v) <= len(sub(localOutline(el, v), c)) + m;
     }
     return true;
   }
@@ -891,6 +1008,8 @@
     sideToward: sideToward,
     outlinePoint: outlinePoint,
     contains: contains,
+    shapePathD: shapePathD,
+    capOf: capOf,
     nearestSide: nearestSide,
     resolveLine: resolveLine,
     linePath: linePath,

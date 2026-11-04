@@ -230,7 +230,11 @@ function textOf(td) {
 }
 
 var ALIGN = { LEFT: "left", CENTER: "center", RIGHT: "right", JUSTIFIED: "left" };
-var SHAPES = { SQUARE: "rect", ROUNDED_RECTANGLE: "round", ELLIPSE: "ellipse", DIAMOND: "diamond" };
+var SHAPES = {
+  SQUARE: "rect", ROUNDED_RECTANGLE: "round", ELLIPSE: "ellipse", DIAMOND: "diamond",
+  TRIANGLE_UP: "triangle", TRIANGLE_DOWN: "triangleDown", PARALLELOGRAM_RIGHT: "parallelogram",
+  PARALLELOGRAM_LEFT: "parallelogramL", ENG_DATABASE: "cylinder",
+};
 
 function mul(a, b) {
   return {

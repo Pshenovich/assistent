@@ -22,7 +22,7 @@ from assistant.lib import board_doc
 
 MAX_NODES = 80
 MAX_EDGES = 160
-SHAPES = ("rect", "diamond", "ellipse", "sticky", "text", "card")
+SHAPES = ("rect", "diamond", "ellipse", "pill", "cylinder", "parallelogram", "triangle", "sticky", "text", "card")
 FILLS = ("gray", "red", "orange", "yellow", "green", "blue", "purple", "pink")
 BAR_COLORS = ("blue", "green", "purple", "orange", "pink", "red", "yellow", "gray")
 MAX_TABLE_ROWS = 60
@@ -50,7 +50,7 @@ def system_addon() -> str:
 Создать доску:
 ```leo-board
 {"action":"create","title":"Обработка заявки","layout":"flow",
- "nodes":[{"id":"n1","text":"Заявка пришла","shape":"ellipse","color":"green"},
+ "nodes":[{"id":"n1","text":"Заявка пришла","shape":"pill","color":"green"},
           {"id":"n2","text":"Проверить данные","shape":"rect"},
           {"id":"n3","text":"Данные полные?","shape":"diamond","color":"orange"},
           {"id":"n4","text":"Запросить недостающее","shape":"rect"},
@@ -62,8 +62,9 @@ def system_addon() -> str:
 - Координат НЕТ — раскладку делает Лео. layout: "flow" (сверху вниз: процессы, блок-схемы),
   "flow-right" (слева направо: этапы, путь клиента, таймлайн), "tree" (иерархия, оргструктура),
   "mindmap" (центр и ветви по обе стороны), "grid" (набор стикеров/идей без связей).
-- shape: "rect" (шаг, блок), "diamond" (решение / вопрос), "ellipse" (старт и финиш),
-  "sticky" (стикер-заметка), "text" (подпись без рамки).
+- shape: "rect" (шаг, блок), "diamond" (решение / вопрос), "pill" (старт и финиш), "ellipse" (событие),
+  "cylinder" (база данных, хранилище), "parallelogram" (ввод / вывод данных: форма, отчёт, файл),
+  "triangle" (слияние, этап воронки), "sticky" (стикер-заметка), "text" (подпись без рамки).
 - color — по смыслу, необязателен: ink, gray, red, orange, yellow, green, blue, purple, pink
   (у стикера: yellow, orange, pink, green, blue, purple, gray).
 - edges: from/to — id узлов; label — подпись на стрелке (коротко); "arrow": "end" (по умолчанию),
@@ -114,7 +115,7 @@ def open_board_prompt_block(sheet_id: str, title: str, body: Any) -> str:
     edges = []
     for el in sorted(elements.values(), key=lambda e: (round(float(e.get("y") or 0) / 40), float(e.get("x") or 0))):
         t = el.get("type")
-        if t in ("rect", "diamond", "ellipse", "sticky", "text"):
+        if t in ("rect", "diamond", "ellipse", "sticky", "text", *board_doc.FLOW_SHAPES):
             color = (el.get("style") or {}).get("fill" if t == "sticky" else "stroke") or ""
             text = " ".join(str(el.get("text") or "").split())[:120]
             nodes.append(f'- id={el["id"]} {t}' + (f" color={color}" if color and color not in ("ink", "none") else "") + f' "{text}"')
@@ -268,7 +269,7 @@ def _size(shape: str, text: str) -> tuple[float, float]:
     if shape == "text":
         w = float(min(320, max(80, longest * CHAR_W + 8)))
         return w, float(_lines(text, w) * LINE_H + 4)
-    pad = {"rect": 28, "ellipse": 60, "diamond": 90}.get(shape, 28)
+    pad = {"rect": 28, "ellipse": 60, "diamond": 90, "pill": 50, "parallelogram": 80, "triangle": 90, "cylinder": 28}.get(shape, 28)
     w = float(min(260, max(150, longest * CHAR_W + pad)))
     inner = w - pad
     lines = _lines(text, inner)
@@ -276,6 +277,10 @@ def _size(shape: str, text: str) -> tuple[float, float]:
         return w, float(max(110, lines * LINE_H * 2 + 44))
     if shape == "ellipse":
         return w, float(max(80, lines * LINE_H * 1.5 + 34))
+    if shape == "triangle":
+        return w, float(max(120, lines * LINE_H * 2.2 + 50))
+    if shape == "cylinder":
+        return w, float(max(100, lines * LINE_H + 70))
     return w, float(max(70, lines * LINE_H + 30))
 
 
@@ -305,7 +310,8 @@ def _norm_node(raw: Any) -> Optional[dict[str, Any]]:
         out["text"] = _clean_text(raw.get("text", raw.get("label")))
     shape = str(raw.get("shape") or raw.get("type") or "").strip().lower()
     shape = {"box": "rect", "rectangle": "rect", "process": "rect", "decision": "diamond", "rhombus": "diamond",
-             "circle": "ellipse", "oval": "ellipse", "start": "ellipse", "end": "ellipse", "note": "sticky",
+             "circle": "ellipse", "oval": "ellipse", "start": "pill", "end": "pill", "terminator": "pill", "note": "sticky",
+             "database": "cylinder", "db": "cylinder", "storage": "cylinder", "data": "parallelogram", "io": "parallelogram",
              "label": "text"}.get(shape, shape)
     if shape in SHAPES:
         out["shape"] = shape
@@ -790,7 +796,7 @@ TEMPLATES = ("scheme", "gantt", "org", "table")
 def template_prompt(template: str, board_open: bool) -> str:
     """Шаблон «На моих данных» (кнопка на доске): что собрать и из чего."""
     what = {
-        "scheme": "схему процесса (блок-схему: layout \"flow\", старт и финиш — ellipse, решения — diamond)",
+        "scheme": "схему процесса (блок-схему: layout \"flow\", старт и финиш — pill, решения — diamond, данные — parallelogram, база — cylinder)",
         "gantt": "диаграмму Ганта (ключ \"gantt\": задачи, даты, ответственные)",
         "org": "оргструктуру (layout \"tree\", узлы shape \"card\" с role, name и text — обязанности)",
         "table": "таблицу (ключ \"table\": первая строка — шапка)",

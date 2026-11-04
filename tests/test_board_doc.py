@@ -338,3 +338,14 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         els = board_doc.parse_board(_board(outer, inner, loop))["elements"]
         self.assertEqual(els["f2"]["frame"], "f1")
         self.assertNotIn("frame", els["f3"])
+
+    def test_flow_shapes_kept_and_drawn(self) -> None:
+        els = [{"id": t, "type": t, "x": i * 220, "y": 0, "w": 200, "h": 120, "text": "Шаг " + t}
+               for i, t in enumerate(board_doc.FLOW_SHAPES)]
+        body = _board(*els)
+        parsed = board_doc.parse_board(body)["elements"]
+        self.assertEqual(sorted(e["type"] for e in parsed.values()), sorted(board_doc.FLOW_SHAPES))
+        svg = board_doc.render_board_svg(body)
+        self.assertEqual(svg.count('stroke-linejoin="round"'), len(board_doc.FLOW_SHAPES))
+        self.assertIn("Шаг cylinder", svg)
+        self.assertIn("цилиндр", board_doc.board_describe(body))

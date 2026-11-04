@@ -19,8 +19,9 @@ BOARD_VERSION = 1
 MAX_BOARD_BYTES = 12 * 1024 * 1024
 MAX_ELEMENTS = 5000
 MAX_TEXT = 20000
-ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "line", "pen", "image", "table", "card", "gantt", "vector", "frame")
-SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", "sticky", "image", "table", "card", "gantt", "vector", "frame")
+FLOW_SHAPES = ("pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL")
+ELEMENT_TYPES = ("text", "rect", "diamond", "ellipse", *FLOW_SHAPES, "sticky", "line", "pen", "image", "table", "card", "gantt", "vector", "frame")
+SHAPE_TYPES = ("text", "rect", "diamond", "ellipse", *FLOW_SHAPES, "sticky", "image", "table", "card", "gantt", "vector", "frame")
 # Режим листа-доски: «board» — доска, «design» — макет экранов (те же элементы, другие инструменты).
 BOARD_MODES = ("board", "design")
 MAX_VECTOR_PATHS = 200
@@ -639,7 +640,9 @@ def board_plain_text(body: Any) -> str:
 
 
 _SHAPE_RU = {
-    "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "sticky": "стикер", "text": "текст", "image": "картинка",
+    "rect": "блок", "diamond": "ромб/решение", "ellipse": "овал", "pill": "скруглённый блок (старт/финиш)",
+    "cylinder": "цилиндр (база данных)", "triangle": "треугольник", "triangleDown": "треугольник вниз",
+    "parallelogram": "параллелограмм (ввод/вывод данных)", "parallelogramL": "параллелограмм", "sticky": "стикер", "text": "текст", "image": "картинка",
     "table": "таблица", "card": "карточка оргструктуры", "gantt": "диаграмма Ганта", "vector": "иконка", "frame": "фрейм",
 }
 _COLOR_RU = {
@@ -799,6 +802,28 @@ def _rounded_d(x: float, y: float, w: float, h: float, r: list[float]) -> str:
             f"V{y + h - br}" + (f"A{br} {br} 0 0 1 {x + w - br} {y + h}" if br else "") +
             f"H{x + bl}" + (f"A{bl} {bl} 0 0 1 {x} {y + h - bl}" if bl else "") +
             f"V{y + tl}" + (f"A{tl} {tl} 0 0 1 {x + tl} {y}" if tl else "") + "Z")
+
+
+def flow_shape_path(t: str, x: float, y: float, w: float, h: float) -> tuple[str, str]:
+    """Контур фигуры блок-схемы (как webapp/board-geom.js shapePathD): (заливка+обводка, доп. линия)."""
+    k = min(w * 0.25, h * 0.3)
+    if t == "pill":
+        r = min(w, h) / 2
+        return (f"M{x + r:.1f} {y:.1f}H{x + w - r:.1f}A{r:.1f} {r:.1f} 0 0 1 {x + w - r:.1f} {y + h:.1f}"
+                f"H{x + r:.1f}A{r:.1f} {r:.1f} 0 0 1 {x + r:.1f} {y:.1f}Z", "")
+    if t == "cylinder":
+        c = max(2.0, min(h * 0.12, w * 0.25, 40.0))
+        rx = w / 2
+        return (f"M{x:.1f} {y + c:.1f}A{rx:.1f} {c:.1f} 0 0 1 {x + w:.1f} {y + c:.1f}V{y + h - c:.1f}"
+                f"A{rx:.1f} {c:.1f} 0 0 1 {x:.1f} {y + h - c:.1f}Z",
+                f"M{x:.1f} {y + c:.1f}A{rx:.1f} {c:.1f} 0 0 0 {x + w:.1f} {y + c:.1f}")
+    pts = {
+        "triangle": [(w / 2, 0), (w, h), (0, h)],
+        "triangleDown": [(0, 0), (w, 0), (w / 2, h)],
+        "parallelogram": [(k, 0), (w, 0), (w - k, h), (0, h)],
+        "parallelogramL": [(0, 0), (w - k, 0), (w, h), (k, h)],
+    }.get(t, [(w / 2, 0), (w, h / 2), (w / 2, h), (0, h / 2)])
+    return "M" + "L".join(f"{x + px:.1f} {y + py:.1f}" for px, py in pts) + "Z", ""
 
 
 def _svg_vector(el: dict[str, Any]) -> str:
@@ -1003,6 +1028,11 @@ def render_board_svg(body: Any, *, view: Optional[tuple[float, float, float, flo
         elif t == "diamond":
             cx, cy = x + ew / 2, y + eh / 2
             out.append(f'<polygon points="{cx},{y} {x + ew},{cy} {cx},{y + eh} {x},{cy}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}"{dash}/>')
+        elif t in FLOW_SHAPES:
+            d, extra = flow_shape_path(t, x, y, ew, eh)
+            out.append(f'<path d="{d}" fill="{fill_attr}" stroke="{stroke}" stroke-width="{sw}" stroke-linejoin="round"{dash}/>')
+            if extra and stroke != "none":
+                out.append(f'<path d="{extra}" fill="none" stroke="{stroke}" stroke-width="{sw}"/>')
         elif t == "image":
             out.append(f'<image x="{x}" y="{y}" width="{ew}" height="{eh}" href="{_attr(el.get("src") or "")}"/>')
         text = str(el.get("text") or "")
@@ -1011,13 +1041,17 @@ def render_board_svg(body: Any, *, view: Optional[tuple[float, float, float, flo
             color = _attr(_ink(st.get("textColor"), "#111827"))
             lines = text.split("\n")
             lh = float(st.get("lineHeight") or 0) or fs * 1.3
-            cy = y + eh / 2 - (len(lines) - 1) * lh / 2
+            # Середина подписи: у треугольника — в широкой части, у цилиндра — под крышкой.
+            mid = {"triangle": y + eh * 0.7, "triangleDown": y + eh * 0.3}.get(t, y + eh / 2)
+            if t == "cylinder":
+                mid += max(2.0, min(eh * 0.12, ew * 0.25, 40.0)) / 2
+            cy = mid - (len(lines) - 1) * lh / 2
             align = st.get("align")
             if align not in ("left", "center", "right"):
                 align = "left" if t == "text" else "center"
             anchor = {"left": "start", "center": "middle", "right": "end"}[align]
             # Поля как в редакторе: у текста без отступа, у ромба — 22% ширины, у остальных 10px.
-            pad = 0 if t == "text" else ew * 0.22 if t == "diamond" else 10
+            pad = 0 if t == "text" else ew * 0.22 if t in ("diamond", "triangle", "triangleDown") else ew * 0.18 if t.startswith("parallelogram") else 10
             tx = x + pad if align == "left" else x + ew - pad if align == "right" else x + ew / 2
             hl = st.get("highlight")
             if isinstance(hl, str) and _HEX_RE.match(hl):
