@@ -4061,7 +4061,13 @@
         h.push('<button type="button" class="lb-btn lb-pbtn lb-txt' + (gt.unit === "week" ? " is-on" : "") + '" data-p="gunit" data-v="week" title="Шкала по неделям">Недели</button>');
       }
       if (types.sticky) h.push(swatchBtn("sticky", stickyVar(commonStyle(list.filter(isType("sticky")), "fill") || "yellow"), "Цвет стикера"));
-      if (anyStroke) h.push(swatchBtn("stroke", inkVar(commonStyle(list.filter(isStroked), "stroke") || "ink"), "Цвет линии", true));
+      if (anyStroke) {
+        var stroked = list.filter(isStroked);
+        var noStroke = stroked.every(function (e) {
+          return e.type !== "line" && e.type !== "pen" && e.style && (e.style.strokeOff || e.style.strokeWidth === 0);
+        });
+        h.push(swatchBtn("stroke", noStroke ? "none" : inkVar(commonStyle(stroked, "stroke") || "ink"), "Цвет линии", true));
+      }
       if (list.length === 1 && list[0].type === "frame") {
         var fr = list[0];
         var dv = DEVICES.filter(function (d) {
@@ -4773,9 +4779,11 @@
             var near = function (u, v) {
               return Math.abs(u - v) < 0.5;
             };
-            if (near(cur[pk] + cur[k], f[pk] + f[k]) && !near(cur[pk], f[pk])) fw[pk] = cur[pk] + cur[k] - n;
+            var pn = pinOf(cur)[k === "w" ? "h" : "v"];
+            if (pn === "r" || pn === "b" || (near(cur[pk] + cur[k], f[pk] + f[k]) && !near(cur[pk], f[pk]))) fw[pk] = cur[pk] + cur[k] - n;
+            else if (pn === "c") fw[pk] = cur[pk] + (cur[k] - n) / 2;
           }
-          patch(cur.id, fw);
+          resizeWithPins(cur.id, fw);
         } else if (k === "rot") {
           if (n == null) return;
           var nr = ((n % 360) + 360) % 360;
@@ -5104,9 +5112,86 @@
       if (h != null && Math.abs(r1(h) - k.h) > 0.05) f.h = Math.max(1, r1(h));
       if (f.w != null || f.h != null) {
         if (k.type === "frame" && k.device) f.device = undefined;
-        patch(k.id, f);
+        resizeWithPins(k.id, f);
         if (k.type === "frame" && k.layout) applyLayout(k.id); // свой автолэйаут — под новый размер
       }
+    }
+
+    // ---- привязка к краям фрейма (constraints, как во Figma): pin «h v» ----
+    // h — l|r|lr|c|s (слева, справа, слева и справа, по центру, масштаб); v — t|b|tb|c|s. По умолчанию «l t».
+    function pinOf(el) {
+      var p = String((el && el.pin) || "").split(" ");
+      return { h: /^(l|r|lr|c|s)$/.test(p[0]) ? p[0] : "l", v: /^(t|b|tb|c|s)$/.test(p[1]) ? p[1] : "t" };
+    }
+
+    function pinStr(P) {
+      var s = P.h + " " + P.v;
+      return s === "l t" ? undefined : s;
+    }
+
+    /** Новое положение и размер по одной оси: a0/s0 — ребёнок, o0/os — фрейм до, n0/ns — после. */
+    function pinAxis(m, a0, s0, o0, os, n0, ns, sizable) {
+      var lo = a0 - o0;
+      var hi = o0 + os - (a0 + s0);
+      if (m === "r") return [n0 + ns - hi - s0, s0];
+      if (m === "c") return [n0 + ns / 2 + (a0 + s0 / 2 - (o0 + os / 2)) - s0 / 2, s0];
+      if (m === "lr" && sizable) return [n0 + lo, Math.max(1, ns - lo - hi)];
+      if (m === "s") {
+        var k = os > 0 ? ns / os : 1;
+        return sizable ? [n0 + lo * k, Math.max(1, s0 * k)] : [n0 + (lo + s0 / 2) * k - s0 / 2, s0];
+      }
+      return [n0 + lo, s0];
+    }
+
+    /** Фрейм сменил рамку o → n: содержимое (по снимку snap: id → копия до правки) встаёт по привязкам. */
+    function applyPins(fid, o, n, snap) {
+      snap.forEach(function (k0) {
+        if (k0.frame !== fid) return;
+        var b = G.elBounds(k0, function (id) {
+          return snap.get(id) || getEl(id);
+        });
+        if (!b) return;
+        var P = pinOf(k0);
+        var box = k0.type !== "line" && k0.type !== "pen";
+        var sw = box && !k0.rot && !(k0.type === "text" && k0.autoW);
+        var sh = box && !k0.rot && k0.type !== "text" && !BLOCKS[k0.type];
+        var X = pinAxis(P.h, b.x, b.w, o.x, o.w, n.x, n.w, sw);
+        var Y = pinAxis(P.v, b.y, b.h, o.y, o.h, n.y, n.h, sh);
+        var dx = r1(X[0] - b.x);
+        var dy = r1(Y[0] - b.y);
+        if (!box) {
+          var cur = getEl(k0.id);
+          if (cur) patch(k0.id, k0.type === "pen" ? { x: k0.x + dx, y: k0.y + dy } : moved(k0, dx, dy, {}));
+          return;
+        }
+        var f = { x: r1(k0.x + dx), y: r1(k0.y + dy), w: r1(X[1]), h: r1(Y[1]) };
+        patch(k0.id, f);
+        if (k0.type === "frame") {
+          applyPins(k0.id, k0, f, snap);
+          if (k0.layout && (f.w !== k0.w || f.h !== k0.h)) applyLayout(k0.id);
+        }
+      });
+    }
+
+    /** Снимок содержимого фрейма (для applyPins). */
+    function pinSnap(fid) {
+      var snap = new Map();
+      withFrameKids([fid]).forEach(function (id) {
+        var e = getEl(id);
+        if (id !== fid && e) snap.set(id, clone(e));
+      });
+      return snap;
+    }
+
+    /** Правка рамки элемента; у фрейма без автолэйаута содержимое следует привязкам. */
+    function resizeWithPins(id, f) {
+      var cur = getEl(id);
+      if (!cur || cur.type !== "frame" || cur.layout || cur.rot) return patch(id, f);
+      var o = { x: cur.x, y: cur.y, w: cur.w, h: cur.h };
+      var snap = pinSnap(id);
+      patch(id, f);
+      var c2 = getEl(id);
+      if (c2 && (c2.x !== o.x || c2.y !== o.y || c2.w !== o.w || c2.h !== o.h)) applyPins(id, o, c2, snap);
     }
 
     /** Разложить содержимое фрейма по правилам. Порядок — по положению вдоль главной оси (или явный order). */
@@ -6486,15 +6571,29 @@
       var p = b.getAttribute("data-p");
       if (p === "stroke" || p === "textColor") {
         openPop(b, function (box) {
-          box.innerHTML = '<div class="lb-swatches">' + INK.map(function (k) {
-            return '<button type="button" class="lb-sw" data-v="' + k + '" title="' + esc(COLOR_NAMES[k] || k) + '" style="--c:' + inkVar(k) + '"></button>';
-          }).join("") + "</div>";
+          // У фигур обводку можно убрать (как «Без заливки»); у линий и рисунков — нет.
+          var canOff = p === "stroke" && !selList().some(function (x) {
+            return x.type === "line" || x.type === "pen";
+          });
+          box.innerHTML = '<div class="lb-swatches">' + (canOff ? '<button type="button" class="lb-sw is-none" data-v="none" title="Без обводки" style="--c:none"></button>' : "") +
+            INK.map(function (k) {
+              return '<button type="button" class="lb-sw" data-v="' + k + '" title="' + esc(COLOR_NAMES[k] || k) + '" style="--c:' + inkVar(k) + '"></button>';
+            }).join("") + "</div>";
           box.onclick = function (ev) {
             var s = ev.target.closest("[data-v]");
             if (!s) return;
-            var f = {};
-            f[p] = s.getAttribute("data-v");
-            applyStyle(p === "stroke" ? isStroked : isType("text"), f);
+            var v = s.getAttribute("data-v");
+            if (p !== "stroke") {
+              applyStyle(isType("text"), { textColor: v });
+            } else if (v === "none") {
+              applyStyle(isStroked, { strokeOff: true });
+            } else {
+              // Цвет возвращает обводку, если её убирали (и толщину, если была 0).
+              applyFields(isStroked, function (x) {
+                var st0 = x.style || {};
+                return { style: { stroke: v, strokeOff: null, strokeWidth: st0.strokeWidth === 0 ? 2 : st0.strokeWidth } };
+              });
+            }
             closePop();
           };
         });
@@ -8002,6 +8101,15 @@
         f.layout = layoutStr(Object.assign(LR, { hug: LR.hug || "none" }));
       }
       patch(g.id, f);
+      // Макет: содержимое фрейма — по привязкам к его краям (Cmd — без них, как во Figma).
+      if (el0.type === "frame" && !el0.layout && !el0.rot && mode === "design") {
+        if (!g.pinSnap) g.pinSnap = pinSnap(g.id);
+        var nf = getEl(g.id);
+        g.pinSnap.forEach(function (k0, id) {
+          if (getEl(id)) put(clone(k0));
+        });
+        if (!free && nf) applyPins(g.id, el0, nf, g.pinSnap);
+      }
     }
 
     /** Тянем край — он прилипает к краям и центрам соседей и экрана (в макете — ещё и к целым пикселям). */
@@ -8832,7 +8940,7 @@
           return;
         }
         var st = el.style || {};
-        var sw = el.type === "line" || el.type === "pen" ? Number(st.strokeWidth) || 2 : strokeW(st, el.type === "frame" ? 0 : 2);
+        var sw = el.type === "line" || el.type === "pen" ? Number(st.strokeWidth) || 2 : st.strokeOff ? 0 : strokeW(st, el.type === "frame" ? 0 : 2);
         ctx.save();
         if (el.rot && BOXED[el.type]) {
           var c = G.center(el);
@@ -9039,7 +9147,7 @@
           return;
         }
         var st = el.style || {};
-        var sw = el.type === "line" || el.type === "pen" ? Number(st.strokeWidth) || 2 : strokeW(st, el.type === "frame" ? 0 : 2);
+        var sw = el.type === "line" || el.type === "pen" ? Number(st.strokeWidth) || 2 : st.strokeOff ? 0 : strokeW(st, el.type === "frame" ? 0 : 2);
         var stroke = colors.ink(st.stroke);
         var dash = dashArray(st.dash, sw);
         var da = dash ? ' stroke-dasharray="' + dash + '"' : "";
