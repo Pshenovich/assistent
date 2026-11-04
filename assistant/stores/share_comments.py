@@ -66,6 +66,21 @@ AGENT_PREFIX = "__agent__:"
 AGENT_AUTHOR_USERNAME = "agent"
 
 
+_SERVICE_PREFIXES = (GPT_PREFIX, RESEARCH_PREFIX, AGENT_PREFIX)
+
+
+def user_prefix(prefix: str | None) -> str:
+    """prefix от клиента — текст перед цитатой; служебные метки ИИ ставит только сервер."""
+    raw = str(prefix or "")
+    return "" if raw.strip().startswith(_SERVICE_PREFIXES) else raw
+
+
+def looks_like_ai_author(name: str | None, username: str | None) -> bool:
+    """Имя или ник, по которым реплика считалась бы репликой ИИ (GPT, Research, CHAIR, агент)."""
+    row = {"author_name": name or "", "author_username": username or ""}
+    return is_gpt_comment(row) or is_research_comment(row) or is_paie_comment(row) or is_agent_turn(row)
+
+
 def is_gpt_comment(row: dict[str, Any] | None) -> bool:
     if not row:
         return False

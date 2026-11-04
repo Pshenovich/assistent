@@ -3033,6 +3033,14 @@ def _comment_author_from_principal(principal: _MiniappPrincipal) -> tuple[str, s
     username = str(u.get("username") or "").strip() or None
     if not name:
         name = f"@{username}" if username else "Пользователь"
+    # Имя «GPT» / «CHAIR» / «Research» или ник @research у живого человека не делают его реплику
+    # «ответом ИИ»: роль ИИ ставит только сервер (as_role, служебный prefix).
+    from assistant.stores import share_comments as share_comments_store
+
+    if share_comments_store.looks_like_ai_author(name, None):
+        name = f"«{name}»"
+    if username and share_comments_store.looks_like_ai_author("", username):
+        username = None
     return str(int(principal.telegram_user_id)), name, username
 
 
@@ -14347,7 +14355,7 @@ async def miniapp_share_comments_create(
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     author_id, author_name, author_username = _comment_author_from_principal(principal)
-    prefix = body.prefix
+    prefix = share_comments_store.user_prefix(body.prefix)
     role = str(body.as_role or "").strip().lower()
     if role == "gpt":
         from assistant.integrations.openrouter_client import gpt_display_label
@@ -17474,7 +17482,7 @@ async def public_share_comments_create(
                 author_username=author_username,
                 body=body.body,
                 quote=body.quote,
-                prefix=body.prefix,
+                prefix=share_comments_store.user_prefix(body.prefix),
                 suffix=body.suffix,
                 parent_id=body.parent_id,
                 chat_id=pub_chat if body.parent_id in (None, 0) else None,
