@@ -45,7 +45,7 @@ class AccountError(ValueError):
 
 def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'email_codes'").fetchone():
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tg_link_tokens'").fetchone():
         return conn
     conn.executescript(
         """
@@ -69,6 +69,11 @@ def _conn() -> sqlite3.Connection:
         );
         CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email, created_at);
         CREATE INDEX IF NOT EXISTS idx_email_codes_ip ON email_codes(ip, created_at);
+        CREATE TABLE IF NOT EXISTS tg_link_tokens (
+            token TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            expires_at INTEGER NOT NULL
+        );
         """
     )
     return conn
@@ -289,3 +294,54 @@ def verify_code(email: str, raw_code: str, *, purpose: str = "login") -> str:
         conn.execute("UPDATE email_codes SET used_at = ? WHERE id = ?", (now, cid))
         conn.commit()
     return key
+
+
+# ---------- привязка Telegram по ссылке в бота ----------
+
+TG_LINK_TTL_SEC = 15 * 60
+
+
+def tg_changeable(user_id: int | str) -> bool:
+    """Сменить Telegram можно только у аккаунта по почте: у старых аккаунтов id и есть Telegram id."""
+    return is_synthetic(user_id)
+
+
+def issue_tg_link(user_id: int) -> str:
+    uid = int(user_id)
+    if not tg_changeable(uid):
+        raise AccountError("Telegram этого аккаунта сменить нельзя: аккаунт создан через него. Напишите в поддержку.")
+    if not get(uid):
+        raise AccountError("Аккаунт не найден.", 404)
+    token = secrets.token_urlsafe(12)
+    now = _now()
+    with _LOCK:
+        conn = _conn()
+        conn.execute("DELETE FROM tg_link_tokens WHERE user_id = ? OR expires_at < ?", (str(uid), now))
+        conn.execute("INSERT INTO tg_link_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
+                     (token, str(uid), now + TG_LINK_TTL_SEC))
+        conn.commit()
+    return token
+
+
+def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optional[int]]:
+    """Бот получил /start link_<token>: привязать (или сменить) Telegram. (аккаунт, прежний Telegram id)."""
+    tg = int(tg_user_id)
+    now = _now()
+    with _LOCK:
+        conn = _conn()
+        r = conn.execute("SELECT user_id, expires_at FROM tg_link_tokens WHERE token = ?", (str(token or ""),)).fetchone()
+        if r:
+            conn.execute("DELETE FROM tg_link_tokens WHERE token = ?", (str(token),))
+            conn.commit()
+    if not r or int(r[1]) < now:
+        raise AccountError("Ссылка устарела — откройте её заново из профиля Орбиты.")
+    uid = int(r[0])
+    if get(tg) and tg != uid:
+        raise AccountError("Этот Telegram — основной для другого аккаунта Орбиты (со своей почтой). Сменить его нельзя.")
+    acc = get(uid)
+    if not acc:
+        raise AccountError("Аккаунт не найден.", 404)
+    old = acc["tg_user_id"]
+    if old == tg:
+        return acc, None
+    return link_tg(uid, tg), old

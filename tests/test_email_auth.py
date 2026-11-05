@@ -150,3 +150,25 @@ def test_member_add_requires_email(env):
     members = r.json()["members"]
     row = next(m for m in members if m["email"] == "someone@acme.io")
     assert row["tg"] == "someone_tg"
+
+
+def test_profile_change_email_and_tg_link(env, monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "orbita_test_bot")
+    monkeypatch.setattr(usage_server, "_miniapp_resolve_bot_username", lambda: "orbita_test_bot")
+    c = env["c"]
+    email = _email()
+    r = c.post("/api/miniapp/auth/email/verify", json={"email": email, "code": _code(env, email)})
+    h = {"Authorization": "session " + r.json()["session_token"]}
+    me = c.get("/api/miniapp/me", headers=h).json()
+    assert me["tg_changeable"] is True and me["tg_linked"] is False
+    r = c.post("/api/miniapp/auth/tg/link", headers=h)
+    assert r.status_code == 200 and "?start=link_" in r.json()["url"]
+    new = _email()
+    r = c.post("/api/miniapp/auth/email/attach", headers=h, json={"email": new, "code": _code(env, new)})
+    assert r.status_code == 200 and r.json()["user"]["email"] == new
+    assert c.get("/api/miniapp/me", headers=h).json()["email"] == new
+    # старый аккаунт из Telegram: сменить Telegram нельзя
+    tg = next(_ids)
+    accounts.attach_email(tg, _email())
+    assert c.get("/api/miniapp/me", headers=_tma(tg)).json()["tg_changeable"] is False
+    assert c.post("/api/miniapp/auth/tg/link", headers=_tma(tg)).status_code == 400

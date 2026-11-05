@@ -10606,6 +10606,8 @@
     }
     var logoutWrap = document.getElementById("profile-logout-wrap");
     if (logoutWrap) setHidden(logoutWrap, hasTelegramWebAppAuth());
+    renderProfileLogin(me);
+    bindProfileLoginOnce();
   }
 
   function profileLogout() {
@@ -57415,34 +57417,108 @@
 
   var emailGateShown = false;
 
-  /** Почта не подтверждена (EMAIL_REQUIRED): без неё дальше не пускаем — и в браузере, и в миниаппе. */
-  function showEmailRequired(hint) {
-    if (emailGateShown) return;
-    emailGateShown = true;
+  /** Полноэкранная форма «почта → код» для текущего аккаунта (подтвердить или сменить почту). */
+  function openEmailSheet(o) {
     var wrap = document.createElement("div");
     wrap.id = "email-gate";
     wrap.className = "gate email-gate";
     wrap.innerHTML =
       '<div class="gate-card">' +
-      '<h1 class="gate-title">Подтвердите почту</h1>' +
-      '<p class="gate-text">Вход в Орбиту теперь по рабочей почте. Укажите ту, что знает ваша организация, — ' +
-      "пришлём код. Telegram останется привязан.</p>" +
+      '<h1 class="gate-title"></h1>' +
+      '<p class="gate-text"></p>' +
       '<div class="gate-email-login"></div>' +
       '<p class="error hidden"></p>' +
+      (o.closable ? '<button type="button" class="gate-email-link" data-act="close">Отмена</button>' : "") +
       "</div>";
+    wrap.querySelector(".gate-title").textContent = o.title;
+    wrap.querySelector(".gate-text").textContent = o.text;
     document.body.appendChild(wrap);
+    var close = wrap.querySelector('[data-act="close"]');
+    if (close) close.addEventListener("click", function () { wrap.remove(); });
     mountEmailCodeForm(wrap.querySelector(".gate-email-login"), {
       authed: true,
-      hint: hint || "",
+      hint: o.hint || "",
       errEl: wrap.querySelector(".error"),
       verifyPath: "/auth/email/attach",
-      submitLabel: "Подтвердить",
+      submitLabel: o.submitLabel || "Подтвердить",
       onDone: function (data) {
         if (data && data.session_token && !hasTelegramWebAppAuth()) setStoredSession(data.session_token);
         // Аккаунт мог смениться (Telegram привязали к аккаунту по почте) — грузим всё заново.
         location.reload();
       },
     });
+  }
+
+  /** Почта не подтверждена (EMAIL_REQUIRED): без неё дальше не пускаем — и в браузере, и в миниаппе. */
+  function showEmailRequired(hint) {
+    if (emailGateShown) return;
+    emailGateShown = true;
+    openEmailSheet({
+      title: "Подтвердите почту",
+      text: "Вход в Орбиту теперь по рабочей почте. Укажите ту, что знает ваша организация, — пришлём код. Telegram останется привязан.",
+      hint: hint,
+    });
+  }
+
+  // ——— Профиль → «Вход в Орбиту»: почта и Telegram ———
+
+  function renderProfileLogin(me) {
+    var emailVal = document.getElementById("profile-email-val");
+    if (emailVal) emailVal.textContent = (me && me.email) || "не подтверждена";
+    var tgVal = document.getElementById("profile-tg-val");
+    var tgAct = document.getElementById("profile-tg-action");
+    var tgBtn = document.getElementById("profile-tg-open");
+    var tgChev = document.getElementById("profile-tg-chev");
+    if (!tgVal || !tgBtn) return;
+    var linked = !!(me && me.tg_linked);
+    var changeable = !!(me && me.tg_changeable);
+    tgVal.textContent = linked
+      ? (me.username ? "@" + me.username : "привязан") + (changeable ? "" : " · основной, сменить нельзя")
+      : "не привязан";
+    if (tgAct) tgAct.textContent = changeable ? (linked ? "Сменить" : "Привязать") : "";
+    if (tgChev) setHidden(tgChev, !changeable);
+    tgBtn.disabled = !changeable;
+    tgBtn.classList.toggle("pf-row--static", !changeable);
+  }
+
+  function bindProfileLoginOnce() {
+    var emailBtn = document.getElementById("profile-email-open");
+    if (emailBtn && emailBtn.dataset.bound !== "1") {
+      emailBtn.dataset.bound = "1";
+      emailBtn.addEventListener("click", function () {
+        openEmailSheet({
+          title: "Сменить почту",
+          text: "Укажите новую почту — пришлём на неё код. Входить в Орбиту будете по ней.",
+          submitLabel: "Сменить почту",
+          closable: true,
+        });
+      });
+    }
+    var tgBtn = document.getElementById("profile-tg-open");
+    if (tgBtn && tgBtn.dataset.bound !== "1") {
+      tgBtn.dataset.bound = "1";
+      tgBtn.addEventListener("click", function () {
+        if (tgBtn.disabled) return;
+        var act = document.getElementById("profile-tg-action");
+        var was = act ? act.textContent : "";
+        if (act) act.textContent = "…";
+        apiFetch("/auth/tg/link", { method: "POST" })
+          .then(function (r) {
+            var tg = window.Telegram && window.Telegram.WebApp;
+            if (tg && hasTelegramWebAppAuth() && typeof tg.openTelegramLink === "function") tg.openTelegramLink(r.url);
+            else window.open(r.url, "_blank", "noopener");
+            var sub = document.getElementById("profile-tg-val");
+            if (sub) sub.textContent = "Нажмите «Start» в боте с нужного Telegram — ссылка действует 15 минут";
+          })
+          .catch(function (e) {
+            var sub = document.getElementById("profile-tg-val");
+            if (sub) sub.textContent = e.message || String(e);
+          })
+          .finally(function () {
+            if (act) act.textContent = was;
+          });
+      });
+    }
   }
 
   window.onTelegramAuth = function (user) {

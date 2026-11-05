@@ -177,3 +177,33 @@ async def _continue_start(update: Update, context: ContextTypes.DEFAULT_TYPE, ui
         raise
     except Exception as e:
         print(f"[email_link] continue start uid={uid} err={e!r}")
+
+
+async def link_by_start(update: Update, context: ContextTypes.DEFAULT_TYPE, token: str) -> None:
+    """/start link_<token> из профиля Орбиты: привязать этот Telegram к аккаунту по почте (или сменить)."""
+    from assistant.lib import tg_account_ids
+    from assistant.stores import accounts
+
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+    uid_now = int(user.id)
+    if accounts.is_synthetic(uid_now):
+        # Апдейт уже пришёл с id аккаунта — этот Telegram к нему привязан.
+        await msg.reply_text("Этот Telegram уже привязан к аккаунту Орбиты. Чтобы перенести его на другую почту, напишите в поддержку.")
+        return
+    try:
+        acc, old = await asyncio.to_thread(accounts.link_tg_by_token, token, uid_now)
+    except accounts.AccountError as e:
+        await msg.reply_text(str(e))
+        return
+    tg_account_ids.forget(uid_now, int(acc["user_id"]), *([old] if old else []))
+    context.user_data.pop(STATE_KEY, None)  # type: ignore[union-attr]
+    await msg.reply_text(f"Готово: этот Telegram привязан к аккаунту {acc['email']}.")
+    if old:
+        try:
+            await context.bot.send_message(chat_id=int(old), text=f"Аккаунт Орбиты {acc['email']} перенесён на другой Telegram.")
+        except Exception:
+            pass
+    await _continue_start(update, context, int(acc["user_id"]))

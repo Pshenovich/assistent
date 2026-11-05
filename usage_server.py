@@ -5658,6 +5658,21 @@ async def miniapp_auth_email_attach(
     return _session_response(uid, user, switched=switched)
 
 
+@miniapp_router.post("/auth/tg/link")
+async def miniapp_auth_tg_link(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Ссылка в бота: «Start» по ней привязывает (или меняет) Telegram аккаунта по почте."""
+    from assistant.stores import accounts
+
+    bot = _miniapp_resolve_bot_username() or (os.getenv("TELEGRAM_BOT_USERNAME", "") or "").strip().lstrip("@")
+    if not bot:
+        raise HTTPException(status_code=503, detail="Бот не настроен.")
+    try:
+        token = await run_in_threadpool(accounts.issue_tg_link, int(principal.telegram_user_id))
+    except accounts.AccountError as e:
+        raise _account_error(e) from e
+    return {"url": f"https://t.me/{bot}?start=link_{token}", "ttl_sec": accounts.TG_LINK_TTL_SEC}
+
+
 @miniapp_router.post("/auth/logout")
 async def miniapp_auth_logout() -> JSONResponse:
     resp = JSONResponse({"ok": True})
@@ -5680,6 +5695,7 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
         "email_hint": await run_in_threadpool(_account_email_hint, principal),
         "need_email": await run_in_threadpool(_needs_email, principal),
         "tg_linked": bool(principal.tg_id),
+        "tg_changeable": await run_in_threadpool(_account_tg_changeable, int(principal.telegram_user_id)),
         "bot_username": _miniapp_resolve_bot_username(),
         "has_custom_avatar": await run_in_threadpool(_user_has_custom_avatar, int(principal.telegram_user_id)),
         "ui_theme": await run_in_threadpool(_ui_theme_state, principal),
@@ -5691,6 +5707,12 @@ def _account_email(uid: int) -> str | None:
     from assistant.stores import accounts
 
     return accounts.email_of(uid)
+
+
+def _account_tg_changeable(uid: int) -> bool:
+    from assistant.stores import accounts
+
+    return accounts.tg_changeable(uid)
 
 
 def _account_email_hint(principal: _MiniappPrincipal) -> str | None:

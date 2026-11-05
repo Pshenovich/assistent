@@ -198,3 +198,45 @@ def test_commands_pass_through_and_cancel():
     upd, msg = _update(next(_ids), "/cancel")
     _run(email_link.handle_message(upd, ctx))
     assert email_link.STATE_KEY not in ctx.user_data
+
+
+def test_change_telegram_by_profile_link():
+    """Профиль → «Сменить Telegram»: ссылка в бота с токеном, Start с нового Telegram."""
+    acc = accounts.create_email_account(_email())
+    uid, old_tg, new_tg = acc["user_id"], next(_ids), next(_ids)
+    accounts.link_tg(uid, old_tg)
+    token = accounts.issue_tg_link(uid)
+    got, old = accounts.link_tg_by_token(token, new_tg)
+    assert got["tg_user_id"] == new_tg and old == old_tg
+    assert accounts.account_for_tg(new_tg) == uid
+    assert accounts.account_for_tg(old_tg) == old_tg  # старый Telegram больше не этот аккаунт
+    with pytest.raises(accounts.AccountError):
+        accounts.link_tg_by_token(token, next(_ids))  # одноразовая
+
+
+def test_telegram_of_legacy_account_not_changeable():
+    legacy = next(_ids)
+    accounts.attach_email(legacy, _email())
+    assert accounts.tg_changeable(legacy) is False
+    with pytest.raises(accounts.AccountError):
+        accounts.issue_tg_link(legacy)
+    # Telegram со своим аккаунтом (почтой) не переносим на чужой аккаунт
+    acc = accounts.create_email_account(_email())
+    with pytest.raises(accounts.AccountError):
+        accounts.link_tg_by_token(accounts.issue_tg_link(acc["user_id"]), legacy)
+
+
+def test_bot_start_link(monkeypatch):
+    acc = accounts.create_email_account(_email())
+    tg = next(_ids)
+    started = []
+
+    async def fake_continue(update, context, uid):
+        started.append(uid)
+
+    monkeypatch.setattr(email_link, "_continue_start", fake_continue)
+    upd, msg = _update(tg, "/start")
+    ctx = SimpleNamespace(user_data={}, bot=SimpleNamespace())
+    asyncio.run(email_link.link_by_start(upd, ctx, accounts.issue_tg_link(acc["user_id"])))
+    assert "привязан" in msg.replies[-1] and started == [acc["user_id"]]
+    assert accounts.account_for_tg(tg) == acc["user_id"]

@@ -103,6 +103,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # «Добавить в группу» (startgroup) присылает /start в группу — знакомство там не показываем.
     if chat and chat.type != "private":
         return
+    start_arg = str((context.args or [""])[0] or "")
+    if start_arg.startswith("link_"):
+        # Привязка Telegram из профиля Орбиты (ссылка с токеном) — до проверки доступа.
+        from assistant.bot import email_link
+
+        await email_link.link_by_start(update, context, start_arg[5:])
+        return
     if not await ensure_access(update, context):
         return
     user = update.effective_user
