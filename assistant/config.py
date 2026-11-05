@@ -15,8 +15,11 @@ DEFAULT_EVENT_TITLE = "Leo: Встреча без названия"
 CALENDAR_TZ = os.getenv("CALENDAR_TZ", "Europe/Moscow").strip() or "Europe/Moscow"
 GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip() or "primary"
 OBUCHAT_TRANSCRIBE_BASE = os.getenv(
-    "OBUCHAT_TRANSCRIBE_BASE", "https://assistant.obuchat.me/transcribe-api"
-).strip()
+    "OBUCHAT_TRANSCRIBE_BASE", "https://transcribe.obuchat.me/api/v1"
+).strip().rstrip("/")
+# Старый адрес (сервер 155.212.189.205) выключен — в старых .env он ещё прописан.
+if OBUCHAT_TRANSCRIBE_BASE == "https://assistant.obuchat.me/transcribe-api":
+    OBUCHAT_TRANSCRIBE_BASE = "https://transcribe.obuchat.me/api/v1"
 WORK_HOURS_START = os.getenv("WORK_HOURS_START", "09:00").strip() or "09:00"
 WORK_HOURS_END = os.getenv("WORK_HOURS_END", "18:00").strip() or "18:00"
 SLOT_MIN_MINUTES = int(os.getenv("SLOT_MIN_MINUTES", "30") or "30")

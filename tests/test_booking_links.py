@@ -386,7 +386,7 @@ class AnnouncePublicBookingTests(unittest.IsolatedAsyncioTestCase):
         bot.__aenter__ = AsyncMock(return_value=bot)
         bot.__aexit__ = AsyncMock(return_value=False)
         with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "123:ABC"}), patch(
-            "telegram.Bot", return_value=bot
+            "assistant.lib.telegram_bot_api.make_bot", return_value=bot
         ), patch(
             "assistant.services.meeting_invites.notify_invitees_for_miniapp",
             new_callable=AsyncMock,

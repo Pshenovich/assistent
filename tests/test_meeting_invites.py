@@ -139,7 +139,7 @@ class TestMeetingInvites(unittest.TestCase):
             cm.__aexit__ = AsyncMock(return_value=None)
             with patch.object(inv, "invites_enabled", return_value=True), patch.dict(
                 os.environ, {"TELEGRAM_BOT_TOKEN": "token"}
-            ), patch.object(inv, "Bot", return_value=cm), patch.object(
+            ), patch.object(inv, "make_bot", return_value=cm), patch.object(
                 inv, "notify_invitees", new_callable=AsyncMock, return_value=1
             ) as notify:
                 await inv.notify_invitees_for_miniapp(

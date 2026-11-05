@@ -48,3 +48,25 @@ def test_notify_urls_use_mirror(monkeypatch):
     monkeypatch.delenv("TELEGRAM_RICH_BOT_API_BASE_URL", raising=False)
     assert telegram_notify._bot_api_url("getMe") == "https://tg-mirror.example.org/bot1:x/getMe"
     assert telegram_notify._rich_api_url("sendRichMessage").startswith("https://tg-mirror.example.org/bot")
+
+
+def test_make_bot_uses_mirror(monkeypatch):
+    # Разовые отправки (приглашения на встречу, бронирование) — тоже через зеркало, не api.telegram.org.
+    monkeypatch.setenv("TELEGRAM_BOT_API_BASE_URL", "https://tg-mirror.example.org")
+    bot = telegram_bot_api.make_bot("1:x")
+    assert bot.base_url == "https://tg-mirror.example.org/bot1:x"
+    assert not bot.local_mode
+    monkeypatch.delenv("TELEGRAM_BOT_API_BASE_URL")
+    assert telegram_bot_api.make_bot("1:x").base_url == "https://api.telegram.org/bot1:x"
+
+
+def test_transcribe_base_skips_dead_host(monkeypatch):
+    import importlib
+
+    monkeypatch.setenv("OBUCHAT_TRANSCRIBE_BASE", "https://assistant.obuchat.me/transcribe-api")
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: None)
+    try:
+        assert importlib.reload(config).OBUCHAT_TRANSCRIBE_BASE == "https://transcribe.obuchat.me/api/v1"
+    finally:
+        monkeypatch.undo()
+        importlib.reload(config)

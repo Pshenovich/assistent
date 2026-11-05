@@ -14,6 +14,7 @@ from assistant.bot.access_gate import is_user_allowed
 from assistant.config import GOOGLE_CALENDAR_ID
 from assistant.lib import calendar_pending_store as cps
 from assistant.lib.calendar_attendees import attendee_calendar_user_id
+from assistant.lib.telegram_bot_api import make_bot
 from assistant.lib.calendar_event_utils import (
     event_is_invitation,
     event_needs_rsvp,
@@ -634,7 +635,7 @@ async def notify_invitees_for_miniapp(
             return 0
     uname = str((organizer_user or {}).get("username") or "").strip() or None
     try:
-        async with Bot(token) as bot:
+        async with make_bot(token) as bot:
             return await notify_invitees(
                 bot,
                 organizer=_MiniappOrganizer(organizer_user),

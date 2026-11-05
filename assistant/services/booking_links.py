@@ -137,7 +137,7 @@ async def announce_public_booking(
     organizer_user: dict[str, Any] | None = None,
 ) -> None:
     """Заменяет сообщение со ссылкой карточкой встречи и пишет владельцу."""
-    from telegram import Bot
+    from assistant.lib.telegram_bot_api import make_bot
     from telegram.constants import ParseMode
 
     from assistant.lib import calendar_pending_store as cps
@@ -158,7 +158,7 @@ async def announce_public_booking(
         return
     edited = False
     try:
-        async with Bot(token) as bot:
+        async with make_bot(token) as bot:
             if source_chat_id and source_message_id and card:
                 try:
                     await bot.edit_message_text(
