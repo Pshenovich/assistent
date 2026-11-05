@@ -112,6 +112,17 @@ html[data-theme="light"] .leo-board {
   --lb-fill-brown: #efe3d6;
 }
 
+/* Свайп двумя пальцами по трекпаду влево/вправо на доске — прокрутка холста, а не «страница назад»
+   (жест браузера срабатывает на корневой прокрутке — у неё и отключаем, пока доска на странице). */
+html:has(.leo-board),
+html:has(.leo-board) body {
+  overscroll-behavior-x: none;
+}
+
+.leo-board {
+  overscroll-behavior: none;
+}
+
 .leo-board .hidden {
   display: none !important;
 }

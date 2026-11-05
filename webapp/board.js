@@ -9962,6 +9962,19 @@
     stage.addEventListener("pointerup", onPointerUp);
     stage.addEventListener("pointercancel", onPointerUp);
     stage.addEventListener("wheel", onWheel, { passive: false });
+    // Горизонтальный свайп над панелями доски (инструменты, слои, свойства, миникарта) — не «назад» в браузере:
+    // гасим, если под пальцами нет своей горизонтальной прокрутки, которой есть куда ехать.
+    root.addEventListener("wheel", function (e) {
+      if (e.defaultPrevented || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+      for (var q = e.target; q && q !== root; q = q.parentElement) {
+        if (q.scrollWidth > q.clientWidth + 1) {
+          var ox = getComputedStyle(q).overflowX;
+          if ((ox === "auto" || ox === "scroll") &&
+            (e.deltaX < 0 ? q.scrollLeft > 0 : q.scrollLeft + q.clientWidth < q.scrollWidth - 1)) return;
+        }
+      }
+      e.preventDefault();
+    }, { passive: false });
     stage.addEventListener("keydown", onKeyDown);
     stage.addEventListener("keyup", onKeyUp);
     stage.addEventListener("copy", onCopy);
