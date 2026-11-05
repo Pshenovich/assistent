@@ -35,6 +35,13 @@ async def meeting_invite_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             print(f"[meeting_invite] user={user_id} fetch err={e!r}")
             return
+        if not notified.has_baseline(user_id):
+            # Первый просмотр календаря (подключили Google, новый сервер без истории): все
+            # уже существующие приглашения — молча, иначе человеку прилетает пачка RSVP разом.
+            ids = [str(ev.get("event_id") or "") for ev in pending]
+            await asyncio.to_thread(notified.mark_baseline, user_id, ids)
+            print(f"[meeting_invite] baseline uid={user_id} existing={len(ids)}")
+            return
         for ev in pending:
             ev_id = str(ev.get("event_id") or "")
             if not ev_id or notified.was_notified(user_id, ev_id):

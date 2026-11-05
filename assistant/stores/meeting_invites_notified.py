@@ -11,6 +11,8 @@ from pathlib import Path
 from assistant.config import ROOT
 
 _lock = threading.RLock()
+# Метка «календарь пользователя уже просмотрен»: не стареет, в отличие от записей о приглашениях.
+_BASELINE = ":__baseline__"
 
 
 def _path() -> Path:
@@ -41,7 +43,7 @@ def _load() -> dict[str, float]:
 def _save(sent: dict[str, float]) -> None:
     path = _path()
     cutoff = time.time() - 86400 * 21
-    pruned = {k: v for k, v in sent.items() if v >= cutoff}
+    pruned = {k: v for k, v in sent.items() if v >= cutoff or k.endswith(_BASELINE)}
     with _lock:
         path.write_text(
             json.dumps({"sent": pruned}, ensure_ascii=False, indent=2),
@@ -65,3 +67,20 @@ def mark_notified(user_id: int, event_id: str) -> None:
     sent = _load()
     sent[key] = time.time()
     _save(sent)
+
+
+def has_baseline(user_id: int) -> bool:
+    """Уже был первый просмотр календаря (после него сообщаем только о новых приглашениях)."""
+    return f"{int(user_id)}{_BASELINE}" in _load()
+
+
+def mark_baseline(user_id: int, event_ids: list[str]) -> None:
+    """Первый просмотр: все текущие приглашения — как уже отправленные, без сообщений."""
+    now = time.time()
+    with _lock:
+        sent = _load()
+        for ev in event_ids:
+            if str(ev or "").strip():
+                sent.setdefault(invite_key(user_id, ev), now)
+        sent[f"{int(user_id)}{_BASELINE}"] = now
+        _save(sent)
