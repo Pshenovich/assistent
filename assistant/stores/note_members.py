@@ -90,6 +90,23 @@ def _conn() -> sqlite3.Connection:
         """
     )
     conn.commit()
+    return _migrate_profiles(conn)
+
+
+_PROFILES_MIGRATED: Optional[sqlite3.Connection] = None
+
+
+def _migrate_profiles(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Своё имя (профиль → «Аккаунт») — отдельно от имени из Telegram, которое обновляется при каждом входе."""
+    global _PROFILES_MIGRATED
+    if _PROFILES_MIGRATED is conn:
+        return conn
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(user_profiles)").fetchall()}
+    for col in ("custom_first_name", "custom_last_name"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE user_profiles ADD COLUMN {col} TEXT")
+    conn.commit()
+    _PROFILES_MIGRATED = conn
     return conn
 
 
@@ -172,13 +189,34 @@ def get_profile(user_id: int | str) -> Optional[dict[str, Any]]:
         ).fetchone()
     if not row:
         return None
+    custom = str(row["custom_first_name"] or "").strip()
     return {
         "user_id": str(row["user_id"]),
         "username": str(row["username"] or "") or None,
-        "first_name": str(row["first_name"] or "") or None,
-        "last_name": str(row["last_name"] or "") or None,
+        # Своё имя (если задано) главнее имени из Telegram — и для фамилии тоже, даже пустой.
+        "first_name": custom or str(row["first_name"] or "") or None,
+        "last_name": (str(row["custom_last_name"] or "") if custom else str(row["last_name"] or "")) or None,
         "photo_url": str(row["photo_url"] or "") or None,
     }
+
+
+def set_custom_name(user_id: int | str, first_name: str, last_name: str = "") -> dict[str, Any]:
+    """Имя в Орбите. Пустое имя — снова как в Telegram."""
+    uid = _uid(user_id)
+    fn = " ".join(str(first_name or "").split())[:64]
+    ln = " ".join(str(last_name or "").split())[:64]
+    with _LOCK:
+        conn = _conn()
+        if not conn.execute("SELECT 1 FROM user_profiles WHERE user_id = ?", (uid,)).fetchone():
+            conn.execute(
+                "INSERT INTO user_profiles (user_id, updated_at) VALUES (?, ?)", (uid, _now_iso())
+            )
+        conn.execute(
+            "UPDATE user_profiles SET custom_first_name = ?, custom_last_name = ?, updated_at = ? WHERE user_id = ?",
+            (fn or None, (ln or None) if fn else None, _now_iso(), uid),
+        )
+        conn.commit()
+    return get_profile(uid) or {}
 
 
 def profile_display_name(profile: dict[str, Any] | None, *, fallback: str = "") -> str:

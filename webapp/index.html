@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261105-emailauth2" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261105-emailauth3" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261105-design44" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261105-emailauth1" />
@@ -1319,6 +1319,59 @@
           </div>
         </div>
 
+        <div id="profile-account" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-account-back">← Назад</button>
+            <span class="detail-title">Аккаунт</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pf-screen-body">
+              <div class="profile-head pf-account-head" id="profile-account-head"></div>
+              <div class="pf-group">
+                <p class="pf-group-title">Имя</p>
+                <div class="pf-list">
+                  <label class="pf-field">
+                    <span class="pf-field-label">Имя</span>
+                    <input type="text" id="account-first-name" class="pf-input" maxlength="64" autocomplete="given-name" placeholder="Как в Telegram" />
+                  </label>
+                  <label class="pf-field">
+                    <span class="pf-field-label">Фамилия</span>
+                    <input type="text" id="account-last-name" class="pf-input" maxlength="64" autocomplete="family-name" />
+                  </label>
+                </div>
+                <p class="pf-hint" id="account-name-status" aria-live="polite">Так вас видят коллеги в Орбите. Пусто — имя из Telegram.</p>
+              </div>
+              <div class="pf-group">
+                <p class="pf-group-title">Вход в Орбиту</p>
+                <div class="pf-list">
+                  <button type="button" class="pf-row" id="account-email-row">
+                    <span class="pf-ico pf-ico--blue" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Почта</span><span class="pf-row-sub" id="account-email-val">—</span></span>
+                      <span class="pf-row-val">Сменить</span>
+                      <span class="pf-chev" aria-hidden="true">›</span>
+                    </span>
+                  </button>
+                  <button type="button" class="pf-row" id="account-tg-row">
+                    <span class="pf-ico pf-ico--violet" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="m21 4-18 7 6 2 2 6 3-4 5 4z" /><path d="m9 13 9-7" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Telegram</span><span class="pf-row-sub" id="account-tg-val">—</span></span>
+                      <span class="pf-row-val" id="account-tg-action"></span>
+                      <span class="pf-chev" aria-hidden="true" id="account-tg-chev">›</span>
+                    </span>
+                  </button>
+                </div>
+                <p class="pf-hint">Входите по почте — пришлём код. Telegram — чтобы писать Лео и получать уведомления.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="profile-calendars" class="profile-subscreen hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
             <button type="button" class="btn-text" id="profile-calendars-back">← Назад</button>
@@ -2500,7 +2553,7 @@
   <script src="/webapp/web-canvas.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261105-emailauth3" defer></script>
+  <script src="/webapp/app.js?v=20261105-emailauth4" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>

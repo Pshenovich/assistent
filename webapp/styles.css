@@ -18800,25 +18800,55 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
   display: none;
 }
 
-/* Почта и Telegram под именем: значение и «Сменить» / «Привязать» */
-#profile-main .pf-ident {
+/* Шапка профиля — кнопка «Аккаунт»: фото, имя, почта и › */
+.pf-head-btn {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 0.6rem;
+  align-items: center;
+  gap: var(--space-4);
+  width: 100%;
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.pf-ident-val {
-  min-width: 0;
+.pf-head-btn .profile-names {
+  flex: 1 1 auto;
+}
+
+.pf-head-btn .pf-nick {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pf-ident .pf-link {
-  padding: 0;
-  font-size: 0.8125rem;
+.pf-head-btn .pf-chev {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 1.25rem;
+}
+
+/* Экран «Аккаунт»: фото и имя сверху */
+#profile-account-head {
+  margin: 0 0 var(--space-2);
+  border: 0;
+  background: none;
+  padding: var(--space-2) var(--space-1);
+}
+
+#profile-account-head .profile-names {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+#profile-account-head .profile-names h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
 /* Скелетоны: серые плашки, пока данные не пришли. */

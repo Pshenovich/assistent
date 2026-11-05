@@ -5684,12 +5684,14 @@ async def miniapp_auth_logout() -> JSONResponse:
 async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict:
     u = principal.user
     await run_in_threadpool(_remember_principal_profile, principal)
+    prof = await run_in_threadpool(_own_profile, int(principal.telegram_user_id))
     return {
         "id": u.get("id") if u.get("id") is not None else int(principal.telegram_user_id),
         "telegram_user_id": int(principal.telegram_user_id),
-        "username": u.get("username"),
-        "first_name": u.get("first_name"),
-        "last_name": u.get("last_name"),
+        "username": u.get("username") or prof.get("username"),
+        # Своё имя из «Аккаунта» главнее имени из Telegram (get_profile это учитывает).
+        "first_name": prof.get("first_name") or u.get("first_name"),
+        "last_name": prof.get("last_name") if prof.get("first_name") else u.get("last_name"),
         "language_code": u.get("language_code"),
         "email": await run_in_threadpool(_account_email, int(principal.telegram_user_id)),
         "email_hint": await run_in_threadpool(_account_email_hint, principal),
@@ -5701,6 +5703,33 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
         "ui_theme": await run_in_threadpool(_ui_theme_state, principal),
         "onboarding": await run_in_threadpool(_onboarding_state, principal),
     }
+
+
+def _own_profile(uid: int) -> dict[str, Any]:
+    try:
+        from assistant.stores import note_members
+
+        return note_members.get_profile(uid) or {}
+    except Exception:
+        return {}
+
+
+class _ProfileNameBody(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+
+
+@miniapp_router.put("/profile/name")
+async def miniapp_profile_name(
+    body: _ProfileNameBody, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Имя в Орбите (профиль → «Аккаунт»). Пустое — снова как в Telegram."""
+    from assistant.stores import note_members
+
+    prof = await run_in_threadpool(
+        note_members.set_custom_name, int(principal.telegram_user_id), body.first_name, body.last_name
+    )
+    return {"first_name": prof.get("first_name"), "last_name": prof.get("last_name")}
 
 
 def _account_email(uid: int) -> str | None:

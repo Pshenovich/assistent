@@ -172,3 +172,18 @@ def test_profile_change_email_and_tg_link(env, monkeypatch):
     accounts.attach_email(tg, _email())
     assert c.get("/api/miniapp/me", headers=_tma(tg)).json()["tg_changeable"] is False
     assert c.post("/api/miniapp/auth/tg/link", headers=_tma(tg)).status_code == 400
+
+
+def test_custom_name_beats_telegram_name(env):
+    c = env["c"]
+    tg = next(_ids)
+    accounts.attach_email(tg, _email())
+    assert c.get("/api/miniapp/me", headers=_tma(tg)).json()["first_name"] == "U"
+    r = c.put("/api/miniapp/profile/name", headers=_tma(tg), json={"first_name": "  Анна  ", "last_name": "Петрова"})
+    assert r.status_code == 200 and r.json() == {"first_name": "Анна", "last_name": "Петрова"}
+    # следующий вход из Telegram (с его именем) своё имя не перетирает
+    me = c.get("/api/miniapp/me", headers=_tma(tg)).json()
+    assert (me["first_name"], me["last_name"]) == ("Анна", "Петрова")
+    # пустое имя — снова как в Telegram
+    c.put("/api/miniapp/profile/name", headers=_tma(tg), json={"first_name": "", "last_name": ""})
+    assert c.get("/api/miniapp/me", headers=_tma(tg)).json()["first_name"] == "U"

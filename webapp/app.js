@@ -10218,8 +10218,32 @@
     return { uid: uid != null ? String(uid) : "", unameKey: uname ? "u:" + uname : "" };
   }
 
+  // Главный экран профиля: шапка — кнопка «Аккаунт» (фото, имя, почта). Править — на экране «Аккаунт».
   function renderProfileHead(me) {
     var head = document.getElementById("profile-head");
+    if (head) {
+      head.innerHTML =
+        '<button type="button" class="pf-head-btn" aria-label="Аккаунт: фото, имя, почта и Telegram">' +
+        '<span class="avatar"><img class="avatar-img" alt="" /><span class="avatar-fallback"></span></span>' +
+        '<span class="profile-names"><h2></h2><p class="pf-nick"></p></span>' +
+        '<span class="pf-chev" aria-hidden="true">›</span></button>';
+      head.querySelector(".avatar-fallback").textContent = initials(me);
+      head.querySelector("h2").textContent = profileDisplayName(me);
+      head.querySelector(".pf-nick").textContent = me.email || (me.username ? "@" + me.username : "");
+      var ids0 = profileSelfIds(me);
+      applyTelegramAvatar(head.querySelector(".avatar-img"), { userId: ids0.uid, username: me.username });
+      head.querySelector(".pf-head-btn").addEventListener("click", openAccountScreen);
+    }
+    renderAccountHead(me);
+  }
+
+  function profileDisplayName(me) {
+    return [me.first_name, me.last_name].filter(Boolean).join(" ") || "Пользователь";
+  }
+
+  // Экран «Аккаунт»: фото с загрузкой, имя, почта, Telegram.
+  function renderAccountHead(me) {
+    var head = document.getElementById("profile-account-head");
     if (!head) return;
     head.innerHTML =
       '<button type="button" class="avatar pf-avatar-btn" aria-label="Сменить фото" title="Сменить фото">' +
@@ -10229,18 +10253,10 @@
       "</button>" +
       '<input type="file" class="pf-avatar-input" accept="image/*" hidden />' +
       '<div class="profile-names"><h2></h2>' +
-      '<p class="pf-ident"><span class="pf-ident-val" data-ident="email"></span>' +
-      '<button type="button" class="pf-link" data-ident-act="email">Сменить</button></p>' +
-      '<p class="pf-ident"><span class="pf-ident-val" data-ident="tg"></span>' +
-      '<button type="button" class="pf-link hidden" data-ident-act="tg"></button></p>' +
       '<p class="pf-avatar-links"><button type="button" class="pf-link" data-av="change"></button>' +
       '<button type="button" class="pf-link pf-link--muted" data-av="delete">Удалить фото</button></p></div>';
     head.querySelector(".avatar-fallback").textContent = initials(me);
-    head.querySelector("h2").textContent = me.first_name || "Пользователь";
-    head.querySelector('[data-ident-act="email"]').addEventListener("click", openChangeEmail);
-    head.querySelector('[data-ident-act="tg"]').addEventListener("click", function (e) {
-      openTelegramLink(e.currentTarget);
-    });
+    head.querySelector("h2").textContent = profileDisplayName(me);
     var ids = profileSelfIds(me);
     var img = head.querySelector(".avatar-img");
     applyTelegramAvatar(img, { userId: ids.uid, username: me.username });
@@ -10262,8 +10278,77 @@
     });
   }
 
+  function openAccountScreen() {
+    var me = cachedMe || {};
+    var fn = document.getElementById("account-first-name");
+    var ln = document.getElementById("account-last-name");
+    if (fn) fn.value = me.first_name || "";
+    if (ln) ln.value = me.last_name || "";
+    renderProfileLogin(me);
+    profileScreen("account");
+  }
+
+  var accountNameSaving = null;
+
+  function saveAccountName() {
+    var fn = document.getElementById("account-first-name");
+    var ln = document.getElementById("account-last-name");
+    var status = document.getElementById("account-name-status");
+    if (!fn || !ln || !cachedMe) return Promise.resolve();
+    var first = fn.value.trim();
+    var last = ln.value.trim();
+    if (first === (cachedMe.first_name || "") && last === (cachedMe.last_name || "")) return Promise.resolve();
+    if (status) status.textContent = "Сохраняю…";
+    accountNameSaving = apiFetch("/profile/name", {
+      method: "PUT",
+      body: JSON.stringify({ first_name: first, last_name: last }),
+    })
+      .then(function (r) {
+        cachedMe.first_name = (r && r.first_name) || "";
+        cachedMe.last_name = (r && r.last_name) || "";
+        fn.value = cachedMe.first_name;
+        ln.value = cachedMe.last_name;
+        renderProfileHead(cachedMe);
+        if (status) status.textContent = "Сохранено ✓";
+      })
+      .catch(function (e) {
+        if (status) status.textContent = e.message || String(e);
+      });
+    return accountNameSaving;
+  }
+
+  function bindAccountScreenOnce() {
+    var back = document.getElementById("profile-account-back");
+    if (!back || back.dataset.bound === "1") return;
+    back.dataset.bound = "1";
+    back.addEventListener("click", function () {
+      saveAccountName().finally(function () {
+        profileScreen("main");
+      });
+    });
+    ["account-first-name", "account-last-name"].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("change", saveAccountName);
+      el.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          el.blur();
+        }
+      });
+    });
+    var emailRow = document.getElementById("account-email-row");
+    if (emailRow) emailRow.addEventListener("click", openChangeEmail);
+    var tgRow = document.getElementById("account-tg-row");
+    if (tgRow) {
+      tgRow.addEventListener("click", function () {
+        if (!tgRow.disabled) openTelegramLink(document.getElementById("account-tg-action") || tgRow);
+      });
+    }
+  }
+
   function syncProfileAvatarLinks(me) {
-    var head = document.getElementById("profile-head");
+    var head = document.getElementById("profile-account-head");
     if (!head) return;
     var change = head.querySelector('[data-av="change"]');
     var del = head.querySelector('[data-av="delete"]');
@@ -10281,16 +10366,16 @@
       if (blob) cache[key] = URL.createObjectURL(blob);
       else delete cache[key];
     });
-    var img = document.querySelector("#profile-head .avatar-img");
-    if (!img) return;
-    if (blob) {
-      img.src = cache[ids.uid] || cache[ids.unameKey];
-      img.classList.add("has-photo");
-    } else {
-      img.removeAttribute("src");
-      img.classList.remove("has-photo");
-      applyTelegramAvatar(img, { userId: ids.uid, username: me.username });
-    }
+    document.querySelectorAll("#profile-head .avatar-img, #profile-account-head .avatar-img").forEach(function (img) {
+      if (blob) {
+        img.src = cache[ids.uid] || cache[ids.unameKey];
+        img.classList.add("has-photo");
+      } else {
+        img.removeAttribute("src");
+        img.classList.remove("has-photo");
+        applyTelegramAvatar(img, { userId: ids.uid, username: me.username });
+      }
+    });
   }
 
   async function profileAvatarError(res) {
@@ -10366,7 +10451,7 @@
       showNoteToast("Файл больше 10 МБ — выберите фото поменьше");
       return;
     }
-    var btn = document.querySelector("#profile-head .pf-avatar-btn");
+    var btn = document.querySelector("#profile-account-head .pf-avatar-btn");
     if (btn) btn.classList.add("is-busy");
     try {
       var small = await shrinkAvatarFile(file);
@@ -57466,22 +57551,27 @@
     });
   }
 
-  // ——— Профиль: почта и Telegram под именем (сменить / привязать) ———
+  // ——— Профиль → «Аккаунт»: почта и Telegram (сменить / привязать) ———
 
   function renderProfileLogin(me) {
-    var head = document.getElementById("profile-head");
-    if (!head) return;
-    var emailVal = head.querySelector('[data-ident="email"]');
-    if (emailVal) emailVal.textContent = (me && me.email) || "почта не подтверждена";
-    var tgVal = head.querySelector('[data-ident="tg"]');
-    var tgBtn = head.querySelector('[data-ident-act="tg"]');
-    if (!tgVal || !tgBtn) return;
+    bindAccountScreenOnce();
+    var emailVal = document.getElementById("account-email-val");
+    if (emailVal) emailVal.textContent = (me && me.email) || "не подтверждена";
+    var tgVal = document.getElementById("account-tg-val");
+    var tgAct = document.getElementById("account-tg-action");
+    var tgRow = document.getElementById("account-tg-row");
+    var tgChev = document.getElementById("account-tg-chev");
+    if (!tgVal || !tgRow) return;
     var linked = !!(me && me.tg_linked);
     var changeable = !!(me && me.tg_changeable);
-    tgVal.textContent = linked ? "Telegram " + (me.username ? "@" + me.username : "привязан") : "Telegram не привязан";
-    // У старых аккаунтов id = Telegram id — сменить его нельзя, кнопки нет.
-    tgBtn.textContent = linked ? "Сменить" : "Привязать";
-    setHidden(tgBtn, !changeable);
+    tgVal.textContent = linked
+      ? (me.username ? "@" + me.username : "привязан") + (changeable ? "" : " · основной, сменить нельзя")
+      : "не привязан";
+    // У старых аккаунтов id = Telegram id — сменить его нельзя.
+    if (tgAct) tgAct.textContent = changeable ? (linked ? "Сменить" : "Привязать") : "";
+    if (tgChev) setHidden(tgChev, !changeable);
+    tgRow.disabled = !changeable;
+    tgRow.classList.toggle("pf-row--static", !changeable);
   }
 
   function openChangeEmail() {
