@@ -59,7 +59,7 @@ def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
     # executescript сам делает COMMIT — запускаем его только на свежей базе, а не посреди транзакции.
     if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'org_dismissed'").fetchone():
-        return conn
+        return _migrate(conn)
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS orgs (
@@ -116,6 +116,22 @@ def _conn() -> sqlite3.Connection:
         );
         """
     )
+    return _migrate(conn)
+
+
+_MIGRATED_CONN: Optional[sqlite3.Connection] = None
+
+
+def _migrate(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Колонки, добавленные после первого выпуска (одна проверка на соединение)."""
+    global _MIGRATED_CONN
+    if _MIGRATED_CONN is conn:
+        return conn
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(org_members)").fetchall()}
+    if "tg_hint" not in cols:
+        conn.execute("ALTER TABLE org_members ADD COLUMN tg_hint TEXT NOT NULL DEFAULT ''")
+        conn.commit()
+    _MIGRATED_CONN = conn
     return conn
 
 
@@ -152,13 +168,21 @@ def _mail_account_verified(acc: dict) -> bool:
 
 
 def verified_emails(user_id: int | str) -> list[str]:
-    """Адреса, которыми пользователь владеет (вошёл через OAuth или в ящик у известного провайдера)."""
+    """Адреса, которыми пользователь владеет: почта аккаунта (подтверждена кодом), Google, ящик у известного провайдера."""
     out: list[str] = []
+    try:
+        from assistant.stores import accounts
+
+        em = accounts.email_of(user_id)
+        if em:
+            out.append(em)
+    except Exception:
+        pass
     try:
         from assistant.stores import user_prefs
 
         em = str(user_prefs.load_prefs(int(user_id)).get("google_account_email") or "").strip().lower()
-        if "@" in em:
+        if "@" in em and em not in out:
             out.append(em)
     except Exception:
         pass
@@ -361,6 +385,8 @@ def list_members(org_id: int) -> list[dict[str, Any]]:
             "name": note_members.profile_display_name(prof, fallback=str(r["invited_key"] or "")) if uid
             else str(r["invited_key"] or ""),
             "username": (prof or {}).get("username"),
+            "email": str(r["invited_key"]) if "@" in str(r["invited_key"] or "") else "",
+            "tg": str(r["tg_hint"] or "") or (prof or {}).get("username") or "",
             "role": str(r["role"]),
             "status": str(r["status"]),
             "plan": str(r["plan"]),
@@ -512,20 +538,34 @@ def delete_org(user_id: int | str, org_id: int) -> None:
 
 
 def _insert_member(org_id: int, user_id: str | None, *, key: str = "", role: str = "member",
-                   status: str = "active", added_by: str = "") -> None:
+                   status: str = "active", added_by: str = "", tg_hint: str = "") -> None:
     _conn().execute(
-        "INSERT INTO org_members (org_id, user_id, invited_key, role, status, added_by, added_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (int(org_id), user_id, key, role, status, added_by, _now_iso()),
+        "INSERT INTO org_members (org_id, user_id, invited_key, role, status, added_by, added_at, tg_hint) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (int(org_id), user_id, key, role, status, added_by, _now_iso(), tg_hint),
     )
+
+
+def _tg_user(nick: str) -> Optional[int]:
+    """@ник → id аккаунта, если человек уже писал боту / открывал миниапп."""
+    from assistant.stores import accounts, telegram_registry
+
+    tg = telegram_registry.lookup_user_id(nick)
+    return accounts.account_for_tg(int(tg)) if tg else None
 
 
 def _resolve_key(actor_id: int | str, key: str) -> Optional[int]:
     """email / @ник → id пользователя Орбиты, если он уже есть."""
     if key.startswith("tg:"):
-        from assistant.stores import telegram_registry
+        return _tg_user(key[3:])
+    try:
+        from assistant.stores import accounts
 
-        return telegram_registry.lookup_user_id(key[3:])
+        acc = accounts.get_by_email(key)
+        if acc:
+            return int(acc["user_id"])
+    except Exception:
+        pass
     try:
         from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
 
@@ -553,17 +593,29 @@ def normalize_member_key(raw: str) -> str:
     return "tg:" + nick if re.match(r"^[a-z0-9_]{4,32}$", nick) else ""
 
 
-def add_member(actor_id: int | str, org_id: int, raw_key: str, *, role: str = "member") -> dict[str, Any]:
-    """Админ добавляет человека по email или @нику. Кого нет в Орбите — ждёт первого входа."""
+def normalize_nick(raw: str) -> str:
+    key = normalize_member_key(raw) if str(raw or "").strip() else ""
+    return key[3:] if key.startswith("tg:") else ""
+
+
+def add_member(actor_id: int | str, org_id: int, raw_key: str, *, role: str = "member",
+               tg: str = "") -> dict[str, Any]:
+    """Админ добавляет человека по почте (обязательно) и, по желанию, @нику в Telegram.
+
+    Почта — ключ входа: кого ещё нет в Орбите, войдёт по ней (или бот узнает по нику).
+    """
     _require(actor_id, org_id, "invite")
     if role not in ("admin", "member"):
         raise OrgError("Неизвестная роль")
     if role == "admin" and not can(actor_id, org_id, "set_role"):
         raise OrgError("Назначать админов может только владелец", 400)
     key = normalize_member_key(raw_key)
-    if not key:
-        raise OrgError("Укажите email или @ник в Telegram")
-    target = _resolve_key(actor_id, key)
+    if not key or key.startswith("tg:"):
+        raise OrgError("Укажите рабочую почту участника — по ней он войдёт в Орбиту")
+    nick = normalize_nick(tg)
+    if str(tg or "").strip() and not nick:
+        raise OrgError("Ник в Telegram — латиница, цифры и _, от 4 символов")
+    target = _resolve_key(actor_id, key) or (_tg_user(nick) if nick else None)
     with _LOCK:
         conn = _conn()
         if target:
@@ -571,18 +623,76 @@ def add_member(actor_id: int | str, org_id: int, raw_key: str, *, role: str = "m
             if m and m["status"] == "active":
                 raise OrgError("Уже в организации", 409)
             if m:
-                conn.execute("UPDATE org_members SET status = 'active', role = ? WHERE id = ?", (role, m["id"]))
+                conn.execute(
+                    "UPDATE org_members SET status = 'active', role = ?, invited_key = ?, tg_hint = ? WHERE id = ?",
+                    (role, key, nick, m["id"]),
+                )
             else:
-                _insert_member(org_id, _uid(target), key=key, role=role, added_by=_uid(actor_id))
+                _insert_member(org_id, _uid(target), key=key, role=role, added_by=_uid(actor_id), tg_hint=nick)
         else:
             if conn.execute(
                 "SELECT 1 FROM org_members WHERE org_id = ? AND user_id IS NULL AND invited_key = ?",
                 (int(org_id), key),
             ).fetchone():
                 raise OrgError("Уже приглашён", 409)
-            _insert_member(org_id, None, key=key, role=role, status="invited", added_by=_uid(actor_id))
+            _insert_member(org_id, None, key=key, role=role, status="invited", added_by=_uid(actor_id), tg_hint=nick)
         conn.commit()
-    return {"status": "active" if target else "invited", "user_id": str(target) if target else None, "key": key}
+    return {"status": "active" if target else "invited", "user_id": str(target) if target else None,
+            "key": key, "tg": nick}
+
+
+def user_by_member_email(email: str) -> Optional[int]:
+    """Участник организации, которого добавили по этой почте и который уже вошёл."""
+    with _LOCK:
+        r = _conn().execute(
+            "SELECT user_id FROM org_members WHERE invited_key = ? AND user_id IS NOT NULL ORDER BY id LIMIT 1",
+            (str(email or "").strip().lower(),),
+        ).fetchone()
+    return int(r[0]) if r else None
+
+
+def member_email_of(user_id: int | str) -> Optional[str]:
+    """Почта, под которой пользователя добавили в организацию (подсказка для формы почты)."""
+    with _LOCK:
+        r = _conn().execute(
+            "SELECT invited_key FROM org_members WHERE user_id = ? AND invited_key LIKE '%@%' ORDER BY id LIMIT 1",
+            (_uid(user_id),),
+        ).fetchone()
+    return str(r[0]) if r else None
+
+
+def claim_by_tg(user_id: int | str, username: str | None) -> list[int]:
+    """/start в боте: приглашения с этим @ником (как ключ или подсказка к почте) → членство."""
+    nick = normalize_nick(username or "")
+    if not nick:
+        return []
+    uid = _uid(user_id)
+    joined: list[int] = []
+    with _LOCK:
+        conn = _conn()
+        rows = conn.execute(
+            "SELECT * FROM org_members WHERE user_id IS NULL AND (tg_hint = ? OR invited_key = ?)",
+            (nick, "tg:" + nick),
+        ).fetchall()
+        for r in rows:
+            if _membership(r["org_id"], uid):
+                conn.execute("DELETE FROM org_members WHERE id = ?", (r["id"],))
+                continue
+            conn.execute("UPDATE org_members SET user_id = ?, status = 'active' WHERE id = ?", (uid, r["id"]))
+            joined.append(int(r["org_id"]))
+        conn.commit()
+    return joined
+
+
+def invited_orgs_for_email(email: str) -> list[dict[str, Any]]:
+    """Организации, куда пригласили эту почту (ещё не вошедшего человека)."""
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT o.* FROM org_members m JOIN orgs o ON o.id = m.org_id "
+            "WHERE m.user_id IS NULL AND m.invited_key = ?",
+            (str(email or "").strip().lower(),),
+        ).fetchall()
+        return [_org_dict(r) for r in rows]
 
 
 def claim_pending(user_id: int | str) -> list[int]:
@@ -598,8 +708,9 @@ def claim_pending(user_id: int | str) -> list[int]:
     with _LOCK:
         conn = _conn()
         rows = conn.execute(
-            f"SELECT * FROM org_members WHERE user_id IS NULL AND invited_key IN ({','.join('?' * len(keys))})",
-            keys,
+            f"SELECT * FROM org_members WHERE user_id IS NULL AND (invited_key IN ({','.join('?' * len(keys))})"
+            " OR (tg_hint != '' AND tg_hint = ?))",
+            [*keys, uname or "\x00"],
         ).fetchall()
         for r in rows:
             if _membership(r["org_id"], uid):

@@ -497,6 +497,10 @@ def register_handlers(app: Application) -> None:
     # Раньше всех групп: один update_id → одна обработка (защита от двойного getUpdates).
     app.add_handler(TypeHandler(Update, _claim_update), group=-3)
     app.add_handler(TypeHandler(Update, _bind_usage_telegram_user), group=-1)
+    # Ответы на «почта?» / «код?» (email_link) — раньше команд и роутера.
+    from assistant.bot import email_link
+
+    app.add_handler(MessageHandler(filters.TEXT & filters.ChatType.PRIVATE, email_link.handle_message), group=-2)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("onboarding", cmd_onboarding))
     app.add_handler(CommandHandler("help", cmd_help))

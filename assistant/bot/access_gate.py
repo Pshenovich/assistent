@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 import requests
+
+from assistant.lib import tg_account_ids
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -41,7 +44,19 @@ def is_user_allowed(
         return True
     if access.is_extra_allowed(username, user_id, scope=scope):
         return True
+    if access.normalize_scope(scope) == "leo" and _in_org(user_id):
+        return True
     return False
+
+
+def _in_org(user_id: int) -> bool:
+    """Участника организации добавил её админ — отдельная заявка на доступ не нужна."""
+    try:
+        from assistant.stores import orgs_store
+
+        return bool(orgs_store.orgs_for_user(user_id))
+    except Exception:
+        return False
 
 
 def miniapp_access_message(
@@ -144,7 +159,7 @@ def _notify_approvers_sync(
     proxy = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
     for approver_id in access.approver_user_ids():
         try:
-            requests.post(
+            tg_account_ids.post(
                 f"{api}/sendMessage",
                 json={
                     "chat_id": int(approver_id),
@@ -165,7 +180,7 @@ def notify_user_sync(user_id: int, text: str, *, scope: str | None = None) -> bo
         return False
     proxy = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
     try:
-        r = requests.post(
+        r = tg_account_ids.post(
             f"{api}/sendMessage",
             json={"chat_id": int(user_id), "text": text},
             timeout=15,
@@ -192,10 +207,26 @@ async def ensure_access(update: Update, context: ContextTypes.DEFAULT_TYPE) -> b
     except Exception as e:
         print(f"[access_gate] registry update failed user={uid} err={e!r}")
     scope = access_scope_from_context(context)
+    msg = update.effective_message
+    if access.normalize_scope(scope) == "leo":
+        from assistant.bot import email_link
+
+        try:
+            ok, joined = await asyncio.to_thread(email_link.recognize, uid, user.username)
+        except Exception as e:
+            print(f"[access_gate] recognize failed user={uid} err={e!r}")
+            ok, joined = True, []
+        if joined and msg:
+            names = ", ".join(f"«{n}»" for n in joined if n)
+            await msg.reply_text(f"Вас добавили в {names} — доступ открыт." if names else "Доступ открыт.")
+        if not ok:
+            # Почты нет и организация не узнала по нику — сначала почта, заявка потом.
+            if update.effective_chat and update.effective_chat.type == "private":
+                await email_link.prompt(update, context)
+            return False
     if is_user_allowed(uid, user.username, scope=scope):
         return True
 
-    msg = update.effective_message
 
     if access.is_denied(uid, scope=scope):
         if msg:

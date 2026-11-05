@@ -424,6 +424,53 @@ html.boot-open-app #app.hidden {
   width: 100%;
 }
 
+/* Вход и подтверждение почты: почта → код из письма */
+.gate-email-login {
+  margin: var(--space-4) 0 0;
+}
+
+.gate-email-input {
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+}
+
+.gate-email-sent {
+  margin: 0 0 var(--space-2);
+  line-height: 1.45;
+}
+
+.gate-email-link {
+  background: none;
+  border: 0;
+  padding: var(--space-1) 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.gate-email-link:disabled {
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.gate-or {
+  margin: var(--space-6) 0 0;
+}
+
+.gate-or + .gate-telegram-login {
+  margin-top: var(--space-3);
+}
+
+.email-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
 .gate-dev-hint {
   margin-top: var(--space-5);
   max-width: 26rem;

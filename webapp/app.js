@@ -6408,7 +6408,10 @@
         };
       }
       if (!res.ok) {
-        if (res.status === 403 && hasTelegramWebAppAuth() && !miniappDev) {
+        var needEmail = res.status === 403 && body && body.detail && body.detail.need_email;
+        if (needEmail) {
+          showEmailRequired((cachedMe && cachedMe.email_hint) || "");
+        } else if (res.status === 403 && hasTelegramWebAppAuth() && !miniappDev) {
           showAccessBlocked(apiErrorMessage(body, res.statusText || "Доступ ограничен."));
         }
         if (res.status === 401 && hasTelegramWebAppAuth() && !miniappDev) {
@@ -6517,6 +6520,7 @@
       return noteOnboardingUse(path, opts, await window.__miniappDevMock.handle(path, opts, apiFetchReal));
     }
     var res = await apiFetchReal(path, opts);
+    if (path === "/me" && res && res.need_email) showEmailRequired(res.email_hint || "");
     noteFocusSourceChanged(path, opts);
     return noteOnboardingUse(path, opts, res);
   }
@@ -57245,6 +57249,202 @@
     });
   }
 
+  // ——— Вход по почте: почта → код из письма (вход в браузере и подтверждение почты) ———
+
+  function postPublicAuth(path, payload) {
+    return fetch(API + path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (res) {
+      return res.text().then(function (text) {
+        var body = null;
+        try {
+          body = text ? JSON.parse(text) : null;
+        } catch (_) {
+          body = { detail: looksLikeHtmlError(text) ? httpStatusFallback(res.status, "Ошибка") : text || res.statusText };
+        }
+        if (!res.ok) throw new Error(apiErrorMessage(body, httpStatusFallback(res.status, "Ошибка входа")));
+        return body;
+      });
+    });
+  }
+
+  /**
+   * Форма «почта → код». opts.verifyPath — /auth/email/verify (вход) или /auth/email/attach
+   * (почта к текущему аккаунту, с авторизацией); opts.onDone(ответ с session_token).
+   */
+  function mountEmailCodeForm(box, opts) {
+    if (!box) return;
+    opts = opts || {};
+    var authed = !!opts.authed;
+    var email = String(opts.hint || "");
+    var resendTimer = null;
+    var errEl = opts.errEl || null;
+
+    function post(path, payload) {
+      return authed
+        ? apiFetch(path, { method: "POST", body: JSON.stringify(payload) })
+        : postPublicAuth(path, payload);
+    }
+
+    function showErr(msg) {
+      if (errEl) {
+        errEl.textContent = msg || "";
+        errEl.classList.toggle("hidden", !msg);
+      }
+    }
+
+    function renderEmail() {
+      if (resendTimer) clearInterval(resendTimer);
+      box.innerHTML =
+        '<form class="gate-code-form" autocomplete="on" novalidate>' +
+        '<input class="gate-code-input gate-email-input" type="email" name="email" autocomplete="email" ' +
+        'inputmode="email" spellcheck="false" placeholder="name@company.ru" aria-label="Рабочая почта" />' +
+        '<button type="submit" class="btn gate-code-submit">Получить код</button>' +
+        "</form>";
+      var form = box.querySelector("form");
+      var input = box.querySelector("input");
+      input.value = email;
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var v = String(input.value || "").trim();
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) {
+          showErr("Укажите почту в виде name@company.ru");
+          return;
+        }
+        send(v, form.querySelector("button"));
+      });
+      if (!opts.noAutofocus) setTimeout(function () { try { input.focus(); } catch (_) {} }, 50);
+    }
+
+    function send(v, btn) {
+      showErr("");
+      if (btn) btn.disabled = true;
+      post("/auth/email/start", { email: v })
+        .then(function (r) {
+          email = (r && r.email) || v;
+          renderCode((r && r.resend_sec) || 60);
+        })
+        .catch(function (err) {
+          if (btn) btn.disabled = false;
+          showErr(err.message || String(err));
+        });
+    }
+
+    function renderCode(resendSec) {
+      box.innerHTML =
+        '<p class="gate-email-sent muted small">Код отправлен на <b></b>. Проверьте почту (и «Спам»).</p>' +
+        '<form class="gate-code-form" autocomplete="off">' +
+        '<input class="gate-code-input" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" ' +
+        'maxlength="6" placeholder="000000" aria-label="Код из письма" />' +
+        '<button type="submit" class="btn gate-code-submit">' + escapeHtml(opts.submitLabel || "Войти") + "</button>" +
+        "</form>" +
+        '<button type="button" class="gate-email-link" data-act="resend"></button> · ' +
+        '<button type="button" class="gate-email-link" data-act="change">Другая почта</button>';
+      box.querySelector(".gate-email-sent b").textContent = email;
+      var form = box.querySelector("form");
+      var input = form.querySelector("input");
+      var resend = box.querySelector('[data-act="resend"]');
+      var left = resendSec;
+      function tick() {
+        if (left > 0) {
+          resend.disabled = true;
+          resend.textContent = "Новый код через " + left + " с";
+          left -= 1;
+        } else {
+          resend.disabled = false;
+          resend.textContent = "Отправить ещё раз";
+          if (resendTimer) clearInterval(resendTimer);
+        }
+      }
+      tick();
+      resendTimer = setInterval(tick, 1000);
+      resend.addEventListener("click", function () { send(email, resend); });
+      box.querySelector('[data-act="change"]').addEventListener("click", function () {
+        showErr("");
+        renderEmail();
+      });
+      input.addEventListener("input", function () {
+        input.value = String(input.value || "").replace(/\D/g, "").slice(0, 6);
+        if (input.value.length === 6) form.requestSubmit ? form.requestSubmit() : form.dispatchEvent(new Event("submit"));
+      });
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var code = String(input.value || "").replace(/\D/g, "");
+        if (code.length !== 6) {
+          showErr("Введите 6 цифр из письма");
+          return;
+        }
+        var btn = form.querySelector("button");
+        if (btn.disabled) return;
+        btn.disabled = true;
+        showErr("");
+        post(opts.verifyPath || "/auth/email/verify", { email: email, code: code })
+          .then(function (data) {
+            if (resendTimer) clearInterval(resendTimer);
+            if (opts.onDone) opts.onDone(data);
+          })
+          .catch(function (err) {
+            btn.disabled = false;
+            input.value = "";
+            showErr(err.message || String(err));
+          });
+      });
+      setTimeout(function () { try { input.focus(); } catch (_) {} }, 50);
+    }
+
+    renderEmail();
+  }
+
+  function bindGateEmailLogin() {
+    var box = document.getElementById("gate-email-login");
+    if (!box || box.dataset.bound === "1") return;
+    box.dataset.bound = "1";
+    mountEmailCodeForm(box, {
+      errEl: document.getElementById("gate-login-err"),
+      verifyPath: "/auth/email/verify",
+      noAutofocus: true,
+      onDone: function (data) {
+        setGateError("");
+        applyBrowserSessionLogin(data);
+      },
+    });
+  }
+
+  var emailGateShown = false;
+
+  /** Почта не подтверждена (EMAIL_REQUIRED): без неё дальше не пускаем — и в браузере, и в миниаппе. */
+  function showEmailRequired(hint) {
+    if (emailGateShown) return;
+    emailGateShown = true;
+    var wrap = document.createElement("div");
+    wrap.id = "email-gate";
+    wrap.className = "gate email-gate";
+    wrap.innerHTML =
+      '<div class="gate-card">' +
+      '<h1 class="gate-title">Подтвердите почту</h1>' +
+      '<p class="gate-text">Вход в Орбиту теперь по рабочей почте. Укажите ту, что знает ваша организация, — ' +
+      "пришлём код. Telegram останется привязан.</p>" +
+      '<div class="gate-email-login"></div>' +
+      '<p class="error hidden"></p>' +
+      "</div>";
+    document.body.appendChild(wrap);
+    mountEmailCodeForm(wrap.querySelector(".gate-email-login"), {
+      authed: true,
+      hint: hint || "",
+      errEl: wrap.querySelector(".error"),
+      verifyPath: "/auth/email/attach",
+      submitLabel: "Подтвердить",
+      onDone: function (data) {
+        if (data && data.session_token && !hasTelegramWebAppAuth()) setStoredSession(data.session_token);
+        // Аккаунт мог смениться (Telegram привязали к аккаунту по почте) — грузим всё заново.
+        location.reload();
+      },
+    });
+  }
+
   window.onTelegramAuth = function (user) {
     if (!user || !user.hash) {
       setGateError(
@@ -57315,6 +57515,7 @@
     setGateError("");
     setGateStatus("Загрузка…");
     bindGateCodeForm();
+    bindGateEmailLogin();
     var codeLogin = document.getElementById("gate-code-login");
     if (codeLogin) codeLogin.classList.remove("hidden");
     var box = document.getElementById("gate-telegram-login");

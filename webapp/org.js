@@ -424,9 +424,12 @@
 
   function memberSub(d, m, ai) {
     if (m.status === "pending") return "Просится в организацию";
-    if (m.status === "invited") return "Приглашён — появится после первого входа в Орбиту · " + planLabel(d, m.plan);
+    if (m.status === "invited") {
+      return "Приглашён — войдёт по почте" + (m.tg ? " или через @" + m.tg + " в Telegram" : "") + " · " + planLabel(d, m.plan);
+    }
     var parts = [];
-    if (m.username) parts.push("@" + m.username);
+    if (m.email && m.email !== m.name) parts.push(m.email);
+    if (m.username || m.tg) parts.push("@" + (m.username || m.tg));
     parts.push(ROLE_LABEL[m.role] || "");
     parts.push(planLabel(d, m.plan));
     if (ai) parts.push("лимит " + fmtNum(ai.daily_limit) + " кр");
@@ -486,22 +489,20 @@
           '<option value="">Добавить из контактов…</option>' + opts + "</select></span></div>";
       }
       add += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.mail + "</span>" +
-        '<span class="pf-row-body"><input type="text" class="pf-input" id="org-add-key" placeholder="Почта или @ник в Telegram" autocapitalize="off" spellcheck="false" aria-label="Почта или @ник в Telegram" />' +
-        '<button type="button" class="pf-link" data-org="add">Добавить</button></span></div>';
+        '<span class="pf-row-body org-add-row"><input type="email" class="pf-input" id="org-add-key" placeholder="Рабочая почта (обязательно)" autocapitalize="off" spellcheck="false" aria-label="Рабочая почта участника" />' +
+        '<input type="text" class="pf-input" id="org-add-tg" placeholder="@ник в Telegram" autocapitalize="off" spellcheck="false" aria-label="Ник в Telegram (необязательно)" />' +
+        '<button type="button" class="pf-link" data-org="add">Добавить</button></span></div>' +
+        '<p class="pf-hint">Участник входит по почте — пришлём ему письмо. С ником бот узнает его сразу, как он нажмёт Start.</p>';
     }
     return group("Участники", "members", "<div>" + '<div class="pf-list">' + rows + add + "</div>" +
       (can.set_role ? '<p class="pf-hint">Админ приглашает и исключает участников и настраивает выпуск «Рынок». Владелец ещё меняет название и адрес, назначает админов. Назначить другого владельцем — передать владение.</p>' : "") +
       "</div>");
   }
 
-  // Ключ контакта для добавления: почта (по ней находим Telegram через контакты) или @ник.
+  // Участника добавляем только по почте: контакт без почты в список не попадает. Ник — подсказка боту.
   function contactKey(c) {
     var email = String(c.email || "").trim().toLowerCase();
-    if (email && email.indexOf("@") > 0) return email;
-    var nick = String(c.telegram_username || "").trim().replace(/^@/, "").toLowerCase();
-    if (nick) return "@" + nick;
-    var key = String(c.key || "");
-    return key.indexOf("tg:") === 0 ? "@" + key.slice(3) : "";
+    return email && email.indexOf("@") > 0 ? email : "";
   }
 
   function contactOptions(d) {
@@ -517,7 +518,7 @@
         if (!key || taken[key] || (nick && taken["@" + nick])) return "";
         var label = String(c.name || "").trim() || key;
         var extra = key !== label ? " · " + key : "";
-        return '<option value="' + esc(key) + '">' + esc(label + extra) + "</option>";
+        return '<option value="' + esc(key + "|" + nick) + '">' + esc(label + extra) + "</option>";
       })
       .filter(Boolean)
       .join("");
@@ -533,16 +534,21 @@
     }
   }
 
-  function addMember(key) {
+  function addMember(key, tg) {
     key = String(key || "").trim();
-    if (!key) return Promise.resolve();
+    tg = String(tg || "").trim();
+    if (!key) {
+      if (tg) setSaved("members", "err", "Укажите почту — по ней участник входит в Орбиту");
+      return Promise.resolve();
+    }
     var id = currentId();
     setSaved("members", "busy", "Добавляю…");
     return act(async function () {
       try {
-        var r = await api("/" + id + "/members", json("POST", { key: key }));
+        var r = await api("/" + id + "/members", json("POST", { key: key, tg: tg }));
         state.detail = r;
-        setSaved("members", "ok", r.added && r.added.status === "invited" ? "Приглашён — появится после первого входа" : "Добавлен ✓");
+        var invited = r.added && r.added.status === "invited";
+        setSaved("members", "ok", invited ? (r.added.mailed ? "Приглашён — отправили письмо" : "Приглашён — войдёт по почте") : "Добавлен ✓");
       } catch (e) {
         setSaved("members", "err", errText(e));
       }
@@ -701,7 +707,8 @@
     }
     if (kind === "add") {
       var inp = document.getElementById("org-add-key");
-      return addMember(inp && inp.value);
+      var tgInp = document.getElementById("org-add-tg");
+      return addMember(inp && inp.value, tgInp && tgInp.value);
     }
     if (kind === "approve" || kind === "reject") {
       return act(async function () {
@@ -778,7 +785,8 @@
       });
     }
     if (kind === "add-contact") {
-      return addMember(el.value);
+      var parts = String(el.value || "").split("|");
+      return addMember(parts[0], parts[1] || "");
     }
     if (kind === "join-mode") {
       var mode = el.value;
@@ -934,9 +942,11 @@
       el.addEventListener("input", onInput);
       el.addEventListener("keydown", function (e) {
         if (e.key !== "Enter") return;
-        if (e.target.id === "org-add-key") {
+        if (e.target.id === "org-add-key" || e.target.id === "org-add-tg") {
           e.preventDefault();
-          addMember(e.target.value);
+          var tgEl = document.getElementById("org-add-tg");
+          var keyEl = document.getElementById("org-add-key");
+          addMember(keyEl && keyEl.value, tgEl && tgEl.value);
         } else if (e.target.tagName === "INPUT") {
           e.preventDefault();
           e.target.blur(); // blur → change → сохранение

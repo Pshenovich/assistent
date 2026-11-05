@@ -101,15 +101,26 @@ class OrgsStoreTests(unittest.TestCase):
         org = self._org()
         res = orgs_store.add_member(1, org["id"], "Guest@Gmail.com")
         self.assertEqual(res["status"], "invited")
-        res2 = orgs_store.add_member(1, org["id"], "@petya_dev")
-        self.assertEqual(res2["key"], "tg:petya_dev")
+        # Только ник — нельзя: почта обязательна, ник — подсказка для бота.
+        with self.assertRaises(OrgError):
+            orgs_store.add_member(1, org["id"], "@petya_dev")
+        res2 = orgs_store.add_member(1, org["id"], "petya@obuchat.me", tg="@Petya_Dev")
+        self.assertEqual((res2["key"], res2["tg"]), ("petya@obuchat.me", "petya_dev"))
+        res3 = orgs_store.add_member(1, org["id"], "kolya@obuchat.me", tg="kolya_tg")
         with self.assertRaises(OrgError):
             orgs_store.add_member(1, org["id"], "guest@gmail.com")
+        with self.assertRaises(OrgError):
+            orgs_store.add_member(1, org["id"], "x@obuchat.me", tg="@a")
         self.assertEqual(orgs_store.claim_pending(3), [org["id"]])
         self.assertEqual(orgs_store.role_of(org["id"], 3), "member")
+        # По нику из подсказки: при входе (claim_pending) и на /start в боте (claim_by_tg).
         self.usernames[4] = "petya_dev"
         orgs_store.claim_pending(4)
-        self.assertEqual(sorted(orgs_store.member_ids(org["id"])), [1, 3, 4])
+        self.assertEqual(orgs_store.claim_by_tg(5, "@kolya_tg"), [org["id"]])
+        self.assertEqual(orgs_store.member_email_of(5), "kolya@obuchat.me")
+        self.assertEqual(orgs_store.user_by_member_email("petya@obuchat.me"), 4)
+        self.assertEqual(sorted(orgs_store.member_ids(org["id"])), [1, 3, 4, 5])
+        self.assertTrue(res3)
 
     def test_add_existing_user_is_active(self) -> None:
         org = self._org()

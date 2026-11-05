@@ -100,10 +100,10 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261104-doctype1" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261105-emailauth1" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261105-design44" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
-  <link rel="stylesheet" href="/webapp/org.css?v=20261030-orgui1" />
+  <link rel="stylesheet" href="/webapp/org.css?v=20261105-emailauth1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -111,11 +111,13 @@
   <div id="gate" class="gate hidden">
     <div class="gate-card">
       <h1 class="gate-title"><span class="wordmark" role="img" aria-label="Orbita"><svg class="wordmark-o" viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="196" fill="none" stroke="currentColor" stroke-width="88" stroke-linecap="round" stroke-dasharray="1032 200" transform="rotate(-16 256 256)"/><circle cx="394.6" cy="117.4" r="44" fill="#9b9ef9"/></svg>rbita</span></h1>
-      <p class="gate-text">Войдите через Telegram, чтобы открыть профиль, календарь и интеграции.</p>
+      <p class="gate-text">Войдите по рабочей почте — пришлём код для входа.</p>
+      <div id="gate-email-login" class="gate-email-login"></div>
+      <p class="gate-or muted small">или, если Telegram уже привязан к аккаунту</p>
       <div id="gate-telegram-login" class="gate-telegram-login" aria-live="polite"></div>
       <div id="gate-code-login" class="gate-code-login">
         <p class="gate-code-hint muted small">
-          Если кнопка не открывается (VPN/прокси) — напишите боту <code>/web</code> и введите код:
+          Кнопка не открывается (VPN/прокси) — напишите боту <code>/web</code> и введите код:
         </p>
         <form id="gate-code-form" class="gate-code-form" autocomplete="off">
           <input
@@ -2498,12 +2500,12 @@
   <script src="/webapp/web-canvas.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261105-design44" defer></script>
+  <script src="/webapp/app.js?v=20261105-emailauth1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
-  <script src="/webapp/org.js?v=20261030-orgui1" defer></script>
+  <script src="/webapp/org.js?v=20261105-emailauth1" defer></script>
   <script src="/webapp/onboarding.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>

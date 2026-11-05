@@ -28,6 +28,8 @@ PUBLIC_MINIAPP_ROUTES = {
     ("POST", "/api/miniapp/auth/telegram"),
     # Обмен одноразового кода из бота (/web) на сессию — это и есть вход.
     ("POST", "/api/miniapp/auth/login-code"),
+    ("POST", "/api/miniapp/auth/email/start"),
+    ("POST", "/api/miniapp/auth/email/verify"),
     ("POST", "/api/miniapp/auth/logout"),
     # Выгрузка заметки «на устройство»: одноразовая ссылка со случайным токеном на 10 минут
     # (её открывает Telegram.WebApp.downloadFile — без заголовков авторизации).

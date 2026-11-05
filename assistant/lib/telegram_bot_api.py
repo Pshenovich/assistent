@@ -42,11 +42,14 @@ def make_bot(token: str) -> Bot:
     """Bot для разовых отправок вне Application — через тот же Bot API, что и бот
     (зеркало или локальный сервер). Голый Bot(token) идёт на api.telegram.org, который
     из российского ДЦ режут: каждая отправка висела на таймаутах соединения."""
+    from assistant.lib.tg_account_ids import AccountMappingRequest
+
+    req = AccountMappingRequest()
     api_base = telegram_bot_api_base_url()
     if not api_base:
-        return Bot(token)
+        return Bot(token, request=req)
     if not telegram_bot_api_is_loopback(api_base):
-        return Bot(token, base_url=f"{api_base}/bot", base_file_url=f"{api_base}/file/bot")
+        return Bot(token, base_url=f"{api_base}/bot", base_file_url=f"{api_base}/file/bot", request=req)
     if not telegram_bot_api_reachable(api_base):
-        return Bot(token)
-    return Bot(token, base_url=f"{api_base}/bot", base_file_url=f"{api_base}/file/bot", local_mode=True)
+        return Bot(token, request=req)
+    return Bot(token, base_url=f"{api_base}/bot", base_file_url=f"{api_base}/file/bot", local_mode=True, request=req)

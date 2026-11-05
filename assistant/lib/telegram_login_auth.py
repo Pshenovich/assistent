@@ -110,7 +110,7 @@ def issue_browser_session(telegram_user_id: int, user: dict[str, Any]) -> tuple[
         "exp": exp,
         "u": {
             k: user[k]
-            for k in ("id", "username", "first_name", "last_name", "photo_url")
+            for k in ("id", "username", "first_name", "last_name", "photo_url", "email", "tg_id")
             if k in user and user[k] is not None
         },
     }

@@ -2132,11 +2132,14 @@ async def user_day_ops_page(
 class _MiniappPrincipal:
     """Результат проверки initData для мини-приложения."""
 
-    __slots__ = ("telegram_user_id", "user")
+    # telegram_user_id — исторически id Telegram, теперь id аккаунта Орбиты (у старых аккаунтов
+    # совпадает с Telegram id, у новых по почте — синтетический, см. stores/accounts.py).
+    __slots__ = ("telegram_user_id", "user", "tg_id")
 
-    def __init__(self, telegram_user_id: int, user: dict) -> None:
+    def __init__(self, telegram_user_id: int, user: dict, tg_id: int | None = None) -> None:
         self.telegram_user_id = telegram_user_id
         self.user = user
+        self.tg_id = tg_id
 
 
 def _decode_tma_init_data_token(scheme: str, token: str) -> str | None:
@@ -2268,9 +2271,32 @@ def _miniapp_dev_principal_if_allowed(request: Request) -> _MiniappPrincipal | N
     return _MiniappPrincipal(uid, user)
 
 
+def _map_principal_to_account(principal: _MiniappPrincipal) -> None:
+    """Telegram id → аккаунт Орбиты: если Telegram привязан к аккаунту по почте, работаем от его id."""
+    from assistant.stores import accounts
+
+    uid = int(principal.telegram_user_id)
+    if accounts.is_synthetic(uid):
+        acc = accounts.get(uid)
+        principal.tg_id = acc["tg_user_id"] if acc else None
+        return
+    acc = accounts.get_by_tg(uid)
+    principal.tg_id = uid
+    if acc and int(acc["user_id"]) != uid:
+        principal.telegram_user_id = int(acc["user_id"])
+        user = dict(principal.user or {})
+        user["id"] = int(acc["user_id"])
+        user["tg_id"] = uid
+        principal.user = user
+
+
 async def _finish_miniapp_principal(
     principal: _MiniappPrincipal, *, enforce_access: bool
 ) -> _MiniappPrincipal:
+    try:
+        await run_in_threadpool(_map_principal_to_account, principal)
+    except Exception as e:
+        print(f"[miniapp_auth] account map failed uid={principal.telegram_user_id} err={e!r}")
     try:
         if not _profile_recently_saved(principal):
             await run_in_threadpool(_remember_principal_profile, principal)
@@ -2347,8 +2373,45 @@ async def _resolve_miniapp_principal(
     return await _finish_miniapp_principal(principal, enforce_access=enforce_access)
 
 
+def _email_required() -> bool:
+    return (os.getenv("EMAIL_REQUIRED", "") or "").strip().lower() in ("1", "true", "yes")
+
+
+# Без подтверждённой почты доступны только они: вход, привязка почты и /me (отдаёт need_email).
+_NEED_EMAIL_OPEN_PATHS = ("/me", "/auth/")
+
+
+def _needs_email(principal: _MiniappPrincipal) -> bool:
+    """Почта аккаунта не подтверждена, а она обязательна (EMAIL_REQUIRED)."""
+    if not _email_required():
+        return False
+    from assistant.lib import review_access
+    from assistant.stores import accounts
+
+    uid = int(principal.telegram_user_id)
+    if review_access.is_review_user(uid):
+        return False
+    if (principal.user or {}).get("username") == "dev_browser":
+        return False
+    return not accounts.email_of(uid)
+
+
+def _enforce_email(request: Request, principal: _MiniappPrincipal) -> None:
+    path = request.url.path
+    i = path.find("/api/miniapp")
+    rel = path[i + len("/api/miniapp"):] if i >= 0 else path
+    if any(rel == p or (p.endswith("/") and rel.startswith(p)) for p in _NEED_EMAIL_OPEN_PATHS):
+        return
+    if _needs_email(principal):
+        raise HTTPException(
+            status_code=403,
+            detail={"need_email": True, "message": "Подтвердите рабочую почту, чтобы продолжить."},
+        )
+
+
 async def require_miniapp_user(request: Request) -> _MiniappPrincipal:
     principal = await _resolve_miniapp_principal(request, enforce_access=True)
+    await run_in_threadpool(_enforce_email, request, principal)
     try:
         from assistant.stores import note_versions
 
@@ -5436,6 +5499,165 @@ async def miniapp_auth_login_code_issue(
     }
 
 
+def _request_ip(request: Request) -> str:
+    return ((request.headers.get("X-Real-IP") or "").strip()
+            or (request.client.host if request.client else "") or "")
+
+
+class _EmailStartBody(BaseModel):
+    email: str
+
+
+class _EmailVerifyBody(BaseModel):
+    email: str
+    code: str
+
+
+def _account_error(e: Exception) -> HTTPException:
+    return HTTPException(status_code=int(getattr(e, "code", 400) or 400), detail=str(e))
+
+
+def _email_send_code(email: str, ip: str) -> dict[str, Any]:
+    from assistant.services import transactional_mail
+    from assistant.stores import accounts
+
+    issued = accounts.issue_code(email, ip=ip)
+    transactional_mail.send_login_code(issued["email"], issued["code"], ttl_min=issued["ttl_sec"] // 60)
+    return {"ok": True, "email": issued["email"], "ttl_sec": issued["ttl_sec"], "resend_sec": accounts.RESEND_GAP_SEC}
+
+
+@miniapp_router.post("/auth/email/start")
+async def miniapp_auth_email_start(body: _EmailStartBody, request: Request) -> dict[str, Any]:
+    """Код на почту — для входа или для подтверждения почты. Ответ не выдаёт, есть ли такой аккаунт."""
+    from assistant.services.transactional_mail import TxMailError
+    from assistant.stores.accounts import AccountError
+
+    try:
+        return await run_in_threadpool(_email_send_code, body.email, _request_ip(request))
+    except AccountError as e:
+        raise _account_error(e) from e
+    except TxMailError as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+
+def _email_login_account(email: str) -> int:
+    """Аккаунт для входа по почте: найденный, старый (по почте Google / из организации) или новый."""
+    from assistant.stores import accounts, orgs_store
+
+    acc = accounts.get_by_email(email)
+    if acc:
+        return int(acc["user_id"])
+    legacy: int | None = None
+    try:
+        from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
+
+        legacy = lookup_user_id_by_calendar_email(email)
+    except Exception:
+        legacy = None
+    legacy = legacy or orgs_store.user_by_member_email(email)
+    if legacy and not accounts.get(legacy):
+        accounts.attach_email(int(legacy), email)
+        return int(legacy)
+    return int(accounts.create_email_account(email)["user_id"])
+
+
+def _session_user(uid: int, email: str, tg_id: int | None = None) -> dict[str, Any]:
+    user: dict[str, Any] = {"id": int(uid), "email": email}
+    try:
+        from assistant.stores import note_members
+
+        prof = note_members.get_profile(uid) or {}
+        for k in ("username", "first_name", "last_name", "photo_url"):
+            if prof.get(k):
+                user[k] = prof[k]
+    except Exception:
+        pass
+    if tg_id:
+        user["tg_id"] = int(tg_id)
+    return user
+
+
+def _session_response(uid: int, user: dict[str, Any], **extra: Any) -> JSONResponse:
+    from assistant.lib.telegram_login_auth import issue_browser_session
+
+    try:
+        token, exp = issue_browser_session(int(uid), user)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    resp = JSONResponse({"session_token": token, "expires_at": exp, "user": user, **extra})
+    _attach_miniapp_session_cookie(resp, token)
+    return resp
+
+
+def _claim_orgs(uid: int) -> None:
+    try:
+        from assistant.stores import orgs_store
+
+        for org_id in orgs_store.claim_pending(uid):
+            _org_sync_contacts(org_id)
+    except Exception as e:
+        print(f"[email_auth] claim orgs failed uid={uid} err={e!r}")
+
+
+@miniapp_router.post("/auth/email/verify")
+async def miniapp_auth_email_verify(body: _EmailVerifyBody) -> JSONResponse:
+    """Вход по коду из письма: находит или создаёт аккаунт и выдаёт сессию."""
+    from assistant.stores import accounts
+
+    try:
+        email = await run_in_threadpool(accounts.verify_code, body.email, body.code)
+        uid = await run_in_threadpool(_email_login_account, email)
+    except accounts.AccountError as e:
+        raise _account_error(e) from e
+    await run_in_threadpool(_claim_orgs, uid)
+    acc = await run_in_threadpool(accounts.get, uid)
+    user = await run_in_threadpool(_session_user, uid, email, (acc or {}).get("tg_user_id"))
+    _track(uid, "auth.email_login")
+    return _session_response(uid, user)
+
+
+def _email_attach(principal: _MiniappPrincipal, email: str) -> tuple[int, bool]:
+    """Подтверждённая почта текущему аккаунту. (id аккаунта, переключились ли на другой)."""
+    from assistant.stores import accounts
+
+    uid = int(principal.telegram_user_id)
+    owner = accounts.get_by_email(email)
+    if owner and int(owner["user_id"]) != uid:
+        tg = principal.tg_id
+        # Аккаунт по почте завели в вебе, а сейчас человек пришёл из Telegram без своего
+        # аккаунта: привязываем Telegram к нему, а не дублируем.
+        if (tg and accounts.is_synthetic(owner["user_id"]) and not owner["tg_user_id"]
+                and not accounts.get(uid) and not accounts.get_by_tg(tg)):
+            accounts.link_tg(int(owner["user_id"]), int(tg))
+            return int(owner["user_id"]), True
+        raise accounts.AccountError("Эта почта уже привязана к другому аккаунту Орбиты.", 409)
+    accounts.attach_email(uid, email)
+    return uid, False
+
+
+@miniapp_router.post("/auth/email/attach")
+async def miniapp_auth_email_attach(
+    body: _EmailVerifyBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> JSONResponse:
+    """Подтвердить почту для текущего аккаунта (старые аккаунты из Telegram, смена почты)."""
+    from assistant.stores import accounts
+
+    try:
+        email = await run_in_threadpool(accounts.verify_code, body.email, body.code)
+        uid, switched = await run_in_threadpool(_email_attach, principal, email)
+    except accounts.AccountError as e:
+        raise _account_error(e) from e
+    await run_in_threadpool(_claim_orgs, uid)
+    _track(uid, "auth.email_attached", switched=switched)
+    user = dict(principal.user or {})
+    user["id"] = uid
+    user["email"] = email
+    if principal.tg_id:
+        user["tg_id"] = int(principal.tg_id)
+    return _session_response(uid, user, switched=switched)
+
+
 @miniapp_router.post("/auth/logout")
 async def miniapp_auth_logout() -> JSONResponse:
     resp = JSONResponse({"ok": True})
@@ -5454,11 +5676,38 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
         "first_name": u.get("first_name"),
         "last_name": u.get("last_name"),
         "language_code": u.get("language_code"),
+        "email": await run_in_threadpool(_account_email, int(principal.telegram_user_id)),
+        "email_hint": await run_in_threadpool(_account_email_hint, principal),
+        "need_email": await run_in_threadpool(_needs_email, principal),
+        "tg_linked": bool(principal.tg_id),
         "bot_username": _miniapp_resolve_bot_username(),
         "has_custom_avatar": await run_in_threadpool(_user_has_custom_avatar, int(principal.telegram_user_id)),
         "ui_theme": await run_in_threadpool(_ui_theme_state, principal),
         "onboarding": await run_in_threadpool(_onboarding_state, principal),
     }
+
+
+def _account_email(uid: int) -> str | None:
+    from assistant.stores import accounts
+
+    return accounts.email_of(uid)
+
+
+def _account_email_hint(principal: _MiniappPrincipal) -> str | None:
+    """Подсказка для формы почты: почта из приглашения в организацию, иначе Google/подключённый ящик."""
+    from assistant.stores import accounts, orgs_store
+
+    uid = int(principal.telegram_user_id)
+    if accounts.email_of(uid):
+        return None
+    try:
+        hint = orgs_store.member_email_of(uid)
+        if hint:
+            return hint
+        emails = orgs_store.verified_emails(uid)
+        return emails[0] if emails else None
+    except Exception:
+        return None
 
 
 def _onboarding_state(principal: _MiniappPrincipal) -> dict[str, Any] | None:
@@ -7219,7 +7468,8 @@ class _MiniappOrgPatch(BaseModel):
 
 
 class _MiniappOrgMemberAdd(BaseModel):
-    key: str = ""
+    key: str = ""  # почта участника — обязательна
+    tg: str = ""  # @ник в Telegram — по нему бот узнает человека на /start
     role: str = "member"
 
 
@@ -7599,10 +7849,29 @@ async def miniapp_orgs_member_add(
     from assistant.stores import orgs_store
 
     uid = int(principal.telegram_user_id)
-    added = await _org_call(orgs_store.add_member, uid, org_id, body.key, role=body.role)
+    added = await _org_call(orgs_store.add_member, uid, org_id, body.key, role=body.role, tg=body.tg)
     if added.get("status") == "active":
         await run_in_threadpool(_org_sync_contacts, org_id)
+    else:
+        added["mailed"] = await run_in_threadpool(_org_mail_invite, principal, org_id, added["key"])
     return {**(await _org_call(_org_detail, uid, org_id)), "added": added}
+
+
+def _org_mail_invite(principal: _MiniappPrincipal, org_id: int, email: str) -> bool:
+    """Письмо приглашённому: «вас добавили, войдите по этой почте». Не вышло — не страшно."""
+    from assistant.lib.webapp_public import webapp_entry_url
+    from assistant.services import transactional_mail
+    from assistant.stores import orgs_store
+
+    try:
+        org = orgs_store.get_org(org_id) or {}
+        transactional_mail.send_org_invite(
+            email, str(org.get("name") or "организацию"), _principal_display_name(principal), webapp_entry_url()
+        )
+        return True
+    except Exception as e:
+        print(f"[orgs] invite mail org={org_id} to={email} err={e!r}")
+        return False
 
 
 @miniapp_router.patch("/orgs/{org_id}/members/{user_id}")

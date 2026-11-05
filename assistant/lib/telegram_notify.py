@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 import requests
 
+from assistant.lib import tg_account_ids
+
 
 def _bot_token() -> str:
     return (os.getenv("TELEGRAM_BOT_TOKEN", "") or "").strip()
@@ -57,7 +59,7 @@ def send_rich_message_return_id(
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
-        r = requests.post(_rich_api_url("sendRichMessage"), json=payload, timeout=25)
+        r = tg_account_ids.post(_rich_api_url("sendRichMessage"), json=payload, timeout=25)
         if r.ok:
             try:
                 data = r.json()
@@ -125,7 +127,7 @@ def send_user_message_return_id(
     if reply_markup:
         payload["reply_markup"] = reply_markup
     try:
-        r = requests.post(
+        r = tg_account_ids.post(
             _bot_api_url("sendMessage"),
             json=payload,
             timeout=25,
@@ -185,7 +187,7 @@ def edit_user_message(
     if parse_mode:
         payload["parse_mode"] = parse_mode
     try:
-        r = requests.post(
+        r = tg_account_ids.post(
             _bot_api_url("editMessageText"),
             json=payload,
             timeout=25,
@@ -341,7 +343,7 @@ def send_user_document(
     if cap:
         form["caption"] = cap[:1024]
     try:
-        r = requests.post(
+        r = tg_account_ids.post(
             _bot_api_url("sendDocument"),
             data=form,
             files=files,
@@ -394,7 +396,7 @@ def send_message(
             payload["reply_markup"] = reply_markup
         proxy = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
         try:
-            r = requests.post(
+            r = tg_account_ids.post(
                 f"{api}/sendMessage",
                 json=payload,
                 timeout=15,
@@ -422,7 +424,7 @@ def get_user_profile_photo_bytes(
     proxy = os.getenv("TELEGRAM_PROXY_URL", "").strip() or None
     proxies = {"http": proxy, "https": proxy} if proxy else None
     try:
-        r = requests.post(
+        r = tg_account_ids.post(
             f"{api}/getUserProfilePhotos",
             json={"user_id": int(user_id), "limit": 1},
             timeout=15,
@@ -438,7 +440,7 @@ def get_user_profile_photo_bytes(
         file_id = str((sizes[-1] or {}).get("file_id") or "").strip()
         if not file_id:
             return None
-        fr = requests.post(
+        fr = tg_account_ids.post(
             f"{api}/getFile",
             json={"file_id": file_id},
             timeout=15,

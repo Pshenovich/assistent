@@ -47,8 +47,11 @@ def base_builder(*, log_prefix: str) -> ApplicationBuilder:
         raise RuntimeError("TELEGRAM_BOT_TOKEN не задан в .env")
     proxy = os.getenv("TELEGRAM_PROXY_URL", "").strip()
     builder = Application.builder().token(token)
-    if proxy:
-        builder = builder.proxy(proxy).get_updates_proxy(proxy)
+    # Свой HTTP-слой: id аккаунтов по почте ↔ Telegram id (assistant/lib/tg_account_ids.py).
+    from assistant.lib.tg_account_ids import AccountMappingRequest
+
+    builder = builder.request(AccountMappingRequest(connection_pool_size=256, proxy=proxy or None))
+    builder = builder.get_updates_request(AccountMappingRequest(connection_pool_size=1, proxy=proxy or None))
     builder = attach_local_bot_api(builder, log_prefix=log_prefix)
     # Лимиты Telegram (~30 сообщений/с на бота, 20 в минуту в группу): массовые рассылки
     # (брифы, напоминания сотням людей) ждут очереди и повторяются после RetryAfter, а не теряются.
