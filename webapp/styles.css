@@ -18800,6 +18800,27 @@ html.actual-voice-open #actual-voice-btn { visibility: hidden; }
   display: none;
 }
 
+/* Почта и Telegram под именем: значение и «Сменить» / «Привязать» */
+#profile-main .pf-ident {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.6rem;
+  min-width: 0;
+}
+
+.pf-ident-val {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pf-ident .pf-link {
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
 /* Скелетоны: серые плашки, пока данные не пришли. */
 @keyframes pf-shimmer {
   0% { opacity: 0.45; }

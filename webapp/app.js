@@ -10228,12 +10228,19 @@
       '<span class="pf-avatar-cam" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z" /><circle cx="12" cy="13" r="3.5" /></svg></span>' +
       "</button>" +
       '<input type="file" class="pf-avatar-input" accept="image/*" hidden />' +
-      '<div class="profile-names"><h2></h2><p class="pf-nick"></p>' +
+      '<div class="profile-names"><h2></h2>' +
+      '<p class="pf-ident"><span class="pf-ident-val" data-ident="email"></span>' +
+      '<button type="button" class="pf-link" data-ident-act="email">Сменить</button></p>' +
+      '<p class="pf-ident"><span class="pf-ident-val" data-ident="tg"></span>' +
+      '<button type="button" class="pf-link hidden" data-ident-act="tg"></button></p>' +
       '<p class="pf-avatar-links"><button type="button" class="pf-link" data-av="change"></button>' +
       '<button type="button" class="pf-link pf-link--muted" data-av="delete">Удалить фото</button></p></div>';
     head.querySelector(".avatar-fallback").textContent = initials(me);
     head.querySelector("h2").textContent = me.first_name || "Пользователь";
-    head.querySelector(".pf-nick").textContent = me.username ? "@" + me.username : "";
+    head.querySelector('[data-ident-act="email"]').addEventListener("click", openChangeEmail);
+    head.querySelector('[data-ident-act="tg"]').addEventListener("click", function (e) {
+      openTelegramLink(e.currentTarget);
+    });
     var ids = profileSelfIds(me);
     var img = head.querySelector(".avatar-img");
     applyTelegramAvatar(img, { userId: ids.uid, username: me.username });
@@ -10607,7 +10614,6 @@
     var logoutWrap = document.getElementById("profile-logout-wrap");
     if (logoutWrap) setHidden(logoutWrap, hasTelegramWebAppAuth());
     renderProfileLogin(me);
-    bindProfileLoginOnce();
   }
 
   function profileLogout() {
@@ -57460,65 +57466,51 @@
     });
   }
 
-  // ——— Профиль → «Вход в Орбиту»: почта и Telegram ———
+  // ——— Профиль: почта и Telegram под именем (сменить / привязать) ———
 
   function renderProfileLogin(me) {
-    var emailVal = document.getElementById("profile-email-val");
-    if (emailVal) emailVal.textContent = (me && me.email) || "не подтверждена";
-    var tgVal = document.getElementById("profile-tg-val");
-    var tgAct = document.getElementById("profile-tg-action");
-    var tgBtn = document.getElementById("profile-tg-open");
-    var tgChev = document.getElementById("profile-tg-chev");
+    var head = document.getElementById("profile-head");
+    if (!head) return;
+    var emailVal = head.querySelector('[data-ident="email"]');
+    if (emailVal) emailVal.textContent = (me && me.email) || "почта не подтверждена";
+    var tgVal = head.querySelector('[data-ident="tg"]');
+    var tgBtn = head.querySelector('[data-ident-act="tg"]');
     if (!tgVal || !tgBtn) return;
     var linked = !!(me && me.tg_linked);
     var changeable = !!(me && me.tg_changeable);
-    tgVal.textContent = linked
-      ? (me.username ? "@" + me.username : "привязан") + (changeable ? "" : " · основной, сменить нельзя")
-      : "не привязан";
-    if (tgAct) tgAct.textContent = changeable ? (linked ? "Сменить" : "Привязать") : "";
-    if (tgChev) setHidden(tgChev, !changeable);
-    tgBtn.disabled = !changeable;
-    tgBtn.classList.toggle("pf-row--static", !changeable);
+    tgVal.textContent = linked ? "Telegram " + (me.username ? "@" + me.username : "привязан") : "Telegram не привязан";
+    // У старых аккаунтов id = Telegram id — сменить его нельзя, кнопки нет.
+    tgBtn.textContent = linked ? "Сменить" : "Привязать";
+    setHidden(tgBtn, !changeable);
   }
 
-  function bindProfileLoginOnce() {
-    var emailBtn = document.getElementById("profile-email-open");
-    if (emailBtn && emailBtn.dataset.bound !== "1") {
-      emailBtn.dataset.bound = "1";
-      emailBtn.addEventListener("click", function () {
-        openEmailSheet({
-          title: "Сменить почту",
-          text: "Укажите новую почту — пришлём на неё код. Входить в Орбиту будете по ней.",
-          submitLabel: "Сменить почту",
-          closable: true,
-        });
+  function openChangeEmail() {
+    openEmailSheet({
+      title: "Сменить почту",
+      text: "Укажите новую почту — пришлём на неё код. Входить в Орбиту будете по ней.",
+      submitLabel: "Сменить почту",
+      closable: true,
+    });
+  }
+
+  function openTelegramLink(btn) {
+    var was = btn.textContent;
+    btn.textContent = "…";
+    btn.disabled = true;
+    apiFetch("/auth/tg/link", { method: "POST" })
+      .then(function (r) {
+        var tg = window.Telegram && window.Telegram.WebApp;
+        if (tg && hasTelegramWebAppAuth() && typeof tg.openTelegramLink === "function") tg.openTelegramLink(r.url);
+        else window.open(r.url, "_blank", "noopener");
+        showNoteToast("Нажмите «Start» в боте с нужного Telegram — ссылка действует 15 минут");
+      })
+      .catch(function (e) {
+        showNoteToast(e.message || String(e));
+      })
+      .finally(function () {
+        btn.textContent = was;
+        btn.disabled = false;
       });
-    }
-    var tgBtn = document.getElementById("profile-tg-open");
-    if (tgBtn && tgBtn.dataset.bound !== "1") {
-      tgBtn.dataset.bound = "1";
-      tgBtn.addEventListener("click", function () {
-        if (tgBtn.disabled) return;
-        var act = document.getElementById("profile-tg-action");
-        var was = act ? act.textContent : "";
-        if (act) act.textContent = "…";
-        apiFetch("/auth/tg/link", { method: "POST" })
-          .then(function (r) {
-            var tg = window.Telegram && window.Telegram.WebApp;
-            if (tg && hasTelegramWebAppAuth() && typeof tg.openTelegramLink === "function") tg.openTelegramLink(r.url);
-            else window.open(r.url, "_blank", "noopener");
-            var sub = document.getElementById("profile-tg-val");
-            if (sub) sub.textContent = "Нажмите «Start» в боте с нужного Telegram — ссылка действует 15 минут";
-          })
-          .catch(function (e) {
-            var sub = document.getElementById("profile-tg-val");
-            if (sub) sub.textContent = e.message || String(e);
-          })
-          .finally(function () {
-            if (act) act.textContent = was;
-          });
-      });
-    }
   }
 
   window.onTelegramAuth = function (user) {
