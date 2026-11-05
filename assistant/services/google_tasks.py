@@ -44,10 +44,9 @@ def _creds(user_id: int):
 
 
 def _authorized_http(creds: Any, timeout: float):
-    import httplib2
-    from google_auth_httplib2 import AuthorizedHttp
+    from assistant.lib import google_http
 
-    return AuthorizedHttp(creds, http=httplib2.Http(timeout=float(timeout)))
+    return google_http.authorized_http(creds, timeout)
 
 
 def _service(user_id: int, timeout: float = PUSH_TIMEOUT_SEC):

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+from assistant.lib import google_http
 
 from assistant.integrations import google_calendar_oauth
 from assistant.stores import user_prefs
@@ -14,7 +14,7 @@ def fetch_google_timezone(user_id: int) -> str | None:
     if not path.is_file():
         return None
     creds = Credentials.from_authorized_user_file(str(path))
-    svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+    svc = google_http.build_service("calendar", "v3", creds)
     setting = svc.settings().get(setting="timezone").execute()
     value = str(setting.get("value") or "").strip()
     if value:

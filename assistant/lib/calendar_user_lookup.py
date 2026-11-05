@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+from assistant.lib import google_http
 
 from assistant.integrations import google_calendar_oauth
 
@@ -95,7 +95,7 @@ def account_email_for_user(user_id: int) -> str | None:
         return None
     try:
         creds = Credentials.from_authorized_user_file(str(path))
-        svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        svc = google_http.build_service("calendar", "v3", creds)
         res = svc.calendarList().list().execute()
         for item in res.get("items") or []:
             if not isinstance(item, dict) or not item.get("primary"):

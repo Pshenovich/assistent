@@ -8,7 +8,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from googleapiclient.discovery import build
+from assistant.lib import google_http
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from assistant.config import (
@@ -50,7 +50,7 @@ def _service(user_id: int):
         raise RuntimeError(
             "Сессия Google истекла. Выполните /calendar_auth в боте."
         )
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    return google_http.build_service("calendar", "v3", creds)
 
 
 def _parse_dt(s: str, user_id: int) -> datetime:
