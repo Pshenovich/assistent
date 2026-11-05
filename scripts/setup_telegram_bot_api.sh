@@ -48,6 +48,15 @@ _env_get() {
   printf '%s' "$val"
 }
 
+# Задано зеркало Bot API вне РФ (из российского ДЦ Telegram режут, локальному серверу до ДЦ Telegram
+# не достучаться) — локальный telegram-bot-api не ставим и адрес не трогаем.
+_current_base="$(_env_get TELEGRAM_BOT_API_BASE_URL)"
+if [[ -n "$_current_base" && ! "$_current_base" =~ ^https?://(127\.0\.0\.1|localhost|\[::1\])(:|/|$) ]]; then
+  echo "TELEGRAM_BOT_API_BASE_URL=${_current_base} — внешнее зеркало, локальный telegram-bot-api не нужен"
+  systemctl disable --now telegram-bot-api >/dev/null 2>&1 || true
+  exit 0
+fi
+
 TELEGRAM_API_ID="$(_env_get TELEGRAM_API_ID)"
 TELEGRAM_API_HASH="$(_env_get TELEGRAM_API_HASH)"
 TELEGRAM_ASSISTANT_API_ID="$(_env_get TELEGRAM_ASSISTANT_API_ID)"
