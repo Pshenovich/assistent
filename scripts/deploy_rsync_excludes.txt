@@ -72,6 +72,7 @@ ai_docs/
 .cursor/
 webapp/node_modules/
 webapp/.npm-cache/
+webapp/.min/
 webapp/dev-mock-data.js
 tmp-restore/
 news/

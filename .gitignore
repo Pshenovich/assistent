@@ -29,6 +29,8 @@ notes.sqlite
 .DS_Store
 webapp/.npm-cache/
 webapp/node_modules/
+# Минифицированные app.js и board*.js — артефакт выкатки (npm run minify, scripts/deploy_prod_replace.sh).
+webapp/.min/
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm

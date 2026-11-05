@@ -2479,3 +2479,9 @@ html[data-theme="light"] .leo-board {
   color: inherit;
   font-size: 12px;
 }
+
+/* Доска ещё грузится (скрипты доски — лениво, см. loadBoardScripts в app.js). */
+.board-lazy-status {
+  padding: 32px 16px;
+  text-align: center;
+}

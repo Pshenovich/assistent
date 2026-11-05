@@ -192,6 +192,17 @@
   const NOTE_EDITOR_ASSET_V = "20261104-doctype1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
+  // Доска и макет (kind=board): скрипты грузятся при первом открытии, а не с каждой страницей.
+  // Порядок важен — board.js при загрузке берёт LeoBoardGeom/Blocks/Templates. Смена ?v= — только здесь (и в share.html).
+  const BOARD_SCRIPTS = [
+    "/webapp/board-geom.js?v=20261105-design43",
+    "/webapp/board-blocks.js?v=20261103-boardtpl",
+    "/webapp/board-templates.js?v=20261104-doctype2",
+    "/webapp/board-import.js?v=20261105-design43",
+    "/webapp/board-figma.js?v=20261105-design43",
+    "/webapp/board.js?v=20261105-design43",
+  ];
+  let boardScriptsPromise = null;
 
   function isIOSDevice() {
     if (typeof navigator === "undefined") return false;
@@ -1238,6 +1249,41 @@
         throw err;
       });
     return noteEditorScriptsPromise;
+  }
+
+  /** Скрипты доски: качаются параллельно, выполняются по порядку (async=false). Ошибка — следующий вызов пробует снова. */
+  function loadBoardScripts() {
+    if (window.LeoBoard) return Promise.resolve();
+    if (boardScriptsPromise) return boardScriptsPromise;
+    var added = [];
+    boardScriptsPromise = Promise.all(
+      BOARD_SCRIPTS.map(function (src) {
+        return new Promise(function (res, rej) {
+          var s = document.createElement("script");
+          s.src = src;
+          s.async = false;
+          s.onload = function () {
+            res();
+          };
+          s.onerror = function () {
+            rej(new Error("Не удалось загрузить доску"));
+          };
+          added.push(s);
+          document.head.appendChild(s);
+        });
+      })
+    )
+      .then(function () {
+        if (!window.LeoBoard) throw new Error("Доска не инициализировалась");
+      })
+      .catch(function (err) {
+        boardScriptsPromise = null;
+        added.forEach(function (s) {
+          if (s.parentNode) s.parentNode.removeChild(s);
+        });
+        throw err;
+      });
+    return boardScriptsPromise;
   }
 
   let cachedBotUsername = "";
@@ -31734,6 +31780,8 @@
     rightWebCanvas: null,
     leftBoard: null,
     rightBoard: null,
+    leftBoardWait: "", // ждём скрипты доски (loadBoardScripts) — см. waitBoardScripts
+    rightBoardWait: "",
     canvasSelections: [],
   };
 
@@ -32178,10 +32226,12 @@
 
   function destroyLeftBoard() {
     var b = noteSheetState.leftBoard;
+    var waiting = !!noteSheetState.leftBoardWait;
+    noteSheetState.leftBoardWait = "";
     if (b) stopBoardYjs(b);
     noteSheetState.leftBoard = null;
-    if (!b) return;
-    if (b.destroy) b.destroy();
+    if (!b && !waiting) return;
+    if (b && b.destroy) b.destroy();
     rerenderDiscussionFeed();
     var pad = document.querySelector("#note-editor-overlay .note-editor-pad--body");
     if (pad) pad.classList.remove("is-board-mode", "is-web-canvas-mode");
@@ -32192,16 +32242,51 @@
   }
 
   function destroyRightBoard() {
+    noteSheetState.rightBoardWait = "";
     var b = noteSheetState.rightBoard;
     if (b) stopBoardYjs(b);
     noteSheetState.rightBoard = null;
     if (b && b.destroy) b.destroy();
   }
 
+  // Скрипты доски ещё не загружены: заглушка в host, после загрузки — тот же mount, если лист всё ещё открыт.
+  // Ключ ожидания (leftBoardWait/rightBoardWait) снимает destroy*Board — ушли с листа, и монтировать нечего.
+  function waitBoardScripts(host, waitKey, sheet, stillOpen, mount) {
+    var sid = String(sheet.id);
+    var token = noteSheetsNoteId() + ":" + sid + ":" + Date.now();
+    noteSheetState[waitKey] = token;
+    host.innerHTML = '<div class="board-lazy-status muted small">Загружаю доску…</div>';
+    loadBoardScripts().then(
+      function () {
+        if (noteSheetState[waitKey] !== token || !stillOpen(sid)) return;
+        noteSheetState[waitKey] = "";
+        mount(findNoteSheet(sid) || sheet);
+      },
+      function (err) {
+        if (noteSheetState[waitKey] !== token) return;
+        host.innerHTML = "";
+        var box = document.createElement("div");
+        box.className = "board-lazy-status muted small";
+        box.textContent = ((err && err.message) || "Не удалось загрузить доску") + ". ";
+        var retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "btn ghost";
+        retry.textContent = "Повторить";
+        retry.addEventListener("click", function () {
+          if (noteSheetState[waitKey] !== token || !stillOpen(sid)) return;
+          noteSheetState[waitKey] = "";
+          mount(findNoteSheet(sid) || sheet);
+        });
+        box.appendChild(retry);
+        host.appendChild(box);
+      }
+    );
+  }
+
   // Холст занимает место редактора так же, как web-канвас (те же классы раскладки).
   function mountLeftBoard(sheet) {
     var LeoBoard = window.LeoBoard;
-    if (!LeoBoard || !sheet) return;
+    if (!sheet) return;
     destroyLeftBoard();
     destroyLeftWebCanvas();
     var host = ensureLeftWebCanvasHost();
@@ -32213,6 +32298,12 @@
     if (overlay) overlay.classList.add("is-web-canvas-open");
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     if (toolbarWrap) setHidden(toolbarWrap, true);
+    if (!LeoBoard) {
+      waitBoardScripts(host, "leftBoardWait", sheet, function (sid) {
+        return String(noteSheetState.leftId) === sid;
+      }, mountLeftBoard);
+      return;
+    }
     noteSheetState.leftBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
     refreshBoardTablesWhenEditorReady(noteSheetState.leftBoard);
     rerenderDiscussionFeed();
@@ -32224,10 +32315,16 @@
     var LeoBoard = window.LeoBoard;
     var host = document.getElementById("note-discussion-sheet-host");
     var bar = document.getElementById("note-discussion-sheet-toolbar");
-    if (!LeoBoard || !host || !sheet) return;
+    if (!host || !sheet) return;
     destroyRightSheetEditor();
     host.innerHTML = "";
     if (bar) bar.innerHTML = "";
+    if (!LeoBoard) {
+      waitBoardScripts(host, "rightBoardWait", sheet, function (sid) {
+        return noteSheetState.rightMode === "sheet" && String(noteSheetState.rightId) === sid;
+      }, mountRightBoard);
+      return;
+    }
     noteSheetState.rightBoard = LeoBoard.create(Object.assign({ host: host }, boardSheetOptions(sheet)));
     refreshBoardTablesWhenEditorReady(noteSheetState.rightBoard);
     rerenderDiscussionFeed();
@@ -37579,6 +37676,18 @@
     var isBoard = String(v.sheet_kind || "").toLowerCase() === "board";
     // Холст — JSON: построчного сравнения нет, показываем версию картинкой.
     var isWeb = String(v.sheet_kind || "").toLowerCase() === "web" || isBoard;
+    if (isBoard && !window.LeoBoard) {
+      var selId = h.selId;
+      loadBoardScripts().then(
+        function () {
+          if (noteHistory === h && h.selId === selId) nhPaintSelected();
+        },
+        function (err) {
+          showNoteToast((err && err.message) || "Не удалось загрузить доску");
+        }
+      );
+      return;
+    }
     var host;
     if (isDesktopLayout()) {
       var pv = nhEnsurePreview();
@@ -42064,6 +42173,12 @@
   }
 
   function readSheetEditorHtml(which) {
+    // Доска ещё ждёт свои скрипты: на экране заглушка, тело — как сохранено (не HTML скрытого редактора).
+    var waitingBoard = which === "right" ? noteSheetState.rightBoardWait : noteSheetState.leftBoardWait;
+    if (waitingBoard) {
+      var ws = findNoteSheet(which === "right" ? noteSheetState.rightId : noteSheetState.leftId);
+      return ws ? String(ws.body || ws.description || "") : "";
+    }
     if (which === "right") {
       if (noteSheetState.rightBoard) return noteSheetState.rightBoard.getJson();
       if (noteSheetState.rightWebCanvas && typeof noteSheetState.rightWebCanvas.getHtml === "function") {
@@ -44247,6 +44362,8 @@
         if (noteSheetsNoteId() !== String(noteId)) return;
         var rows = (data && data.sheets) || [];
         if (rows.length) noteSheetState.sheets = rows;
+        // Есть доска или макет — скрипты доски заранее, пока человек не открыл лист (и для контекста Лео).
+        if (rows.some(isBoardSheet)) loadBoardScripts().catch(function () {});
         if (noteSheetState.staleSheetsNoteId === String(noteId)) noteSheetState.staleSheetsNoteId = "";
         var main = findNoteSheet(NOTE_SHEET_MAIN);
         if (main) noteSheetState.primaryBody = main.body || main.description || noteSheetState.primaryBody;
@@ -49185,6 +49302,7 @@
       if (String(noteSheetState.leftId) === String(sheet.id) && noteSheetState.leftBoard) bj = noteSheetState.leftBoard.getJson();
       else if (String(noteSheetState.rightId) === String(sheet.id) && noteSheetState.rightBoard) bj = noteSheetState.rightBoard.getJson();
       // Не только текст блоков: формы, цвета и связи — чтобы Лео понимал, что нарисовано.
+      if (!window.LeoBoard) loadBoardScripts().catch(function () {}); // обычно уже грузится с листами заметки
       return window.LeoBoard ? window.LeoBoard.describe(bj) : "";
     }
     if (isPrimarySheetId(sheet.id) && isPrimarySheetId(noteSheetState.leftId)) {
