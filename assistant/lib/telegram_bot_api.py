@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from telegram.ext import ApplicationBuilder
 
-from assistant.config import telegram_bot_api_base_url, telegram_bot_api_reachable
+from assistant.config import (
+    telegram_bot_api_base_url,
+    telegram_bot_api_is_loopback,
+    telegram_bot_api_reachable,
+)
 
 
 def attach_local_bot_api(builder: ApplicationBuilder, *, log_prefix: str) -> ApplicationBuilder:
@@ -15,6 +19,10 @@ def attach_local_bot_api(builder: ApplicationBuilder, *, log_prefix: str) -> App
     api_base = telegram_bot_api_base_url()
     if not api_base:
         return builder
+    if not telegram_bot_api_is_loopback(api_base):
+        # Зеркало api.telegram.org вне РФ (из российского ДЦ Telegram режут): тот же API, облачные лимиты.
+        print(f"[{log_prefix}] Bot API через зеркало: {api_base}")
+        return builder.base_url(f"{api_base}/bot").base_file_url(f"{api_base}/file/bot")
     if not telegram_bot_api_reachable(api_base):
         print(
             f"[{log_prefix}] local Bot API {api_base} недоступен — "

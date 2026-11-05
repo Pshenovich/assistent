@@ -5231,8 +5231,10 @@ def _miniapp_resolve_bot_username() -> str | None:
         token = (os.getenv("TELEGRAM_BOT_TOKEN", "") or "").strip()
         if token:
             try:
+                from assistant.config import telegram_api_root
+
                 r = requests.get(
-                    f"https://api.telegram.org/bot{token}/getMe",
+                    f"{telegram_api_root()}/bot{token}/getMe",
                     timeout=5,
                 )
                 j = r.json()

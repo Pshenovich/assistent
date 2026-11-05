@@ -26,7 +26,10 @@ def _rich_api_url(method: str) -> str:
     token = _bot_token()
     custom = (os.getenv("TELEGRAM_RICH_BOT_API_BASE_URL", "") or "").strip().rstrip("/")
     if not custom:
-        custom = "https://api.telegram.org"
+        from assistant.config import telegram_api_root, telegram_bot_api_is_loopback
+
+        # Локальный сервер часто без sendRichMessage — тогда облако; зеркало вне РФ — через него.
+        custom = "https://api.telegram.org" if telegram_bot_api_is_loopback() else telegram_api_root()
     return f"{custom}/bot{token}/{method}"
 
 
@@ -461,7 +464,9 @@ def get_user_profile_photo_bytes(
             url = f"{api.replace('/bot', '/file/bot', 1)}/{file_path}"
             if "/file/bot" not in url:
                 token = (bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
-                url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+                from assistant.config import telegram_api_root
+
+                url = f"{telegram_api_root()}/file/bot{token}/{file_path}"
         img = requests.get(url, timeout=20, proxies=proxies)
         if img.ok and img.content:
             return img.content

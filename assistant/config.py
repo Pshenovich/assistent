@@ -45,9 +45,25 @@ def telegram_bot_api_base_url() -> str:
     return (os.getenv("TELEGRAM_BOT_API_BASE_URL", "") or "").strip().rstrip("/")
 
 
+def telegram_bot_api_is_loopback(api_base: str | None = None) -> bool:
+    """Адрес Bot API — этот же сервер (локальный telegram-bot-api), а не удалённое зеркало."""
+    from urllib.parse import urlparse
+
+    raw = (api_base if api_base is not None else telegram_bot_api_base_url()).strip()
+    if not raw:
+        return False
+    host = (urlparse(raw if "://" in raw else f"http://{raw}").hostname or "").lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def telegram_api_root() -> str:
+    """Куда ходить за Bot API: TELEGRAM_BOT_API_BASE_URL (локальный сервер или зеркало вне РФ) или облако."""
+    return telegram_bot_api_base_url() or "https://api.telegram.org"
+
+
 def telegram_local_bot_api_enabled() -> bool:
-    """В .env задан локальный telegram-bot-api (снимает лимит 20 МБ)."""
-    return bool(telegram_bot_api_base_url())
+    """В .env задан локальный telegram-bot-api (снимает лимит 20 МБ). Удалённое зеркало — облачные лимиты."""
+    return telegram_bot_api_is_loopback()
 
 
 def telegram_bot_api_reachable(api_base: str | None = None, timeout: float = 0.6) -> bool:
