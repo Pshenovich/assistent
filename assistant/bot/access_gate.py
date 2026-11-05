@@ -27,7 +27,7 @@ def access_scope_from_context(context: ContextTypes.DEFAULT_TYPE | None) -> str:
 
 
 def _product_name(scope: str | None) -> str:
-    return "Donatello" if access.normalize_scope(scope) == "donatello" else "Orbita"
+    return "Donatello" if access.normalize_scope(scope) == "donatello" else "Орбита"
 
 
 def is_user_allowed(
@@ -267,10 +267,17 @@ async def handle_access_callback(
         )
         await q.edit_message_text(f"Доступ разрешён (ID {uid}).")
         try:
-            await context.bot.send_message(
-                int(uid),
-                f"Вам открыт доступ к {product}. Напишите /start, чтобы начать.",
-            )
+            if access.normalize_scope(scope) != "donatello":
+                from assistant.bot.onboarding import send_welcome
+                from assistant.lib.webapp_public import webapp_entry_url
+
+                await context.bot.send_message(int(uid), f"Вам открыт доступ к {product}.")
+                await send_welcome(context.bot, int(uid), user_id=int(uid), webapp_url=webapp_entry_url())
+            else:
+                await context.bot.send_message(
+                    int(uid),
+                    f"Вам открыт доступ к {product}. Напишите /start, чтобы начать.",
+                )
         except Exception as e:
             print(f"[access_gate] notify approved user={uid} failed err={e!r}")
         return

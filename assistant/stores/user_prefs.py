@@ -288,6 +288,51 @@ def mark_onboarding_completed(user_id: int) -> None:
     save_prefs(user_id, prefs)
 
 
+def onboarding_fresh(user_id: int) -> bool:
+    """Пришёл новым через бота: знакомство в мини-приложении показываем, даже если он уже что-то сделал в боте."""
+    try:
+        return float(load_prefs(user_id).get("onboarding_fresh_at") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def mark_onboarding_fresh(user_id: int) -> None:
+    prefs = load_prefs(user_id)
+    prefs["onboarding_fresh_at"] = time.time()
+    save_prefs(user_id, prefs)
+
+
+def onboarding_pick(user_id: int, *, max_age_sec: float | None = None) -> str:
+    """Что человек выбрал на старте: day / talk / chats ("" — не выбирал или выбор устарел)."""
+    prefs = load_prefs(user_id)
+    pick = str(prefs.get("onboarding_pick") or "")
+    if not pick or max_age_sec is None:
+        return pick
+    try:
+        at = float(prefs.get("onboarding_pick_at") or 0)
+    except (TypeError, ValueError):
+        at = 0.0
+    return pick if time.time() - at <= max_age_sec else ""
+
+
+def set_onboarding_pick(user_id: int, pick: str) -> None:
+    prefs = load_prefs(user_id)
+    prefs["onboarding_pick"] = str(pick)
+    prefs["onboarding_pick_at"] = time.time()
+    prefs.setdefault("onboarding_completed_at", time.time())
+    save_prefs(user_id, prefs)
+
+
+def claim_onboarding_followup(user_id: int) -> bool:
+    """Сообщение «что дальше» после первого результата — один раз. True, если отправлять."""
+    prefs = load_prefs(user_id)
+    if prefs.get("onboarding_followup_at"):
+        return False
+    prefs["onboarding_followup_at"] = time.time()
+    save_prefs(user_id, prefs)
+    return True
+
+
 def digest_enabled(user_id: int) -> bool:
     """Дайджест чатов выключен по умолчанию (явный opt-in)."""
     prefs = load_prefs(user_id)

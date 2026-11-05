@@ -22,7 +22,7 @@ from assistant.integrations.openrouter_client import set_openrouter_usage_telegr
 
 from assistant.bot.access_gate import ensure_access, handle_access_callback
 from assistant.bot.note_edit_requests import handle_note_edit_callback
-from assistant.bot.onboarding import handle_onboarding_callback, send_start_onboarding
+from assistant.bot.onboarding import handle_onboarding_callback, send_help, send_start_onboarding
 from assistant.bot.operation_cancel import try_cancel_operation
 from assistant.bot.group_gate import should_process_message
 from assistant.bot.group_reaction import react_group_message_seen
@@ -55,7 +55,7 @@ async def _set_chat_webapp_menu_button(
         await context.bot.set_chat_menu_button(
             chat_id=chat.id,
             menu_button=MenuButtonWebApp(
-                text="Orbita", web_app=WebAppInfo(url=_webapp_url())
+                text="Орбита", web_app=WebAppInfo(url=_webapp_url())
             ),
         )
     except Exception as e:
@@ -99,6 +99,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             platform="tg_bot",
             ref=ref if _re.fullmatch(r"[A-Za-z0-9_\-]*", ref) else "other",
         )
+    chat = update.effective_chat
+    # «Добавить в группу» (startgroup) присылает /start в группу — знакомство там не показываем.
+    if chat and chat.type != "private":
+        return
     if not await ensure_access(update, context):
         return
     user = update.effective_user
@@ -136,13 +140,29 @@ async def cmd_onboarding(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
 
 
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await ensure_access(update, context):
+        return
+    await send_help(update, webapp_url=_webapp_url())
+
+
+async def cmd_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Неизвестная команда в личке — подсказка вместо тишины."""
+    chat = update.effective_chat
+    if not update.message or not chat or chat.type != "private":
+        return
+    if not await ensure_access(update, context):
+        return
+    await update.message.reply_text("Такой команды нет. Что я умею — /help")
+
+
 async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await ensure_access(update, context):
         return
     url = _webapp_url()
     await _set_chat_webapp_menu_button(update, context)
     if update.message:
-        await update.message.reply_text(f"Мини-приложение: {url}")
+        await update.message.reply_text(f"Орбита: {url}")
 
 
 async def cmd_web(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -334,7 +354,7 @@ async def cmd_yandex_disk_code(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     await msg.reply_text(
         "Код Яндекс Диска вводится в мини-приложении:\n"
-        "Меню «Orbita» → Профиль → Яндекс Диск → вставьте код со страницы Яндекса."
+        "Меню «Орбита» → Профиль → Яндекс Диск → вставьте код со страницы Яндекса."
     )
 
 
@@ -368,9 +388,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Голос обрабатывает MessageHandler(VOICE) — не дублируем (в т.ч. sticky Bitrix).
     if msg.voice:
         return
-    from assistant.bot import task_reply
+    from assistant.bot import onboarding, task_reply
 
     if await task_reply.try_consume_reply(update, context, text):
+        return
+    if not is_group and text and await onboarding.try_consume_capture(update, context, text):
         return
     if await zoom_skill.try_continue_pending(update, context):
         return
@@ -477,6 +499,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(TypeHandler(Update, _bind_usage_telegram_user), group=-1)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("onboarding", cmd_onboarding))
+    app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("app", cmd_app))
     app.add_handler(CommandHandler("web", cmd_web))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
@@ -558,6 +581,8 @@ def register_handlers(app: Application) -> None:
             transcribe_skill.handle_document,
         )
     )
+    # Неизвестные команды — после всех CommandHandler'ов этой группы.
+    app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.COMMAND, cmd_unknown))
     # Один handler на текст/подпись; только первичные message (не edited_*).
     app.add_handler(
         MessageHandler(

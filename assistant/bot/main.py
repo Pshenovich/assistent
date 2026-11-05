@@ -95,6 +95,45 @@ def register_background_jobs(app: Application) -> None:
     register_analytics_snapshot_jobs(app)
 
 
+BOT_DESCRIPTION = (
+    "Лео — ИИ-помощник Орбиты. Держит встречи, задачи и договорённости под контролем прямо в Телеграме:\n\n"
+    "• разложит ваш день из одного голосового на встречи, задачи и напоминания\n"
+    "• перешлите голосовое или запись созвона — верну суть и задачи по людям\n"
+    "• добавьте в рабочий чат — соберу главное и пришлю срочное\n\n"
+    "Нажмите «Старт» — за минуту покажу на ваших делах."
+)
+BOT_SHORT_DESCRIPTION = (
+    "Лео держит встречи, задачи и договорённости под контролем: разберёт голосовые и созвоны, "
+    "соберёт ваш день."
+)
+BOT_COMMANDS = [
+    ("start", "Начать"),
+    ("help", "Что умеет Лео"),
+    ("app", "Открыть Орбиту"),
+    ("calendar_auth", "Подключить Google Календарь"),
+    ("cancel", "Отменить текущий шаг"),
+]
+
+
+async def set_bot_profile(bot) -> None:
+    """Описание (видно в пустом чате до /start), короткое описание и меню команд. BOT_PROFILE_SYNC=0 — не трогать."""
+    if os.getenv("BOT_PROFILE_SYNC", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    from telegram import BotCommand
+
+    for name, call in (
+        ("description", lambda: bot.set_my_description(BOT_DESCRIPTION, language_code="ru")),
+        ("description", lambda: bot.set_my_description(BOT_DESCRIPTION)),
+        ("short_description", lambda: bot.set_my_short_description(BOT_SHORT_DESCRIPTION, language_code="ru")),
+        ("short_description", lambda: bot.set_my_short_description(BOT_SHORT_DESCRIPTION)),
+        ("commands", lambda: bot.set_my_commands([BotCommand(c, d) for c, d in BOT_COMMANDS])),
+    ):
+        try:
+            await call()
+        except Exception as e:
+            print(f"[bot] set {name} failed: {e!r}")
+
+
 def build_application() -> Application:
     # Параллельная обработка апдейтов (напоминания не блокируют голос/текст).
     builder = base_builder(log_prefix="bot").concurrent_updates(8)
@@ -105,12 +144,13 @@ def build_application() -> Application:
         try:
             await application.bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
-                    text="Orbita", web_app=WebAppInfo(url=url)
+                    text="Орбита", web_app=WebAppInfo(url=url)
                 )
             )
             print(f"[bot] menu button → {url}")
         except Exception as e:
             print(f"[bot] menu button failed: {e}")
+        await set_bot_profile(application.bot)
 
     builder = builder.post_init(_post_init)
     app = builder.build()

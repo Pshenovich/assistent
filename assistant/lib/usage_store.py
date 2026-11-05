@@ -304,6 +304,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "market_insight": "Рынок: что это значит для вас",
     "ask_image": "Вопрос с картинкой",
     "parse_voice_command": "Голосовая команда",
+    "parse_day_plan": "Разбор дня (знакомство)",
     "chat_alerts": "Срочное из чатов",
     "chat_thread_title": "Название чата",
     "meeting_followup": "Письмо после встречи",

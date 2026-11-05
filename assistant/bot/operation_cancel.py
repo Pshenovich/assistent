@@ -44,6 +44,11 @@ async def try_cancel_operation(
     if reminders_skill.clear_await_when_for_user(context, uid):
         await msg.reply_text("Операция отменена: уточнение времени напоминания.")
         return True
+    from assistant.bot import onboarding
+
+    if onboarding.clear_capture(context):
+        await msg.reply_text("Хорошо, не разбираю. Пишите, что нужно, — или /start, чтобы выбрать заново.")
+        return True
     st = cps.get_pending(chat_id, ttl_sec=_PENDING_TTL, user_id=uid)
     if not st or int(st.get("user_id") or 0) != uid:
         await msg.reply_text("Нет активной операции для отмены.")

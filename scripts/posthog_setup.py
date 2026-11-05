@@ -202,6 +202,12 @@ def insights(action_id: int) -> list[tuple[str, str, dict]]:
             [ev("integration.connect", "Подключения", "dau")], display="ActionsBarValue", breakdown="provider")),
         ("Онбординг", "Шаги интро / команда / тур.", trends(
             [ev("onboarding.step", "Шаг", "dau")], display="ActionsBarValue", breakdown="step")),
+        ("Знакомство в боте: что выбирают", "Кнопка на /start: day / talk / chats.", trends(
+            [ev("onboarding.pick", "Выбор", "dau")], display="ActionsPie", breakdown="choice")),
+        ("Знакомство в боте: воронка", "/start → выбрал боль → первый результат → следующая сессия, окно 14 дней.", funnel([
+            ev("bot.start", "/start"), ev("onboarding.pick", "Выбрал сценарий"),
+            ev("onboarding.first_value", "Первый результат"), ev("session", "Следующая сессия"),
+        ])),
         ("Воронка активации", "Создал материал → спросил ИИ → вернулся (новая сессия), окно 14 дней.", funnel([
             created, ev("ai.ask", "Спросил ИИ"), ev("session", "Следующая сессия"),
         ])),

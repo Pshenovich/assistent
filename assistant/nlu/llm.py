@@ -21,6 +21,7 @@ from assistant.nlu.prompts import (
     ASK_SYSTEM,
     CALENDAR_PARSE_SYSTEM,
     CHAT_DIGEST_SYSTEM,
+    DAY_PLAN_SYSTEM,
     JOURNAL_QA_ANSWER_SYSTEM,
     JOURNAL_QA_PARSE_SYSTEM,
     KB_QA_ANSWER_SYSTEM,
@@ -697,6 +698,32 @@ def parse_voice_command(text: str, *, now: datetime) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return obj if isinstance(obj, dict) else None
+
+
+def parse_day_plan(text: str, *, now: datetime) -> list[dict[str, Any]]:
+    """Онбординг «Разгрести день»: одно сообщение → список встреч, задач и напоминаний (сырые поля, проверяет вызывающий)."""
+    from datetime import timedelta
+
+    wd = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+    days = [now.date() + timedelta(days=i) for i in range(14)]
+    payload = {
+        "now": now.strftime("%Y-%m-%d %H:%M") + " (" + wd[now.weekday()] + ")",
+        "days": [d.isoformat() + " " + wd[d.weekday()] for d in days],
+        "text": text,
+    }
+    raw = _chat(
+        DAY_PLAN_SYSTEM,
+        json.dumps(payload, ensure_ascii=False),
+        operation="parse_day_plan",
+        model=os.getenv("OPENROUTER_MODEL_ROUTER", "").strip() or "google/gemini-2.5-flash",
+        timeout=40,
+    )
+    try:
+        obj = json.loads(strip_json_from_markdown(raw))
+    except json.JSONDecodeError:
+        return []
+    items = obj.get("items") if isinstance(obj, dict) else None
+    return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
 
 
 def format_note(text: str) -> dict[str, str] | None:

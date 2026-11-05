@@ -50,6 +50,28 @@ def _usage_calls(uid: int) -> int:
     return int(usage_store.user_lifetime_stats(str(uid)).get("n_calls") or 0)
 
 
+def has_activity(user_id: int) -> bool:
+    """Следы работы в Орбите: документы, чаты, задачи или вызовы ИИ."""
+    uid = int(user_id)
+
+    def _threads() -> bool:
+        from assistant.stores import chat_threads
+
+        return bool(chat_threads.list_threads(uid, limit=1))
+
+    def _tasks() -> bool:
+        from assistant.stores import calendar_tasks
+
+        return bool(calendar_tasks.list_recent_owner_tasks(uid, "1970-01-01", 1))
+
+    return bool(
+        _try(lambda: _notes(uid), [])
+        or _try(_threads, False)
+        or _try(_tasks, False)
+        or (_try(lambda: _usage_calls(uid), 0) or 0) > 0
+    )
+
+
 def initial_state(user_id: int) -> dict[str, Any]:
     uid = int(user_id)
     used: set[str] = set()
@@ -137,8 +159,16 @@ def initial_state(user_id: int) -> dict[str, Any]:
 
         return user_prefs.onboarding_completed(uid)
 
+    def _fresh() -> bool:
+        from assistant.stores import user_prefs
+
+        return user_prefs.onboarding_fresh(uid)
+
     calls = _try(lambda: _usage_calls(uid), 0) or 0
-    existing = bool(note_list or has_threads or has_tasks or calls > 0 or _try(_bot_onboarded, False))
+    # Пришёл новым через бота (/start) — знакомство показываем, даже если он уже что-то сделал в боте.
+    existing = not _try(_fresh, False) and bool(
+        note_list or has_threads or has_tasks or calls > 0 or _try(_bot_onboarded, False)
+    )
 
     now = time.time()
     st: dict[str, Any] = {"used": {f: now for f in sorted(used)}, "hint_shown": {}, "snoozed": {}, "screens_seen": {}}

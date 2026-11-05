@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 from telegram import InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
@@ -88,6 +89,24 @@ def mark_transcribe_handled(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def consume_transcribe_handled(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return bool(context.user_data.pop(_DONE_FLAG, False))
+
+
+def forwarded_summary_enabled() -> bool:
+    return os.getenv("FORWARDED_SUMMARY", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _is_av_media(msg: Message) -> bool:
+    if msg.voice or msg.audio or msg.video or msg.video_note:
+        return True
+    mt = str(getattr(msg.document, "mime_type", "") or "") if msg.document else ""
+    return mt.startswith(("audio/", "video/"))
+
+
+async def _summarize_forwarded(update: Update, context: ContextTypes.DEFAULT_TYPE, msg: Message) -> None:
+    from assistant.skills.summary import mark_summary_handled, run_explicit_summary
+
+    mark_summary_handled(context)
+    await run_explicit_summary(update, context, source_message=msg)
 
 
 def is_forwarded(msg: Message | None) -> bool:
@@ -343,6 +362,17 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
             except Exception:
                 pass
             return
+        from assistant.bot import onboarding
+
+        if onboarding.capture_active(context):
+            try:
+                if status:
+                    await status.delete()
+            except Exception:
+                pass
+            status = None
+            if await onboarding.try_consume_capture(update, context, text):
+                return
         status = await set_status(
             status, "Разбираю запрос…", anchor=msg, context=context
         )
@@ -392,6 +422,15 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not msg or not msg.voice:
         return
     if is_forwarded(msg):
+        # Чужое голосовое — только суть и задачи; командой не исполняем никогда.
+        chat = update.effective_chat
+        if chat and chat.type == "private" and forwarded_summary_enabled():
+            if await claim_voice_once(
+                chat_id=msg.chat_id,
+                message_id=msg.message_id,
+                update_id=getattr(update, "update_id", None),
+            ):
+                await _summarize_forwarded(update, context, msg)
         return
     claimed = await claim_voice_once(
         chat_id=msg.chat_id,
@@ -449,6 +488,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if is_forwarded(msg):
+        if forwarded_summary_enabled() and _is_av_media(msg):
+            await _summarize_forwarded(update, context, msg)
+        return
+
+    from assistant.bot import onboarding
+
+    uid = int(update.effective_user.id) if update.effective_user else 0
+    if uid and _is_av_media(msg) and onboarding.wants_summary(uid):
+        # Знакомство «Много голосовых и созвонов»: первая запись — сразу саммари, а не расшифровка.
+        mark_summary_handled(context)
+        await run_explicit_summary(update, context, source_message=msg)
         return
 
     # Видео, аудио и файлы — в список «Транскрипции».

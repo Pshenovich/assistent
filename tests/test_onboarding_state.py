@@ -61,6 +61,16 @@ def test_bot_onboarded_user_counts_as_existing():
     assert ob.get_state(uid)["tour_done_at"]
 
 
+def test_fresh_via_bot_user_still_gets_tour_but_used_features_known():
+    uid = next(_ids)
+    user_prefs.mark_onboarding_fresh(uid)
+    user_prefs.set_onboarding_pick(uid, "day")
+    notes_store.create_note(uid, "Саммари из бота", "текст")
+    st = ob.get_state(uid)
+    assert not st.get("intro_done_at") and not st.get("tour_done_at")
+    assert "notes" in st["used"]
+
+
 def test_backfill_runs_once():
     uid = next(_ids)
     assert not ob.get_state(uid).get("tour_done_at")

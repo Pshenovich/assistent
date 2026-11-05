@@ -140,7 +140,10 @@ def test_approver_approves_request():
 
     assert gate.is_user_allowed(STRANGER, "new_user")
     assert "Доступ разрешён" in q.edit_message_text.await_args.args[0]
-    assert ctx.bot.send_message.await_args.args[0] == STRANGER
+    first, welcome = ctx.bot.send_message.await_args_list
+    assert first.args[0] == STRANGER and "открыт доступ" in first.args[1]
+    # Сразу после одобрения — знакомство с выбором сценария, без «напишите /start».
+    assert welcome.kwargs["chat_id"] == STRANGER and "Привет, я Лео" in welcome.kwargs["text"]
 
 
 def test_approver_denies_request():

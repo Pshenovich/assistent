@@ -190,6 +190,12 @@ async def on_my_chat_member(
             int(actor.id),
             username=actor.username,
         )
+        if is_group_chat_type(chat.type) and _member_became_in_chat(ev):
+            from assistant.bot import onboarding
+
+            await onboarding.on_bot_added_to_group(
+                context.bot, chat_id=int(chat.id), chat_title=title, actor_id=int(actor.id)
+            )
 
 
 def register_chat_ingest(app) -> None:

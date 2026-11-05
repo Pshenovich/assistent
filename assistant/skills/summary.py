@@ -386,6 +386,10 @@ async def run_explicit_summary(
                 None,
                 f"Саммари сохранено в приложении, но не удалось отправить в чат: {e}",
             )
+        if uid and msg.chat.type == "private":
+            from assistant.bot import onboarding
+
+            await onboarding.after_first_value(context.bot, msg.chat_id, uid, "talk")
     except MediaTooLargeError as e:
         await _reply_error(msg, status, str(e), context=context)
     except Exception as e:
