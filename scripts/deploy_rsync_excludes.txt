@@ -3,6 +3,8 @@
 .env
 .env.*
 .venv/
+# и без слеша: ссылка .venv (рабочая копия через git worktree) иначе уезжает и затирает venv на сервере
+.venv
 .git/
 .claude/
 google_user_tokens/
@@ -71,6 +73,7 @@ token.json
 ai_docs/
 .cursor/
 webapp/node_modules/
+webapp/node_modules
 webapp/.npm-cache/
 webapp/.min/
 webapp/dev-mock-data.js
