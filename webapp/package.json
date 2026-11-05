@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild editor/note-rich-editor.mjs --bundle --format=iife --outfile=note-rich-editor.js --minify && esbuild editor/board-figma.mjs --bundle --format=iife --outfile=board-figma.js --minify"
+    "build": "esbuild editor/note-rich-editor.mjs --bundle --format=iife --outfile=note-rich-editor.js --minify && esbuild editor/board-figma.mjs --bundle --format=iife --outfile=board-figma.js --minify",
+    "minify": "rm -rf .min && esbuild app.js board.js board-geom.js board-blocks.js board-import.js board-templates.js --minify --target=es2017 --charset=utf8 --legal-comments=none --log-override:duplicate-object-key=silent --log-level=warning --outdir=.min"
   },
   "dependencies": {
     "@tiptap/core": "^2.27.3",

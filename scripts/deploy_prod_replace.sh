@@ -143,14 +143,39 @@ _remote_write() {
 echo "==> Проверка SSH ${SSH_HOST}"
 _ssh_retry "echo ssh_ok" >/dev/null
 
+# Минификация app.js и board*.js (node на сервере нет — собираем здесь). В репозитории — читаемые
+# исходники; на сервер вместо них уезжают webapp/.min/*.js под теми же именами и ?v=.
+echo "==> Минификация JS веб-приложения (webapp/.min)"
+if [[ ! -x "$ROOT/webapp/node_modules/.bin/esbuild" ]]; then
+  echo "Нет esbuild: выполните (cd webapp && npm ci) и запустите выкатку снова." >&2
+  exit 1
+fi
+(cd "$ROOT/webapp" && npm run --silent minify)
+MIN_FILES=()
+for _f in "$ROOT"/webapp/.min/*.js; do
+  _name="$(basename "$_f")"
+  [[ -s "$_f" && -f "$ROOT/webapp/$_name" ]] || { echo "Минификация: странный файл $_f" >&2; exit 1; }
+  node --check "$_f"
+  MIN_FILES+=("$_name")
+done
+[[ "${#MIN_FILES[@]}" -gt 0 ]] || { echo "Минификация: webapp/.min пуст" >&2; exit 1; }
+MIN_EXCLUDES=()
+for _name in "${MIN_FILES[@]}"; do MIN_EXCLUDES+=(--exclude="/webapp/${_name}"); done
+# Те же параметры rsync, но без --delete: кладём файлы поверх, остальное в webapp/ не трогаем.
+RSYNC_COPY=()
+for _a in "${RSYNC[@]}"; do [[ "$_a" == "--delete" ]] || RSYNC_COPY+=("$_a"); done
+
 # Шаг 1. Код — в промежуточный каталог; бот и сайт работают. Обрыв SSH здесь прод не трогает:
 # выкатка просто останавливается, на сервере остаётся прежняя версия.
 echo "==> Синхронизация кода в ${STAGE_ROOT} (сервисы работают; без .env, .venv, данных)"
 _ssh_retry "mkdir -p '${STAGE_ROOT}' '${DEPLOY_DIR}'" >/dev/null
 _rsync_ok=0
 for _attempt in 1 2 3 4; do
-  if "${RSYNC[@]}" --partial --exclude-from="$ROOT/$EXCLUDES_FILE" \
-    "$ROOT/" "${SSH_USER}@${SSH_HOST}:${STAGE_ROOT}/"; then
+  # Читаемые app.js/board*.js не везём (исключены — и --delete их на stage не трогает);
+  # следом — минифицированные под теми же именами.
+  if "${RSYNC[@]}" --partial --exclude-from="$ROOT/$EXCLUDES_FILE" "${MIN_EXCLUDES[@]}" \
+    "$ROOT/" "${SSH_USER}@${SSH_HOST}:${STAGE_ROOT}/" &&
+    "${RSYNC_COPY[@]}" --partial "$ROOT/webapp/.min/" "${SSH_USER}@${SSH_HOST}:${STAGE_ROOT}/webapp/"; then
     _rsync_ok=1
     break
   fi
