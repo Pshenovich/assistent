@@ -61,14 +61,13 @@ case "${1:-}" in
       systemctl stop assistant-bot assistant-worker assistant-usage executive-board-bot 2>/dev/null || true
     fi
     # Сайты Орбиты снимаем (запоминаем, какие были), ставим заглушку на все домены.
-    if [[ ! -f "$SAVED" ]]; then
-      : > "$SAVED"
-      for s in /etc/nginx/sites-enabled/*; do
-        [[ -e "$s" && "$(basename "$s")" != leo-maintenance ]] || continue
-        basename "$s" >> "$SAVED"
-        rm -f "$s"
-      done
-    fi
+    # Каждый раз: деплой мог заново включить сайт (getorbita.me ставится, если его нет в sites-enabled).
+    touch "$SAVED"
+    for s in /etc/nginx/sites-enabled/*; do
+      [[ -e "$s" && "$(basename "$s")" != leo-maintenance ]] || continue
+      grep -qxF "$(basename "$s")" "$SAVED" || basename "$s" >> "$SAVED"
+      rm -f "$s"
+    done
     cat > "$SITE" <<NGINX
 server {
     listen 80 default_server;
@@ -112,6 +111,12 @@ NGINX
     fi
     ln -sf "$SITE" /etc/nginx/sites-enabled/leo-maintenance
     nginx -t && systemctl reload nginx
+    # Конфиг заглушки только что переписан — https (дописанный certbot) возвращаем тем же сертификатом.
+    if [[ -d /etc/letsencrypt/live/leo-maintenance ]]; then
+      certbot install --nginx --non-interactive --redirect --cert-name leo-maintenance \
+        || echo "WARN: certbot install не прошёл — запустите: bash $0 cert" >&2
+      nginx -t && systemctl reload nginx
+    fi
     echo "maintenance: $1 (сняты сайты: $(tr '\n' ' ' < "$SAVED"))"
     ;;
   cert)
@@ -139,6 +144,12 @@ NGINX
       rm -f "$SAVED"
     fi
     nginx -t && systemctl reload nginx
+    # Сертификат, выпущенный для заглушки (getorbita.me, www), — на настоящий сайт.
+    if [[ -d /etc/letsencrypt/live/leo-maintenance && -e /etc/nginx/sites-enabled/getorbita.me ]]; then
+      certbot install --nginx --non-interactive --redirect --cert-name leo-maintenance \
+        || echo "WARN: certbot install не прошёл — https getorbita.me: certbot --nginx -d getorbita.me -d www.getorbita.me" >&2
+      nginx -t && systemctl reload nginx
+    fi
     echo "maintenance: off (сервисы Орбиты не запущены — деплой или systemctl start)"
     ;;
   *)
