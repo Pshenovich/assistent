@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -174,23 +175,76 @@ def _request_kwargs() -> dict[str, Any]:
 
 
 def transcribe_bytes(audio: bytes, filename: str, *, speakers: str | None = None) -> TranscribeResult:
-    headers = {"X-API-Key": _api_key()}
+    files = {"file": (_upload_name(filename), audio, "application/octet-stream")}
+    return _transcribe(files=files, data=_form_fields(speakers))
+
+
+def transcribe_file(path: str | os.PathLike, filename: str, *, speakers: str | None = None) -> TranscribeResult:
+    """Как transcribe_bytes, но файл уходит с диска потоком: в памяти — куски по 1 МБ, а не весь файл
+    (записи встреч бывают по сотне мегабайт и больше)."""
+    body = _StreamingMultipart(path, _upload_name(filename), _form_fields(speakers))
+    return _transcribe(data=body, extra_headers={"Content-Type": body.content_type})
+
+
+def _upload_name(filename: str) -> str:
     fn = filename
     if fn.endswith(".oga"):
         fn = fn[:-4] + ".ogg"
-    url = f"{OBUCHAT_TRANSCRIBE_BASE}/transcribe?wait=true"
-    files = {"file": (fn, audio, "application/octet-stream")}
+    return fn
+
+
+def _form_fields(speakers: str | None) -> dict[str, str]:
     mode = (speakers or _speakers_mode()).strip() or "auto"
-    data = {"speakers": mode, "llm_enabled": "true"}
+    return {"speakers": mode, "llm_enabled": "true"}
+
+
+class _StreamingMultipart:
+    """multipart/form-data из полей и файла на диске; длина известна заранее — requests шлёт
+    Content-Length, а тело читает кусками."""
+
+    CHUNK = 1024 * 1024
+
+    def __init__(self, path: str | os.PathLike, filename: str, fields: dict[str, str]) -> None:
+        self.path = os.fspath(path)
+        self.size = os.path.getsize(self.path)
+        b = uuid.uuid4().hex
+        self.content_type = f"multipart/form-data; boundary={b}"
+        safe = re.sub(r"[\r\n]", "", filename).replace('"', "%22") or "audio"
+        head = "".join(
+            f'--{b}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n' for k, v in fields.items()
+        )
+        head += (
+            f'--{b}\r\nContent-Disposition: form-data; name="file"; filename="{safe}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        )
+        self.head = head.encode("utf-8")
+        self.tail = f"\r\n--{b}--\r\n".encode("ascii")
+
+    def __len__(self) -> int:
+        return len(self.head) + self.size + len(self.tail)
+
+    def __iter__(self):
+        yield self.head
+        with open(self.path, "rb") as f:
+            while True:
+                chunk = f.read(self.CHUNK)
+                if not chunk:
+                    break
+                yield chunk
+        yield self.tail
+
+
+def _transcribe(*, extra_headers: dict[str, str] | None = None, **send: Any) -> TranscribeResult:
+    headers = {"X-API-Key": _api_key(), **(extra_headers or {})}
+    url = f"{OBUCHAT_TRANSCRIBE_BASE}/transcribe?wait=true"
     post_timeout = _post_timeout_sec()
     req_kwargs = _request_kwargs()
     try:
         r = requests.post(
             url,
             headers=headers,
-            files=files,
-            data=data,
             timeout=post_timeout,
+            **send,
             **req_kwargs,
         )
     except requests.Timeout as e:
@@ -223,7 +277,7 @@ def transcribe_bytes(audio: bytes, filename: str, *, speakers: str | None = None
         try:
             jr = requests.get(
                 f"{OBUCHAT_TRANSCRIBE_BASE}/jobs/{job_id}",
-                headers=headers,
+                headers={"X-API-Key": headers["X-API-Key"]},
                 timeout=90,
                 **req_kwargs,
             )

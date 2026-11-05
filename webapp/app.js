@@ -189,6 +189,8 @@
   const MINIAPP_DEV_BEARER = "miniapp-local-dev";
   const MINIAPP_SESSION_KEY = "miniapp_session";
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
+  // Запись встречи на транскрибацию — = TRANSCRIPTION_UPLOAD_MAX_MB на сервере (файл идёт через диск).
+  const TRANSCRIPTION_UPLOAD_MAX_MB = 500;
   const NOTE_EDITOR_ASSET_V = "20261104-doctype1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
@@ -5530,9 +5532,9 @@
       setTranscriptionUploadError("Нужна ссылка, начинающаяся с http:// или https://");
       return;
     }
-    var maxBytes = 100 * 1024 * 1024;
+    var maxBytes = TRANSCRIPTION_UPLOAD_MAX_MB * 1024 * 1024;
     if (file && file.size > maxBytes) {
-      setTranscriptionUploadError("Файл слишком большой (макс. 100 МБ)");
+      setTranscriptionUploadError("Файл слишком большой (макс. " + TRANSCRIPTION_UPLOAD_MAX_MB + " МБ)");
       return;
     }
     var withSummary = transcriptionUploadWantsSummary();
@@ -20602,7 +20604,7 @@
     var veil = document.createElement("div");
     veil.className = "ev-drop-veil hidden";
     veil.setAttribute("aria-hidden", "true");
-    veil.innerHTML = UPLOAD_ICON + '<b>Отпустите, чтобы добавить запись</b><span>Аудио или видео до 100 МБ — расшифруем и привяжем к встрече</span>';
+    veil.innerHTML = UPLOAD_ICON + '<b>Отпустите, чтобы добавить запись</b><span>Аудио или видео до ' + TRANSCRIPTION_UPLOAD_MAX_MB + ' МБ — расшифруем и привяжем к встрече</span>';
     modal.appendChild(veil);
     function box() {
       var b = document.querySelector("#modal-fields .ev-materials");
@@ -20656,8 +20658,8 @@
   }
 
   async function eventUploadRecording(ev, f, box) {
-    if (f.size > 100 * 1024 * 1024) {
-      showNoteToast("Файл слишком большой (макс. 100 МБ)");
+    if (f.size > TRANSCRIPTION_UPLOAD_MAX_MB * 1024 * 1024) {
+      showNoteToast("Файл слишком большой (макс. " + TRANSCRIPTION_UPLOAD_MAX_MB + " МБ)");
       return;
     }
     var key = meetingEventKey(ev);

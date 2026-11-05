@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+from typing import Any, Callable
 from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
@@ -124,16 +126,39 @@ def resolve_download_url(url: str) -> tuple[str, str | None]:
 
 
 def download_url_bytes(url: str) -> tuple[bytes, str]:
-    """Скачивает файл по прямой ссылке. Возвращает (bytes, filename)."""
+    """Скачивает файл по прямой ссылке. Возвращает (bytes, filename). Большие файлы — download_url_to_file."""
+    chunks: list[bytes] = []
+    fname = _download(url, chunks.append)
+    data = b"".join(chunks)
+    if not data:
+        raise ValueError("Пустой файл по ссылке.")
+    return data, fname
+
+
+def download_url_to_file(url: str, dest: str | os.PathLike) -> tuple[int, str]:
+    """Скачивает файл по ссылке сразу на диск (в памяти — куски по 256 КБ). Возвращает (размер, имя)."""
+    total = 0
+    with open(dest, "wb") as f:
+
+        def sink(chunk: bytes) -> None:
+            nonlocal total
+            total += len(chunk)
+            f.write(chunk)
+
+        fname = _download(url, sink)
+    if not total:
+        raise ValueError("Пустой файл по ссылке.")
+    return total, fname
+
+
+def _download(url: str, sink: Callable[[bytes], Any]) -> str:
+    """Скачивает по ссылке в sink кусками, с проверкой типа и размера. Возвращает имя файла."""
     u = (url or "").strip()
     if not u.lower().startswith(("http://", "https://")):
         raise ValueError("Нужна ссылка http:// или https://")
 
     fname_hint: str | None = None
-    try:
-        u, fname_hint = resolve_download_url(u)
-    except ValueError:
-        raise
+    u, fname_hint = resolve_download_url(u)
 
     # Ссылка от пользователя: только публичные адреса (не 127.0.0.1, не внутренняя сеть, не метаданные).
     try:
@@ -170,7 +195,6 @@ def download_url_bytes(url: str) -> tuple[bytes, str]:
                 )
 
         disposition = r.headers.get("Content-Disposition")
-        chunks: list[bytes] = []
         total = 0
         for chunk in r.iter_content(chunk_size=256 * 1024):
             if not chunk:
@@ -178,13 +202,9 @@ def download_url_bytes(url: str) -> tuple[bytes, str]:
             total += len(chunk)
             if total > URL_MAX_DOWNLOAD_BYTES:
                 raise ValueError("Файл слишком большой.")
-            chunks.append(chunk)
-
-    data = b"".join(chunks)
-    if not data:
-        raise ValueError("Пустой файл по ссылке.")
+            sink(chunk)
 
     fname = _filename_from_disposition(disposition)
     if not fname:
         fname = fname_hint or _filename_from_url(u)
-    return data, fname
+    return fname

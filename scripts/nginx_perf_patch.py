@@ -5,7 +5,9 @@
 Что делает в серверном блоке, где `location /` проксирует на приложение (127.0.0.1:8080):
 - gzip для text/javascript (Python 3.12 отдаёт .js так — без этого app.js шёл несжатым);
 - proxy_buffering on в `location /` (потоковых ответов нет; медленный клиент не держит uvicorn);
-- client_max_body_size 64m по умолчанию, 120m — на загрузку записи встречи и голосового.
+- client_max_body_size 64m по умолчанию; 520m — на загрузку записи встречи (приложение пишет её на диск
+  по частям, лимит в нём — TRANSCRIPTION_UPLOAD_MAX_MB, 500), 60m — на голосовое (до 50 МБ, читается в память).
+  Свой блок помечен «# leo-perf … end»: если он в конфиге устарел, заменяется на текущий.
 
   python3 scripts/nginx_perf_patch.py FILE [FILE …]   — правит на месте, печатает, что изменилось
   python3 scripts/nginx_perf_patch.py --check FILE …  — только сказать, нужна ли правка (код 1 — нужна)
@@ -18,7 +20,8 @@ import sys
 
 MARK = "# leo-perf"
 GZIP_NEED = ("text/javascript", "application/manifest+json")
-UPLOAD_MAX = "120m"
+TRANSCRIPTION_MAX = "520m"
+VOICE_MAX = "60m"
 DEFAULT_MAX = "64m"
 
 
@@ -67,11 +70,16 @@ def _extra_locations(indent: str) -> str:
     i2 = indent + "    "
     return (
         f"{indent}{MARK}: лимит загрузок — scripts/nginx_perf_patch.py\n"
-        f"{indent}# Загрузка записи встречи и голосового — большие тела; остальное — до {DEFAULT_MAX}.\n"
-        f"{indent}location ~ ^/api/miniapp/(?:notes/transcriptions/upload|voice/transcribe)$ {{\n"
-        f"{i2}client_max_body_size {UPLOAD_MAX};\n{_proxy_headers(i2)}{indent}}}\n"
+        f"{indent}# Запись встречи — большие файлы (приложение пишет их на диск); остальное — до {DEFAULT_MAX}.\n"
+        f"{indent}location = /api/miniapp/notes/transcriptions/upload {{\n"
+        f"{i2}client_max_body_size {TRANSCRIPTION_MAX};\n{_proxy_headers(i2)}{indent}}}\n"
+        f"{indent}location = /api/miniapp/voice/transcribe {{\n"
+        f"{i2}client_max_body_size {VOICE_MAX};\n{_proxy_headers(i2)}{indent}}}\n"
         f"{indent}{MARK} end\n"
     )
+
+
+_MARKED_RE = re.compile(r"(?ms)^([ \t]*)" + re.escape(MARK) + r":.*?^[ \t]*" + re.escape(MARK) + r" end\n")
 
 
 def patch(text: str) -> tuple[str, list[str]]:
@@ -103,10 +111,14 @@ def patch(text: str) -> tuple[str, list[str]]:
         if new_body != body:
             changes.append("location /: proxy_buffering on")
         indent = re.match(r"[ \t]*", body).group(0)
-        if MARK not in block:
-            new_body = _extra_locations(indent) + "\n" + new_body
-            changes.append("лимит загрузок: 120m на запись встречи и голосовое")
         block = block[:ls] + new_body + block[le:]
+        m = _MARKED_RE.search(block)
+        if m is None:
+            block = block[:ls] + _extra_locations(indent) + "\n" + block[ls:]
+            changes.append(f"лимит загрузок: {TRANSCRIPTION_MAX} на запись встречи, {VOICE_MAX} на голосовое")
+        elif m.group(0) != _extra_locations(m.group(1)):
+            block = block[: m.start()] + _extra_locations(m.group(1)) + block[m.end() :]
+            changes.append(f"лимит загрузок обновлён: {TRANSCRIPTION_MAX} / {VOICE_MAX}")
         nb = re.sub(r"(?m)^([ \t]*client_max_body_size\s+)500m;", r"\g<1>" + DEFAULT_MAX + ";", block)
         if nb != block:
             changes.append(f"client_max_body_size 500m → {DEFAULT_MAX}")

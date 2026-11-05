@@ -24,7 +24,7 @@ def test_patch_applies_once_and_keeps_ws_unbuffered():
     again, more = npp.patch(new)
     assert again == new and more == []
     assert "text/javascript" in new and "client_max_body_size 64m;" in new
-    assert "client_max_body_size 120m;" in new
+    assert "client_max_body_size 520m;" in new and "client_max_body_size 60m;" in new
     ws = new[new.index("location = /api/miniapp/ws") :]
     assert "proxy_buffering off;" in ws[: ws.index("}")]
     main = new[new.rindex("    location / {") :]

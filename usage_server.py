@@ -11,6 +11,8 @@ import json
 import os
 import re
 import secrets
+import shutil
+import tempfile
 import time
 from functools import partial
 from pathlib import Path
@@ -4262,62 +4264,100 @@ def _put_local_dev_event(
     }
     return base
 
+def _is_webm(filename: str, content_type: str | None) -> bool:
+    return filename.lower().endswith(".webm") or "webm" in (content_type or "").lower()
+
+
+def _convert_webm_to_wav(src: Path, dst: Path) -> None:
+    """WebM/Opus из браузерного MediaRecorder → WAV 16 кГц моно для Obuchat."""
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("На сервере не установлен ffmpeg для конвертации webm-аудио")
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            # Формат и протоколы — фиксированные: иначе ffmpeg сам угадает формат файла пользователя,
+            # и плейлист HLS под видом .webm заставит сервер ходить по ссылкам из него (SSRF).
+            "-protocol_whitelist",
+            "file",
+            "-f",
+            "matroska",
+            "-i",
+            str(src),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            str(dst),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError("Не удалось конвертировать webm-аудио: " + (err or "ffmpeg error"))
+    if not dst.is_file() or not dst.stat().st_size:
+        raise RuntimeError("Конвертация webm-аудио вернула пустой файл")
+
+
 def _prepare_miniapp_voice_audio(
     data: bytes,
     filename: str,
     content_type: str | None,
 ) -> tuple[bytes, str]:
     """Browser MediaRecorder often produces WebM/Opus; convert it for Obuchat."""
-    import shutil
-    import subprocess
     import tempfile
 
-    lower_name = filename.lower()
-    lower_type = (content_type or "").lower()
-    is_webm = lower_name.endswith(".webm") or "webm" in lower_type
-    if not is_webm:
+    if not _is_webm(filename, content_type):
         return data, filename
-    ffmpeg = shutil.which("ffmpeg")
-    if not ffmpeg:
-        raise RuntimeError("На сервере не установлен ffmpeg для конвертации webm-аудио")
     with tempfile.TemporaryDirectory(prefix="miniapp_voice_") as td:
         src = Path(td) / "voice.webm"
         dst = Path(td) / "voice.wav"
         src.write_bytes(data)
-        proc = subprocess.run(
-            [
-                ffmpeg,
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                # Формат и протоколы — фиксированные: иначе ffmpeg сам угадает формат файла пользователя,
-                # и плейлист HLS под видом .webm заставит сервер ходить по ссылкам из него (SSRF).
-                "-protocol_whitelist",
-                "file",
-                "-f",
-                "matroska",
-                "-i",
-                str(src),
-                "-vn",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                str(dst),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=60,
-        )
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "").strip()
-            raise RuntimeError("Не удалось конвертировать webm-аудио: " + (err or "ffmpeg error"))
-        out = dst.read_bytes()
-        if not out:
-            raise RuntimeError("Конвертация webm-аудио вернула пустой файл")
-        return out, "voice.wav"
+        _convert_webm_to_wav(src, dst)
+        return dst.read_bytes(), "voice.wav"
+
+
+def _prepare_audio_file(src: Path, filename: str, content_type: str | None) -> tuple[Path, str]:
+    """То же для файла на диске: webm → wav рядом с исходником, остальное — как есть."""
+    if not _is_webm(filename, content_type):
+        return src, filename
+    dst = src.with_name("voice.wav")
+    _convert_webm_to_wav(src, dst)
+    return dst, "voice.wav"
+
+
+def _transcription_upload_max_bytes() -> int:
+    try:
+        mb = int(os.getenv("TRANSCRIPTION_UPLOAD_MAX_MB", "500") or "500")
+    except ValueError:
+        mb = 500
+    return max(1, mb) * 1024 * 1024
+
+
+def _copy_upload_to_file(fileobj: Any, dst: Path, max_bytes: int) -> int:
+    """Загруженный файл (Starlette уже держит его на диске) — в dst кусками по 1 МБ; сверх лимита — ValueError."""
+    total = 0
+    with open(dst, "wb") as out:
+        while True:
+            chunk = fileobj.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError("too large")
+            out.write(chunk)
+    return total
 
 
 def _local_dev_calendar_events(day_iso: str, timezone_name: str) -> list[dict[str, Any]]:
@@ -13021,124 +13061,132 @@ async def miniapp_transcription_upload(
     from assistant.services import transcription_notes as tnotes
 
     source_url = (url or "").strip()
-    if file is not None:
-        data = await file.read()
-        if not data:
-            raise HTTPException(status_code=400, detail="Пустой файл")
-        max_bytes = 100 * 1024 * 1024
-        if len(data) > max_bytes:
-            raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 100 МБ)")
-        filename = str(file.filename or "audio.mp3").strip() or "audio.mp3"
-        content_type = file.content_type
-        source_url = ""
-    elif source_url:
-        from assistant.lib.media_download import download_url_bytes
-
-        try:
-            data, filename = await run_in_threadpool(download_url_bytes, source_url)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:
-            print(f"[miniapp_transcription_upload] url download failed url={source_url!r} err={e!r}")
-            raise HTTPException(status_code=502, detail="Не удалось скачать файл по ссылке") from e
-        filename = str(filename or "media.mp4").strip() or "media.mp4"
-        content_type = None
-    else:
-        raise HTTPException(status_code=400, detail="Выберите файл или вставьте ссылку")
-    source_filename = filename
-    source_size = len(data)
-    want_summary = _truthy_form_flag(with_summary)
+    max_bytes = _transcription_upload_max_bytes()
+    max_mb = max_bytes // (1024 * 1024)
+    # Файл — на диск по частям и в транскрибацию потоком: записи встреч бывают по сотням мегабайт,
+    # целиком в памяти несколько таких загрузок разом клали бы процесс.
+    tmpdir = Path(tempfile.mkdtemp(prefix="leo_transcribe_"))
     try:
-        data, filename = await run_in_threadpool(
-            _prepare_miniapp_voice_audio,
-            data,
-            filename,
-            content_type,
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-    stem = Path(source_filename).stem.strip() or "Транскрипция"
-    title = stem[:120]
-    meeting_ev: dict[str, Any] = {}
-    if meeting.strip():
-        try:
-            parsed = json.loads(meeting)
-            meeting_ev = parsed if isinstance(parsed, dict) else {}
-        except ValueError:
-            meeting_ev = {}
-    if meeting_ev.get("summary"):
-        title = str(meeting_ev.get("summary") or "").strip()[:120] or title
-    username = None
-    if isinstance(principal.user, dict) and principal.user.get("username"):
-        username = str(principal.user.get("username") or "").strip() or None
-    uid = int(principal.telegram_user_id)
-
-    def _transcribe_and_create() -> dict[str, Any]:
-        from assistant.stores import voice_prefs
-
-        result = voice_prefs.process_transcript_result(
-            uid, obu.transcribe_bytes(data, filename)
-        )
-        transcript = (result.formatted_text or result.plain_text or "").strip()
-        if not transcript:
-            raise RuntimeError("(пустая транскрипция)")
-        from assistant.lib import billing_store
-
-        billing_store.charge_transcription(uid, getattr(result, "segments", ()), operation="obuchat_transcribe")
-        insert_usage_event(
-            operation="obuchat_transcribe",
-            model=None,
-            generation_id=result.job_id,
-            usage={
-                "text": transcript[:4000],
-                "source": "miniapp_transcription_upload",
-                "filename": filename,
-                "with_summary": want_summary,
-            },
-            telegram_user_id=str(uid),
-            telegram_username=username,
-        )
-        meta = {
-            "source": "miniapp_url" if source_url else "miniapp_upload",
-            "filename": source_filename,
-            "job_id": result.job_id,
-        }
-        if source_url:
-            meta["url"] = source_url
-        note = tnotes.create_transcript_only(
-            uid,
-            title=title,
-            transcript=transcript,
-            meta=meta,
-            segments=getattr(result, "segments", None),
-        )
-        if meeting_ev.get("id") or meeting_ev.get("event_id"):
+        src = tmpdir / "source.bin"
+        if file is not None:
             try:
-                from assistant.stores import meeting_links
+                source_size = await run_in_threadpool(_copy_upload_to_file, file.file, src, max_bytes)
+            except ValueError as e:
+                raise HTTPException(status_code=413, detail=f"Файл слишком большой (макс. {max_mb} МБ)") from e
+            if not source_size:
+                raise HTTPException(status_code=400, detail="Пустой файл")
+            filename = str(file.filename or "audio.mp3").strip() or "audio.mp3"
+            content_type = file.content_type
+            source_url = ""
+        elif source_url:
+            from assistant.lib.media_download import download_url_to_file
 
-                meeting_links.link(uid, note["id"], meeting_ev, source="upload")
+            try:
+                source_size, filename = await run_in_threadpool(download_url_to_file, source_url, src)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
             except Exception as e:
-                print(f"[miniapp_transcription_upload] meeting link failed note={note.get('id')} err={e!r}")
-        return note
+                print(f"[miniapp_transcription_upload] url download failed url={source_url!r} err={e!r}")
+                raise HTTPException(status_code=502, detail="Не удалось скачать файл по ссылке") from e
+            filename = str(filename or "media.mp4").strip() or "media.mp4"
+            content_type = None
+        else:
+            raise HTTPException(status_code=400, detail="Выберите файл или вставьте ссылку")
+        source_filename = filename
+        want_summary = _truthy_form_flag(with_summary)
+        try:
+            audio_path, filename = await run_in_threadpool(
+                _prepare_audio_file,
+                src,
+                filename,
+                content_type,
+            )
+        except RuntimeError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
 
-    try:
-        item = await run_in_threadpool(_transcribe_and_create)
-    except RuntimeError as e:
-        print(
-            "[miniapp_transcription_upload] failed "
-            f"source_filename={source_filename!r} filename={filename!r} "
-            f"content_type={content_type!r} source_bytes={source_size} "
-            f"bytes={len(data)} err={e!r}"
-        )
-        raise HTTPException(status_code=502, detail=str(e)) from e
-    except Exception as e:
-        print(
-            "[miniapp_transcription_upload] failed "
-            f"source_filename={source_filename!r} filename={filename!r} "
-            f"err={e!r}"
-        )
-        raise HTTPException(status_code=502, detail=f"Транскрибация: {e}") from e
+        stem = Path(source_filename).stem.strip() or "Транскрипция"
+        title = stem[:120]
+        meeting_ev: dict[str, Any] = {}
+        if meeting.strip():
+            try:
+                parsed = json.loads(meeting)
+                meeting_ev = parsed if isinstance(parsed, dict) else {}
+            except ValueError:
+                meeting_ev = {}
+        if meeting_ev.get("summary"):
+            title = str(meeting_ev.get("summary") or "").strip()[:120] or title
+        username = None
+        if isinstance(principal.user, dict) and principal.user.get("username"):
+            username = str(principal.user.get("username") or "").strip() or None
+        uid = int(principal.telegram_user_id)
+
+        def _transcribe_and_create() -> dict[str, Any]:
+            from assistant.stores import voice_prefs
+
+            result = voice_prefs.process_transcript_result(
+                uid, obu.transcribe_file(audio_path, filename)
+            )
+            transcript = (result.formatted_text or result.plain_text or "").strip()
+            if not transcript:
+                raise RuntimeError("(пустая транскрипция)")
+            from assistant.lib import billing_store
+
+            billing_store.charge_transcription(uid, getattr(result, "segments", ()), operation="obuchat_transcribe")
+            insert_usage_event(
+                operation="obuchat_transcribe",
+                model=None,
+                generation_id=result.job_id,
+                usage={
+                    "text": transcript[:4000],
+                    "source": "miniapp_transcription_upload",
+                    "filename": filename,
+                    "with_summary": want_summary,
+                },
+                telegram_user_id=str(uid),
+                telegram_username=username,
+            )
+            meta = {
+                "source": "miniapp_url" if source_url else "miniapp_upload",
+                "filename": source_filename,
+                "job_id": result.job_id,
+            }
+            if source_url:
+                meta["url"] = source_url
+            note = tnotes.create_transcript_only(
+                uid,
+                title=title,
+                transcript=transcript,
+                meta=meta,
+                segments=getattr(result, "segments", None),
+            )
+            if meeting_ev.get("id") or meeting_ev.get("event_id"):
+                try:
+                    from assistant.stores import meeting_links
+
+                    meeting_links.link(uid, note["id"], meeting_ev, source="upload")
+                except Exception as e:
+                    print(f"[miniapp_transcription_upload] meeting link failed note={note.get('id')} err={e!r}")
+            return note
+
+        try:
+            item = await run_in_threadpool(_transcribe_and_create)
+        except RuntimeError as e:
+            print(
+                "[miniapp_transcription_upload] failed "
+                f"source_filename={source_filename!r} filename={filename!r} "
+                f"content_type={content_type!r} source_bytes={source_size} "
+                f"err={e!r}"
+            )
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        except Exception as e:
+            print(
+                "[miniapp_transcription_upload] failed "
+                f"source_filename={source_filename!r} filename={filename!r} "
+                f"err={e!r}"
+            )
+            raise HTTPException(status_code=502, detail=f"Транскрибация: {e}") from e
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
     if want_summary:
         note_id = int(item["id"])
