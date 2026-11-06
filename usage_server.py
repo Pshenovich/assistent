@@ -3536,8 +3536,12 @@ def _owner_can_share_item(uid: str, kind: str, item_id: str) -> bool:
     return _public_share_payload(fake) is not None
 
 
-def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
-    """Владелец записи, если зритель — владелец или участник (для local)."""
+def _resolve_item_owner(uid: str, kind: str, item_id: str, *, org_need: str = "editor") -> str | None:
+    """Владелец записи, если зритель — владелец или участник (для local).
+
+    ``org_need`` — какая роль в базе знаний организации достаточна: по умолчанию редактор,
+    для чтения комментариев — читатель, для нового комментария — комментатор.
+    """
     kind = (kind or "").strip()
     if kind == "local":
         from assistant.stores import notes as notes_store
@@ -3547,6 +3551,11 @@ def _resolve_item_owner(uid: str, kind: str, item_id: str) -> str | None:
         except (TypeError, ValueError):
             return None
         note = notes_store.get_accessible_note(uid, nid, with_sharing=False)
+        if not note and org_need != "editor":
+            from assistant.stores import org_kb
+
+            if org_kb.at_least(org_kb.role_for_note(uid, nid), org_need):
+                note = notes_store.get_note_by_id(nid)
         if not note:
             return None
         return str(note.get("owner_user_id") or "") or None
@@ -8094,6 +8103,168 @@ async def miniapp_orgs_group_member_remove(
     uid = int(principal.telegram_user_id)
     await _org_call(org_groups.remove_member, uid, org_id, group_id, user_id)
     return await _org_call(_org_detail, uid, org_id)
+
+
+# ---------- база знаний организации ----------
+
+
+class _MiniappKbSection(BaseModel):
+    title: str
+    parent_id: Optional[int] = None
+
+
+class _MiniappKbDoc(BaseModel):
+    section_id: int
+    note_id: Optional[int] = None
+    title: str = ""
+
+
+class _MiniappKbNodePatch(BaseModel):
+    title: Optional[str] = None
+    parent_id: Optional[int] = None
+    position: Optional[float] = None
+
+
+class _MiniappKbAccess(BaseModel):
+    principal: str
+    role: Optional[str] = None
+
+
+class _MiniappKbInherit(BaseModel):
+    inherit: bool
+
+
+class _MiniappKbVerify(BaseModel):
+    no_expiry: Optional[bool] = None
+
+
+def _org_kb_state(uid: int, org_id: int) -> dict[str, Any]:
+    from assistant.stores import org_groups, org_kb, orgs_store
+
+    members = [
+        {"user_id": m["user_id"], "name": m["name"], "guest": m["guest"]}
+        for m in orgs_store.list_members(org_id) if m["status"] == "active"
+    ]
+    return {
+        "ok": True,
+        "nodes": org_kb.tree(org_id, uid),
+        "can_create_root": orgs_store.role_of(org_id, uid) in ("owner", "admin"),
+        "groups": org_groups.list_groups(org_id, uid),
+        "members": members,
+        "roles": [{"id": r, "label": org_kb.ROLE_LABEL[r]} for r in org_kb.ROLES],
+        "verify_days": org_kb.VERIFY_DAYS,
+    }
+
+
+@miniapp_router.get("/orgs/{org_id}/kb")
+async def miniapp_org_kb(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    return await _org_call(_org_kb_state, int(principal.telegram_user_id), org_id)
+
+
+@miniapp_router.post("/orgs/{org_id}/kb/sections")
+async def miniapp_org_kb_section_create(
+    org_id: int, body: _MiniappKbSection, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    uid = int(principal.telegram_user_id)
+    _track(uid, "kb.section_create", root=body.parent_id is None)
+    created = await _org_call(org_kb.create_section, uid, org_id, body.title, parent_id=body.parent_id)
+    return {**(await _org_call(_org_kb_state, uid, org_id)), "created": created}
+
+
+def _org_kb_add_doc(uid: int, org_id: int, body: "_MiniappKbDoc") -> dict[str, Any]:
+    """Свой документ — в раздел; без ``note_id`` — новый пустой документ."""
+    from assistant.stores import notes as notes_store
+    from assistant.stores import org_kb
+
+    note_id = body.note_id
+    created_note = False
+    if note_id is None:
+        note_id = int(notes_store.create_note(uid, body.title or "Новый документ", "")["id"])
+        created_note = True
+    try:
+        return org_kb.add_doc(uid, org_id, body.section_id, int(note_id))
+    except Exception:
+        if created_note:
+            notes_store.delete_note(uid, int(note_id))
+        raise
+
+
+@miniapp_router.post("/orgs/{org_id}/kb/docs")
+async def miniapp_org_kb_doc_add(
+    org_id: int, body: _MiniappKbDoc, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    _track(uid, "kb.doc_add", new=body.note_id is None)
+    created = await _org_call(_org_kb_add_doc, uid, org_id, body)
+    return {**(await _org_call(_org_kb_state, uid, org_id)), "created": created}
+
+
+@miniapp_router.patch("/orgs/{org_id}/kb/nodes/{node_id}")
+async def miniapp_org_kb_node_update(
+    org_id: int, node_id: int, body: _MiniappKbNodePatch, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    uid = int(principal.telegram_user_id)
+    if body.title is not None:
+        await _org_call(org_kb.rename_section, uid, org_id, node_id, body.title)
+    if body.parent_id is not None:
+        await _org_call(org_kb.move, uid, org_id, node_id, body.parent_id, position=body.position)
+    return await _org_call(_org_kb_state, uid, org_id)
+
+
+@miniapp_router.delete("/orgs/{org_id}/kb/nodes/{node_id}")
+async def miniapp_org_kb_node_remove(
+    org_id: int, node_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(org_kb.remove, uid, org_id, node_id)
+    return await _org_call(_org_kb_state, uid, org_id)
+
+
+@miniapp_router.get("/orgs/{org_id}/kb/nodes/{node_id}/access")
+async def miniapp_org_kb_access(
+    org_id: int, node_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    return {"ok": True, **(await _org_call(org_kb.access, org_id, int(principal.telegram_user_id), node_id))}
+
+
+@miniapp_router.put("/orgs/{org_id}/kb/nodes/{node_id}/access")
+async def miniapp_org_kb_access_set(
+    org_id: int, node_id: int, body: _MiniappKbAccess, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(org_kb.set_access, uid, org_id, node_id, body.principal, body.role)
+    return {"ok": True, **(await _org_call(org_kb.access, org_id, uid, node_id))}
+
+
+@miniapp_router.put("/orgs/{org_id}/kb/nodes/{node_id}/inherit")
+async def miniapp_org_kb_inherit(
+    org_id: int, node_id: int, body: _MiniappKbInherit, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(org_kb.set_inherit, uid, org_id, node_id, body.inherit)
+    return {"ok": True, **(await _org_call(org_kb.access, org_id, uid, node_id))}
+
+
+@miniapp_router.post("/notes/local/{note_id}/verify")
+async def miniapp_note_verify(
+    note_id: int, body: _MiniappKbVerify, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    await _org_call(org_kb.verify, int(principal.telegram_user_id), note_id, no_expiry=body.no_expiry)
+    return {"ok": True, "node": await run_in_threadpool(org_kb.node_for_note, note_id)}
 
 
 class _MiniappOrgMemberAi(BaseModel):
@@ -13263,7 +13434,7 @@ async def miniapp_local_note_get(
     from assistant.stores import notes as notes_store
 
     uid = int(principal.telegram_user_id)
-    item = await run_in_threadpool(notes_store.get_accessible_note, uid, note_id)
+    item = await run_in_threadpool(notes_store.get_readable_note, uid, note_id)
     if not item:
         raise HTTPException(status_code=404, detail="Документ не найден")
     from assistant.services import transcription_notes as tnotes
@@ -13271,6 +13442,11 @@ async def miniapp_local_note_get(
     if tnotes.is_transcription_note(item):
         item = tnotes.enrich(item)
     item = await run_in_threadpool(_enrich_item_labels, uid, "local", item)
+    from assistant.stores import org_kb
+
+    kb = await run_in_threadpool(org_kb.doc_info, uid, note_id)
+    if kb:
+        item["org_kb"] = kb
     if item.get("is_knowledge"):
         from assistant.stores import teams_store
 
@@ -13321,10 +13497,12 @@ async def miniapp_note_sheets_list(
     uid = int(principal.telegram_user_id)
 
     def _run() -> list[dict[str, Any]] | None:
-        note = notes_store.get_accessible_note(uid, note_id)
+        note = notes_store.get_readable_note(uid, note_id)
         if not note:
             return None
         sheets = note_sheets_store.list_sheets(note)
+        if not note.get("can_edit", True):
+            return sheets  # читатель не перерисовывает старые презентации — это запись
         return [_upgrade_stale_deck(note, sh) for sh in sheets]
 
     sheets = await run_in_threadpool(_run)
@@ -14493,15 +14671,19 @@ def _realtime_note_access(uid: int, note_id: int) -> tuple[str, bool] | None:
     from assistant.services import transcription_notes as tnotes
     from assistant.stores import notes as notes_store
 
-    note = notes_store.get_accessible_note(uid, note_id)
+    from assistant.stores import org_kb
+
+    note = notes_store.get_readable_note(uid, note_id)
     if not note:
         return None
     owner = str(note.get("owner_user_id") or uid)
+    # читатель базы знаний получает события, но не входит в совместную правку
     yjs = (
         _realtime_yjs_enabled()
+        and bool(note.get("can_edit", True))
         and not str(note.get("role") or "")
         and not tnotes.is_transcription_note(note)
-        and len(note.get("members") or []) > 1
+        and (len(note.get("members") or []) > 1 or org_kb.node_for_note(note_id) is not None)
     )
     return owner, yjs
 
@@ -14899,7 +15081,7 @@ async def miniapp_share_comments_list(
     from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
-    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    owner = await run_in_threadpool(partial(_resolve_item_owner, uid, kind, item_id, org_need="reader"))
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     from assistant.stores import note_chats
@@ -14918,7 +15100,7 @@ async def miniapp_share_comments_create(
     from assistant.stores import share_comments as share_comments_store
 
     uid = str(int(principal.telegram_user_id))
-    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    owner = await run_in_threadpool(partial(_resolve_item_owner, uid, kind, item_id, org_need="commenter"))
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     author_id, author_name, author_username = _comment_author_from_principal(principal)

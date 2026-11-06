@@ -155,3 +155,51 @@ def test_org_groups_and_guest(env):
     assert next(g for g in r.json()["groups"] if g["id"] == dept)["teams"][0]["member_ids"] == []
     r = c.delete(f"{base}/{oid}/groups/{dept}", headers=_headers(owner))
     assert r.json()["groups"] == []
+
+
+def test_org_knowledge_base(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("NOTE_VERSIONS_DB_PATH", str(tmp_path / "versions.sqlite"))
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    base = "/api/miniapp/orgs"
+    oid = c.post(base, headers=_headers(owner), json={"name": "БЗ-тест"}).json()["org"]["id"]
+    token = c.post(f"{base}/{oid}/invites", headers=_headers(owner)).json()["invite"]["token"]
+    c.post(f"{base}/invite/{token}/accept", headers=_headers(guest))
+
+    r = c.post(f"{base}/{oid}/kb/sections", headers=_headers(owner), json={"title": "Инструкции"})
+    assert r.status_code == 200, r.text
+    sec = r.json()["created"]["id"]
+    r = c.post(f"{base}/{oid}/kb/docs", headers=_headers(owner), json={"section_id": sec, "title": "VPN"})
+    assert r.status_code == 200, r.text
+    note_id = r.json()["created"]["note_id"]
+
+    # раздел закрыт — коллега документа не видит
+    assert c.get(f"/api/miniapp/notes/local/{note_id}", headers=_headers(guest)).status_code == 404
+    assert [n for n in c.get(f"{base}/{oid}/kb", headers=_headers(guest)).json()["nodes"]] == []
+
+    # всем — читать: открывает, но не правит и не комментирует
+    r = c.put(f"{base}/{oid}/kb/nodes/{sec}/access", headers=_headers(owner), json={"principal": "all", "role": "reader"})
+    assert r.status_code == 200, r.text
+    item = c.get(f"/api/miniapp/notes/local/{note_id}", headers=_headers(guest)).json()["item"]
+    assert item["can_edit"] is False and item["org_kb"]["role"] == "reader"
+    assert c.get(f"/api/miniapp/notes/local/{note_id}/sheets", headers=_headers(guest)).status_code == 200
+    assert c.patch(f"/api/miniapp/notes/local/{note_id}", headers=_headers(guest), json={"title": "взлом"}).status_code == 404
+    assert c.get(f"/api/miniapp/notes/local/{note_id}/comments", headers=_headers(guest)).status_code == 200
+    assert c.post(f"/api/miniapp/notes/local/{note_id}/comments", headers=_headers(guest),
+                  json={"body": "вопрос"}).status_code == 404
+    assert c.post(f"/api/miniapp/notes/local/{note_id}/verify", headers=_headers(guest), json={}).status_code == 400
+
+    # коллеге лично — комментатор: может комментировать, править — нет
+    doc = next(n for n in c.get(f"{base}/{oid}/kb", headers=_headers(owner)).json()["nodes"] if n["kind"] == "doc")
+    c.put(f"{base}/{oid}/kb/nodes/{doc['id']}/access", headers=_headers(owner), json={"principal": f"u:{guest}", "role": "commenter"})
+    assert c.post(f"/api/miniapp/notes/local/{note_id}/comments", headers=_headers(guest),
+                  json={"body": "вопрос"}).status_code == 200
+    assert c.patch(f"/api/miniapp/notes/local/{note_id}", headers=_headers(guest), json={"title": "взлом"}).status_code == 404
+
+    # редактор — правит
+    c.put(f"{base}/{oid}/kb/nodes/{doc['id']}/access", headers=_headers(owner), json={"principal": f"u:{guest}", "role": "editor"})
+    r = c.patch(f"/api/miniapp/notes/local/{note_id}", headers=_headers(guest), json={"title": "VPN: как подключиться"})
+    assert r.status_code == 200, r.text
+    assert c.post(f"/api/miniapp/notes/local/{note_id}/verify", headers=_headers(guest), json={}).status_code == 200
+    # права меняет только владелец
+    assert c.put(f"{base}/{oid}/kb/nodes/{sec}/access", headers=_headers(guest),
+                 json={"principal": "all", "role": "editor"}).status_code == 400

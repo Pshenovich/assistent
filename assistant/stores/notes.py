@@ -428,8 +428,48 @@ def get_accessible_note(
 
     shared = note_members.get_shared_note(uid, int(note_id))
     if not shared:
-        return None
+        # база знаний организации: здесь — только те, кто может править (редактор и владелец)
+        shared = _org_note(uid, int(note_id), need="editor")
+        if not shared:
+            return None
     return _with_sharing(shared, uid) if with_sharing else shared
+
+
+def _org_note(uid: str, note_id: int, *, need: str) -> Optional[dict[str, Any]]:
+    try:
+        from assistant.stores import org_kb
+
+        role = org_kb.role_for_note(uid, note_id)
+    except Exception as e:
+        print(f"[notes] org access note={note_id} err={e!r}")
+        return None
+    if not org_kb.at_least(role, need):
+        return None
+    note = get_note_by_id(note_id)
+    if note:
+        note["org_role"] = role
+    return note
+
+
+def get_readable_note(
+    user_id: int | str, note_id: int, *, with_sharing: bool = True
+) -> Optional[dict[str, Any]]:
+    """Документ для чтения: как ``get_accessible_note``, плюс читатели и комментаторы базы знаний организации.
+
+    ``can_edit`` в ответе — можно ли править. Пути, которые меняют документ, должны звать
+    ``get_accessible_note``: он читателей не пускает.
+    """
+    note = get_accessible_note(user_id, note_id, with_sharing=with_sharing)
+    if note:
+        return note
+    uid = str(int(user_id))
+    note = _org_note(uid, int(note_id), need="reader")
+    if not note:
+        return None
+    out = _with_sharing(note, uid) if with_sharing else dict(note)
+    out["can_edit"] = False
+    out["can_comment"] = note["org_role"] == "commenter"
+    return out
 
 
 def _merge_shared_notes(
@@ -641,6 +681,10 @@ def update_note(
         note_id, revision=new_rev, actor_user_id=actor_user_id, source=realtime_source
     )
     viewer = actor_user_id if actor_user_id is not None else uid
+    if title is not None or body is not None:
+        from assistant.stores import org_kb
+
+        org_kb.mark_edited(int(note_id), viewer)  # правка в базе знаний = «проверено»; не бросает
     out = get_note(uid, note_id)
     return _with_sharing(out, viewer) if out else None
 

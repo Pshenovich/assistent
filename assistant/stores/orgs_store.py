@@ -549,6 +549,10 @@ def delete_org(user_id: int | str, org_id: int) -> None:
         conn.execute(
             "DELETE FROM org_group_members WHERE group_id IN (SELECT id FROM org_groups WHERE org_id = ?)", (int(org_id),)
         )
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'org_kb_nodes'").fetchone():
+            # документы остаются у авторов, уходит только дерево и права базы знаний
+            conn.execute("DELETE FROM org_kb_acl WHERE node_id IN (SELECT id FROM org_kb_nodes WHERE org_id = ?)", (int(org_id),))
+            conn.execute("DELETE FROM org_kb_nodes WHERE org_id = ?", (int(org_id),))
         for table in ("org_members", "org_domains", "org_invites", "org_settings", "org_dismissed", "org_groups"):
             conn.execute(f"DELETE FROM {table} WHERE org_id = ?", (int(org_id),))
         conn.execute("DELETE FROM orgs WHERE id = ?", (int(org_id),))
