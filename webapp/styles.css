@@ -455,12 +455,42 @@ html.boot-open-app #app.hidden {
   cursor: default;
 }
 
-.gate-or {
+/* «Другой способ»: Telegram и код из бота — для тех, кто ещё не подтвердил почту */
+.gate-other {
   margin: var(--space-6) 0 0;
 }
 
-.gate-or + .gate-telegram-login {
-  margin-top: var(--space-3);
+.gate-other-toggle {
+  display: inline-block;
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.gate-other-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.gate-other-toggle::after {
+  content: " ›";
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.gate-other[open] .gate-other-toggle::after {
+  transform: rotate(90deg);
+}
+
+.gate-other-note {
+  margin: var(--space-3) auto 0;
+  max-width: 18rem;
+  line-height: 1.45;
+}
+
+.gate-other .gate-telegram-login {
+  margin: var(--space-4) 0;
 }
 
 .email-gate {

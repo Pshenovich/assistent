@@ -82,40 +82,116 @@ def send(to: str, subject: str, text: str, html_body: str | None = None) -> None
         raise TxMailError("Не получилось отправить письмо. Попробуйте ещё раз через минуту.") from e
 
 
-def _layout(title: str, body_html: str) -> str:
+# ---------- вёрстка: таблицы и инлайн-стили (почтовые клиенты не знают CSS-классов и SVG) ----------
+
+_BRAND = "#5b5fe0"  # фиолетовый орбиты, затемнён под белый текст кнопки
+_BRAND_SOFT = "#eef0ff"
+_INK = "#14142b"
+_MUTED = "#6b6f80"
+_FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
+_DISPLAY = "'Unbounded','Segoe UI',Helvetica,Arial,sans-serif"
+
+
+def _site() -> str:
+    from assistant.lib.webapp_public import webapp_entry_url
+
+    url = webapp_entry_url()
+    return url.split("/webapp", 1)[0] if "/webapp" in url else url.rstrip("/")
+
+
+def _button(url: str, label: str) -> str:
+    u = html.escape(url, quote=True)
     return (
-        '<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:0 auto;'
-        'padding:24px;color:#1b1b1f">'
-        f'<div style="font-size:18px;font-weight:600;margin-bottom:16px">{html.escape(title)}</div>'
-        f"{body_html}"
-        '<div style="margin-top:24px;font-size:12px;color:#8a8a93">Орбита · getorbita.me</div></div>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 8px">'
+        f'<tr><td align="center" bgcolor="{_BRAND}" style="border-radius:12px">'
+        f'<a href="{u}" target="_blank" style="display:inline-block;padding:14px 28px;font-family:{_FONT};'
+        f'font-size:16px;font-weight:600;line-height:20px;color:#ffffff;text-decoration:none;border-radius:12px">'
+        f"{html.escape(label)}</a></td></tr></table>"
     )
 
 
-def send_login_code(to: str, code: str, ttl_min: int = 10) -> None:
-    text = (
-        f"Код входа в Орбиту: {code}\n\n"
-        f"Код действует {ttl_min} минут. Если вы не запрашивали вход — просто проигнорируйте письмо."
+def _layout(*, preheader: str, title: str, body_html: str, footer: str = "") -> str:
+    site = _site()
+    logo = html.escape(site + "/webapp/icons/icon-192.png", quote=True)
+    foot = footer or "Вы получили это письмо, потому что ваш адрес указали в Орбите."
+    return f"""<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light only"><title>{html.escape(title)}</title></head>
+<body style="margin:0;padding:0;background:#f2f3f8">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">{html.escape(preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f2f3f8">
+<tr><td align="center" style="padding:32px 16px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px">
+<tr><td style="padding:0 4px 20px">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="padding-right:10px"><img src="{logo}" width="36" height="36" alt="" style="display:block;border-radius:9px"></td>
+<td style="font-family:{_DISPLAY};font-size:20px;font-weight:600;letter-spacing:-0.3px;color:{_INK}">Orbita</td>
+</tr></table></td></tr>
+<tr><td style="background:#ffffff;border-radius:20px;padding:36px 32px;font-family:{_FONT};color:{_INK}">
+<div style="font-family:{_DISPLAY};font-size:22px;line-height:30px;font-weight:600;letter-spacing:-0.3px;margin:0 0 14px">{html.escape(title)}</div>
+{body_html}
+</td></tr>
+<tr><td style="padding:20px 8px 0;font-family:{_FONT};font-size:12px;line-height:18px;color:{_MUTED}">
+{html.escape(foot)}<br><a href="{html.escape(site, quote=True)}" style="color:{_MUTED}">{html.escape(site.replace('https://', ''))}</a>
+</td></tr>
+</table></td></tr></table></body></html>"""
+
+
+def _p(text_html: str, *, muted: bool = False, size: int = 15) -> str:
+    color = _MUTED if muted else _INK
+    return f'<p style="margin:0 0 12px;font-size:{size}px;line-height:{size + 8}px;color:{color}">{text_html}</p>'
+
+
+def _code_box(code: str) -> str:
+    spaced = " ".join(code)
+    return (
+        f'<div style="margin:20px 0 4px;padding:18px 0;background:{_BRAND_SOFT};border-radius:14px;text-align:center;'
+        f"font-family:'SF Mono',Menlo,Consolas,monospace;font-size:34px;line-height:40px;font-weight:700;"
+        f'letter-spacing:6px;color:{_INK}">{html.escape(spaced)}</div>'
     )
-    body = (
-        '<div style="font-size:14px">Код входа в Орбиту:</div>'
-        f'<div style="font-size:32px;font-weight:700;letter-spacing:6px;margin:12px 0">{html.escape(code)}</div>'
-        f'<div style="font-size:13px;color:#55555e">Код действует {ttl_min} минут. '
-        "Если вы не запрашивали вход — просто проигнорируйте письмо.</div>"
+
+
+def send_login_code(to: str, code: str, ttl_min: int = 10, login_url: str | None = None) -> None:
+    """Код входа. С login_url — ещё и кнопка «Войти»: вход без ввода кода (только для входа на сайте)."""
+    if login_url:
+        lead = "Нажмите кнопку — и вы в Орбите. Или введите код на экране входа:"
+        text = f"Войти в Орбиту: {login_url}\n\nИли введите код: {code}\n\n"
+    else:
+        lead = "Введите этот код в Орбите, чтобы подтвердить почту:"
+        text = f"Код подтверждения почты в Орбите: {code}\n\n"
+    text += f"Код действует {ttl_min} минут. Если это были не вы — просто проигнорируйте письмо."
+    body = _p(html.escape(lead))
+    if login_url:
+        body += _button(login_url, "Войти в Орбиту")
+    body += _code_box(code)
+    body += _p(
+        f"Код действует {ttl_min} минут и сработает один раз. Если это были не вы — просто проигнорируйте письмо.",
+        muted=True, size=13,
     )
-    send(to, f"{code} — код входа в Орбиту", text, _layout("Вход в Орбиту", body))
+    title = "Вход в Орбиту" if login_url else "Подтверждение почты"
+    send(
+        to,
+        f"{code} — код {'входа в Орбиту' if login_url else 'подтверждения почты'}",
+        text,
+        _layout(preheader=f"Ваш код: {code}", title=title, body_html=body),
+    )
 
 
 def send_org_invite(to: str, org_name: str, inviter: str, url: str) -> None:
     text = (
-        f"{inviter} добавил(а) вас в организацию «{org_name}» в Орбите.\n\n"
-        f"Войти: {url}\n\nВход — по этой почте, код придёт письмом."
+        f"{inviter} пригласил(а) вас в организацию «{org_name}» в Орбите.\n\n"
+        f"Войти: {url}\n\nВход — по этой почте ({to}), код придёт письмом."
     )
     body = (
-        f'<div style="font-size:14px">{html.escape(inviter)} добавил(а) вас в организацию '
-        f"«{html.escape(org_name)}» в Орбите.</div>"
-        f'<div style="margin:20px 0"><a href="{html.escape(url, quote=True)}" style="background:#5b5bd6;color:#fff;'
-        'padding:10px 18px;border-radius:8px;text-decoration:none;font-size:14px">Войти в Орбиту</a></div>'
-        '<div style="font-size:13px;color:#55555e">Вход — по этой почте, код придёт письмом.</div>'
+        _p(f"<b>{html.escape(inviter)}</b> пригласил(а) вас в организацию <b>«{html.escape(org_name)}»</b>.")
+        + _p("Орбита собирает встречи, задачи и договорённости команды в одном месте, а Лео держит их под контролем.",
+             muted=True, size=14)
+        + _button(url, "Войти в Орбиту")
+        + _p(f"Вход — по этой почте ({html.escape(to)}): нажмите кнопку, и мы пришлём код.", muted=True, size=13)
     )
-    send(to, f"Вас добавили в «{org_name}» — Орбита", text, _layout("Приглашение в Орбиту", body))
+    send(
+        to,
+        f"Вас пригласили в «{org_name}» — Орбита",
+        text,
+        _layout(preheader=f"{inviter} ждёт вас в «{org_name}»", title=f"Приглашение в «{org_name}»", body_html=body),
+    )

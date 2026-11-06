@@ -41,7 +41,7 @@ def env(monkeypatch):
     monkeypatch.delenv("TX_MAIL_HOST", raising=False)
     monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
     sent: list[tuple[str, str]] = []
-    monkeypatch.setattr(transactional_mail, "send_login_code", lambda to, code, ttl_min=10: sent.append((to, code)))
+    monkeypatch.setattr(transactional_mail, "send_login_code", lambda to, code, ttl_min=10, login_url=None: sent.append((to, code, login_url)))
     monkeypatch.setattr(transactional_mail, "send_org_invite", lambda *a, **k: None)
     return {"c": TestClient(usage_server.app, raise_server_exceptions=False), "sent": sent}
 
@@ -50,9 +50,9 @@ def _email() -> str:
     return f"user{next(_mail)}-{int(time.time() * 1000)}@acme.io"
 
 
-def _code(env, email: str, ip: str = "") -> str:
+def _code(env, email: str, ip: str = "", purpose: str = "login") -> str:
     headers = {"X-Real-IP": ip or f"10.0.{next(_mail) % 250}.{next(_mail) % 250}"}
-    r = env["c"].post("/api/miniapp/auth/email/start", json={"email": email}, headers=headers)
+    r = env["c"].post("/api/miniapp/auth/email/start", json={"email": email, "purpose": purpose}, headers=headers)
     assert r.status_code == 200, r.text
     assert env["sent"][-1][0] == email.lower()
     return env["sent"][-1][1]
@@ -82,7 +82,7 @@ def test_legacy_telegram_user_must_attach_email(env):
     r = c.get("/api/miniapp/orgs", headers=_tma(tg))
     assert r.status_code == 403 and r.json()["detail"]["need_email"] is True
     email = _email()
-    code = _code(env, email)
+    code = _code(env, email, purpose="attach")
     r = c.post("/api/miniapp/auth/email/attach", headers=_tma(tg), json={"email": email, "code": code})
     assert r.status_code == 200, r.text
     assert r.json()["user"]["id"] == tg and r.json()["switched"] is False
@@ -100,7 +100,7 @@ def test_telegram_links_to_existing_email_account(env):
     real_now = accounts._now
     accounts._now = lambda: real_now() + accounts.RESEND_GAP_SEC + 1  # type: ignore[assignment]
     try:
-        code = _code(env, email)
+        code = _code(env, email, purpose="attach")
         r = c.post("/api/miniapp/auth/email/attach", headers=_tma(tg), json={"email": email, "code": code})
     finally:
         accounts._now = real_now  # type: ignore[assignment]
@@ -115,7 +115,7 @@ def test_email_taken_by_other_legacy_account(env):
     a, b = next(_ids), next(_ids)
     email = _email()
     accounts.attach_email(a, email)
-    code = _code(env, email)
+    code = _code(env, email, purpose="attach")
     r = c.post("/api/miniapp/auth/email/attach", headers=_tma(b), json={"email": email, "code": code})
     assert r.status_code == 409
 
@@ -164,7 +164,7 @@ def test_profile_change_email_and_tg_link(env, monkeypatch):
     r = c.post("/api/miniapp/auth/tg/link", headers=h)
     assert r.status_code == 200 and "?start=link_" in r.json()["url"]
     new = _email()
-    r = c.post("/api/miniapp/auth/email/attach", headers=h, json={"email": new, "code": _code(env, new)})
+    r = c.post("/api/miniapp/auth/email/attach", headers=h, json={"email": new, "code": _code(env, new, purpose="attach")})
     assert r.status_code == 200 and r.json()["user"]["email"] == new
     assert c.get("/api/miniapp/me", headers=h).json()["email"] == new
     # старый аккаунт из Telegram: сменить Telegram нельзя
@@ -187,3 +187,35 @@ def test_custom_name_beats_telegram_name(env):
     # пустое имя — снова как в Telegram
     c.put("/api/miniapp/profile/name", headers=_tma(tg), json={"first_name": "", "last_name": ""})
     assert c.get("/api/miniapp/me", headers=_tma(tg)).json()["first_name"] == "U"
+
+
+def test_login_mail_has_button_attach_mail_does_not(env):
+    """Кнопка «Войти» — только в письме для входа: код подтверждения не должен входить в браузере."""
+    email = _email()
+    _code(env, email)
+    assert "login_code=" in env["sent"][-1][2] and "login_email=" in env["sent"][-1][2]
+    email2 = _email()
+    code = _code(env, email2, purpose="attach")
+    assert env["sent"][-1][2] is None
+    # код подтверждения не годится для входа на сайте
+    r = env["c"].post("/api/miniapp/auth/email/verify", json={"email": email2, "code": code})
+    assert r.status_code == 400
+
+
+def test_mail_templates_render():
+    from assistant.services import transactional_mail as tm
+
+    out = []
+    orig = tm.send
+    tm.send = lambda to, subject, text, html_body=None: out.append((subject, text, html_body))
+    try:
+        tm.send_login_code("a@b.io", "123456", login_url="https://x/webapp/?login_email=a%40b.io&login_code=123456")
+        tm.send_login_code("a@b.io", "654321")
+        tm.send_org_invite("a@b.io", "Обучат <script>", "Вова", "https://x/webapp/?login_email=a%40b.io")
+    finally:
+        tm.send = orig
+    (s1, t1, h1), (s2, t2, h2), (s3, t3, h3) = out
+    assert s1.startswith("123456") and "Войти в Орбиту" in h1 and "1 2 3 4 5 6" in h1 and "login_code=123456" in h1
+    assert "Войти в Орбиту" not in h2 and "6 5 4 3 2 1" in h2
+    assert "&lt;script&gt;" in h3 and "<script>" not in h3 and "login_email=" in h3
+    assert "icon-192.png" in h1

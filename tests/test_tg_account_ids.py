@@ -135,7 +135,7 @@ def _run(coro):
 
 def test_bot_email_then_code_links_to_invited_org(monkeypatch):
     sent = []
-    monkeypatch.setattr(transactional_mail, "send_login_code", lambda to, code, ttl_min=10: sent.append((to, code)))
+    monkeypatch.setattr(transactional_mail, "send_login_code", lambda to, code, ttl_min=10, login_url=None: sent.append((to, code)))
     started = []
 
     async def fake_continue(update, context, uid):
@@ -178,7 +178,7 @@ def test_bot_email_then_code_links_to_invited_org(monkeypatch):
 def test_bot_code_links_telegram_to_web_account(monkeypatch):
     """Аккаунт завели по почте в вебе; в боте та же почта — Telegram привязывается к нему."""
     sent = []
-    monkeypatch.setattr(transactional_mail, "send_login_code", lambda to, code, ttl_min=10: sent.append((to, code)))
+    monkeypatch.setattr(transactional_mail, "send_login_code", lambda to, code, ttl_min=10, login_url=None: sent.append((to, code)))
     monkeypatch.setattr(email_link, "_continue_start", lambda *a: asyncio.sleep(0))
     email = _email()
     acc = accounts.create_email_account(email)

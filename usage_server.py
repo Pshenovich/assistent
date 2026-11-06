@@ -5506,6 +5506,8 @@ def _request_ip(request: Request) -> str:
 
 class _EmailStartBody(BaseModel):
     email: str
+    # login — вход на сайте (в письме кнопка «Войти»); attach — подтвердить почту текущего аккаунта
+    purpose: str = "login"
 
 
 class _EmailVerifyBody(BaseModel):
@@ -5517,12 +5519,28 @@ def _account_error(e: Exception) -> HTTPException:
     return HTTPException(status_code=int(getattr(e, "code", 400) or 400), detail=str(e))
 
 
-def _email_send_code(email: str, ip: str) -> dict[str, Any]:
+def _email_login_url(email: str, code: str | None = None) -> str:
+    """Ссылка на экран входа: почта подставлена, с кодом — входит сама (кнопка в письме)."""
+    from urllib.parse import urlencode
+
+    from assistant.lib.webapp_public import webapp_entry_url
+
+    base = webapp_entry_url()
+    params = {"login_email": email}
+    if code:
+        params["login_code"] = code
+    return f"{base}{'&' if '?' in base else '?'}{urlencode(params)}"
+
+
+def _email_send_code(email: str, ip: str, purpose: str = "login") -> dict[str, Any]:
     from assistant.services import transactional_mail
     from assistant.stores import accounts
 
-    issued = accounts.issue_code(email, ip=ip)
-    transactional_mail.send_login_code(issued["email"], issued["code"], ttl_min=issued["ttl_sec"] // 60)
+    purpose = "attach" if purpose == "attach" else "login"
+    issued = accounts.issue_code(email, ip=ip, purpose=purpose)
+    # Кнопка «Войти» — только для входа: по коду подтверждения она завела бы в браузере другой аккаунт.
+    url = _email_login_url(issued["email"], issued["code"]) if purpose == "login" else None
+    transactional_mail.send_login_code(issued["email"], issued["code"], ttl_min=issued["ttl_sec"] // 60, login_url=url)
     return {"ok": True, "email": issued["email"], "ttl_sec": issued["ttl_sec"], "resend_sec": accounts.RESEND_GAP_SEC}
 
 
@@ -5533,7 +5551,7 @@ async def miniapp_auth_email_start(body: _EmailStartBody, request: Request) -> d
     from assistant.stores.accounts import AccountError
 
     try:
-        return await run_in_threadpool(_email_send_code, body.email, _request_ip(request))
+        return await run_in_threadpool(_email_send_code, body.email, _request_ip(request), body.purpose)
     except AccountError as e:
         raise _account_error(e) from e
     except TxMailError as e:
@@ -5644,7 +5662,7 @@ async def miniapp_auth_email_attach(
     from assistant.stores import accounts
 
     try:
-        email = await run_in_threadpool(accounts.verify_code, body.email, body.code)
+        email = await run_in_threadpool(partial(accounts.verify_code, body.email, body.code, purpose="attach"))
         uid, switched = await run_in_threadpool(_email_attach, principal, email)
     except accounts.AccountError as e:
         raise _account_error(e) from e
@@ -7910,14 +7928,13 @@ async def miniapp_orgs_member_add(
 
 def _org_mail_invite(principal: _MiniappPrincipal, org_id: int, email: str) -> bool:
     """Письмо приглашённому: «вас добавили, войдите по этой почте». Не вышло — не страшно."""
-    from assistant.lib.webapp_public import webapp_entry_url
     from assistant.services import transactional_mail
     from assistant.stores import orgs_store
 
     try:
         org = orgs_store.get_org(org_id) or {}
         transactional_mail.send_org_invite(
-            email, str(org.get("name") or "организацию"), _principal_display_name(principal), webapp_entry_url()
+            email, str(org.get("name") or "организацию"), _principal_display_name(principal), _email_login_url(email)
         )
         return True
     except Exception as e:

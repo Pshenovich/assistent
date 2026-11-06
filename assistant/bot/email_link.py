@@ -94,7 +94,7 @@ def _send_code(email: str, tg_id: int) -> dict:
     from assistant.services import transactional_mail
     from assistant.stores import accounts
 
-    issued = accounts.issue_code(email, ip=f"tg:{tg_id}")
+    issued = accounts.issue_code(email, ip=f"tg:{tg_id}", purpose="attach")
     transactional_mail.send_login_code(issued["email"], issued["code"], ttl_min=issued["ttl_sec"] // 60)
     return issued
 
@@ -127,7 +127,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             from assistant.stores import accounts
 
             try:
-                email = await asyncio.to_thread(accounts.verify_code, st["email"], digits)
+                email = await asyncio.to_thread(accounts.verify_code, st["email"], digits, purpose="attach")
                 uid, orgs = await asyncio.to_thread(link_after_code, tg_id, email)
             except AccountError as e:
                 await msg.reply_text(str(e))

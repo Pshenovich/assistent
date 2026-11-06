@@ -6583,6 +6583,8 @@
   }
 
   function showTelegramAuthError(msg) {
+    var other = document.getElementById("gate-other");
+    if (other) other.open = true;
     var status = document.getElementById("gate-login-status");
     var login = document.getElementById("gate-telegram-login");
     var err = document.getElementById("gate-login-err");
@@ -57415,7 +57417,7 @@
     function send(v, btn) {
       showErr("");
       if (btn) btn.disabled = true;
-      post("/auth/email/start", { email: v })
+      post("/auth/email/start", { email: v, purpose: authed ? "attach" : "login" })
         .then(function (r) {
           email = (r && r.email) || v;
           renderCode((r && r.resend_sec) || 60);
@@ -57491,11 +57493,49 @@
     renderEmail();
   }
 
+  /** ?login_email=…&login_code=… — кнопка «Войти» из письма (код уже в ссылке) или приглашение (только почта). */
+  function readEmailLoginFromUrl() {
+    try {
+      var q = new URLSearchParams(location.search || "");
+      return { email: (q.get("login_email") || "").trim(), code: (q.get("login_code") || "").replace(/\D/g, "") };
+    } catch (_) {
+      return { email: "", code: "" };
+    }
+  }
+
+  function clearEmailLoginFromUrl() {
+    try {
+      var u = new URL(window.location.href);
+      if (!u.searchParams.has("login_email") && !u.searchParams.has("login_code")) return;
+      u.searchParams.delete("login_email");
+      u.searchParams.delete("login_code");
+      var q = u.searchParams.toString();
+      history.replaceState(null, "", u.pathname + (q ? "?" + q : "") + u.hash);
+    } catch (_) {}
+  }
+
   function bindGateEmailLogin() {
     var box = document.getElementById("gate-email-login");
     if (!box || box.dataset.bound === "1") return;
     box.dataset.bound = "1";
+    var fromUrl = readEmailLoginFromUrl();
+    if (fromUrl.email && fromUrl.code.length === 6) {
+      clearEmailLoginFromUrl();
+      setGateStatus("Вход по ссылке из письма…");
+      postPublicAuth("/auth/email/verify", { email: fromUrl.email, code: fromUrl.code })
+        .then(function (data) {
+          setGateStatus("");
+          applyBrowserSessionLogin(data);
+        })
+        .catch(function (err) {
+          setGateStatus("");
+          setGateError((err.message || String(err)) + " Запросите новый код ниже.");
+        });
+    } else if (fromUrl.email) {
+      clearEmailLoginFromUrl();
+    }
     mountEmailCodeForm(box, {
+      hint: fromUrl.email,
       errEl: document.getElementById("gate-login-err"),
       verifyPath: "/auth/email/verify",
       noAutofocus: true,
