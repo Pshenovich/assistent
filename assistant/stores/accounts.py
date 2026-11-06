@@ -45,7 +45,7 @@ class AccountError(ValueError):
 
 def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tg_link_tokens'").fetchone():
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'account_aliases'").fetchone():
         return conn
     conn.executescript(
         """
@@ -73,6 +73,12 @@ def _conn() -> sqlite3.Connection:
             token TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
             expires_at INTEGER NOT NULL
+        );
+        -- Пустой аккаунт по почте склеен со старым аккаунтом из Telegram: сессии на старый id ведут сюда.
+        CREATE TABLE IF NOT EXISTS account_aliases (
+            old_user_id TEXT PRIMARY KEY,
+            new_user_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL
         );
         """
     )
@@ -316,15 +322,83 @@ def issue_tg_link(user_id: int) -> str:
     now = _now()
     with _LOCK:
         conn = _conn()
-        conn.execute("DELETE FROM tg_link_tokens WHERE user_id = ? OR expires_at < ?", (str(uid), now))
+        # Прежние ссылки не гасим: экран мог запросить новую, пока человек уже жмёт Start по старой.
+        conn.execute("DELETE FROM tg_link_tokens WHERE expires_at < ?", (now,))
         conn.execute("INSERT INTO tg_link_tokens (token, user_id, expires_at) VALUES (?, ?, ?)",
                      (token, str(uid), now + TG_LINK_TTL_SEC))
         conn.commit()
     return token
 
 
-def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optional[int]]:
-    """Бот получил /start link_<token>: привязать (или сменить) Telegram. (аккаунт, прежний Telegram id)."""
+def resolve_alias(user_id: int | str) -> Optional[int]:
+    """Аккаунт склеили с другим — куда теперь ведёт этот id."""
+    with _LOCK:
+        r = _conn().execute("SELECT new_user_id FROM account_aliases WHERE old_user_id = ?", (str(int(user_id)),)).fetchone()
+    return int(r[0]) if r else None
+
+
+def _tg_has_history(tg_id: int) -> bool:
+    """Telegram уже пользовался Орбитой (старый аккаунт: id = Telegram id)."""
+    try:
+        from assistant.stores import note_members
+
+        if note_members.get_profile(tg_id):
+            return True
+    except Exception:
+        pass
+    return _has_data(tg_id)
+
+
+def _has_data(user_id: int) -> bool:
+    try:
+        from assistant.stores import notes as notes_store_mod
+
+        return bool(notes_store_mod.list_notes(int(user_id), limit=1, include_knowledge=True, include_transcription=True))
+    except Exception:
+        return True  # не смогли проверить — считаем, что данные есть, и не склеиваем
+
+
+def merge_into_legacy(new_uid: int, tg_id: int) -> dict[str, Any]:
+    """Вход по почте завёл пустой аккаунт, а Telegram — старый аккаунт с данными: почта переходит
+    на старый аккаунт (id = Telegram id), новый пустой становится его псевдонимом."""
+    new_uid, tg = int(new_uid), int(tg_id)
+    acc = get(new_uid)
+    if not acc or not is_synthetic(new_uid):
+        raise AccountError("Аккаунт не найден.", 404)
+    if get(tg) or get_by_tg(tg):
+        raise AccountError("Этот Telegram уже привязан к другой почте.")
+    if _has_data(new_uid):
+        raise AccountError(
+            "У этого Telegram есть свой аккаунт Орбиты, а в новом аккаунте уже есть документы — "
+            "объединить автоматически не получится. Напишите в поддержку."
+        )
+    now = _now()
+    with _LOCK:
+        conn = _conn()
+        conn.execute("DELETE FROM accounts WHERE user_id = ?", (str(new_uid),))
+        conn.execute(
+            "INSERT INTO accounts (user_id, email, email_verified_at, tg_user_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (str(tg), acc["email"], acc["email_verified_at"] or now, str(tg), now),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO account_aliases (old_user_id, new_user_id, created_at) VALUES (?, ?, ?)",
+            (str(new_uid), str(tg), now),
+        )
+        conn.commit()
+    try:
+        from assistant.stores import orgs_store
+
+        orgs_store.reassign_user(new_uid, tg)
+    except Exception as e:
+        print(f"[accounts] merge orgs {new_uid}->{tg} err={e!r}")
+    return get(tg)  # type: ignore[return-value]
+
+
+def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optional[int], bool]:
+    """Бот получил /start link_<token>: привязать (или сменить) Telegram.
+
+    (аккаунт, прежний Telegram id, склеили ли со старым аккаунтом этого Telegram).
+    """
     tg = int(tg_user_id)
     now = _now()
     with _LOCK:
@@ -343,5 +417,8 @@ def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optio
         raise AccountError("Аккаунт не найден.", 404)
     old = acc["tg_user_id"]
     if old == tg:
-        return acc, None
-    return link_tg(uid, tg), old
+        return acc, None, False
+    if not old and _tg_has_history(tg):
+        # Старый пользователь вошёл по почте (завёлся пустой аккаунт) и привязывает свой Telegram.
+        return merge_into_legacy(uid, tg), None, True
+    return link_tg(uid, tg), old, False

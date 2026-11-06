@@ -206,7 +206,8 @@ def test_change_telegram_by_profile_link():
     uid, old_tg, new_tg = acc["user_id"], next(_ids), next(_ids)
     accounts.link_tg(uid, old_tg)
     token = accounts.issue_tg_link(uid)
-    got, old = accounts.link_tg_by_token(token, new_tg)
+    got, old, merged = accounts.link_tg_by_token(token, new_tg)
+    assert merged is False
     assert got["tg_user_id"] == new_tg and old == old_tg
     assert accounts.account_for_tg(new_tg) == uid
     assert accounts.account_for_tg(old_tg) == old_tg  # старый Telegram больше не этот аккаунт
@@ -240,3 +241,38 @@ def test_bot_start_link(monkeypatch):
     asyncio.run(email_link.link_by_start(upd, ctx, accounts.issue_tg_link(acc["user_id"])))
     assert "привязан" in msg.replies[-1] and started == [acc["user_id"]]
     assert accounts.account_for_tg(tg) == acc["user_id"]
+
+
+def test_old_telegram_user_logs_in_by_email_then_links_tg(monkeypatch):
+    """Старый пользователь вошёл по почте (завёлся пустой аккаунт) и привязал свой Telegram:
+    почта переходит на старый аккаунт с данными, сессии нового ведут туда же."""
+    from assistant.stores import note_members
+
+    legacy = next(_ids)
+    note_members.upsert_profile(legacy, username=f"old{legacy}", first_name="Old")
+    owner = next(_ids)
+    accounts.attach_email(owner, _email())
+    org = orgs_store.create_org(owner, f"Org {owner}")
+    email = _email()
+    orgs_store.add_member(owner, org["id"], email)
+    fresh = accounts.create_email_account(email)
+    orgs_store.claim_pending(fresh["user_id"])  # вход по почте забрал приглашение
+    acc, old, merged = accounts.link_tg_by_token(accounts.issue_tg_link(fresh["user_id"]), legacy)
+    assert merged and old is None
+    assert (acc["user_id"], acc["email"], acc["tg_user_id"]) == (legacy, email, legacy)
+    assert accounts.get(fresh["user_id"]) is None and accounts.resolve_alias(fresh["user_id"]) == legacy
+    assert accounts.get_by_email(email)["user_id"] == legacy
+    assert orgs_store.role_of(org["id"], legacy) == "member" and not orgs_store.role_of(org["id"], fresh["user_id"])
+
+
+def test_no_merge_when_new_account_has_documents(monkeypatch):
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store_mod
+
+    legacy = next(_ids)
+    note_members.upsert_profile(legacy, username=f"old{legacy}", first_name="Old")
+    fresh = accounts.create_email_account(_email())
+    notes_store_mod.create_note(fresh["user_id"], "Уже есть", "<p>текст</p>")
+    with pytest.raises(accounts.AccountError):
+        accounts.link_tg_by_token(accounts.issue_tg_link(fresh["user_id"]), legacy)
+    assert accounts.get(fresh["user_id"]) is not None and accounts.get(legacy) is None

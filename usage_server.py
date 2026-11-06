@@ -2278,6 +2278,15 @@ def _map_principal_to_account(principal: _MiniappPrincipal) -> None:
     uid = int(principal.telegram_user_id)
     if accounts.is_synthetic(uid):
         acc = accounts.get(uid)
+        if not acc:
+            # Пустой аккаунт по почте склеили со старым аккаунтом из Telegram — сессия ведёт туда.
+            target = accounts.resolve_alias(uid)
+            if target:
+                principal.telegram_user_id = target
+                user = dict(principal.user or {})
+                user["id"] = target
+                principal.user = user
+                acc = accounts.get(target)
         principal.tg_id = acc["tg_user_id"] if acc else None
         return
     acc = accounts.get_by_tg(uid)
@@ -5558,13 +5567,16 @@ async def miniapp_auth_email_start(body: _EmailStartBody, request: Request) -> d
         raise HTTPException(status_code=502, detail=str(e)) from e
 
 
-def _email_login_account(email: str) -> int:
-    """Аккаунт для входа по почте: найденный, старый (по почте Google / из организации) или новый."""
+def _email_login_account(email: str) -> tuple[int, bool]:
+    """Аккаунт для входа по почте: найденный, старый (по почте Google / из организации) или новый.
+
+    (id, создан ли новый аккаунт).
+    """
     from assistant.stores import accounts, orgs_store
 
     acc = accounts.get_by_email(email)
     if acc:
-        return int(acc["user_id"])
+        return int(acc["user_id"]), False
     legacy: int | None = None
     try:
         from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
@@ -5575,8 +5587,8 @@ def _email_login_account(email: str) -> int:
     legacy = legacy or orgs_store.user_by_member_email(email)
     if legacy and not accounts.get(legacy):
         accounts.attach_email(int(legacy), email)
-        return int(legacy)
-    return int(accounts.create_email_account(email)["user_id"])
+        return int(legacy), False
+    return int(accounts.create_email_account(email)["user_id"]), True
 
 
 def _session_user(uid: int, email: str, tg_id: int | None = None) -> dict[str, Any]:
@@ -5624,14 +5636,15 @@ async def miniapp_auth_email_verify(body: _EmailVerifyBody) -> JSONResponse:
 
     try:
         email = await run_in_threadpool(accounts.verify_code, body.email, body.code)
-        uid = await run_in_threadpool(_email_login_account, email)
+        uid, created = await run_in_threadpool(_email_login_account, email)
     except accounts.AccountError as e:
         raise _account_error(e) from e
     await run_in_threadpool(_claim_orgs, uid)
     acc = await run_in_threadpool(accounts.get, uid)
     user = await run_in_threadpool(_session_user, uid, email, (acc or {}).get("tg_user_id"))
-    _track(uid, "auth.email_login")
-    return _session_response(uid, user)
+    _track(uid, "auth.email_login", created=created)
+    # created — новый аккаунт: приложение предложит привязать Telegram (старый аккаунт подтянется с данными).
+    return _session_response(uid, user, created=created)
 
 
 def _email_attach(principal: _MiniappPrincipal, email: str) -> tuple[int, bool]:

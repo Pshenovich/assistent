@@ -202,7 +202,7 @@
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261105-design43",
     "/webapp/board-figma.js?v=20261105-design43",
-    "/webapp/board.js?v=20261105-design44",
+    "/webapp/board.js?v=20261106-figcopy1",
   ];
   let boardScriptsPromise = null;
 
@@ -57493,6 +57493,66 @@
     renderEmail();
   }
 
+  /**
+   * Вход по почте завёл новый аккаунт. Прежде чем открыть приложение, спрашиваем: не пользовались ли
+   * Орбитой через Telegram? Привязка Telegram склеит пустой аккаунт со старым (данные на месте).
+   */
+  function finishEmailLogin(data) {
+    if (!data || !data.created) {
+      applyBrowserSessionLogin(data);
+      return;
+    }
+    setStoredSession(data.session_token);
+    var wrap = document.createElement("div");
+    wrap.id = "tg-offer-gate";
+    wrap.className = "gate email-gate";
+    wrap.innerHTML =
+      '<div class="gate-card">' +
+      '<h1 class="gate-title">Уже пользовались Орбитой?</h1>' +
+      '<p class="gate-text">Если вы работали с Лео в Telegram — привяжите его, и мы подтянем ваш аккаунт со всеми данными.</p>' +
+      '<div class="gate-code-form"><button type="button" class="btn gate-code-submit" data-act="link" disabled>Привязать Telegram</button></div>' +
+      '<p class="gate-text muted small hidden" data-act="hint">Нажмите «Start» в боте и вернитесь сюда — Орбита обновится сама.</p>' +
+      '<button type="button" class="gate-email-link" data-act="skip">Нет, я здесь впервые</button>' +
+      "</div>";
+    document.body.appendChild(wrap);
+    var linkBtn = wrap.querySelector('[data-act="link"]');
+    var url = "";
+    // Ссылку берём заранее: бот откроется прямо по нажатию, без блокировки окна браузером.
+    apiFetch("/auth/tg/link", { method: "POST" })
+      .then(function (r) {
+        url = r.url;
+        linkBtn.disabled = false;
+      })
+      .catch(function () {
+        wrap.remove();
+        applyBrowserSessionLogin(data);
+      });
+    var opened = false;
+    linkBtn.addEventListener("click", function () {
+      if (opened) {
+        location.reload();
+        return;
+      }
+      if (!url) return;
+      opened = true;
+      openTelegramUrl(url);
+      setHidden(wrap.querySelector('[data-act="hint"]'), false);
+      linkBtn.textContent = "Готово, я нажал Start";
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState !== "visible") return;
+        apiFetch("/me", { method: "GET" })
+          .then(function (me) {
+            if (me && (me.id !== data.user.id || me.tg_linked)) location.reload();
+          })
+          .catch(function () {});
+      });
+    });
+    wrap.querySelector('[data-act="skip"]').addEventListener("click", function () {
+      wrap.remove();
+      applyBrowserSessionLogin(data);
+    });
+  }
+
   /** ?login_email=…&login_code=… — кнопка «Войти» из письма (код уже в ссылке) или приглашение (только почта). */
   function readEmailLoginFromUrl() {
     try {
@@ -57525,7 +57585,7 @@
       postPublicAuth("/auth/email/verify", { email: fromUrl.email, code: fromUrl.code })
         .then(function (data) {
           setGateStatus("");
-          applyBrowserSessionLogin(data);
+          finishEmailLogin(data);
         })
         .catch(function (err) {
           setGateStatus("");
@@ -57541,7 +57601,7 @@
       noAutofocus: true,
       onDone: function (data) {
         setGateError("");
-        applyBrowserSessionLogin(data);
+        finishEmailLogin(data);
       },
     });
   }
@@ -57623,16 +57683,51 @@
     });
   }
 
+  function openTelegramUrl(url) {
+    var tg = window.Telegram && window.Telegram.WebApp;
+    if (tg && hasTelegramWebAppAuth() && typeof tg.openTelegramLink === "function") {
+      tg.openTelegramLink(url);
+      return;
+    }
+    // Без "noopener" в параметрах: с ним window.open всегда возвращает null — не отличить от блокировки.
+    var w = window.open(url, "_blank");
+    if (w) {
+      try {
+        w.opener = null;
+      } catch (_) {}
+    } else {
+      location.href = url; // окно заблокировано — переходим в этой вкладке
+    }
+  }
+
+  var tgLinkWatchBound = false;
+  var tgLinkWatchUntil = 0;
+
+  /** Вернулись из бота: Telegram привязан или аккаунт склеен со старым — перезагружаем приложение. */
+  function watchTelegramLinked() {
+    tgLinkWatchUntil = Date.now() + 15 * 60 * 1000;
+    if (tgLinkWatchBound) return;
+    tgLinkWatchBound = true;
+    var before = cachedMe ? { id: cachedMe.id, linked: !!cachedMe.tg_linked } : null;
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState !== "visible" || Date.now() > tgLinkWatchUntil || !before) return;
+      apiFetch("/me", { method: "GET" })
+        .then(function (me) {
+          if (me && (me.id !== before.id || !!me.tg_linked !== before.linked)) location.reload();
+        })
+        .catch(function () {});
+    });
+  }
+
   function openTelegramLink(btn) {
     var was = btn.textContent;
     btn.textContent = "…";
     btn.disabled = true;
     apiFetch("/auth/tg/link", { method: "POST" })
       .then(function (r) {
-        var tg = window.Telegram && window.Telegram.WebApp;
-        if (tg && hasTelegramWebAppAuth() && typeof tg.openTelegramLink === "function") tg.openTelegramLink(r.url);
-        else window.open(r.url, "_blank", "noopener");
+        openTelegramUrl(r.url);
         showNoteToast("Нажмите «Start» в боте с нужного Telegram — ссылка действует 15 минут");
+        watchTelegramLinked();
       })
       .catch(function (e) {
         showNoteToast(e.message || String(e));
