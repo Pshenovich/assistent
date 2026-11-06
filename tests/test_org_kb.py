@@ -270,8 +270,8 @@ class OrgKbLeoSearchTests(OrgKbTests):
                 out.append(v)
             return out
 
+        sm.index_org(self.org, embed=fake_embed)
         with mock.patch.object(sm, "sources_for_user", lambda u: []):
-            sm.index_org(self.org, embed=fake_embed)
             return [h["ref"].get("note_id") for h in sm.search(uid, "как перезапустить n8n контейнер", embed=fake_embed)]
 
     def test_reader_finds_org_doc(self) -> None:
@@ -311,5 +311,7 @@ class OrgKbNoDoubleIndexTests(OrgKbTests):
 
         notes_store.update_note(BACK, self.note, body="<p>" + "Перезапуск n8n на сервере. " * 5 + "</p>", actor_user_id=BACK)
         keys = [s["key"] for s in sm.sources_for_user(BACK)]
-        self.assertNotIn(f"note:{self.note}", keys)  # только в разделе организации
-        self.assertIn(f"org:{self.note}", [s["key"] for s in sm.org_sources(self.org)])
+        self.assertNotIn(f"note:{self.note}", keys)  # документы — не в личном разделе
+        doc = [(s["key"], s["kind"], s["ref"].get("org_id"))
+               for s in sm.doc_sources(notes_store.get_note_by_id(self.note), org_id=sm._org_of_note(self.note))]
+        self.assertEqual(doc, [(f"kb:{self.note}", "knowledge", self.org)])  # один раздел на документ, вид — база знаний

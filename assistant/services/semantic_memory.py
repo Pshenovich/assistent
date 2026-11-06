@@ -89,58 +89,103 @@ def _sheet_sources(note: dict[str, Any], kind: str, *, skip_titles: tuple[str, .
     return out
 
 
-def sources_for_user(uid: int) -> list[dict[str, Any]]:
-    """Тексты пользователя для индекса: key, kind, title, date, text, ref."""
+DOC_PREFIX = "doc:"
+# Ключи источников документа (заметка, документ базы знаний, встреча и их листы). Раньше они жили копией
+# в личном разделе каждого, кому документ открыт, а документы организаций — в разделе "org:<id>".
+_DOC_KEY = re.compile(r"^(note|kb|org|tr_sum|tr_txt|sheet):(\d+)(?::\d+)?$")
+_MAIN_KINDS = ("note", "kb", "org")  # основной лист документа — под любым из этих ключей один и тот же текст
+
+
+def doc_owner_key(note_id: int) -> str:
+    """Раздел индекса документа: векторизуется один раз, права проверяет поиск."""
+    return f"{DOC_PREFIX}{int(note_id)}"
+
+
+def _doc_key_note(key: str) -> Optional[int]:
+    m = _DOC_KEY.match(key or "")
+    return int(m.group(2)) if m else None
+
+
+def _doc_key_norm(key: str) -> str:
+    """note:5 / kb:5 / org:5 — один и тот же основной лист (для склейки старых копий с новым разделом)."""
+    m = _DOC_KEY.match(key or "")
+    if m and m.group(1) in _MAIN_KINDS:
+        return f"main:{m.group(2)}"
+    return key
+
+
+def doc_sources(note: dict[str, Any], *, org_id: Optional[int] = None) -> list[dict[str, Any]]:
+    """Тексты одного документа для его раздела: key, kind, title, date, text, ref. Права — при поиске, не здесь.
+    org_id — документ лежит в базе знаний организации (тогда он «документ базы знаний», где бы ни был)."""
     from assistant.services import transcription_notes as tnotes
     from assistant.stores import notes as notes_store
 
+    nid = int(note["id"])
     out: list[dict[str, Any]] = []
-    for n in notes_store.list_transcription_notes(uid, limit=500):
-        if str(n.get("owner_user_id") or n.get("user_id") or uid) != str(uid):
-            continue
-        full = n  # список и так отдаёт полные строки (раньше — ещё get_note на каждую расшифровку)
-        summary = _plain(str(full.get("body") or "")) if tnotes.has_summary(full) else ""
-        transcript = _plain(tnotes.transcript_html(full))
-        date = str(full.get("created_at") or "")[:10]
-        ref = {"note_id": int(full["id"]), "kind": "transcription"}
+    if note.get("is_transcription") and org_id is None:
+        summary = _plain(str(note.get("body") or "")) if tnotes.has_summary(note) else ""
+        transcript = _plain(tnotes.transcript_html(note))
+        date = str(note.get("created_at") or "")[:10]
+        ref = {"note_id": nid, "kind": "transcription"}
         if summary:
-            out.append({"key": f"tr_sum:{full['id']}", "kind": "meeting_summary", "title": full.get("title") or "Встреча",
+            out.append({"key": f"tr_sum:{nid}", "kind": "meeting_summary", "title": note.get("title") or "Встреча",
                         "date": date, "text": summary, "ref": ref})
         if transcript:
-            out.append({"key": f"tr_txt:{full['id']}", "kind": "transcript", "title": full.get("title") or "Встреча",
+            out.append({"key": f"tr_txt:{nid}", "kind": "transcript", "title": note.get("title") or "Встреча",
                         "date": date, "text": transcript, "ref": ref})
         # Лист «Транскрипция» уже выше (tr_txt) — остальные листы встречи отдельно.
-        skip = (notes_store.TRANSCRIPT_SHEET_TITLE,) if tnotes.has_summary(full) else ()
-        out += _sheet_sources(full, "transcription", skip_titles=skip)
+        skip = (notes_store.TRANSCRIPT_SHEET_TITLE,) if tnotes.has_summary(note) else ()
+        return out + _sheet_sources(note, "transcription", skip_titles=skip)
+    knowledge = bool(note.get("is_knowledge")) or org_id is not None
+    kind = "knowledge" if knowledge else "note"
+    text = _plain(str(note.get("body") or ""))
+    ref: dict[str, Any] = {"note_id": nid, "kind": kind}
+    if org_id is not None:
+        ref["org_id"] = int(org_id)
+    if len(text) >= 40:
+        out.append({"key": f"{'kb' if knowledge else 'note'}:{nid}", "kind": kind,
+                    "title": note.get("title") or ("Документ" if knowledge else "Заметка"),
+                    "date": str(note.get("updated_at") or note.get("created_at") or "")[:10], "text": text, "ref": ref})
+    for sh in _sheet_sources(note, kind):
+        if org_id is not None:
+            sh["ref"]["org_id"] = int(org_id)
+        out.append(sh)
+    return out
+
+
+def _org_of_note(note_id: int) -> Optional[int]:
     try:
         from assistant.stores import org_kb
 
-        org_docs = org_kb.all_doc_note_ids()  # индексируются один раз в разделе организации (org_sources)
+        node = org_kb.node_for_note(int(note_id))
+        return int(node["org_id"]) if node and node.get("kind") == "doc" else None
+    except Exception as e:
+        print(f"[semantic] org of note={note_id} err={e!r}")
+        return None
+
+
+def readable_doc_ids(uid: int) -> tuple[set[int], list[int]]:
+    """Документы, открытые человеку сейчас (свои, расшаренные, базы знаний организаций), и его организации."""
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    ids = set(notes_store.own_note_ids(uid))
+    ids |= {nid for _owner, nid in note_members.list_note_ids_for_member(uid)}
+    org_ids: list[int] = []
+    try:
+        from assistant.stores import org_kb
+
+        org_ids = org_kb.org_ids_of(uid)
+        for oid in org_ids:
+            ids |= org_kb.readable_note_ids(uid, oid)
     except Exception as e:
         print(f"[semantic] org docs uid={uid} err={e!r}")
-        org_docs = set()
-    for n in notes_store.list_notes(uid, limit=500):
-        if int(n["id"]) in org_docs:
-            continue
-        text = _plain(str(n.get("body") or ""))
-        if len(text) >= 40:
-            out.append({"key": f"note:{n['id']}", "kind": "note", "title": n.get("title") or "Заметка",
-                        "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
-                        "ref": {"note_id": int(n["id"]), "kind": "note"}})
-        out += _sheet_sources(n, "note")
-    # База знаний (свои документы и расшаренные командой) — тоже в памяти, со всеми листами.
-    try:
-        for n in notes_store.list_knowledge_notes(uid):
-            if int(n["id"]) in org_docs:
-                continue
-            text = _plain(str(n.get("body") or ""))
-            if len(text) >= 40:
-                out.append({"key": f"kb:{n['id']}", "kind": "knowledge", "title": n.get("title") or "Документ",
-                            "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
-                            "ref": {"note_id": int(n["id"]), "kind": "knowledge"}})
-            out += _sheet_sources(n, "knowledge")
-    except Exception as e:
-        print(f"[semantic] knowledge uid={uid} err={e!r}")
+    return ids, org_ids
+
+
+def sources_for_user(uid: int) -> list[dict[str, Any]]:
+    """Личные тексты для раздела пользователя: дайджесты чатов, задачи, почта. Документы — в своих разделах."""
+    out: list[dict[str, Any]] = []
     try:
         from assistant.stores import chat_digest
 
@@ -240,101 +285,175 @@ def _hash(text: str) -> str:
 
 
 def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 400) -> dict[str, int]:
-    """Переиндексировать изменившиеся источники (не больше budget_chunks кусков за проход)."""
-    return _index_sources(uid, sources_for_user(uid), embed=embed, budget_chunks=budget_chunks)
+    """Переиндексировать изменившиеся личные источники (не больше budget_chunks кусков за проход).
+    Старые копии документов в личном разделе не трогаем: их убирает index_docs, перенеся векторы."""
+    return _index_sources(uid, sources_for_user(uid), embed=embed, budget_chunks=budget_chunks,
+                          keep=lambda key: _doc_key_note(key) is not None)
 
 
-def org_owner_key(org_id: int) -> str:
-    """Общий раздел индекса базы знаний организации: документы — один раз на организацию, не на каждого."""
-    return f"org:{int(org_id)}"
-
-
-def org_sources(org_id: int) -> list[dict[str, Any]]:
-    """Документы базы знаний организации со всеми листами. Права — при поиске, не здесь."""
-    from assistant.stores import org_kb
+def index_doc(note_id: int, *, embed: Optional[Embed] = None, budget_chunks: int = 2000,
+              note: Optional[dict[str, Any]] = None, org_id: Any = ...) -> dict[str, int]:
+    """Раздел одного документа — один раз для всех, кому он открыт. Удалён — раздел убираем."""
     from assistant.stores import notes as notes_store
 
-    out: list[dict[str, Any]] = []
-    for nid in org_kb.org_doc_note_ids(org_id):
-        n = notes_store.get_note_by_id(nid)
-        if not n:
+    nid = int(note_id)
+    note = note if note is not None else notes_store.get_note_by_id(nid)
+    if not note:
+        idx.delete_owner(doc_owner_key(nid))
+        return {"indexed": 0, "copied": 0, "skipped": 0, "removed": 0, "chunks": 0, "pending": 0}
+    oid = _org_of_note(nid) if org_id is ... else org_id
+    return _index_sources(doc_owner_key(nid), doc_sources(note, org_id=oid), embed=embed,
+                          budget_chunks=budget_chunks, reuse=True)
+
+
+def index_docs(*, embed: Optional[Embed] = None, budget_chunks: int = 3000) -> dict[str, int]:
+    """Полный проход по документам: досчитать изменившиеся (общий бюджет кусков на проход), убрать разделы
+    удалённых и старые копии в личных разделах / разделах организаций — у документов, уже готовых здесь."""
+    from assistant.stores import notes as notes_store
+
+    try:
+        from assistant.stores import org_kb
+
+        org_of = {}
+        for oid in _all_org_ids():
+            for nid in org_kb.org_doc_note_ids(oid):
+                org_of[nid] = oid
+    except Exception as e:
+        print(f"[semantic] org docs map err={e!r}")
+        org_of = {}
+    total = {"docs": 0, "indexed": 0, "copied": 0, "skipped": 0, "removed": 0, "chunks": 0, "pending": 0, "purged": 0}
+    ready: set[int] = set()
+    existing = notes_store.all_note_ids()
+    for nid in existing:
+        try:
+            res = index_doc(nid, embed=embed, budget_chunks=budget_chunks - total["chunks"], org_id=org_of.get(nid))
+        except Exception as e:
+            print(f"[semantic] doc={nid} err={e!r}")
             continue
-        text = _plain(str(n.get("body") or ""))
-        if len(text) >= 40:
-            out.append({"key": f"org:{nid}", "kind": "knowledge", "title": n.get("title") or "Документ",
-                        "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
-                        "ref": {"note_id": nid, "kind": "knowledge", "org_id": int(org_id)}})
-        for sh in _sheet_sources(n, "knowledge"):
-            sh["ref"]["org_id"] = int(org_id)
-            out.append(sh)
-    return out
+        total["docs"] += 1
+        for k in ("indexed", "copied", "skipped", "removed", "chunks", "pending"):
+            total[k] += res[k]
+        if not res["pending"]:
+            ready.add(nid)
+    alive = set(existing)
+    for owner in idx.owners_with_prefix(DOC_PREFIX):
+        try:
+            gone = int(owner[len(DOC_PREFIX):]) not in alive
+        except ValueError:
+            gone = True
+        if gone:
+            idx.delete_owner(owner)
+            total["removed"] += 1
+    # Старые копии: документ уже целиком в своём разделе (или удалён) — копия больше не нужна.
+    for owner, key in idx.sources_outside(DOC_PREFIX):
+        nid = _doc_key_note(key)
+        if nid is not None and (nid in ready or nid not in alive):
+            idx.delete_source(owner, key)
+            total["purged"] += 1
+    return total
+
+
+def _all_org_ids() -> list[int]:
+    from assistant.stores import orgs_store
+
+    return orgs_store.all_org_ids()
 
 
 def index_org(org_id: int, *, embed: Optional[Embed] = None, budget_chunks: int = 2000) -> dict[str, int]:
-    return _index_sources(org_owner_key(org_id), org_sources(org_id), embed=embed, budget_chunks=budget_chunks)
+    """Документы базы знаний организации — каждый в своём разделе (как любой документ)."""
+    from assistant.stores import org_kb
+
+    total = {"indexed": 0, "copied": 0, "skipped": 0, "removed": 0, "chunks": 0, "pending": 0}
+    for nid in org_kb.org_doc_note_ids(org_id):
+        res = index_doc(nid, embed=embed, budget_chunks=budget_chunks - total["chunks"], org_id=int(org_id))
+        for k in total:
+            total[k] += res[k]
+    return total
 
 
 def _index_sources(owner: Any, sources: list[dict[str, Any]], *, embed: Optional[Embed] = None,
-                   budget_chunks: int = 400) -> dict[str, int]:
+                   budget_chunks: int = 400, reuse: bool = False,
+                   keep: Optional[Callable[[str], bool]] = None) -> dict[str, int]:
+    """reuse — сначала искать готовые векторы того же текста в старых разделах (перенос без пересчёта);
+    keep(key) — не удалять такие ключи, даже если источника больше нет."""
     uid = owner
     embed = embed or embed_client.embed
     meta = idx.source_meta(uid)
     have = {k: v[0] for k, v in meta.items()}
     seen: set[str] = set()
-    done = skipped = chunks_n = 0
+    done = copied = skipped = pending = chunks_n = 0
     # сначала короткое и ценное (саммари, заметки, База знаний, дайджесты), длинные транскрипты — последними
     order = {"meeting_summary": 0, "note": 1, "knowledge": 1, "task": 2, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
     for src in sorted(sources, key=lambda x: order.get(x["kind"], 9)):
         seen.add(src["key"])
         h = _hash(src["text"])
+        title = str(src["title"])[:200]
+        ref_json = json.dumps(src["ref"], ensure_ascii=False)
         if have.get(src["key"]) == h:
             # Текст тот же, а название / ссылка поменялись (переименовали заметку) — обновляем подпись.
-            title = str(src["title"])[:200]
-            ref_json = json.dumps(src["ref"], ensure_ascii=False)
             _h, old_title, old_ref = meta[src["key"]]
             if old_title != title or old_ref != ref_json:
                 idx.update_meta(uid, src["key"], title=title, date=src["date"], ref_json=ref_json)
             skipped += 1
             continue
+        if reuse:
+            nid = _doc_key_note(src["key"])
+            cands = [f"{kind}:{nid}" for kind in _MAIN_KINDS] if _doc_key_norm(src["key"]) != src["key"] else [src["key"]]
+            found = idx.find_copy(cands, h, exclude_prefix=DOC_PREFIX)
+            if found and idx.copy_source(found[0], found[1], uid, src["key"], content_hash=h, kind=src["kind"],
+                                         title=title, date=src["date"], ref_json=ref_json):
+                copied += 1
+                continue
         chunks = chunk_text(src["text"])
         if not chunks:
             continue
-        if chunks_n + len(chunks) > budget_chunks and chunks_n:
+        if chunks_n + len(chunks) > budget_chunks and (chunks_n or budget_chunks <= 0):
+            pending += 1
             continue  # доиндексируем в следующий проход
         # заголовок в каждом куске — поиск «по встрече X» находит её куски
         vecs = embed([f"{src['title']}. {c}" for c in chunks])
-        idx.upsert_source(uid, src["key"], content_hash=h, kind=src["kind"], title=str(src["title"])[:200],
-                          date=src["date"], ref_json=json.dumps(src["ref"], ensure_ascii=False), chunks=chunks, vecs=vecs)
+        idx.upsert_source(uid, src["key"], content_hash=h, kind=src["kind"], title=title,
+                          date=src["date"], ref_json=ref_json, chunks=chunks, vecs=vecs)
         chunks_n += len(chunks)
         done += 1
     removed = 0
     for key in set(have) - seen:
+        if keep and keep(key):
+            continue
         idx.delete_source(uid, key)
         removed += 1
-    return {"indexed": done, "skipped": skipped, "removed": removed, "chunks": chunks_n}
+    return {"indexed": done, "copied": copied, "skipped": skipped, "removed": removed, "chunks": chunks_n,
+            "pending": pending}
 
 
-def _org_partitions(uid: int) -> list[tuple[str, set[int]]]:
-    """Разделы индекса организаций человека и id документов, которые ему открыты."""
-    try:
-        from assistant.stores import org_kb
-
-        out = []
-        for oid in org_kb.org_ids_of(uid):
-            allowed = org_kb.readable_note_ids(uid, oid)
-            if allowed:
-                out.append((org_owner_key(oid), allowed))
-        return out
-    except Exception as e:
-        print(f"[semantic] org partitions uid={uid} err={e!r}")
-        return []
+def _search_owners(uid: int) -> tuple[list[str], set[int]]:
+    """Разделы для поиска человека: личный, документы, открытые ему сейчас, и (пока не убраны проходом
+    index_docs) старые разделы организаций. Плюс сами id открытых документов — для старых копий."""
+    readable, org_ids = readable_doc_ids(uid)
+    owners = [str(uid)] + [doc_owner_key(n) for n in sorted(readable)] + [f"org:{int(o)}" for o in org_ids]
+    return owners, readable
 
 
-def _org_hit_allowed(hit: dict[str, Any], allowed: set[int]) -> bool:
-    try:
-        return int(json.loads(hit.get("ref_json") or "{}").get("note_id") or 0) in allowed
-    except (TypeError, ValueError):
-        return False
+def _visible(hits: list[dict[str, Any]], uid: int, readable: set[int]) -> list[dict[str, Any]]:
+    """Права и склейка копий: раздел документа открыт по построению; старая копия документа (личный раздел,
+    раздел организации) — только если документ всё ещё открыт и его нет в новом разделе."""
+    def legacy(h: dict[str, Any]) -> bool:
+        return not str(h.get("owner") or h.get("owner_user_id") or "").startswith(DOC_PREFIX)
+
+
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, Any]] = set()
+    for h in sorted(hits, key=legacy):  # сначала разделы документов — копии склеятся с ними
+        nid = _doc_key_note(h["source_key"])
+        if nid is not None and legacy(h) and nid not in readable:
+            continue
+        h["source_key"] = _doc_key_norm(h["source_key"])
+        ident = (h["source_key"], h.get("chunk_no", 0))
+        if ident in seen:
+            continue
+        seen.add(ident)
+        out.append(h)
+    return out
 
 
 TITLE_MATCH_RANK = 0.8
@@ -368,11 +487,9 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
         return []
     embed = embed or embed_client.embed
     qvec = embed([q])[0]
-    hits = idx.search(uid, qvec, k=60)
-    # базы знаний организаций: общий раздел индекса, а показываем только открытое человеку
-    org_parts = _org_partitions(uid)
-    for owner, allowed in org_parts:
-        hits += [h for h in idx.search(owner, qvec, k=60) if _org_hit_allowed(h, allowed)]
+    # Личный раздел + разделы документов, открытых человеку прямо сейчас (права — при каждом поиске).
+    owners, readable = _search_owners(uid)
+    hits = _visible(idx.search_many(owners, qvec, k=60), uid, readable)
     qs = _stems(q)
     for h in hits:
         overlap = len(qs & _stems(h["text"] + " " + h["title"])) / max(1, len(qs))
@@ -382,10 +499,7 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
     by_key = {}
     for h in hits:
         by_key.setdefault(h["source_key"], h)
-    first = list(idx.first_chunks(uid))
-    for owner, allowed in org_parts:
-        first += [fc for fc in idx.first_chunks(owner) if _org_hit_allowed(fc, allowed)]
-    for fc in first:
+    for fc in _visible(idx.first_chunks_many(owners), uid, readable):
         ts = _title_stems(fc["title"])
         if not ts or not ts <= qs:
             continue
@@ -405,8 +519,6 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
     for h in hits:
         if per_source.get(h["source_key"], 0) >= 2:
             continue
-        if h["source_key"].startswith("org:") and f"note:{h['source_key'][4:]}" in per_source:
-            continue  # свой документ организации уже нашёлся в личном разделе
         per_source[h["source_key"]] = per_source.get(h["source_key"], 0) + 1
         ref = json.loads(h["ref_json"] or "{}")
         item = {
@@ -429,49 +541,33 @@ import threading
 import time
 
 NOTE_DEBOUNCE_SEC = 60.0
-_TIMERS: dict[int, threading.Timer] = {}
-_RUNNING: set[int] = set()
+_TIMERS: dict[Any, threading.Timer] = {}  # ключ: uid, "doc:<id>", "org:<id>"
+_RUNNING: set[Any] = set()
 _T_LOCK = threading.Lock()
 _STATUS_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
 _STATUS_TTL = 20.0
 
 
-def _index_now(uid: int) -> None:
+def _run_once(key: Any, fn: Callable[[], Any], label: str) -> None:
+    """Один прогон на ключ: если такой уже идёт — этот пропускаем (идущий увидит свежий текст или следующий таймер)."""
     with _T_LOCK:
-        if uid in _RUNNING:
+        if key in _RUNNING:
             return
-        _RUNNING.add(uid)
+        _RUNNING.add(key)
     try:
-        res = index_user(uid, budget_chunks=2000)
-        _STATUS_CACHE.pop(uid, None)
-        if res["indexed"] or res["removed"]:
-            print(f"[semantic] on-change uid={uid} {res}")
+        res = fn()
+        if res and (res.get("indexed") or res.get("removed") or res.get("copied")):
+            print(f"[semantic] on-change {label} {res}")
     except Exception as e:
-        print(f"[semantic] on-change uid={uid} err={e!r}")
+        print(f"[semantic] on-change {label} err={e!r}")
     finally:
         with _T_LOCK:
-            _RUNNING.discard(uid)
+            _RUNNING.discard(key)
 
 
-def org_changed(org_id: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
-    """Документ базы знаний организации изменился, добавлен или убран — переиндексировать её раздел."""
-    if not embed_client.enabled():
-        return
-    try:
-        oid = int(org_id)
-    except (TypeError, ValueError):
-        return
-
-    def run() -> None:
-        try:
-            res = index_org(oid)
-            if res["indexed"] or res["removed"]:
-                print(f"[semantic] on-change org={oid} {res}")
-        except Exception as e:
-            print(f"[semantic] on-change org={oid} err={e!r}")
-
-    key = -oid  # таймеры организаций — отрицательные ключи, рядом с пользовательскими
-    timer = threading.Timer(delay, run)
+def _schedule(key: Any, delay: float, fn: Callable[[], None]) -> None:
+    """Через delay секунд; повтор с тем же ключом откладывает прежний таймер."""
+    timer = threading.Timer(delay, fn)
     timer.daemon = True
     with _T_LOCK:
         old = _TIMERS.get(key)
@@ -481,22 +577,76 @@ def org_changed(org_id: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
     timer.start()
 
 
+def _index_now(uid: int) -> None:
+    def run() -> dict[str, int]:
+        res = index_user(uid, budget_chunks=2000)
+        _STATUS_CACHE.pop(uid, None)
+        return res
+
+    _run_once(uid, run, f"uid={uid}")
+
+
+def _index_doc_now(note_id: int) -> None:
+    def run() -> dict[str, int]:
+        res = index_doc(note_id)
+        _STATUS_CACHE.clear()  # документ общий — счётчики «в памяти» у всех, кому он открыт
+        return res
+
+    _run_once(doc_owner_key(note_id), run, f"doc={note_id}")
+
+
+def doc_changed(note_id: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
+    """Документ (текст, лист, встреча) изменился — переиндексировать его раздел один раз для всех."""
+    if not embed_client.enabled():
+        return
+    try:
+        nid = int(note_id)
+    except (TypeError, ValueError):
+        return
+    _schedule(doc_owner_key(nid), delay, lambda: _index_doc_now(nid))
+
+
+def org_changed(org_id: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
+    """Документ добавлен в базу знаний организации или убран — у её документов меняется вид («документ базы»)."""
+    if not embed_client.enabled():
+        return
+    try:
+        from assistant.stores import org_kb
+
+        nids = org_kb.org_doc_note_ids(int(org_id))
+    except Exception as e:
+        print(f"[semantic] on-change org={org_id} err={e!r}")
+        return
+    for nid in nids:
+        doc_changed(nid, delay=delay)
+
+
 def note_changed(uid: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
-    """Материал изменился — переиндексировать пользователя через delay секунд (повторы откладывают)."""
+    """Личный материал (почта, задачи) изменился — переиндексировать раздел пользователя через delay секунд."""
     if not embed_client.enabled():
         return
     try:
         u = int(uid)
     except (TypeError, ValueError):
         return
-    timer = threading.Timer(delay, _index_now, args=(u,))
-    timer.daemon = True
-    with _T_LOCK:
-        old = _TIMERS.get(u)
-        if old is not None:
-            old.cancel()
-        _TIMERS[u] = timer
-    timer.start()
+    _schedule(u, delay, lambda: _index_now(u))
+
+
+def _doc_status_sources(uid: int) -> list[tuple[str, dict[str, Any]]]:
+    """(раздел, источник) документов, открытых человеку."""
+    from assistant.stores import notes as notes_store
+
+    try:
+        readable, _orgs = readable_doc_ids(uid)
+    except Exception as e:
+        print(f"[semantic] status docs uid={uid} err={e!r}")
+        return []
+    out = []
+    for nid in sorted(readable, reverse=True):
+        note = notes_store.get_note_by_id(nid)
+        if note:
+            out += [(doc_owner_key(nid), src) for src in doc_sources(note, org_id=_org_of_note(nid))]
+    return out
 
 
 def status(uid: int) -> dict[str, Any]:
@@ -507,12 +657,13 @@ def status(uid: int) -> dict[str, Any]:
     hit = _STATUS_CACHE.get(int(uid))
     if hit and now - hit[0] < _STATUS_TTL:
         return hit[1]
-    have = idx.source_hashes(uid)
+    pairs = [(str(uid), src) for src in sources_for_user(uid)] + _doc_status_sources(uid)
+    have = idx.source_hashes_many(list(dict.fromkeys(o for o, _s in pairs)))
     total = indexed = 0
     pending: list[str] = []
-    for src in sources_for_user(uid):
+    for owner, src in pairs:
         total += 1
-        if have.get(src["key"]) == _hash(src["text"]):
+        if have.get((owner, src["key"])) == _hash(src["text"]):
             indexed += 1
         elif len(pending) < 5:
             title = str(src["title"] or "")

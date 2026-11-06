@@ -424,6 +424,28 @@ def get_note_by_id(note_id: int) -> Optional[dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
+def _semantic_doc_changed(note_id: int) -> None:
+    """Поиск Лео: раздел документа переиндексируется через минуту — один раз для всех, кому он открыт."""
+    try:
+        from assistant.services import semantic_memory
+
+        semantic_memory.doc_changed(note_id)
+    except Exception as e:
+        print(f"[notes] semantic note={note_id} err={e!r}")
+
+
+def own_note_ids(user_id: int | str) -> set[int]:
+    with _LOCK:
+        rs = _conn().execute("SELECT id FROM local_notes WHERE user_id = ?", (str(int(user_id)),)).fetchall()
+    return {int(r[0]) for r in rs}
+
+
+def all_note_ids() -> list[int]:
+    with _LOCK:
+        rs = _conn().execute("SELECT id FROM local_notes ORDER BY updated_at DESC").fetchall()
+    return [int(r[0]) for r in rs]
+
+
 def get_accessible_note(
     user_id: int | str, note_id: int, *, with_sharing: bool = True
 ) -> Optional[dict[str, Any]]:
@@ -694,6 +716,7 @@ def update_note(
         from assistant.stores import org_kb
 
         org_kb.mark_edited(int(note_id), viewer)  # не бросает
+    _semantic_doc_changed(note_id)
     out = get_note(uid, note_id)
     return _with_sharing(out, viewer) if out else None
 

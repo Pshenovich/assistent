@@ -47,6 +47,7 @@ def _conn() -> sqlite3.Connection:
             text TEXT NOT NULL, vec BLOB NOT NULL,
             PRIMARY KEY (owner_user_id, source_key, chunk_no)
         );
+        CREATE INDEX IF NOT EXISTS sem_sources_key ON sem_sources (source_key, content_hash);
         """
     )
     _CONN.commit()
@@ -129,16 +130,127 @@ def delete_source(owner: Any, key: str) -> None:
         c.commit()
 
 
-def search(owner: Any, qvec: list[float], *, k: int = 40) -> list[dict[str, Any]]:
-    """Косинусная близость по всем кускам пользователя (векторы нормированы не всегда — нормируем)."""
+_IN_BATCH = 500  # разделов в одном IN (…) — далеко от лимита параметров SQLite
+
+
+def _rows_many(sql: str, owners: list[Any]) -> list[sqlite3.Row]:
+    """sql с «{owners}» на месте списка разделов — по пачкам, строки всех пачек вместе."""
+    keys = list(dict.fromkeys(str(o) for o in owners))
+    out: list[sqlite3.Row] = []
+    with _LOCK:
+        c = _conn()
+        for i in range(0, len(keys), _IN_BATCH):
+            part = keys[i:i + _IN_BATCH]
+            out += c.execute(sql.format(owners=",".join("?" * len(part))), part).fetchall()
+    return out
+
+
+def first_chunks_many(owners: list[Any]) -> list[dict[str, Any]]:
+    """first_chunks по нескольким разделам (свой + документы, открытые человеку); owner_user_id — в строке."""
+    rs = _rows_many(
+        """SELECT c.owner_user_id, c.source_key, c.text, s.kind, s.title, s.date, s.ref_json
+           FROM sem_chunks c JOIN sem_sources s
+             ON s.owner_user_id = c.owner_user_id AND s.source_key = c.source_key
+           WHERE c.owner_user_id IN ({owners}) AND c.chunk_no = 0""",
+        owners,
+    )
+    return [dict(r) for r in rs]
+
+
+def source_hashes_many(owners: list[Any]) -> dict[tuple[str, str], str]:
+    rs = _rows_many(
+        "SELECT owner_user_id, source_key, content_hash FROM sem_sources WHERE owner_user_id IN ({owners})", owners
+    )
+    return {(r["owner_user_id"], r["source_key"]): r["content_hash"] for r in rs}
+
+
+def find_copy(keys: list[str], content_hash: str, *, exclude_prefix: str) -> Optional[tuple[str, str]]:
+    """Готовые векторы того же текста под одним из ключей keys в другом разделе (перенос без пересчёта)."""
+    if not keys:
+        return None
+    with _LOCK:
+        r = _conn().execute(
+            f"""SELECT owner_user_id, source_key FROM sem_sources
+                WHERE source_key IN ({",".join("?" * len(keys))}) AND content_hash = ?
+                  AND substr(owner_user_id, 1, ?) != ?
+                LIMIT 1""",
+            (*keys, content_hash, len(exclude_prefix), exclude_prefix),
+        ).fetchone()
+    return (r["owner_user_id"], r["source_key"]) if r else None
+
+
+def copy_source(src_owner: Any, src_key: str, owner: Any, key: str, *, content_hash: str, kind: str, title: str,
+                date: str, ref_json: str) -> int:
+    """Скопировать куски и векторы источника в другой раздел под новым ключом. Возвращает число кусков."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _LOCK:
+        c = _conn()
+        c.execute("DELETE FROM sem_chunks WHERE owner_user_id = ? AND source_key = ?", (str(owner), key))
+        n = c.execute(
+            """INSERT INTO sem_chunks (owner_user_id, source_key, chunk_no, text, vec)
+               SELECT ?, ?, chunk_no, text, vec FROM sem_chunks WHERE owner_user_id = ? AND source_key = ?""",
+            (str(owner), key, str(src_owner), src_key),
+        ).rowcount
+        c.execute(
+            """INSERT INTO sem_sources (owner_user_id, source_key, content_hash, kind, title, date, ref_json, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(owner_user_id, source_key) DO UPDATE SET content_hash = excluded.content_hash,
+               kind = excluded.kind, title = excluded.title, date = excluded.date, ref_json = excluded.ref_json,
+               updated_at = excluded.updated_at""",
+            (str(owner), key, content_hash, kind, title, date, ref_json, now),
+        )
+        c.commit()
+    return int(n or 0)
+
+
+def owners_with_prefix(prefix: str) -> list[str]:
     with _LOCK:
         rs = _conn().execute(
-            """SELECT c.source_key, c.chunk_no, c.text, c.vec, s.kind, s.title, s.date, s.ref_json
-               FROM sem_chunks c JOIN sem_sources s
-                 ON s.owner_user_id = c.owner_user_id AND s.source_key = c.source_key
-               WHERE c.owner_user_id = ?""",
-            (str(owner),),
+            "SELECT DISTINCT owner_user_id FROM sem_sources WHERE substr(owner_user_id, 1, ?) = ?", (len(prefix), prefix)
         ).fetchall()
+    return [r[0] for r in rs]
+
+
+def sources_outside(prefix: str) -> list[tuple[str, str]]:
+    """(раздел, ключ) всех источников вне разделов с prefix — найти старые копии документов."""
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT owner_user_id, source_key FROM sem_sources WHERE substr(owner_user_id, 1, ?) != ?",
+            (len(prefix), prefix),
+        ).fetchall()
+    return [(r[0], r[1]) for r in rs]
+
+
+def delete_owner(owner: Any) -> None:
+    with _LOCK:
+        c = _conn()
+        c.execute("DELETE FROM sem_chunks WHERE owner_user_id = ?", (str(owner),))
+        c.execute("DELETE FROM sem_sources WHERE owner_user_id = ?", (str(owner),))
+        c.commit()
+
+
+def totals() -> dict[str, int]:
+    with _LOCK:
+        c = _conn()
+        s = c.execute("SELECT COUNT(*) FROM sem_sources").fetchone()[0]
+        n = c.execute("SELECT COUNT(*) FROM sem_chunks").fetchone()[0]
+    return {"sources": int(s), "chunks": int(n)}
+
+
+def search(owner: Any, qvec: list[float], *, k: int = 40) -> list[dict[str, Any]]:
+    """Косинусная близость по всем кускам пользователя (векторы нормированы не всегда — нормируем)."""
+    return search_many([owner], qvec, k=k)
+
+
+def search_many(owners: list[Any], qvec: list[float], *, k: int = 40) -> list[dict[str, Any]]:
+    """Как search, но по нескольким разделам сразу; owner_user_id — в каждом попадании."""
+    rs = _rows_many(
+        """SELECT c.owner_user_id, c.source_key, c.chunk_no, c.text, c.vec, s.kind, s.title, s.date, s.ref_json
+           FROM sem_chunks c JOIN sem_sources s
+             ON s.owner_user_id = c.owner_user_id AND s.source_key = c.source_key
+           WHERE c.owner_user_id IN ({owners})""",
+        owners,
+    )
     if not rs:
         return []
     qn = math.sqrt(sum(x * x for x in qvec)) or 1.0
@@ -161,7 +273,7 @@ def search(owner: Any, qvec: list[float], *, k: int = 40) -> list[dict[str, Any]
         scored.sort(key=lambda p: -p[0])
         scored = scored[:k]
     return [
-        {"score": s, "source_key": r["source_key"], "chunk_no": r["chunk_no"], "text": r["text"], "kind": r["kind"],
+        {"score": s, "owner": r["owner_user_id"], "source_key": r["source_key"], "chunk_no": r["chunk_no"], "text": r["text"], "kind": r["kind"],
          "title": r["title"], "date": r["date"], "ref_json": r["ref_json"]}
         for s, r in scored
     ]

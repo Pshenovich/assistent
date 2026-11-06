@@ -30,6 +30,8 @@ def env(tmp_path, monkeypatch):
          "text": "Подключить десять почтовых каналов на Бустере, обсудить стоимость с техкомандой.", "ref": {"note_id": 2}},
     ]
     monkeypatch.setattr(sm, "sources_for_user", lambda uid: [dict(s) for s in srcs])
+    # Источники лежат в личном разделе (как старые копии документов) — документы открыты человеку.
+    monkeypatch.setattr(sm, "readable_doc_ids", lambda uid: ({s["ref"]["note_id"] for s in srcs if s["ref"].get("note_id")}, []))
     yield srcs
     idx._CONN = None
 
@@ -49,7 +51,8 @@ def test_index_and_search(env):
         calls.append(len(texts))
         return fake_embed(texts)
 
-    assert sm.index_user(1, embed=counting) == {"indexed": 2, "skipped": 0, "removed": 0, "chunks": 2}
+    assert sm.index_user(1, embed=counting) == {"indexed": 2, "copied": 0, "skipped": 0, "removed": 0, "chunks": 2,
+                                                "pending": 0}
     assert sm.index_user(1, embed=counting)["skipped"] == 2 and len(calls) == 2  # без изменений — без вызовов
 
     hits = sm.search(1, "что решили по ценам тарифа", embed=fake_embed)
@@ -57,11 +60,16 @@ def test_index_and_search(env):
     hits = sm.search(1, "почтовые каналы на Бустере", embed=fake_embed)
     assert hits[0]["title"] == "Интеграция почты"
 
+    env.append({"key": "task:3", "kind": "task", "title": "Задача «Рассылка»", "date": "2026-10-06",
+                "text": "Описание: подготовить рассылку клиентам о новых ценах на тариф Про.", "ref": {"task_id": 3}})
+    sm.index_user(1, embed=fake_embed)
     env[1]["text"] += " Срок — конец месяца."
     env.pop(0)
+    env.pop()
     res = sm.index_user(1, embed=fake_embed)
+    # Личный источник (задача) пропал — убран; ключ документа (tr_sum) — старая копия, её убирает index_docs.
     assert res["indexed"] == 1 and res["removed"] == 1
-    assert idx.stats(1) == {"sources": 1, "chunks": 1}
+    assert idx.stats(1) == {"sources": 2, "chunks": 2}
     assert idx.stats(2) == {"sources": 0, "chunks": 0}  # чужой индекс пуст
 
 
@@ -91,7 +99,10 @@ def test_sources_for_user_real_stores(tmp_path, monkeypatch):
     tnotes.create_with_summary(5, title="Синк", transcript="Спикер 1: обсуждаем цены", summary="<p>Решили поднять цены</p>")
     notes_store.create_note(5, "Идеи", "<p>Длинная заметка про интеграцию почтовых каналов и бота</p>")
     notes_store.create_note(5, "Пусто", "<p>коротко</p>")
-    keys = sorted(s["key"].split(":")[0] for s in sm.sources_for_user(5))
+    # Документы — не в личном разделе, а каждый в своём.
+    assert not [s for s in sm.sources_for_user(5) if sm._doc_key_note(s["key"]) is not None]
+    keys = sorted(s["key"].split(":")[0] for n in notes_store.list_notes(5, include_transcription=True)
+                  for s in sm.doc_sources(n))
     assert keys == ["note", "tr_sum", "tr_txt"]
     notes_store._CONN = None
 
@@ -110,7 +121,7 @@ def test_sheets_are_indexed(tmp_path, monkeypatch):
     note_sheets.create_sheet(note, "Слайды", body="<html><body><h1>Слайды про бюджет пилота и сроки</h1></body></html>", kind="web")
     meet = tnotes.create_with_summary(6, title="Синк", transcript="Спикер 1: обсуждаем цены на тариф", summary="<p>Решили поднять цены</p>")
     note_sheets.create_sheet(meet, "Задачи", body="<p>Оксана готовит рассылку клиентам до пятницы</p>")
-    srcs = {s["key"]: s for s in sm.sources_for_user(6)}
+    srcs = {s["key"]: s for n in (note, meet) for s in sm.doc_sources(notes_store.get_note_by_id(n["id"]))}
     sheet_src = srcs[f"sheet:{note['id']}:{sheet['id']}"]
     assert sheet_src["title"] == "Проект · Бюджет" and "1,2 млн" in sheet_src["text"]
     assert sheet_src["ref"] == {"note_id": note["id"], "sheet_id": sheet["id"], "sheet_title": "Бюджет", "kind": "note"}
@@ -182,7 +193,7 @@ def test_knowledge_docs_in_memory_and_notes_find(tmp_path, monkeypatch):
                                  role=notes_store.KNOWLEDGE_ROLE)
     note_sheets.create_sheet(kb, "Тарифы", body="<p>Тариф Про — десять операторов и интеграция с CRM</p>")
     notes_store.create_note(8, "Вебапп", "<p>Сборка мини-приложения и кэш сервис-воркера при выкатке</p>")
-    srcs = {s["key"]: s for s in sm.sources_for_user(8)}
+    srcs = {s["key"]: s for s in sm.doc_sources(notes_store.get_note_by_id(kb["id"]))}
     assert srcs[f"kb:{kb['id']}"]["kind"] == "knowledge"
     assert any(k.startswith(f"sheet:{kb['id']}:") and s["title"] == "Обучат Деск · Тарифы" for k, s in srcs.items())
     res = json.loads(gct.tool_notes_find(gct.GptCalendarContext(uid=8), {"query": "дай ссылку на заметку Вебапп"}))
