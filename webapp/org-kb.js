@@ -21,6 +21,7 @@
     clock: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>',
     check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>',
     x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>',
+    key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4" /><path d="m11 12 9-9M17 6l3 3M15 8l2 2" /></svg>',
   };
   var RANK = { reader: 1, commenter: 2, editor: 3, owner: 4 };
   var ROLE_LABEL = { reader: "Читатель", commenter: "Комментатор", editor: "Редактор", owner: "Владелец" };
@@ -250,6 +251,8 @@
     if (panel) panel.classList.toggle("kb-has-org", has);
     var mine = document.getElementById("knowledge-mine-title");
     if (mine) mine.classList.toggle("hidden", !has);
+    var aiEntry = document.getElementById("knowledge-ai-entry");
+    if (aiEntry) aiEntry.classList.toggle("hidden", !has);
     if (!state.loaded) {
       root.innerHTML = "";
       return;
@@ -809,6 +812,96 @@
     }
   }
 
+  // ---------- доступ к базе знаний для ИИ (Профиль → Аккаунт) ----------
+
+  var ai = { items: [], created: null, command: "", url: "" };
+
+  function aiApi(path, opts) {
+    return app().apiFetch("/ai-tokens" + (path || ""), opts || { method: "GET" });
+  }
+
+  function aiApply(r) {
+    ai.items = (r && r.items) || [];
+    ai.command = (r && r.command) || ai.command;
+    ai.url = (r && r.mcp_url) || ai.url;
+    renderAi();
+  }
+
+  function renderAi() {
+    var body = document.getElementById("account-ai-body");
+    var group = document.getElementById("account-ai-group");
+    if (!body || !group) return;
+    group.classList.remove("hidden");
+    var rows = ai.items.map(function (t) {
+      var used = t.last_used_at ? "использовался " + ago(t.last_used_at) : "ещё не использовался";
+      return '<div class="pf-row pf-row--static"><span class="pf-ico" aria-hidden="true">' + ICO.key + "</span>" +
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(t.name) + "</span>" +
+        '<span class="pf-row-sub">' + esc(t.hint + " · " + used) + "</span></span>" +
+        '<button type="button" class="pf-del" data-ai="revoke" data-id="' + t.id + '" aria-label="Отозвать" title="Отозвать">' + ICO.x + "</button></span></div>";
+    }).join("");
+    rows += addRowHtml('data-ai="create"', "Новый токен");
+    var html = '<div class="pf-list">' + rows + "</div>";
+    if (ai.created) {
+      html += '<div class="kb-ai-new">' +
+        '<p class="kb-ai-new-title">Токен «' + esc(ai.created.name) + "» — скопируйте сейчас, второй раз его не покажем</p>" +
+        '<pre class="kb-ai-code" data-ai="code">' + esc(ai.command) + "</pre>" +
+        '<div class="kb-ai-actions"><button type="button" class="pf-btn" data-ai="copy">Скопировать команду</button>' +
+        '<button type="button" class="pf-link" data-ai="copy-token">Только токен</button>' +
+        '<button type="button" class="pf-link pf-link--muted" data-ai="hide">Готово</button></div>' +
+        '<p class="pf-hint">Выполните команду в терминале — Claude Code подключит базу знаний. Для других агентов: адрес ' +
+        esc(ai.url) + ", заголовок Authorization: Bearer и токен.</p></div>";
+    }
+    html += '<p class="pf-hint">Агент видит то же, что вы в базе знаний, и только читает. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
+    body.innerHTML = html;
+  }
+
+  async function aiCopy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Скопировано");
+    } catch (_) {
+      toast("Выделите и скопируйте вручную");
+    }
+  }
+
+  function onAiClick(e) {
+    var b = e.target.closest("[data-ai]");
+    if (!b) return;
+    var kind = b.getAttribute("data-ai");
+    if (kind === "create") {
+      prompt("Новый токен", "Где будете использовать? Например, «Claude Code на ноутбуке»", "Claude Code").then(function (name) {
+        if (name == null) return;
+        aiApi("", json("POST", { name: String(name).trim() })).then(function (r) {
+          ai.created = r.created;
+          aiApply(r);
+        }).catch(function (err) { toast(errText(err)); });
+      });
+    } else if (kind === "revoke") {
+      var ok = app().confirm ? app().confirm("Отозвать токен? Агенты с ним сразу потеряют доступ.") : Promise.resolve(window.confirm("Отозвать токен?"));
+      Promise.resolve(ok).then(function (yes) {
+        if (!yes) return;
+        aiApi("/" + b.getAttribute("data-id"), { method: "DELETE" }).then(function (r) {
+          if (ai.created && String(ai.created.id) === b.getAttribute("data-id")) ai.created = null;
+          aiApply(r);
+        }).catch(function (err) { toast(errText(err)); });
+      });
+    } else if (kind === "copy") {
+      aiCopy(ai.command);
+    } else if (kind === "copy-token") {
+      if (ai.created) aiCopy(ai.created.token);
+    } else if (kind === "hide") {
+      ai.created = null;
+      renderAi();
+    }
+  }
+
+  function loadAi() {
+    aiApi().then(function (r) {
+      ai.command = "";
+      aiApply(r);
+    }).catch(function () {});
+  }
+
   // ---------- подключение ----------
 
   function init() {
@@ -853,6 +946,30 @@
     var minePane = document.getElementById("knowledge-pane");
     if (minePane) new MutationObserver(compactMineEmpty).observe(minePane, { childList: true });
     document.addEventListener("leo:note-open", onNoteOpen);
+    var aiBody = document.getElementById("account-ai-body");
+    if (aiBody) aiBody.addEventListener("click", onAiClick);
+    var account = document.getElementById("profile-account");
+    if (account) {
+      // экран «Аккаунт» показали — подтянуть токены (токен целиком не храним: при уходе с экрана прячем)
+      new MutationObserver(function () {
+        if (account.classList.contains("hidden")) {
+          ai.created = null;
+        } else {
+          loadAi();
+        }
+      }).observe(account, { attributes: true, attributeFilter: ["class"] });
+    }
+    var aiOpen = document.getElementById("knowledge-ai-open");
+    if (aiOpen) {
+      aiOpen.addEventListener("click", function () {
+        if (app().setTab) app().setTab("profile");
+        if (app().openAccount) app().openAccount();
+        setTimeout(function () {
+          var g = document.getElementById("account-ai-group");
+          if (g && g.scrollIntoView) g.scrollIntoView({ block: "start", behavior: "smooth" });
+        }, 300);
+      });
+    }
   }
 
   window.LeoOrgKb = { reload: load };

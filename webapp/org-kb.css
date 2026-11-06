@@ -85,3 +85,18 @@ html.kb-note-readonly .sheet-kind-pick { display: none; }
 .note-web-canvas.is-readonly .note-web-canvas-insert-bar { display: none !important; }
 /* Читатель: обсуждение видно, поле ввода — нет (писать можно с роли комментатора) */
 html.kb-note-reader #note-paie-reply-form { display: none; }
+
+/* Доступ к базе знаний для ИИ (Аккаунт): новый токен — команда для терминала */
+.kb-ai-entry { margin-top: 10px; }
+.kb-ai-new {
+  margin-top: 10px; padding: 12px 14px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.kb-ai-new-title { margin: 0 0 8px; font-size: 0.875rem; font-weight: 600; color: var(--text); }
+.kb-ai-code {
+  margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--surface-muted);
+  font: 0.75rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
+  white-space: pre-wrap; word-break: break-all; user-select: all;
+}
+.kb-ai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.kb-ai-actions .pf-btn { width: auto; padding: 8px 14px; font-size: 0.875rem; }

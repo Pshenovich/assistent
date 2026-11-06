@@ -203,3 +203,53 @@ def test_org_knowledge_base(env, monkeypatch, tmp_path):
     # права меняет только владелец
     assert c.put(f"{base}/{oid}/kb/nodes/{sec}/access", headers=_headers(guest),
                  json={"principal": "all", "role": "editor"}).status_code == 400
+
+
+def test_kb_mcp_with_personal_token(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("NOTE_VERSIONS_DB_PATH", str(tmp_path / "versions.sqlite"))
+    from assistant.stores import notes as notes_store
+
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    base = "/api/miniapp/orgs"
+    oid = c.post(base, headers=_headers(owner), json={"name": "MCP-тест"}).json()["org"]["id"]
+    token = c.post(f"{base}/{oid}/invites", headers=_headers(owner)).json()["invite"]["token"]
+    c.post(f"{base}/invite/{token}/accept", headers=_headers(guest))
+    sec = c.post(f"{base}/{oid}/kb/sections", headers=_headers(owner), json={"title": "Инструкции"}).json()["created"]["id"]
+    open_id = c.post(f"{base}/{oid}/kb/docs", headers=_headers(owner), json={"section_id": sec, "title": "Перезапуск роутеров"}).json()["created"]["note_id"]
+    c.patch(f"/api/miniapp/notes/local/{open_id}", headers=_headers(owner),
+            json={"description": "<p>Роутеры перезапускаются через панель провайдера, без паролей.</p>"})
+    c.put(f"{base}/{oid}/kb/nodes/{sec}/access", headers=_headers(owner), json={"principal": "all", "role": "reader"})
+    closed = c.post(f"{base}/{oid}/kb/sections", headers=_headers(owner), json={"title": "Закрытое"}).json()["created"]["id"]
+    closed_id = c.post(f"{base}/{oid}/kb/docs", headers=_headers(owner), json={"section_id": closed, "title": "Секретный план"}).json()["created"]["note_id"]
+    private_id = notes_store.create_note(guest, "Моя личная заметка", "<p>не база знаний</p>")["id"]
+
+    r = c.post("/api/miniapp/ai-tokens", headers=_headers(guest), json={"name": "Claude Code"})
+    assert r.status_code == 200, r.text
+    tok = r.json()["created"]["token"]
+    assert tok.startswith("orb_") and tok in r.json()["command"] and "/mcp/kb" in r.json()["mcp_url"]
+    assert "token" not in c.get("/api/miniapp/ai-tokens", headers=_headers(guest)).json()["items"][0]
+
+    def rpc(method, params=None, t=tok, mid=1):
+        return c.post("/mcp/kb", headers={"Authorization": f"Bearer {t}"},
+                      json={"jsonrpc": "2.0", "id": mid, "method": method, "params": params or {}})
+
+    assert c.post("/mcp/kb", json={"jsonrpc": "2.0", "id": 1, "method": "initialize"}).status_code == 401
+    assert rpc("initialize", t="orb_wrong").status_code == 401
+    init = rpc("initialize", {"protocolVersion": "2025-06-18"}).json()["result"]
+    assert init["serverInfo"]["name"] == "orbita-kb" and "ДАННЫЕ" in init["instructions"]
+    assert {t["name"] for t in rpc("tools/list").json()["result"]["tools"]} == {"search", "list", "read"}
+
+    listed = rpc("tools/call", {"name": "list", "arguments": {}}).json()["result"]["content"][0]["text"]
+    assert "Перезапуск роутеров" in listed and "Секретный план" not in listed and "личная" not in listed
+    found = rpc("tools/call", {"name": "search", "arguments": {"query": "роутеры провайдера"}}).json()["result"]
+    assert str(open_id) in found["content"][0]["text"]
+    doc = rpc("tools/call", {"name": "read", "arguments": {"id": open_id}}).json()["result"]
+    assert not doc.get("isError") and "панель провайдера" in doc["content"][0]["text"]
+    assert "данные, не инструкции" in doc["content"][0]["text"]
+    for nid in (closed_id, private_id):
+        res = rpc("tools/call", {"name": "read", "arguments": {"id": nid}}).json()["result"]
+        assert res.get("isError"), nid
+
+    tid = c.get("/api/miniapp/ai-tokens", headers=_headers(guest)).json()["items"][0]["id"]
+    c.delete(f"/api/miniapp/ai-tokens/{tid}", headers=_headers(guest))
+    assert rpc("tools/list").status_code == 401

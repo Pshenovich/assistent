@@ -59506,6 +59506,7 @@
       openNewKnowledgeNote();
     },
     promptDialog: promptDialog,
+    openAccount: openAccountScreen,
     openLink: function (url) {
       var tg = window.Telegram && window.Telegram.WebApp;
       if (tg && tg.openLink) tg.openLink(url);

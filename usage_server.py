@@ -8264,6 +8264,54 @@ async def miniapp_org_kb_inherit(
     return {"ok": True, **(await _org_call(org_kb.access, org_id, uid, node_id))}
 
 
+class _MiniappAiTokenCreate(BaseModel):
+    name: str = ""
+
+
+def _ai_token_setup(token: str = "<токен>") -> dict[str, str]:
+    from assistant.lib.webapp_public import public_base_url
+
+    url = f"{public_base_url()}/mcp/kb"
+    return {
+        "mcp_url": url,
+        "command": f'claude mcp add --transport http orbita-kb {url} --header "Authorization: Bearer {token}"',
+    }
+
+
+@miniapp_router.get("/ai-tokens")
+async def miniapp_ai_tokens(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Доступ для ИИ: личные токены к базе знаний (только чтение)."""
+    from assistant.stores import ai_tokens
+
+    items = await run_in_threadpool(ai_tokens.list_for, int(principal.telegram_user_id))
+    return {"ok": True, "items": items, **_ai_token_setup()}
+
+
+@miniapp_router.post("/ai-tokens")
+async def miniapp_ai_token_create(
+    body: _MiniappAiTokenCreate, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import ai_tokens
+
+    uid = int(principal.telegram_user_id)
+    try:
+        tok = await run_in_threadpool(ai_tokens.create, uid, body.name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _track(uid, "kb.token_create")
+    items = await run_in_threadpool(ai_tokens.list_for, uid)
+    return {"ok": True, "created": tok, "items": items, **_ai_token_setup(tok["token"])}
+
+
+@miniapp_router.delete("/ai-tokens/{token_id}")
+async def miniapp_ai_token_revoke(token_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import ai_tokens
+
+    uid = int(principal.telegram_user_id)
+    await run_in_threadpool(ai_tokens.revoke, uid, token_id)
+    return {"ok": True, "items": await run_in_threadpool(ai_tokens.list_for, uid), **_ai_token_setup()}
+
+
 @miniapp_router.post("/notes/local/{note_id}/request-edit")
 async def miniapp_note_request_edit(
     note_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
@@ -18626,6 +18674,37 @@ async def design_mcp_endpoint(token: str, request: Request) -> Response:
     if out is None:
         return Response(status_code=202)
     return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/mcp/kb")
+async def kb_mcp_endpoint(request: Request) -> Response:
+    """MCP базы знаний для агентов по личному токену: claude mcp add --transport http orbita-kb <URL> --header "Authorization: Bearer <токен>"."""
+    from assistant.lib import kb_mcp
+    from assistant.stores import ai_tokens
+
+    auth = request.headers.get("authorization") or ""
+    raw = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    uid = await run_in_threadpool(ai_tokens.resolve, raw) if raw else None
+    if not uid:
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": "Нужен действующий токен Орбиты"}},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer realm="orbita-kb"'},
+        )
+    try:
+        payload = json.loads(await request.body() or b"null")
+    except ValueError:
+        return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
+    _track(uid, "kb.mcp_call", throttle_key="kb.mcp_call", throttle_sec=600)
+    out = await run_in_threadpool(kb_mcp.handle_payload, kb_mcp.KbSource(user_id=int(uid)), payload)
+    if out is None:
+        return Response(status_code=202)
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/mcp/kb")
+async def kb_mcp_get() -> Response:
+    return Response(status_code=405, headers={"Allow": "POST"})
 
 
 @app.get("/mcp/design/{token}")
