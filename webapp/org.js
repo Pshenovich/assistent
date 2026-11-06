@@ -233,6 +233,7 @@
     }
 
     html += membersHtml(d);
+    html += groupsHtml(d);
     if (can.invite) html += joinHtml(d) + invitesHtml(d);
     html += creditsHtml(d);
     html += billingHtml(d);
@@ -431,6 +432,7 @@
     if (m.email && m.email !== m.name) parts.push(m.email);
     if (m.username || m.tg) parts.push("@" + (m.username || m.tg));
     parts.push(ROLE_LABEL[m.role] || "");
+    if (m.guest) parts.push("гость");
     parts.push(planLabel(d, m.plan));
     if (ai) parts.push("лимит " + fmtNum(ai.daily_limit) + " кр");
     return parts.filter(Boolean).join(" · ");
@@ -454,7 +456,8 @@
     var canRole = m.status === "active" && can.set_role && m.user_id !== d.my_user_id;
     var canRemove = can.remove_member && m.role !== "owner" && (m.role !== "admin" || me === "owner");
     var aiEdit = ai && d.credits.can_manage;
-    if (!(canRole || can.billing || canRemove || aiEdit)) {
+    var canGuest = can.invite && m.status === "active" && m.role === "member";
+    if (!(canRole || can.billing || canRemove || aiEdit || canGuest)) {
       return '<div class="pf-row pf-row--static">' + avatar + '<span class="pf-row-body">' + textHtml(name, sub) + "</span></div>";
     }
     var open = state.openMember === String(m.id);
@@ -470,6 +473,11 @@
       edit += staticRow("Тариф", "", planSelect(d, m.plan, 'data-org="member-plan" data-mid="' + m.id + '" aria-label="Тариф участника"'), "label");
     }
     if (aiEdit) edit += memberAiHtml(d, m, ai);
+    if (canGuest) {
+      edit += '<label class="pf-row pf-row--static"><span class="pf-row-body">' +
+        textHtml("Гость", "Подрядчик или клиент: не видит открытое «Всем», только своё и своих отделов") +
+        '<input type="checkbox" class="pf-switch" data-org="guest" data-mid="' + m.id + '"' + (m.guest ? " checked" : "") + ' aria-label="Гость" /></span></label>';
+    }
     if (canRemove) {
       edit += '<button type="button" class="pf-row" data-org="remove" data-mid="' + m.id + '"><span class="pf-row-body">' +
         textHtml(m.status === "invited" ? "Отозвать приглашение" : "Исключить из организации", "", "pf-link--danger") + "</span></button>";
@@ -500,6 +508,109 @@
   }
 
   // Участника добавляем только по почте: контакт без почты в список не попадает. Ник — подсказка боту.
+  // ---------- отделы и команды ----------
+
+  function personName(d, uid) {
+    var m = (d.members || []).filter(function (x) { return x.user_id === uid; })[0];
+    return m ? memberName(d, m) : "Бывший участник";
+  }
+
+  // Выбор участника организации, которого ещё нет в списке ids.
+  function personSelect(d, ids, attrs, placeholder) {
+    var opts = (d.members || []).filter(function (m) {
+      return m.status === "active" && ids.indexOf(m.user_id) < 0;
+    });
+    if (!opts.length) return "";
+    return '<select class="pf-input" ' + attrs + '><option value="">' + esc(placeholder) + "</option>" +
+      opts.map(function (m) { return '<option value="' + esc(m.user_id) + '">' + esc(memberName(d, m)) + "</option>"; }).join("") +
+      "</select>";
+  }
+
+  function peopleRows(d, g, manage) {
+    return g.member_ids.map(function (uid) {
+      var name = personName(d, uid);
+      var lead = g.lead_user_id === uid ? "руководитель" : "";
+      var del = manage ? delBtn('data-org="group-member-del" data-gid="' + g.id + '" data-uid="' + esc(uid) + '"', "Убрать " + name) : "";
+      return '<div class="pf-row pf-row--static"><span class="pf-avatar" aria-hidden="true">' + esc(initials(name)) + "</span>" +
+        '<span class="pf-row-body">' + textHtml(name, lead) + del + "</span></div>";
+    }).join("");
+  }
+
+  function addPersonRow(d, g, label) {
+    var sel = personSelect(d, g.member_ids, 'data-org="group-member-add" data-gid="' + g.id + '" aria-label="' + esc(label) + '"', label + "…");
+    return sel ? '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+      '<span class="pf-row-body">' + sel + "</span></div>" : "";
+  }
+
+  function teamHtml(d, dept, t) {
+    var sub = t.member_ids.length + " " + plural(t.member_ids.length, "участник", "участника", "участников");
+    var head = '<div class="pf-row pf-row--static"><span class="pf-row-body">' + textHtml(t.name, sub) +
+      (dept.can_manage ? delBtn('data-org="group-del" data-gid="' + t.id + '"', "Удалить команду") : "") + "</span></div>";
+    return '<div class="org-team">' + head + peopleRows(d, t, dept.can_manage) +
+      (dept.can_manage ? addPersonRow(d, t, "Добавить в команду") : "") + "</div>";
+  }
+
+  function deptHtml(d, g) {
+    var can = d.can || {};
+    var people = g.member_ids.slice();
+    g.teams.forEach(function (t) { t.member_ids.forEach(function (u) { if (people.indexOf(u) < 0) people.push(u); }); });
+    var sub = [g.lead_user_id ? "руководитель " + personName(d, g.lead_user_id).replace(/ \(вы\)$/, "") : "",
+      people.length + " " + plural(people.length, "участник", "участника", "участников"),
+      g.teams.length ? g.teams.length + " " + plural(g.teams.length, "команда", "команды", "команд") : ""].filter(Boolean).join(" · ");
+    var open = state.openGroup === String(g.id);
+    var html = '<button type="button" class="pf-row" data-org="group-toggle" data-gid="' + g.id + '" aria-expanded="' + open + '">' +
+      '<span class="pf-row-body">' + textHtml(g.name, sub) + '<span class="pf-chev' + (open ? " pf-chev--open" : "") + '" aria-hidden="true">›</span></span></button>';
+    if (!open) return html;
+    var edit = "";
+    if (g.can_manage) {
+      edit += '<label class="pf-field"><span class="pf-field-label">Название отдела</span><input type="text" class="pf-input" data-org="group-name" data-gid="' + g.id + '" maxlength="60" value="' + esc(g.name) + '" /></label>';
+    }
+    if (can.edit_org || can.invite) {
+      var leadOpts = [["", "Не назначен"]].concat((d.members || []).filter(function (m) { return m.status === "active"; })
+        .map(function (m) { return [m.user_id, memberName(d, m)]; }));
+      edit += staticRow("Руководитель", "Управляет составом отдела и его командами", selectHtml(leadOpts, g.lead_user_id || "",
+        'data-org="group-lead" data-gid="' + g.id + '" aria-label="Руководитель отдела"'), "label");
+    }
+    edit += '<p class="pf-group-title org-sub-title">В отделе напрямую</p>' + peopleRows(d, g, g.can_manage) +
+      (g.can_manage ? addPersonRow(d, g, "Добавить в отдел") : "");
+    edit += '<p class="pf-group-title org-sub-title">Команды</p>' + g.teams.map(function (t) { return teamHtml(d, g, t); }).join("");
+    if (g.can_manage) {
+      edit += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+        '<span class="pf-row-body org-add-row"><input type="text" class="pf-input" id="org-team-new-' + g.id + '" maxlength="60" placeholder="Новая команда, например «' + esc(g.name) + ' · бэкенд»" aria-label="Название команды" />' +
+        '<button type="button" class="pf-link" data-org="team-add" data-gid="' + g.id + '">Добавить</button></span></div>';
+    }
+    if (can.edit_org || can.invite) {
+      edit += '<button type="button" class="pf-row" data-org="group-del" data-gid="' + g.id + '" data-dept="1"><span class="pf-row-body">' +
+        textHtml("Удалить отдел", "", "pf-link--danger") + "</span></button>";
+    }
+    return html + '<div class="org-member-edit org-group-edit">' + edit + "</div>";
+  }
+
+  function groupsHtml(d) {
+    var can = d.can || {};
+    var groups = d.groups || [];
+    if (!groups.length && !can.invite) return "";
+    var rows = groups.map(function (g) { return deptHtml(d, g); }).join("");
+    if (can.invite) {
+      rows += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+        '<span class="pf-row-body org-add-row"><input type="text" class="pf-input" id="org-dept-new" maxlength="60" placeholder="Новый отдел, например «ОКК»" aria-label="Название отдела" />' +
+        '<button type="button" class="pf-link" data-org="dept-add">Добавить</button></span></div>';
+    }
+    return group("Отделы и команды", "groups", "<div>" + '<div class="pf-list">' + rows + "</div>" +
+      '<p class="pf-hint">Кому открыт раздел базы знаний или запись сейфа. Открытое отделу видят все его команды, открытое команде — только она. «Все» — участники организации, кроме гостей.</p></div>');
+  }
+
+  function addGroup(name, parentId) {
+    var id = currentId();
+    name = String(name || "").trim();
+    if (!name) return;
+    return autosave("groups", async function () {
+      var d = await api("/" + id + "/groups", json("POST", { name: name, parent_id: parentId || null }));
+      if (!parentId && d.created) state.openGroup = String(d.created.id);
+      return d;
+    });
+  }
+
   function contactKey(c) {
     var email = String(c.email || "").trim().toLowerCase();
     return email && email.indexOf("@") > 0 ? email : "";
@@ -653,6 +764,29 @@
     if (!btn || btn.tagName === "SELECT") return;
     var kind = btn.getAttribute("data-org");
     var id = currentId();
+    if (kind === "group-toggle") {
+      var gid = btn.getAttribute("data-gid");
+      state.openGroup = state.openGroup === gid ? null : gid;
+      render();
+      return;
+    }
+    if (kind === "dept-add") return addGroup((document.getElementById("org-dept-new") || {}).value, null);
+    if (kind === "team-add") {
+      var pid = btn.getAttribute("data-gid");
+      return addGroup((document.getElementById("org-team-new-" + pid) || {}).value, Number(pid));
+    }
+    if (kind === "group-del") {
+      return act(async function () {
+        var dept = btn.getAttribute("data-dept");
+        if (!(await confirm(dept ? "Удалить отдел вместе с его командами? Доступы, открытые им, пропадут." : "Удалить команду? Доступы, открытые ей, пропадут."))) return;
+        await applyDetail(await api("/" + id + "/groups/" + btn.getAttribute("data-gid"), { method: "DELETE" }));
+      });
+    }
+    if (kind === "group-member-del") {
+      return autosave("groups", function () {
+        return api("/" + id + "/groups/" + btn.getAttribute("data-gid") + "/members/" + btn.getAttribute("data-uid"), { method: "DELETE" });
+      });
+    }
     if (kind === "member-toggle") {
       var mid = btn.getAttribute("data-mid");
       state.openMember = state.openMember === mid ? null : mid;
@@ -782,6 +916,35 @@
       var plan = el.value;
       return autosave("members", function () {
         return api("/" + id + "/members/" + mid + "/plan", json("PATCH", { plan: plan }));
+      });
+    }
+    if (kind === "group-member-add" && el.value) {
+      var gUid = Number(el.value);
+      var gId = el.getAttribute("data-gid");
+      return autosave("groups", function () {
+        return api("/" + id + "/groups/" + gId + "/members", json("POST", { user_id: gUid }));
+      });
+    }
+    if (kind === "group-lead") {
+      var lead = el.value ? Number(el.value) : null;
+      var leadGid = el.getAttribute("data-gid");
+      return autosave("groups", function () {
+        return api("/" + id + "/groups/" + leadGid, json("PATCH", { lead_user_id: lead }));
+      });
+    }
+    if (kind === "group-name") {
+      var gname = el.value.trim();
+      var nameGid = el.getAttribute("data-gid");
+      if (!gname) return;
+      return autosave("groups", function () {
+        return api("/" + id + "/groups/" + nameGid, json("PATCH", { name: gname }));
+      });
+    }
+    if (kind === "guest") {
+      var guestMid = el.getAttribute("data-mid");
+      var isGuest = !!el.checked;
+      return autosave("members", function () {
+        return api("/" + id + "/members/" + guestMid + "/guest", json("PATCH", { guest: isGuest }));
       });
     }
     if (kind === "add-contact") {
@@ -942,7 +1105,13 @@
       el.addEventListener("input", onInput);
       el.addEventListener("keydown", function (e) {
         if (e.key !== "Enter") return;
-        if (e.target.id === "org-add-key" || e.target.id === "org-add-tg") {
+        if (e.target.id === "org-dept-new") {
+          e.preventDefault();
+          addGroup(e.target.value, null);
+        } else if (e.target.id.indexOf("org-team-new-") === 0) {
+          e.preventDefault();
+          addGroup(e.target.value, Number(e.target.id.slice("org-team-new-".length)));
+        } else if (e.target.id === "org-add-key" || e.target.id === "org-add-tg") {
           e.preventDefault();
           var tgEl = document.getElementById("org-add-tg");
           var keyEl = document.getElementById("org-add-key");

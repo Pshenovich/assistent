@@ -58,3 +58,13 @@
 .org-add-row { flex-wrap: wrap; row-gap: var(--space-2, 8px); }
 .org-add-row #org-add-key { flex: 1 1 14rem; min-width: 0; }
 .org-add-row #org-add-tg { flex: 1 1 8rem; min-width: 0; }
+
+/* Отделы и команды: раскрытый отдел без аватара — сдвиг меньше; команды — блоком с отступом */
+.org-group-edit .pf-row,
+.org-group-edit .pf-field { padding-left: 1.75rem; }
+.org-group-edit .org-team .pf-row { padding-left: 2.75rem; }
+.org-group-edit .org-team > .pf-row:first-child { padding-left: 1.75rem; }
+.org-group-edit .org-team > .pf-row:first-child .pf-row-title { font-weight: 600; }
+.org-sub-title { margin: 0; padding: 0.75rem 1rem 0.25rem 1.75rem; border-top: 1px solid var(--border); }
+.org-group-edit .org-add-row .pf-input { flex: 1 1 12rem; min-width: 0; }
+.org-group-edit .pf-add-select .pf-input { width: 100%; }

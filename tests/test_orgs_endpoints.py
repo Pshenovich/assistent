@@ -121,3 +121,37 @@ def test_market_settings(env):
     g = c.patch(f"{base}/{oid}/market", headers=_headers(guest), json={"telegram": True}).json()
     assert g["telegram"] is True and g["can_edit"] is False and g["settings"]["about"] == "Речевая аналитика продаж"
     assert c.get(f"{base}/{oid}/market", headers=_headers(next(_ids))).status_code == 404
+
+
+def test_org_groups_and_guest(env):
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    base = "/api/miniapp/orgs"
+    oid = c.post(base, headers=_headers(owner), json={"name": "Отделы-тест"}).json()["org"]["id"]
+    token = c.post(f"{base}/{oid}/invites", headers=_headers(owner)).json()["invite"]["token"]
+    c.post(f"{base}/invite/{token}/accept", headers=_headers(guest))
+
+    r = c.post(f"{base}/{oid}/groups", headers=_headers(owner), json={"name": "ОКК"})
+    assert r.status_code == 200, r.text
+    dept = r.json()["created"]["id"]
+    r = c.post(f"{base}/{oid}/groups", headers=_headers(owner), json={"name": "ОКК · бэкенд", "parent_id": dept})
+    team = r.json()["created"]["id"]
+    r = c.post(f"{base}/{oid}/groups/{team}/members", headers=_headers(owner), json={"user_id": guest})
+    assert r.status_code == 200, r.text
+    okk = next(g for g in r.json()["groups"] if g["id"] == dept)
+    assert okk["teams"][0]["member_ids"] == [str(guest)]
+
+    # участник без прав руководителя не управляет отделом, но видит состав
+    assert c.post(f"{base}/{oid}/groups", headers=_headers(guest), json={"name": "Своё"}).status_code == 400
+    assert c.patch(f"{base}/{oid}/groups/{dept}", headers=_headers(guest), json={"name": "X"}).status_code == 400
+    r = c.patch(f"{base}/{oid}/groups/{dept}", headers=_headers(owner), json={"lead_user_id": guest})
+    assert next(g for g in r.json()["groups"] if g["id"] == dept)["lead_user_id"] == str(guest)
+    assert c.patch(f"{base}/{oid}/groups/{dept}", headers=_headers(guest), json={"name": "ОКК-2"}).status_code == 200
+
+    mid = next(m["id"] for m in r.json()["members"] if m["user_id"] == str(guest))
+    d = c.patch(f"{base}/{oid}/members/{mid}/guest", headers=_headers(owner), json={"guest": True}).json()
+    assert next(m for m in d["members"] if m["user_id"] == str(guest))["guest"] is True
+
+    r = c.delete(f"{base}/{oid}/groups/{team}/members/{guest}", headers=_headers(owner))
+    assert next(g for g in r.json()["groups"] if g["id"] == dept)["teams"][0]["member_ids"] == []
+    r = c.delete(f"{base}/{oid}/groups/{dept}", headers=_headers(owner))
+    assert r.json()["groups"] == []

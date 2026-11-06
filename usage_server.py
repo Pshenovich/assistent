@@ -7577,6 +7577,24 @@ class _MiniappOrgMemberPlan(BaseModel):
     plan: str = "free"
 
 
+class _MiniappOrgGuest(BaseModel):
+    guest: bool = True
+
+
+class _MiniappOrgGroupCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+
+
+class _MiniappOrgGroupPatch(BaseModel):
+    name: Optional[str] = None
+    lead_user_id: Optional[int] = None
+
+
+class _MiniappOrgGroupMember(BaseModel):
+    user_id: int
+
+
 async def _org_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
     """Вызов orgs_store в потоке; OrgError → HTTP с текстом для пользователя."""
     from assistant.stores.orgs_store import OrgError
@@ -7624,7 +7642,7 @@ def _org_overview(uid: int) -> dict[str, Any]:
 
 
 def _org_detail(uid: int, org_id: int) -> dict[str, Any]:
-    from assistant.stores import orgs_store
+    from assistant.stores import org_groups, orgs_store
 
     org = orgs_store.get_org(org_id)
     role = orgs_store.role_of(org_id, uid)
@@ -7643,6 +7661,7 @@ def _org_detail(uid: int, org_id: int) -> dict[str, Any]:
         "org": {**org, "my_role": role},
         "can": can,
         "members": members,
+        "groups": org_groups.list_groups(org_id, uid),
         "invites": invites,
         "my_domains": orgs_store.user_domains(uid),
         "my_user_id": str(uid),
@@ -7998,6 +8017,82 @@ async def miniapp_orgs_member_plan(
 
     uid = int(principal.telegram_user_id)
     await _org_call(orgs_store.set_member_plan, uid, org_id, member_id, body.plan)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.patch("/orgs/{org_id}/members/{member_id}/guest")
+async def miniapp_orgs_member_guest(
+    org_id: int, member_id: int, body: _MiniappOrgGuest,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(orgs_store.set_guest, uid, org_id, member_id, body.guest)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+# ---------- отделы и команды ----------
+
+
+@miniapp_router.post("/orgs/{org_id}/groups")
+async def miniapp_orgs_group_create(
+    org_id: int, body: _MiniappOrgGroupCreate, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_groups
+
+    uid = int(principal.telegram_user_id)
+    _track(uid, "org.group_create", team=body.parent_id is not None)
+    created = await _org_call(org_groups.create, uid, org_id, body.name, parent_id=body.parent_id)
+    return {**(await _org_call(_org_detail, uid, org_id)), "created": created}
+
+
+@miniapp_router.patch("/orgs/{org_id}/groups/{group_id}")
+async def miniapp_orgs_group_update(
+    org_id: int, group_id: int, body: _MiniappOrgGroupPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import org_groups
+
+    uid = int(principal.telegram_user_id)
+    if body.name is not None:
+        await _org_call(org_groups.rename, uid, org_id, group_id, body.name)
+    if "lead_user_id" in body.model_fields_set:
+        await _org_call(org_groups.set_lead, uid, org_id, group_id, body.lead_user_id)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.delete("/orgs/{org_id}/groups/{group_id}")
+async def miniapp_orgs_group_delete(
+    org_id: int, group_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_groups
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(org_groups.delete, uid, org_id, group_id)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.post("/orgs/{org_id}/groups/{group_id}/members")
+async def miniapp_orgs_group_member_add(
+    org_id: int, group_id: int, body: _MiniappOrgGroupMember,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import org_groups
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(org_groups.add_member, uid, org_id, group_id, body.user_id)
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.delete("/orgs/{org_id}/groups/{group_id}/members/{user_id}")
+async def miniapp_orgs_group_member_remove(
+    org_id: int, group_id: int, user_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import org_groups
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(org_groups.remove_member, uid, org_id, group_id, user_id)
     return await _org_call(_org_detail, uid, org_id)
 
 

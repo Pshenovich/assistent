@@ -131,6 +131,23 @@ def _migrate(conn: sqlite3.Connection) -> sqlite3.Connection:
     if "tg_hint" not in cols:
         conn.execute("ALTER TABLE org_members ADD COLUMN tg_hint TEXT NOT NULL DEFAULT ''")
         conn.commit()
+    if "guest" not in cols:
+        # гость (подрядчик, клиент) не входит в «Все» — видит только то, что открыли ему или его отделу
+        conn.execute("ALTER TABLE org_members ADD COLUMN guest INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'org_groups'").fetchone():
+        # отделы (parent_id IS NULL) и команды внутри них — см. org_groups.py
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS org_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, org_id INTEGER NOT NULL, "
+            "parent_id INTEGER, name TEXT NOT NULL, lead_user_id TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_org_groups_org ON org_groups(org_id)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS org_group_members (group_id INTEGER NOT NULL, user_id TEXT NOT NULL, "
+            "added_at TEXT NOT NULL, PRIMARY KEY (group_id, user_id))"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_org_group_members_user ON org_group_members(user_id)")
+        conn.commit()
     _MIGRATED_CONN = conn
     return conn
 
@@ -390,6 +407,7 @@ def list_members(org_id: int) -> list[dict[str, Any]]:
             "role": str(r["role"]),
             "status": str(r["status"]),
             "plan": str(r["plan"]),
+            "guest": bool(r["guest"]),
             "added_at": r["added_at"],
         })
     return out
@@ -528,7 +546,10 @@ def delete_org(user_id: int | str, org_id: int) -> None:
     _require(user_id, org_id, "delete_org")
     with _LOCK:
         conn = _conn()
-        for table in ("org_members", "org_domains", "org_invites", "org_settings", "org_dismissed"):
+        conn.execute(
+            "DELETE FROM org_group_members WHERE group_id IN (SELECT id FROM org_groups WHERE org_id = ?)", (int(org_id),)
+        )
+        for table in ("org_members", "org_domains", "org_invites", "org_settings", "org_dismissed", "org_groups"):
             conn.execute(f"DELETE FROM {table} WHERE org_id = ?", (int(org_id),))
         conn.execute("DELETE FROM orgs WHERE id = ?", (int(org_id),))
         conn.commit()
@@ -695,6 +716,11 @@ def reassign_user(old_user_id: int | str, new_user_id: int | str) -> None:
             else:
                 conn.execute("UPDATE org_members SET user_id = ? WHERE id = ?", (new, r["id"]))
         conn.execute("UPDATE orgs SET created_by = ? WHERE created_by = ?", (new, old))
+        conn.execute(
+            "UPDATE OR IGNORE org_group_members SET user_id = ? WHERE user_id = ?", (new, old)
+        )
+        conn.execute("DELETE FROM org_group_members WHERE user_id = ?", (old,))
+        conn.execute("UPDATE org_groups SET lead_user_id = ? WHERE lead_user_id = ?", (new, old))
         conn.commit()
 
 
@@ -823,7 +849,10 @@ def set_role(actor_id: int | str, org_id: int, target_id: int | str, role: str) 
             raise OrgError("Участник не найден", 404)
         if target == actor and role != "owner" and _owner_count(org_id) <= 1:
             raise OrgError("Сначала передайте владение другому участнику")
-        conn.execute("UPDATE org_members SET role = ? WHERE id = ?", (role, m["id"]))
+        conn.execute(
+            "UPDATE org_members SET role = ?, guest = CASE WHEN ? = 'member' THEN guest ELSE 0 END WHERE id = ?",
+            (role, role, m["id"]),
+        )
         if role == "owner" and target != actor:
             conn.execute(
                 "UPDATE org_members SET role = 'admin' WHERE org_id = ? AND user_id = ?", (int(org_id), actor)
@@ -847,7 +876,18 @@ def remove_member(actor_id: int | str, org_id: int, member_row_id: int) -> None:
         if m["role"] == "admin" and actor_role != "owner":
             raise OrgError("Админа может исключить только владелец", 400)
         conn.execute("DELETE FROM org_members WHERE id = ?", (m["id"],))
+        if m["user_id"]:
+            _drop_from_groups(conn, org_id, str(m["user_id"]))
         conn.commit()
+
+
+def _drop_from_groups(conn: sqlite3.Connection, org_id: int, user_id: str) -> None:
+    """Ушёл из организации — выходит из всех её отделов и команд и перестаёт ими руководить."""
+    conn.execute(
+        "DELETE FROM org_group_members WHERE user_id = ? AND group_id IN (SELECT id FROM org_groups WHERE org_id = ?)",
+        (user_id, int(org_id)),
+    )
+    conn.execute("UPDATE org_groups SET lead_user_id = NULL WHERE org_id = ? AND lead_user_id = ?", (int(org_id), user_id))
 
 
 def leave(user_id: int | str, org_id: int) -> None:
@@ -859,6 +899,7 @@ def leave(user_id: int | str, org_id: int) -> None:
         if m["role"] == "owner" and _owner_count(org_id) <= 1:
             raise OrgError("Вы единственный владелец — передайте владение или удалите организацию")
         conn.execute("DELETE FROM org_members WHERE id = ?", (m["id"],))
+        _drop_from_groups(conn, org_id, _uid(user_id))
         conn.execute("INSERT OR IGNORE INTO org_dismissed (user_id, org_id) VALUES (?, ?)", (_uid(user_id), int(org_id)))
         conn.commit()
 
@@ -1116,3 +1157,19 @@ def set_settings(actor_id: int | str, org_id: int, section: str, value: Any) -> 
         )
         conn.commit()
     return data
+
+
+def set_guest(actor_id: int | str, org_id: int, member_row_id: int, guest: bool) -> None:
+    """Пометить участника гостем: он не входит в «Все» и видит только открытое ему или его отделу."""
+    _require(actor_id, org_id, "invite")
+    with _LOCK:
+        conn = _conn()
+        m = conn.execute(
+            "SELECT * FROM org_members WHERE id = ? AND org_id = ?", (int(member_row_id), int(org_id))
+        ).fetchone()
+        if not m:
+            raise OrgError("Участник не найден", 404)
+        if guest and m["role"] != "member":
+            raise OrgError("Владелец и админ не могут быть гостями", 400)
+        conn.execute("UPDATE org_members SET guest = ? WHERE id = ?", (1 if guest else 0, m["id"]))
+        conn.commit()
