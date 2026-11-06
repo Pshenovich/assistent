@@ -15292,17 +15292,29 @@ html.modal-sheet-open body {
   padding: 0.55rem 1.25rem;
 }
 
-/* Лео над заголовком пустой правой половины (заполняет onboarding.js по data-leo-pose) */
-.empty-leo {
+/* Контурная иллюстрация над заголовком пустой правой половины (документы / чаты) */
+.empty-illo {
   display: block;
-  width: 96px;
+  width: 120px;
   height: 96px;
-  margin-bottom: 4px;
+  margin-bottom: 8px;
+  color: var(--text-tertiary);
 }
 
-.empty-leo .leo {
-  width: 100%;
-  height: 100%;
+.empty-illo * {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.empty-illo .illo-page {
+  fill: var(--surface);
+}
+
+.empty-illo .illo-accent {
+  stroke: var(--accent);
 }
 
 html.notes-chats-tab.chats-split-open #note-discussion-close {
