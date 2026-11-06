@@ -161,6 +161,13 @@ def _plain_note_text(html: str) -> str:
     return re.sub(r"<[^>]+>", "", html or "").replace("\xa0", " ").strip()
 
 
+def _text_words(html_body: str) -> str:
+    """Текст без разметки, сущностей и разницы в пробелах — чтобы отличить правку от пересохранения."""
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", html_body or "")).split())
+
+
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     role = ""
     try:
@@ -681,10 +688,12 @@ def update_note(
         note_id, revision=new_rev, actor_user_id=actor_user_id, source=realtime_source
     )
     viewer = actor_user_id if actor_user_id is not None else uid
-    if title is not None or body is not None:
+    # Правка в базе знаний = «проверено». Только когда изменился текст: редактор при закрытии
+    # пересохраняет HTML в своём формате — это не проверка.
+    if new_title != (existing.get("title") or "") or _text_words(new_body) != _text_words(existing.get("body") or ""):
         from assistant.stores import org_kb
 
-        org_kb.mark_edited(int(note_id), viewer)  # правка в базе знаний = «проверено»; не бросает
+        org_kb.mark_edited(int(note_id), viewer)  # не бросает
     out = get_note(uid, note_id)
     return _with_sharing(out, viewer) if out else None
 

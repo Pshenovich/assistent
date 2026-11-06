@@ -104,6 +104,7 @@
   <link rel="stylesheet" href="/webapp/board.css?v=20261106-empty1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261106-groups1" />
+  <link rel="stylesheet" href="/webapp/org-kb.css?v=20261106-kb1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
 </head>
@@ -581,17 +582,7 @@
           </div>
           <div class="knowledge-list-head">
             <h1 class="screen-title">База знаний</h1>
-            <p class="muted lead lead-tight">Документы компании для ответов PAIE и Donatello</p>
-          </div>
-          <div class="pf-list knowledge-sources-entry">
-            <button type="button" class="pf-row" id="knowledge-sources-open" data-tour="knowledge-sources">
-              <span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg></span>
-              <span class="pf-row-body">
-                <span class="pf-row-text"><span class="pf-row-title">Источники</span><span class="pf-row-sub">Google Docs, Notion, Яндекс Диск, Битрикс24</span></span>
-                <span class="pf-row-val" id="knowledge-sources-count"></span>
-                <span class="pf-chev" aria-hidden="true">›</span>
-              </span>
-            </button>
+            <p class="muted lead lead-tight">Документы компании — Лео отвечает по ним</p>
           </div>
           <div class="notes-filter-bar">
             <div class="notes-search-wrap">
@@ -606,9 +597,22 @@
               />
             </div>
           </div>
+          <div id="org-kb-root"></div>
+          <p id="knowledge-mine-title" class="pf-group-title kb-mine-title hidden">Мои документы</p>
           <div id="knowledge-pane" class="notes-pane notes-pane--stack"></div>
+          <div class="pf-list knowledge-sources-entry">
+            <button type="button" class="pf-row" id="knowledge-sources-open" data-tour="knowledge-sources">
+              <span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" /><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" /></svg></span>
+              <span class="pf-row-body">
+                <span class="pf-row-text"><span class="pf-row-title">Источники</span><span class="pf-row-sub">Google Docs, Notion, Яндекс Диск, Битрикс24</span></span>
+                <span class="pf-row-val" id="knowledge-sources-count"></span>
+                <span class="pf-chev" aria-hidden="true">›</span>
+              </span>
+            </button>
+          </div>
           <p id="knowledge-global-error" class="error hidden"></p>
         </div>
+        <div id="org-kb-section" class="org-kb-section hidden"></div>
         <div id="knowledge-sources" class="kb-sources hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
             <button type="button" class="btn-text" id="knowledge-sources-back">← Назад</button>
@@ -2563,12 +2567,13 @@
   <script src="/webapp/web-canvas.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261106-empty1" defer></script>
+  <script src="/webapp/app.js?v=20261106-kb1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261106-empty1" defer></script>
+  <script src="/webapp/org-kb.js?v=20261106-kb1" defer></script>
   <script src="/webapp/onboarding.js?v=20261106-empty1" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>

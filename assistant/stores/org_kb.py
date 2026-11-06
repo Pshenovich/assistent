@@ -254,6 +254,10 @@ def tree(org_id: int, actor_id: int | str) -> list[dict[str, Any]]:
             "restricted": nid in path_only,
             "inherit": bool(row["inherit"]),
         }
+        if row["kind"] == "section" and nid not in path_only:
+            # кому открыт — для подписи «ОКК · Чат-боты»; владельцы-люди не в счёт
+            eff = _effective_acl(nodes, acl, nid)
+            item["access"] = sorted(p for p, r in eff.items() if not (p.startswith("u:") and r == "owner"))
         if row["kind"] == "doc":
             item.update({
                 "note_id": int(row["note_id"]),
@@ -553,3 +557,21 @@ def doc_info(user_id: int | str, note_id: int) -> Optional[dict[str, Any]]:
         "no_expiry": bool(row["no_expiry"]),
         "stale": _stale(row, datetime.now(timezone.utc)),
     }
+
+
+def my_docs(org_id: int, user_id: int | str, *, limit: int = 300) -> list[dict[str, Any]]:
+    """Свои документы, которых ещё нет в базе знаний, — для «Добавить свой документ»."""
+    from assistant.stores import notes as notes_store
+
+    viewer = _Viewer(org_id, user_id)
+    if not viewer.member:
+        raise OrgError("Организация не найдена", 404)
+    with _LOCK:
+        taken = {int(r[0]) for r in _conn().execute("SELECT note_id FROM org_kb_nodes WHERE note_id IS NOT NULL")}
+    out = []
+    for n in notes_store.list_notes(viewer.uid, limit=limit, include_knowledge=True):
+        if str(n.get("owner_user_id") or n.get("user_id") or "") != viewer.uid or int(n["id"]) in taken:
+            continue
+        out.append({"note_id": int(n["id"]), "title": n.get("title") or "Без названия",
+                    "updated_at": n.get("updated_at"), "is_knowledge": bool(n.get("is_knowledge"))})
+    return out

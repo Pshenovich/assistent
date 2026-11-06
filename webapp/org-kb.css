@@ -1,0 +1,77 @@
+/* База знаний организации (org-kb.js): разделы во вкладке, окно «Доступ», полоска в документе.
+   Собрано из компонентов Профиля (pf-*); здесь только то, чего у них нет. Цвета — только токены темы. */
+
+.kb-ico svg { fill: none; }
+.kb-lock { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; color: var(--text-secondary); }
+.kb-row-restricted .pf-row-title { color: var(--text-secondary); }
+.kb-stale { color: var(--warning-text); }
+
+/* Заголовок группы организации: значок, название, «+ Раздел» справа */
+.kb-org-group { margin-top: 18px; }
+.kb-group-head { display: flex; align-items: center; gap: 8px; }
+.kb-org-ico {
+  width: 18px; height: 18px; flex: none; border-radius: 5px; overflow: hidden;
+  display: grid; place-items: center; background: var(--surface-muted);
+  font-size: 0.625rem; font-weight: 700; color: var(--text); text-transform: none;
+}
+.kb-org-ico img { width: 100%; height: 100%; object-fit: cover; }
+.kb-group-head .pf-link { margin-left: auto; font-size: 0.8125rem; font-weight: 500; text-transform: none; letter-spacing: 0; }
+.kb-empty-hint, .kb-no-org { margin-top: 18px; }
+.kb-no-org .pf-link { display: inline; padding: 0; font-size: inherit; }
+
+/* «Мои документы» и «Источники» — с отступом от разделов, когда организация есть */
+.kb-mine-title { margin: 22px 0 8px; }
+#panel-knowledge .knowledge-sources-entry { margin-top: 18px; }
+
+/* Раздел */
+.org-kb-section .kb-toolbar .pf-link { font-size: 0.9375rem; }
+.kb-crumbs { margin: 0 0 4px; font-size: 0.8125rem; color: var(--text-secondary); }
+.kb-crumbs b { font-weight: 500; color: var(--text); }
+
+/* Окно «Доступ» и выбор документа */
+.kb-sheet-body { padding-bottom: 8px; }
+.kb-inherited .pf-row-title { color: var(--text-secondary); }
+.kb-role.pf-select { flex: none; }
+.kb-add-row .pf-input { flex: 1 1 12rem; min-width: 0; }
+.kb-add-row .kb-role { flex: none; }
+.kb-pick-search { margin: 8px 0 12px; }
+.kb-pick-list { max-height: 50vh; overflow-y: auto; }
+
+/* Полоска в открытом документе */
+.kb-doc-banner { margin: 0 0 12px; }
+.kb-doc-crumbs { margin-bottom: 6px; }
+.kb-banner {
+  display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-size: 0.8125rem; color: var(--text-secondary);
+}
+.kb-banner svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; }
+.kb-banner > span { flex: 1; min-width: 0; }
+.kb-banner .pf-link { white-space: nowrap; font-size: 0.8125rem; }
+.kb-banner--stale {
+  border-color: color-mix(in srgb, var(--warning) 40%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  color: var(--warning-text);
+}
+
+/* Пустые «Мои документы» при организации — строкой, а не большой заглушкой */
+.empty-state.kb-mine-empty {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; text-align: left;
+  padding: 12px 14px; border-style: solid;
+}
+.kb-mine-empty .empty-state-title { margin: 0; font-size: 0.9375rem; }
+.kb-mine-empty .empty-state-text { flex: 1 1 100%; order: 3; margin: 0; max-width: none; }
+.kb-mine-empty .pf-btn { order: 2; margin: 0 0 0 auto; padding: 6px 14px; font-size: 0.8125rem; width: auto; }
+
+/* Раздел — та же ширина и отступы, что у главного экрана вкладки */
+.org-kb-section .kb-toolbar { padding-left: 0; padding-right: 0; }
+.kb-section-head .kb-crumbs { margin-bottom: 2px; }
+.org-kb-section > .pf-group { margin-top: 14px; }
+.org-kb-section > .pf-list { margin-top: 18px; }
+
+/* Документ только для чтения: без панели форматирования и вставки */
+html.kb-note-readonly #note-editor-toolbar-wrap { display: none; }
+
+@media (max-width: 520px) {
+  .kb-mine-empty .pf-btn { order: 4; margin: 4px 0 0; }
+}

@@ -8191,6 +8191,13 @@ def _org_kb_add_doc(uid: int, org_id: int, body: "_MiniappKbDoc") -> dict[str, A
         raise
 
 
+@miniapp_router.get("/orgs/{org_id}/kb/my-docs")
+async def miniapp_org_kb_my_docs(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    return {"ok": True, "items": await _org_call(org_kb.my_docs, org_id, int(principal.telegram_user_id))}
+
+
 @miniapp_router.post("/orgs/{org_id}/kb/docs")
 async def miniapp_org_kb_doc_add(
     org_id: int, body: _MiniappKbDoc, principal: _MiniappPrincipal = Depends(require_miniapp_user)

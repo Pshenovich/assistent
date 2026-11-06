@@ -154,3 +154,20 @@ class OrgKbTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrgKbVerifyOnEditTests(OrgKbTests):
+    def _verified(self) -> str:
+        return org_kb.node_for_note(self.note)["verified_at"]
+
+    def test_resave_without_text_change_is_not_a_check(self) -> None:
+        old = "2026-01-01T00:00:00+00:00"
+        with orgs_store._LOCK:
+            c = org_kb._conn()
+            c.execute("UPDATE org_kb_nodes SET verified_at = ? WHERE id = ?", (old, self.doc))
+            c.commit()
+        # редактор пересохранил ту же мысль другой разметкой
+        notes_store.update_note(BACK, self.note, body="<p>шаги</p>\n", actor_user_id=BACK)
+        self.assertEqual(self._verified(), old)
+        notes_store.update_note(BACK, self.note, body="<p>шаги: 1, 2, 3</p>", actor_user_id=BACK)
+        self.assertNotEqual(self._verified(), old)

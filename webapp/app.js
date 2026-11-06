@@ -56379,6 +56379,9 @@
     var editorPad = wrap.querySelector(".note-editor-pad--body");
     var titleInput = wrap.querySelector("#note-editor-title-input");
     if (titleInput) titleInput.value = cleanTitle;
+    // Читатель или комментатор базы знаний организации: смотрит, не правит (сервер правку и не примет).
+    var noteReadOnly = !!(n && n.can_edit === false);
+    if (noteReadOnly && titleInput) titleInput.readOnly = true;
 
     var saveTimer = null;
     var noteRichEditor = null;
@@ -56404,6 +56407,7 @@
 
     async function persistNoteDraft(opts) {
       opts = opts || {};
+      if (noteReadOnly) return;
       if (noteCollabState.applying && !opts.force) return;
       var fields = opts.snapshot || readFields();
       var title = String(fields.title || "").trim();
@@ -56888,6 +56892,10 @@
     }
     bindNoteGptToolbarButton();
     syncNoteGptToolbarButton(true);
+    // Полоску базы знаний организации («только чтение», «проверено») рисует org-kb.js.
+    try {
+      document.dispatchEvent(new CustomEvent("leo:note-open", { detail: { note: n, page: wrap } }));
+    } catch (_) {}
     openNoteEditorModal(
       noteIsCreate
         ? isKnowledge
@@ -56911,6 +56919,7 @@
       editorPad,
       editorBody,
       function (info) {
+        if (noteReadOnly) return;
         if (isPrimarySheetId(noteSheetState.leftId)) schedulePatch(info);
         else if (!(info && info.remote === true)) scheduleExtraSheetPersist(noteSheetState.leftId);
       },
@@ -56926,6 +56935,7 @@
       },
     }).then(function (editor) {
       noteRichEditor = editor;
+      if (noteReadOnly && editor && editor.setEditable) editor.setEditable(false);
       if (noteId && isTranscriptionNoteItem(n)) meetingTasksAttach(editor, noteId);
       var detailBodyMount = getNoteEditorBodyEl();
       if (detailBodyMount) detailBodyMount._noteRichEditor = editor;
@@ -59472,6 +59482,15 @@
     profileScreen: profileScreen,
     setTab: setTab,
     loadIntegrations: loadIntegrations,
+    // Для org-kb.js: открыть документ по id поверх текущей вкладки; новый личный документ базы знаний.
+    openNote: function (noteId) {
+      // body_preview_only: не загрузился — тост, а не пустой документ, который сохранится поверх
+      openLocalNoteDetail({ id: String(noteId), body_preview_only: true }, { isLocal: true });
+    },
+    newKnowledgeNote: function () {
+      openNewKnowledgeNote();
+    },
+    promptDialog: promptDialog,
     openLink: function (url) {
       var tg = window.Telegram && window.Telegram.WebApp;
       if (tg && tg.openLink) tg.openLink(url);
