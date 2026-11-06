@@ -511,6 +511,7 @@ def update_sheet(
         _conn().commit()
     if changed:
         realtime_notify.sheets_changed(note_id, source=realtime_source)
+        notes_store._semantic_doc_changed(int(note_id))
     out = get_extra_sheet(note_id, sheet_id)
     assert out is not None
     return out
@@ -604,6 +605,7 @@ def delete_sheet(note_id: int, sheet_id: int) -> bool:
         ok = cur.rowcount > 0
     if ok:
         realtime_notify.sheets_changed(note_id)
+        notes_store._semantic_doc_changed(int(note_id))
     return ok
 
 

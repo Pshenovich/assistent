@@ -255,7 +255,7 @@ def _focus_summary_ready(owner: int | str, note_id: int) -> None:
     try:
         from assistant.services import semantic_memory
 
-        semantic_memory.note_changed(owner, delay=5)
+        semantic_memory.doc_changed(note_id, delay=5)  # раздел встречи — один на всех участников
     except Exception as e:
         print(f"[semantic] summary_ready failed note={note_id} err={e!r}")
     from assistant.services import meeting_share
