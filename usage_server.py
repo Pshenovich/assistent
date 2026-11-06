@@ -13484,19 +13484,6 @@ async def miniapp_transcription_upload(
             from assistant.lib import billing_store
 
             billing_store.charge_transcription(uid, getattr(result, "segments", ()), operation="obuchat_transcribe")
-            insert_usage_event(
-                operation="obuchat_transcribe",
-                model=None,
-                generation_id=result.job_id,
-                usage={
-                    "text": transcript[:4000],
-                    "source": "miniapp_transcription_upload",
-                    "filename": filename,
-                    "with_summary": want_summary,
-                },
-                telegram_user_id=str(uid),
-                telegram_username=username,
-            )
             meta = {
                 "source": "miniapp_url" if source_url else "miniapp_upload",
                 "filename": source_filename,
@@ -13510,6 +13497,22 @@ async def miniapp_transcription_upload(
                 transcript=transcript,
                 meta=meta,
                 segments=getattr(result, "segments", None),
+            )
+            # событие расхода сразу связано с документом: иначе перенос журнала делал из него
+            # второй документ (название — имя файла) рядом с документом встречи
+            insert_usage_event(
+                operation="obuchat_transcribe",
+                model=None,
+                generation_id=result.job_id,
+                usage={
+                    "text": transcript[:4000],
+                    "source": "miniapp_transcription_upload",
+                    "filename": filename,
+                    "with_summary": want_summary,
+                    "meta": {"migrated_to_note_id": int(note["id"])},
+                },
+                telegram_user_id=str(uid),
+                telegram_username=username,
             )
             if meeting_ev.get("id") or meeting_ev.get("event_id"):
                 try:

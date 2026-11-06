@@ -128,19 +128,6 @@ def transcribe_url_to_note(
     from assistant.lib import billing_store
 
     billing_store.charge_transcription(uid, getattr(result, "segments", ()), operation="obuchat_transcribe")
-    insert_usage_event(
-        operation="obuchat_transcribe",
-        model=None,
-        generation_id=result.job_id,
-        usage={
-            "text": transcript[:4000],
-            "source": "miniapp_chat_url",
-            "filename": filename,
-            "with_summary": with_summary,
-        },
-        telegram_user_id=str(uid),
-        telegram_username=username,
-    )
     note = tnotes.create_transcript_only(
         uid,
         title=(Path(source_filename).stem.strip() or "Транскрипция")[:120],
@@ -152,6 +139,21 @@ def transcribe_url_to_note(
             "job_id": result.job_id,
         },
         segments=getattr(result, "segments", None),
+    )
+    # событие расхода связано с документом — перенос журнала не сделает из него второй
+    insert_usage_event(
+        operation="obuchat_transcribe",
+        model=None,
+        generation_id=result.job_id,
+        usage={
+            "text": transcript[:4000],
+            "source": "miniapp_chat_url",
+            "filename": filename,
+            "with_summary": with_summary,
+            "meta": {"migrated_to_note_id": int(note["id"])},
+        },
+        telegram_user_id=str(uid),
+        telegram_username=username,
     )
     from assistant.stores import analytics_store as _an
 

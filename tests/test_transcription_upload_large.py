@@ -79,3 +79,22 @@ def test_upload_over_limit_rejected(env, monkeypatch):
 def test_default_limit_is_500mb(monkeypatch):
     monkeypatch.delenv("TRANSCRIPTION_UPLOAD_MAX_MB", raising=False)
     assert usage_server._transcription_upload_max_bytes() == 500 * 1024 * 1024
+
+
+def test_upload_makes_one_document(env):
+    # событие расхода связано с документом: перенос журнала не делает второй («audio….m4a» рядом со встречей)
+    from assistant.lib import usage_store
+    from assistant.services.transcription_notes_migrate import migrate_user_if_needed
+    from assistant.stores import notes as notes_store
+
+    uid = next(_ids)
+    r = env["client"].post(
+        "/api/miniapp/notes/transcriptions/upload",
+        headers=_headers(uid),
+        files={"file": ("audio1.m4a", b"x" * 2048, "audio/mp4")},
+        data={"meeting": json.dumps({"id": "ev1", "summary": "Проектный синк"})},
+    )
+    assert r.status_code == 200, r.text
+    assert migrate_user_if_needed(uid)["created"] == 0
+    assert [n["title"] for n in notes_store.list_transcription_notes(uid)] == ["Проектный синк"]
+    assert usage_store.user_journal_entries(str(uid), limit=20) == []
