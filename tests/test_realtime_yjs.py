@@ -302,3 +302,89 @@ def test_board_cursor_is_broadcast(env):
         a.send_json({"type": "board.cursor", "note_id": nid, "sheet_id": sid, "x": 10.26, "y": -5})
         cur = _receive_until(b, "board.cursor")
         assert cur["sheet_id"] == sid and cur["x"] == 10.3 and cur["user_id"] == str(env["owner"])
+
+
+# ---------- слияние правки мимо Yjs — только с подтверждением (y.reseeded) ----------
+# Случай с прода (06.11.2026): правку по MCP получила фоновая вкладка, слила у себя и сохранила
+# HTML, но её обновление Yjs до сервера не дошло — журнал остался пустым, и все видели пустой документ.
+
+
+def _outside_edit_while_closed(env, body="<p>hello</p><p>from AI</p>"):
+    nid = env["note_id"]
+    note_ydoc.save(nid, [b"doc"], notes_store.get_note_by_id(nid)["revision"], "<p>hello</p>")
+    notes_store.update_note(env["owner"], nid, body=body)
+    return nid
+
+
+def test_unconfirmed_merge_is_offered_again_after_html_save(env):
+    nid = _outside_edit_while_closed(env)
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as a:
+        _join(a, env["owner"], nid)
+        assert _receive_until(a, "y.reseed")["html"] == "<p>hello</p><p>from AI</p>"
+        # Слил у себя и сохранил HTML, но y.update и y.reseeded не дошли.
+        r = c.patch(
+            f"/api/miniapp/notes/local/{nid}",
+            headers=_headers(env["owner"]),
+            json={"description": "<p>hello</p><p>from AI</p>", "yjs": True},
+        )
+        assert r.status_code == 200, r.text
+    _, base, base_html = _wait_saved(nid, [b"doc"])
+    assert base_html == "<p>hello</p>"  # база не сдвинулась — журнал правки не видел
+    assert base != notes_store.get_note_by_id(nid)["revision"]
+    with c.websocket_connect("/api/miniapp/ws") as b:
+        st = _join(b, env["member"], nid)
+        assert st["role"] == "sync"
+        msg = _receive_until(b, "y.reseed")
+        assert msg["old_html"] == "<p>hello</p>"
+        assert msg["html"] == "<p>hello</p><p>from AI</p>"
+
+
+def test_confirmed_merge_advances_base_and_is_not_repeated(env):
+    nid = _outside_edit_while_closed(env)
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as a:
+        _join(a, env["owner"], nid)
+        _receive_until(a, "y.reseed")
+        a.send_json({"type": "y.update", "note_id": nid, "update": b64(b"merged")})
+        _receive_until(a, "y.ack")
+        a.send_json({"type": "y.reseeded", "note_id": nid})
+    _, base, base_html = _wait_saved(nid, [b"doc", b"merged"])
+    assert base == notes_store.get_note_by_id(nid)["revision"]
+    assert base_html == "<p>hello</p><p>from AI</p>"
+    with c.websocket_connect("/api/miniapp/ws") as b:
+        _join(b, env["member"], nid)
+        b.send_json({"type": "ping"})
+        assert _receive_until(b, "pong") == {"type": "pong"}  # y.reseed не пришёл
+
+
+def test_leader_leaving_without_confirming_hands_merge_on(env):
+    nid = env["note_id"]
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as b:
+        with c.websocket_connect("/api/miniapp/ws") as a:
+            _join(a, env["owner"], nid)
+            a.send_json({"type": "y.update", "note_id": nid, "update": b64(b"seed")})
+            _receive_until(a, "y.ack")
+            _join(b, env["member"], nid)
+            notes_store.update_note(env["owner"], nid, body="<p>bot line</p>")
+            _receive_until(a, "y.reseed")
+        msg = _receive_until(b, "y.reseed")
+        assert msg["old_html"] == "<p>hello</p>" and msg["html"] == "<p>bot line</p>"
+
+
+def test_silent_leader_times_out_and_merge_goes_to_next(env, monkeypatch):
+    from assistant.realtime import yrooms
+
+    monkeypatch.setattr(yrooms, "RESEED_ACK_SEC", 0.2)
+    nid = env["note_id"]
+    c = env["client"]
+    with c.websocket_connect("/api/miniapp/ws") as a, c.websocket_connect("/api/miniapp/ws") as b:
+        _join(a, env["owner"], nid)
+        a.send_json({"type": "y.update", "note_id": nid, "update": b64(b"seed")})
+        _receive_until(a, "y.ack")
+        _join(b, env["member"], nid)
+        notes_store.update_note(env["owner"], nid, body="<p>bot line</p>")
+        _receive_until(a, "y.reseed")  # ведущий молчит — фоновая вкладка
+        msg = _receive_until(b, "y.reseed")
+        assert msg["html"] == "<p>bot line</p>"

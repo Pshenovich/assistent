@@ -17,7 +17,7 @@ import { canJoin } from "@tiptap/pm/transform";
 import { keydownHandler } from "@tiptap/pm/keymap";
 import { createDocument } from "@tiptap/core";
 import * as Y from "yjs";
-import { mergeBlocks } from "./yjs-merge.mjs";
+import { alreadyApplied, mergeBlocks } from "./yjs-merge.mjs";
 import {
   defaultDeleteFilter,
   defaultProtectedNodes,
@@ -5536,9 +5536,12 @@ function mount(container, options) {
         doc.forEach(function (node) { out.push(node); });
         return out;
       }
-      var merged = mergeBlocks(blocks(oldDoc), blocks(newDoc), blocks(curDoc), function (a, b) {
+      var eqNode = function (a, b) {
         return a.eq(b);
-      });
+      };
+      // Слияние доставили повторно, а правка уже в документе — второй раз не вливаем.
+      if (alreadyApplied(blocks(oldDoc), blocks(newDoc), blocks(curDoc), eqNode)) return false;
+      var merged = mergeBlocks(blocks(oldDoc), blocks(newDoc), blocks(curDoc), eqNode);
       if (!merged.length) merged = [editor.schema.nodes.paragraph.create()];
       var nextDoc = editor.schema.topNodeType.create(null, merged);
       if (nextDoc.eq(curDoc)) return false;
@@ -5929,7 +5932,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261104-doctype1",
+  assetVersion: "20261106-reseedack",
   Y: Y,
   mount: mount,
   mountTable: mountTable,

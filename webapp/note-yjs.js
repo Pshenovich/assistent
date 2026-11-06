@@ -115,6 +115,10 @@
       return m;
     }
 
+    function sendReseeded() {
+      o.send(msg("y.reseeded"));
+    }
+
     function scheduleLeaderSave() {
       if (leaderTimer) clearTimeout(leaderTimer);
       leaderTimer = setTimeout(function () {
@@ -211,9 +215,12 @@
       if (t === "y.reseed") {
         // HTML изменили мимо Yjs (ИИ, бот, старое приложение): вливаем только их правку
         // (было → стало) — не затирая того, что ещё не попало в HTML.
+        // Слили — подтверждаем: обновление ушло раньше по тому же сокету. Без подтверждения
+        // сервер отдаст слияние другому участнику (а базу журнала не сдвинет).
         if (!ready || msg.old_html == null) return;
-        if (ad.reseed(doc, msg.old_html, msg.html || "", ORIGIN_RESEED) && typeof o.onReseeded === "function") {
-          o.onReseeded();
+        if (ad.reseed(doc, msg.old_html, msg.html || "", ORIGIN_RESEED)) {
+          sendReseeded();
+          if (typeof o.onReseeded === "function") o.onReseeded();
         }
         return;
       }

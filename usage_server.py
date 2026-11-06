@@ -13387,7 +13387,10 @@ async def miniapp_local_note_patch(
             from assistant.stores import note_ydoc
 
             yjs_saved.append((int(item.get("revision") or 1), str(item.get("body") or "")))
-            note_ydoc.set_base(note_id, *yjs_saved[-1])
+            from assistant.realtime.yrooms import rooms as _yjs_rooms
+
+            if not _yjs_rooms().reseed_pending(note_id):  # слияние не подтверждено — база ждёт
+                note_ydoc.set_base(note_id, *yjs_saved[-1])
         from assistant.services import transcription_notes as tnotes
 
         if tnotes.is_transcription_note(item):
@@ -14212,7 +14215,10 @@ async def miniapp_note_sheet_patch(
             from assistant.stores import note_ydoc
 
             yjs_saved.append((int(item.get("revision") or 1), str(item.get("body") or "")))
-            note_ydoc.set_base(note_id, *yjs_saved[-1], sheet_id=str(extra_id))
+            from assistant.realtime.yrooms import rooms as _yjs_rooms
+
+            if not _yjs_rooms().reseed_pending(note_id, str(extra_id)):
+                note_ydoc.set_base(note_id, *yjs_saved[-1], sheet_id=str(extra_id))
         return item
 
     yjs_saved: list[tuple[int, str]] = []
@@ -14931,6 +14937,8 @@ async def miniapp_realtime_ws(websocket: WebSocket) -> None:
                     upto = msg.get("upto")
                     if data is not None and isinstance(upto, int):
                         yjs_rooms().compact(conn, note_id, data, upto, ykey[1])
+                elif kind == "y.reseeded" and ykey in yjs_joined:
+                    yjs_rooms().reseeded(conn, note_id, ykey[1])
                 elif kind == "y.leave" and ykey in yjs_joined:
                     yjs_joined.discard(ykey)
                     await yjs_rooms().leave(conn, note_id, ykey[1])

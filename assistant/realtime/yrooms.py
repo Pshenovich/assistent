@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 from typing import Any, Callable, Optional
 
 from assistant.realtime.hub import HUB, Connection
@@ -29,6 +30,9 @@ from assistant.realtime.hub import HUB, Connection
 SAVE_DELAY_SEC = 2.0
 COMPACT_AT = 300  # столько обновлений в журнале — просим клиента прислать снимок
 MAX_UPDATE_BYTES = 12 * 1024 * 1024
+# Слияние правки мимо Yjs считаем сделанным только по y.reseeded от клиента. Не подтвердил
+# за это время (фоновая вкладка, полумёртвый сокет) — отдаём слияние следующему участнику.
+RESEED_ACK_SEC = 8.0
 MAIN = "main"
 
 # (note_id) -> (body_html, revision); подменяется в тестах.
@@ -80,7 +84,9 @@ class YRoom:
         self.base_revision = base_revision  # ревизия, на которой HTML сохранён из Yjs
         self.base_html = base_html  # тот HTML
         self.merge_old: Optional[str] = base_html  # последний известный HTML — «было» для слияния
-        self.pending_merge: Optional[tuple[str, str]] = None  # (было, стало) — влить при входе
+        # Неподтверждённое слияние правки мимо Yjs: {"old", "new", "conn", "at"}; conn=None — ещё не отдано.
+        self.reseed: Optional[dict[str, Any]] = None
+        self.reseed_timer: Optional[asyncio.TimerHandle] = None
         self.save_handle: Optional[asyncio.TimerHandle] = None
         self.compact_pending = False
 
@@ -146,7 +152,8 @@ class YRooms:
             html, revision = note
             pending: Optional[tuple[str, str]] = None
             if updates and base != revision:
-                # HTML менялся мимо Yjs, пока заметку никто не держал открытой.
+                # HTML менялся мимо Yjs, пока заметку никто не держал открытой
+                # (или прошлое слияние так и не подтвердили — база тогда не сдвигалась).
                 if base_html is not None:
                     print(f"[yjs] outside edit note={note_id} sheet={sheet} base={base} rev={revision} — merge")
                     pending = (base_html, html)
@@ -158,7 +165,8 @@ class YRooms:
             else:
                 room = YRoom(note_id, updates, revision, html, sheet)
             room.merge_old = html
-            room.pending_merge = pending
+            if pending is not None:
+                room.reseed = {"old": pending[0], "new": pending[1], "revision": revision, "conn": None, "at": 0.0}
             self.rooms[key] = room
             return room
 
@@ -172,11 +180,57 @@ class YRooms:
         if conn not in room.conns:
             room.conns.append(conn)
         await self._send_state(room, conn)
-        if room.pending_merge is not None and room.updates:
-            old_html, html = room.pending_merge
-            room.pending_merge = None
-            _send(conn, _msg(room, sheet, {"type": "y.reseed", "old_html": old_html, "html": html}))
+        rs = room.reseed
+        if rs is not None and room.updates and (
+            rs["conn"] is None or rs["conn"] not in room.conns or time.monotonic() - rs["at"] >= RESEED_ACK_SEC
+        ):
+            self._deliver_reseed(room, conn)
         self._update_leader(room)
+
+    # ---- слияние правки мимо Yjs: отдать участнику и дождаться подтверждения ----
+    def _deliver_reseed(self, room: YRoom, conn: Connection) -> None:
+        rs = room.reseed
+        if rs is None:
+            return
+        rs["conn"] = conn
+        rs["at"] = time.monotonic()
+        payload: dict[str, Any] = {"type": "y.reseed", "old_html": rs["old"], "html": rs["new"]}
+        if rs.get("revision") is not None:
+            payload["revision"] = rs["revision"]
+        _send(conn, _msg(room, room.sheet, payload))
+        self._arm_reseed_timer(room)
+
+    def _arm_reseed_timer(self, room: YRoom) -> None:
+        if room.reseed_timer is not None:
+            room.reseed_timer.cancel()
+        loop = asyncio.get_running_loop()
+
+        def _fire() -> None:
+            room.reseed_timer = None
+            rs = room.reseed
+            if rs is None or self.rooms.get(room.key) is not room:
+                return
+            others = [c for c in room.conns if c is not rs["conn"]]
+            if others:
+                print(f"[yjs] reseed not confirmed note={room.note_id} sheet={room.sheet} — handing to next")
+                self._deliver_reseed(room, others[0])
+
+        room.reseed_timer = loop.call_later(RESEED_ACK_SEC, _fire)
+
+    def reseeded(self, conn: Connection, note_id: int, sheet: str = MAIN) -> None:
+        """Клиент влил правку мимо Yjs (y.reseeded) — её обновление уже ушло перед этим сообщением."""
+        room = self.rooms.get((int(note_id), normalize_sheet(sheet)))
+        if room is None or room.reseed is None or room.reseed["conn"] is not conn:
+            return
+        rs, room.reseed = room.reseed, None
+        if room.reseed_timer is not None:
+            room.reseed_timer.cancel()
+            room.reseed_timer = None
+        if rs.get("revision") is not None and int(rs["revision"]) >= int(room.base_revision or 0):
+            # Журнал теперь содержит правку — база догоняет, иначе при следующей загрузке слили бы её снова.
+            room.base_revision = int(rs["revision"])
+            room.base_html = rs["new"]
+            self._schedule_save(room)
 
     def _update_leader(self, room: YRoom) -> None:
         """Ведущий (первый в комнате) сохраняет HTML и после чужих правок — HTML не отстаёт."""
@@ -256,6 +310,8 @@ class YRooms:
         room.conns.remove(conn)
         if room.conns:
             self._update_leader(room)
+            if room.reseed is not None and room.reseed["conn"] is conn:
+                self._deliver_reseed(room, room.conns[0])  # ушёл, не подтвердив слияние
             if room.seeder is conn:
                 room.seeder = None
                 if not room.updates:
@@ -263,18 +319,29 @@ class YRooms:
                     await self._send_state(room, room.conns[0])
             return
         self.rooms.pop(room.key, None)
+        if room.reseed_timer is not None:
+            room.reseed_timer.cancel()
+            room.reseed_timer = None
         if room.save_handle is not None:
             room.save_handle.cancel()
             room.save_handle = None
         await self._flush(room)
 
+    def reseed_pending(self, note_id: int, sheet: str = MAIN) -> bool:
+        """Есть неподтверждённое слияние правки мимо Yjs — базу журнала сдвигать рано."""
+        room = self.rooms.get((int(note_id), normalize_sheet(sheet)))
+        return bool(room is not None and room.reseed is not None)
+
     def mark_saved(self, note_id: int, revision: int, html: str, sheet: str = MAIN) -> None:
         """HTML сохранён из Yjs на этой ревизии — журнал с ней согласован."""
         room = self.rooms.get((int(note_id), normalize_sheet(sheet)))
         if room is not None:
-            room.base_revision = int(revision)
-            room.base_html = html
             room.merge_old = html
+            if room.reseed is None:
+                room.base_revision = int(revision)
+                room.base_html = html
+            # Иначе база остаётся прежней: журнал ещё без правки мимо Yjs, и после выхода всех
+            # (или перезапуска) расхождение ревизий снова вызовет слияние при входе.
             self._schedule_save(room)
 
     # ---- правки мимо Yjs ----
@@ -326,10 +393,12 @@ class YRooms:
         room.merge_old = html
         if not room.updates or old_html is None or old_html == html:
             return  # документа ещё нет — посевщик возьмёт свежий HTML сам
-        # Ведущий вливает правку (было → стало) слиянием; его сохранение обновит base.
-        _send(room.conns[0], _msg(room, room.sheet, {
-            "type": "y.reseed", "old_html": old_html, "html": html, "revision": revision,
-        }))
+        # Ведущий вливает правку (было → стало) слиянием и подтверждает y.reseeded.
+        # Прошлое слияние не подтверждено — «было» берём от него: так вольются обе правки.
+        if room.reseed is not None:
+            old_html = room.reseed["old"]
+        room.reseed = {"old": old_html, "new": html, "revision": revision, "conn": None, "at": 0.0}
+        self._deliver_reseed(room, room.conns[0])
 
     # ---- хранение ----
     def _schedule_save(self, room: YRoom) -> None:

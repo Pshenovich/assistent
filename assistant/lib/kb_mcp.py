@@ -296,12 +296,12 @@ MAX_MARKDOWN = 200_000
 
 
 def _md_html(markdown: str) -> str:
-    from assistant.lib.note_markdown import markdown_to_html
+    from assistant.lib.note_markdown import document_markdown_to_html
 
     md = str(markdown or "")
     if len(md) > MAX_MARKDOWN:
         raise ValueError(f"Слишком длинный текст — до {MAX_MARKDOWN} символов за раз")
-    return markdown_to_html(md)
+    return document_markdown_to_html(md)
 
 
 def _as_ai(uid: int) -> None:

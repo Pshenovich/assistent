@@ -191,7 +191,7 @@
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
   // Запись встречи на транскрибацию — = TRANSCRIPTION_UPLOAD_MAX_MB на сервере (файл идёт через диск).
   const TRANSCRIPTION_UPLOAD_MAX_MB = 500;
-  const NOTE_EDITOR_ASSET_V = "20261104-doctype1"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261106-reseedack"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
   // Доска и макет (kind=board): скрипты грузятся при первом открытии, а не с каждой страницей.

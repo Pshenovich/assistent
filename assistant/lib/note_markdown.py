@@ -258,3 +258,166 @@ def markdown_to_html(md: str) -> str:
         html.append("<p>" + _inline(trimmed) + "</p>")
     close_all()
     return "".join(html)
+
+
+# ---------- Обычный Markdown документа (агенты по MCP, импорт) ----------
+# markdown_to_html выше — для саммари встреч: он «расклеивает» заголовок и текст, слитые моделью
+# в одну строку, и поэтому режет обычные заголовки («# Орбита и ИИ-ассистент» → «Орбита и» + абзац).
+# Для готового Markdown — этот разбор: заголовки как есть, нумерованные и вложенные списки,
+# цитаты, код, разделитель, ссылки.
+
+_DOC_INLINE = re.compile(
+    r"(`[^`]+`|\*\*[^*]+\*\*|~~[^~]+~~|\[[^\]]+\]\([^)\s]+\)|\*[^*\s][^*]*\*)"
+)
+_SAFE_URL = re.compile(r"^(https?://|mailto:|tel:|/|#)", re.I)
+
+
+def _doc_inline(s: str) -> str:
+    out = []
+    for part in _DOC_INLINE.split(str(s or "")):
+        if not part:
+            continue
+        if part.startswith("`") and part.endswith("`") and len(part) > 2:
+            out.append("<code>" + _esc(part[1:-1]) + "</code>")
+        elif part.startswith("**") and part.endswith("**") and len(part) > 4:
+            out.append("<strong>" + _doc_inline(part[2:-2]) + "</strong>")
+        elif part.startswith("~~") and part.endswith("~~") and len(part) > 4:
+            out.append("<s>" + _doc_inline(part[2:-2]) + "</s>")
+        elif part.startswith("[") and part.endswith(")"):
+            m = re.fullmatch(r"\[([^\]]+)\]\(([^)\s]+)\)", part)
+            if m and _SAFE_URL.match(m.group(2)):
+                out.append(f'<a href="{_esc(m.group(2))}">{_doc_inline(m.group(1))}</a>')
+            else:
+                out.append(_esc(part))
+        elif part.startswith("*") and part.endswith("*") and len(part) > 2:
+            out.append("<em>" + _doc_inline(part[1:-1]) + "</em>")
+        else:
+            out.append(_esc(part))
+    return "".join(out)
+
+
+_LIST_ITEM = re.compile(r"^(\s*)([-*+•]|\d{1,3}[.)])\s+(.*)$")
+_DOC_TABLE_SEP = re.compile(r"^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?$")
+
+
+def _doc_table_cells(line: str) -> list[str]:
+    t = line.strip()
+    if t.startswith("|"):
+        t = t[1:]
+    if t.endswith("|"):
+        t = t[:-1]
+    return [c.strip() for c in t.split("|")]
+
+
+def document_markdown_to_html(md: str) -> str:
+    """Готовый Markdown → HTML документа Орбиты (без эвристик саммари)."""
+    lines = str(md or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    html: list[str] = []
+    para: list[str] = []
+    i = 0
+
+    def flush_para() -> None:
+        if para:
+            html.append("<p>" + "<br>".join(_doc_inline(p) for p in para) + "</p>")
+            para.clear()
+
+    def render_list(start: int) -> int:
+        """Список (с вложенностью по отступу) с позиции start; возвращает следующую строку."""
+        stack: list[tuple[int, str]] = []  # (отступ, ul|ol)
+        j = start
+        while j < len(lines):
+            m = _LIST_ITEM.match(lines[j])
+            if not m:
+                # продолжение пункта — строка с отступом под ним
+                if lines[j].strip() and stack and len(lines[j]) - len(lines[j].lstrip()) > stack[-1][0]:
+                    html[-1] = html[-1][: -len("</p>")] + "<br>" + _doc_inline(lines[j].strip()) + "</p>"
+                    j += 1
+                    continue
+                break
+            indent = len(m.group(1).expandtabs(4))
+            kind = "ol" if m.group(2)[0].isdigit() else "ul"
+            text = m.group(3)
+            task = re.match(r"^\[([ xX])\]\s+(.*)$", text) if kind == "ul" else None
+            while stack and indent < stack[-1][0]:
+                html.append("</li></" + stack.pop()[1] + ">")
+            if stack and indent == stack[-1][0] and kind != stack[-1][1]:
+                html.append("</li></" + stack.pop()[1] + ">")
+            if not stack or indent > stack[-1][0]:
+                if task:
+                    html.append('<ul class="note-task-list">')
+                elif kind == "ol" and m.group(2)[:-1] != "1":
+                    html.append(f'<ol start="{int(m.group(2)[:-1])}">')
+                else:
+                    html.append("<" + kind + ">")
+                stack.append((indent, kind))
+            else:
+                html.append("</li>")
+            if task:
+                html.append(("<li checked>" if task.group(1).lower() == "x" else "<li>") + "<p>" + _doc_inline(task.group(2)) + "</p>")
+            else:
+                html.append("<li><p>" + _doc_inline(text) + "</p>")
+            j += 1
+        while stack:
+            html.append("</li></" + stack.pop()[1] + ">")
+        return j
+
+    while i < len(lines):
+        raw = lines[i]
+        t = raw.strip()
+        if not t:
+            flush_para()
+            i += 1
+            continue
+        if t.startswith("```"):
+            flush_para()
+            code: list[str] = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code.append(lines[i])
+                i += 1
+            i += 1
+            html.append("<pre><code>" + _esc("\n".join(code)) + "</code></pre>")
+            continue
+        hm = re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", t)
+        if hm:
+            flush_para()
+            n = len(hm.group(1))
+            html.append(f"<h{n}>{_doc_inline(hm.group(2))}</h{n}>")
+            i += 1
+            continue
+        if re.fullmatch(r"(\*\s*){3,}|(-\s*){3,}|(_\s*){3,}", t):
+            flush_para()
+            html.append("<hr>")
+            i += 1
+            continue
+        if t.startswith("|") and i + 1 < len(lines) and _DOC_TABLE_SEP.match(lines[i + 1].strip()):
+            flush_para()
+            rows = [_doc_table_cells(t)]
+            i += 2
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                rows.append(_doc_table_cells(lines[i]))
+                i += 1
+            width = max(len(r) for r in rows)
+            out = ['<table class="note-editor-table"><tbody>']
+            for n, cells in enumerate(rows):
+                tag = "th" if n == 0 else "td"
+                cells = cells + [""] * (width - len(cells))
+                out.append("<tr>" + "".join(f"<{tag}><p>{_doc_inline(c)}</p></{tag}>" for c in cells) + "</tr>")
+            out.append("</tbody></table>")
+            html.append("".join(out))
+            continue
+        if t.startswith(">"):
+            flush_para()
+            quote: list[str] = []
+            while i < len(lines) and lines[i].strip().startswith(">"):
+                quote.append(re.sub(r"^>\s?", "", lines[i].strip()))
+                i += 1
+            html.append("<blockquote>" + document_markdown_to_html("\n".join(quote)) + "</blockquote>")
+            continue
+        if _LIST_ITEM.match(raw) and not para:
+            i = render_list(i)
+            continue
+        para.append(t)
+        i += 1
+    flush_para()
+    return "".join(html)

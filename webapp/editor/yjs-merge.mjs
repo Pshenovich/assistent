@@ -101,3 +101,24 @@ export function mergeBlocks(oldBlocks, newBlocks, curBlocks, eq) {
   }
   return out;
 }
+
+/**
+ * Правка old → new уже есть в cur (слияние доставили повторно: прошлый участник слил,
+ * но не успел подтвердить). Тогда сливать нельзя — дописанные блоки встали бы второй раз.
+ * Признак: все блоки new стоят в cur в том же порядке, а удалённых правкой блоков в cur нет.
+ */
+export function alreadyApplied(oldBlocks, newBlocks, curBlocks, eq) {
+  if (!newBlocks.length) return false;
+  if (lcsPairs(newBlocks, curBlocks, eq).length !== newBlocks.length) return false;
+  var kept = {};
+  lcsPairs(oldBlocks, newBlocks, eq).forEach(function (p) {
+    kept[p[0]] = true;
+  });
+  for (var i = 0; i < oldBlocks.length; i++) {
+    if (kept[i]) continue;
+    for (var c = 0; c < curBlocks.length; c++) {
+      if (eq(oldBlocks[i], curBlocks[c])) return false;
+    }
+  }
+  return true;
+}

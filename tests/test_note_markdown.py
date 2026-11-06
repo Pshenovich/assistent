@@ -81,3 +81,34 @@ def test_task_section_becomes_checklist():
 def test_done_tasks_heading_stays_whole():
     html = markdown_to_html("## ✅ Выполненные задачи\n\n- [x] Собрать фидбек")
     assert html.startswith('<h2>✅ Выполненные задачи</h2><ul class="note-task-list"><li checked>')
+
+
+# ---------- обычный Markdown документа (MCP базы знаний) ----------
+
+from assistant.lib.note_markdown import document_markdown_to_html  # noqa: E402
+
+
+def test_document_markdown_keeps_headings_whole():
+    html = document_markdown_to_html("# Орбита и ИИ-ассистент Лео\n\n## 2. Какие задачи решает\n\nТекст")
+    assert html == "<h1>Орбита и ИИ-ассистент Лео</h1><h2>2. Какие задачи решает</h2><p>Текст</p>"
+
+
+def test_document_markdown_lists_ordered_nested_and_tasks():
+    html = document_markdown_to_html("1. один\n2. два\n   - вложенный\n3. три\n\n- [ ] открыта\n- [x] готова")
+    assert html == (
+        "<ol><li><p>один</p></li><li><p>два</p><ul><li><p>вложенный</p></li></ul></li><li><p>три</p></li></ol>"
+        '<ul class="note-task-list"><li><p>открыта</p></li><li checked><p>готова</p></li></ul>'
+    )
+
+
+def test_document_markdown_table_inline_and_safety():
+    html = document_markdown_to_html(
+        "| A | B |\n|---|:-:|\n| **x** | [сайт](https://getorbita.me) |\n\n"
+        "[плохо](javascript:alert(1)) note_id_x <b>тег</b>\n\n> цитата\n\n---"
+    )
+    assert '<table class="note-editor-table"><tbody><tr><th><p>A</p></th>' in html
+    assert "<td><p><strong>x</strong></p></td>" in html
+    assert '<a href="https://getorbita.me">сайт</a>' in html
+    assert 'href="javascript' not in html
+    assert "note_id_x" in html and "&lt;b&gt;тег&lt;/b&gt;" in html
+    assert "<blockquote><p>цитата</p></blockquote><hr>" in html

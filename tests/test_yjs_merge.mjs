@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mergeBlocks } from "../webapp/editor/yjs-merge.mjs";
+import { alreadyApplied, mergeBlocks } from "../webapp/editor/yjs-merge.mjs";
 
 const eq = (a, b) => a === b;
 const m = (o, n, c) => mergeBlocks(o, n, c, eq);
@@ -27,4 +27,12 @@ assert.deepEqual(m(["A", "B"], ["A", "B", "bot"], ["A", "B-human"]), ["A", "B-hu
 assert.deepEqual(m(["A"], ["A", "bot"], ["A", "mine"]), ["A", "bot", "mine"]);
 // Полная замена (транскрибация переписала саммари), человек ничего не трогал.
 assert.deepEqual(m(["A", "B"], ["X", "Y"], ["A", "B"]), ["X", "Y"]);
+// Повторная доставка слияния: правка уже в документе — не сливаем второй раз.
+const done = (o, n, c) => alreadyApplied(o, n, c, eq);
+assert.equal(done(["A"], ["A", "bot"], ["A", "bot", "mine"]), true); // дописанное уже есть
+assert.equal(done(["A"], ["A", "bot"], ["A", "mine"]), false);
+assert.equal(done(["A", "B"], ["X", "Y"], ["X", "Y"]), true); // полная замена уже прошла
+assert.equal(done(["T1", "T2"], ["X", "Y"], ["T1", "T2"]), false); // случай с прода: в журнале старое
+assert.equal(done(["A", "B", "C"], ["A", "C"], ["A", "B", "C"]), false); // удаление ещё не прошло
+assert.equal(done(["A", "B", "C"], ["A", "C"], ["A", "C"]), true);
 console.log("yjs merge ok");
