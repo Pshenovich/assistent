@@ -2591,9 +2591,19 @@
     var onIcon = typeof opts.onIcon === "function" ? opts.onIcon : null;
     var onRevise = typeof opts.onRevise === "function" ? opts.onRevise : null;
     var onNotify = typeof opts.onNotify === "function" ? opts.onNotify : function () {};
+    // readOnly — читатель базы знаний: смотреть, листать, PDF; без выделения, правки, стиля и сохранения.
+    var readOnly = !!opts.readOnly;
+    if (readOnly) {
+      onChange = null;
+      onOp = null;
+      onRevise = null;
+      onMedia = null;
+      onIcon = null;
+      onSelect = null;
+    }
     var sheetId = String(opts.sheetId || "");
     var wrap = document.createElement("div");
-    wrap.className = "note-web-canvas";
+    wrap.className = "note-web-canvas" + (readOnly ? " is-readonly" : "");
     var toolbar = document.createElement("div");
     toolbar.className = "note-web-canvas-toolbar";
 

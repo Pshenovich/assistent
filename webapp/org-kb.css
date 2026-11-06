@@ -75,3 +75,13 @@ html.kb-note-readonly #note-editor-toolbar-wrap { display: none; }
 @media (max-width: 520px) {
   .kb-mine-empty .pf-btn { order: 4; margin: 4px 0 0; }
 }
+.kb-banner-done { white-space: nowrap; color: var(--text-secondary); }
+
+/* Читатель: без «+ лист», «Сделать: …» и кнопок правки презентации */
+html.kb-note-readonly .note-sheet-chip--add,
+html.kb-note-readonly .sheet-kind-pick { display: none; }
+.note-web-canvas.is-readonly .note-web-canvas-pick-btn:not(.note-web-canvas-refresh-btn):not(.note-web-canvas-pdf-btn),
+.note-web-canvas.is-readonly .note-web-canvas-theme,
+.note-web-canvas.is-readonly .note-web-canvas-insert-bar { display: none !important; }
+/* Читатель: обсуждение видно, поле ввода — нет (писать можно с роли комментатора) */
+html.kb-note-reader #note-paie-reply-form { display: none; }

@@ -32152,6 +32152,7 @@
     var toolbarWrap = document.getElementById("note-editor-toolbar-wrap");
     if (toolbarWrap) setHidden(toolbarWrap, true);
     noteSheetState.leftWebCanvas = LeoWebCanvas.create({
+      readOnly: noteSheetsReadOnly(),
       host: host,
       html: sheet.body || sheet.description || "",
       sheetId: String(sheet.id),
@@ -32198,6 +32199,7 @@
     host.innerHTML = "";
     if (bar) bar.innerHTML = "";
     noteSheetState.rightWebCanvas = LeoWebCanvas.create({
+      readOnly: noteSheetsReadOnly(),
       host: host,
       html: sheet.body || sheet.description || "",
       sheetId: String(sheet.id),
@@ -32234,9 +32236,15 @@
     noteSheetState.rightEditor = null;
   }
 
+  // Читатель базы знаний организации (класс ставит org-kb.js): доски и презентации — только просмотр.
+  function noteSheetsReadOnly() {
+    return document.documentElement.classList.contains("kb-note-readonly");
+  }
+
   function boardSheetOptions(sheet) {
     var sid = String(sheet.id);
     return {
+      readOnly: noteSheetsReadOnly(),
       json: sheet.body || sheet.description || "",
       sheetId: (noteSheetsNoteId() || "") + ":" + sid,
       title: sheet.title || "Доска",
@@ -48630,8 +48638,14 @@
       chatNow === 0
         ? !(wrap && wrap._newChatVisibility === "private")
         : chatNow !== null && (noteChatById(chatNow) || {}).visibility !== "private";
-    hint.textContent =
-      "ИИ видит текст и таблицы документа и может их править." + (shared ? " Чат видят все участники." : "");
+    // Читатель базы знаний организации (класс ставит org-kb.js): ИИ отвечает, но не правит.
+    var readOnlyDoc = document.documentElement.classList.contains("kb-note-readonly");
+    var readerOnly = document.documentElement.classList.contains("kb-note-reader");
+    hint.textContent = readerOnly
+      ? "Вы читатель: обсуждение видно, а писать и спрашивать ИИ можно с правами комментатора."
+      : (readOnlyDoc
+          ? "ИИ видит текст и таблицы документа и отвечает по ним. Править документ у вас прав нет."
+          : "ИИ видит текст и таблицы документа и может их править.") + (shared ? " Чат видят все участники." : "");
     box.appendChild(title);
     box.appendChild(hint);
     var html = "";
@@ -48643,14 +48657,15 @@
     if (/<table/i.test(html)) sugg.push("Проверь цифры в таблице");
     else sugg.push("Предложи следующие шаги");
     // На открытой доске — шаблоны «по заметке»: чип шаблона в поле ввода, Лео соберёт по листам.
-    var boardOpen = !!openBoardForYjs();
-    if (openBoardIsDesign()) {
+    var boardOpen = !readOnlyDoc && !!openBoardForYjs();
+    if (!readOnlyDoc && openBoardIsDesign()) {
       hint.textContent = "Лео видит экраны макета — слои, тексты, размеры и цвета — и может поправить тексты, цвета, имена и видимость слоёв." +
         (shared ? " Чат видят все участники." : "");
       box.appendChild(designSuggestions());
       return box;
     }
-    if (!boardOpen) sugg.push("Нарисуй схему на доске");
+    if (!boardOpen && !readOnlyDoc) sugg.push("Нарисуй схему на доске");
+    if (readerOnly) sugg = [];
     var chips = document.createElement("div");
     chips.className = "note-discuss-sugg";
     if (boardOpen) {

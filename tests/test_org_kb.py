@@ -171,3 +171,19 @@ class OrgKbVerifyOnEditTests(OrgKbTests):
         self.assertEqual(self._verified(), old)
         notes_store.update_note(BACK, self.note, body="<p>шаги: 1, 2, 3</p>", actor_user_id=BACK)
         self.assertNotEqual(self._verified(), old)
+
+
+class OrgKbEditRequestTests(OrgKbTests):
+    def test_reader_requests_and_author_allows(self) -> None:
+        from assistant.stores import note_members
+
+        req = note_members.create_edit_request(owner_user_id=BACK, note_id=self.note, requester_user_id=MANAGER)
+        self.assertTrue(req["new"])
+        again = note_members.create_edit_request(owner_user_id=BACK, note_id=self.note, requester_user_id=MANAGER)
+        self.assertFalse(again["new"])  # повторный запрос не плодит уведомления
+        note_members.resolve_edit_request(req["token"], allow=True)
+        self.assertEqual(org_kb.role_for_note(MANAGER, self.note), "editor")
+        self.assertIsNotNone(notes_store.get_accessible_note(MANAGER, self.note))
+        self.assertFalse(note_members.is_member(str(BACK), self.note, str(MANAGER)))  # не участник заметки
+        with self.assertRaises(ValueError):
+            note_members.create_edit_request(owner_user_id=BACK, note_id=self.note, requester_user_id=MANAGER)

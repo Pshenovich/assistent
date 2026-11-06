@@ -752,6 +752,11 @@
       var check = kb.no_expiry ? "не устаревает" : "проверено " + ago(kb.verified_at);
       text = (role === "reader" ? "Только чтение · " : role === "commenter" ? "Можно комментировать · " : "") + check;
     }
+    if (!canEdit) {
+      action += note._kbRequested
+        ? '<span class="kb-banner-done">Запрос отправлен</span>'
+        : '<button type="button" class="pf-link" data-kb-banner="request">Попросить править</button>';
+    }
     if (role === "owner") action += '<button type="button" class="pf-link" data-kb-banner="access">Доступ</button>';
     var ico = kb.stale && !kb.no_expiry ? ICO.clock : canEdit ? ICO.check : ICO.eye;
     return crumb + '<div class="' + cls + '">' + ico + "<span>" + esc(text) + "</span>" + action + "</div>";
@@ -764,6 +769,7 @@
     // читатель и комментатор: прячем панель правки (класс снимается на следующем открытом документе)
     var ro = !!(note && note.can_edit === false);
     document.documentElement.classList.toggle("kb-note-readonly", ro);
+    document.documentElement.classList.toggle("kb-note-reader", ro && !note.can_comment);
     if (!note || !note.org_kb || !page) return;
     var box = document.createElement("div");
     box.className = "kb-doc-banner";
@@ -781,6 +787,15 @@
           box.innerHTML = bannerHtml(note);
           toast("Отмечено: всё актуально");
           refreshOrg(note.org_kb.org_id).catch(function () {});
+        } catch (err) {
+          toast(errText(err));
+        }
+      } else if (kind === "request") {
+        try {
+          var r = await app().apiFetch("/notes/local/" + note.id + "/request-edit", json("POST", {}));
+          note._kbRequested = true;
+          box.innerHTML = bannerHtml(note);
+          toast(r && r.already ? "Запрос уже отправлен — ждём ответа автора" : "Запрос отправлен автору документа");
         } catch (err) {
           toast(errText(err));
         }

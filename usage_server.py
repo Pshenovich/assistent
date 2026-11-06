@@ -8264,6 +8264,40 @@ async def miniapp_org_kb_inherit(
     return {"ok": True, **(await _org_call(org_kb.access, org_id, uid, node_id))}
 
 
+@miniapp_router.post("/notes/local/{note_id}/request-edit")
+async def miniapp_note_request_edit(
+    note_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Читатель или комментатор базы знаний просит права редактировать — автору приходит «Разрешить / Отклонить»."""
+    from assistant.stores import note_members, org_kb
+    from assistant.stores import notes as notes_store
+
+    uid = int(principal.telegram_user_id)
+    role = await run_in_threadpool(org_kb.role_for_note, uid, note_id)
+    note = await run_in_threadpool(notes_store.get_note_by_id, note_id)
+    if not role or not note:
+        raise HTTPException(status_code=404, detail="Документ не найден")
+    await run_in_threadpool(_remember_principal_profile, principal)
+    author_id, author_name, author_username = _comment_author_from_principal(principal)
+    try:
+        req = await run_in_threadpool(
+            partial(
+                note_members.create_edit_request,
+                owner_user_id=str(note.get("owner_user_id") or ""),
+                note_id=note_id,
+                requester_user_id=author_id,
+                requester_username=author_username,
+                requester_name=author_name,
+            )
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if req.get("new"):
+        await run_in_threadpool(_notify_edit_request, req, str(note.get("title") or "Без названия"))
+    _track(uid, "kb.request_edit")
+    return {"ok": True, "status": req.get("status"), "already": not req.get("new")}
+
+
 @miniapp_router.post("/notes/local/{note_id}/verify")
 async def miniapp_note_verify(
     note_id: int, body: _MiniappKbVerify, principal: _MiniappPrincipal = Depends(require_miniapp_user)
@@ -14553,7 +14587,7 @@ async def miniapp_note_collab(
     payload = body or _MiniappNoteCollabBody()
 
     def _run() -> dict[str, Any] | None:
-        note = notes_store.get_accessible_note(uid, note_id)
+        note = notes_store.get_readable_note(uid, note_id)  # присутствие и курсор — читателю тоже
         if not note:
             return None
         owner = str(note.get("owner_user_id") or uid)
@@ -14612,7 +14646,7 @@ async def miniapp_note_collab_leave(
     uid = int(principal.telegram_user_id)
 
     def _run() -> None:
-        note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
+        note = notes_store.get_readable_note(uid, note_id, with_sharing=False)
         if not note:
             return
         owner = str(note.get("owner_user_id") or uid)
@@ -15231,7 +15265,7 @@ async def miniapp_discuss_presence_heartbeat(
     from assistant.stores import discussion_presence
 
     uid = str(int(principal.telegram_user_id))
-    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    owner = await run_in_threadpool(partial(_resolve_item_owner, uid, kind, item_id, org_need="reader"))
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     _, name, username = _comment_author_from_principal(principal)
@@ -15264,7 +15298,7 @@ async def miniapp_discuss_presence_leave(
     from assistant.stores import discussion_presence
 
     uid = str(int(principal.telegram_user_id))
-    owner = await run_in_threadpool(_resolve_item_owner, uid, kind, item_id)
+    owner = await run_in_threadpool(partial(_resolve_item_owner, uid, kind, item_id, org_need="reader"))
     if not owner:
         return {"ok": True}
     await run_in_threadpool(
@@ -15325,12 +15359,12 @@ def _note_chat_api(chat: dict[str, Any], uid: str) -> dict[str, Any]:
     }
 
 
-def _note_chat_owner_or_404(uid: str, kind: str, item_id: str) -> str:
+def _note_chat_owner_or_404(uid: str, kind: str, item_id: str, *, org_need: str = "editor") -> str:
     from assistant.stores import note_chats
 
     if not note_chats.supports_chats(kind):
         raise HTTPException(status_code=404, detail="Чаты есть только у заметок")
-    owner = _resolve_item_owner(uid, kind, item_id)
+    owner = _resolve_item_owner(uid, kind, item_id, org_need=org_need)
     if not owner:
         raise HTTPException(status_code=404, detail="Запись не найдена")
     return owner
@@ -15348,7 +15382,7 @@ async def miniapp_note_chats_list(
     uid = str(int(principal.telegram_user_id))
 
     def _run() -> list[dict[str, Any]]:
-        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        owner = _note_chat_owner_or_404(uid, kind, item_id, org_need="reader")
         return note_chats.list_chats(owner, kind, str(item_id), uid)
 
     chats = await run_in_threadpool(_run)
@@ -15367,7 +15401,7 @@ async def miniapp_note_chats_create(
     uid = str(int(principal.telegram_user_id))
 
     def _run() -> dict[str, Any]:
-        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        owner = _note_chat_owner_or_404(uid, kind, item_id, org_need="commenter")
         return note_chats.create_chat(
             owner, kind, str(item_id), author=uid, title=body.title, visibility=body.visibility
         )
@@ -15446,7 +15480,7 @@ async def miniapp_note_chats_read(
     uid = str(int(principal.telegram_user_id))
 
     def _run() -> int:
-        owner = _note_chat_owner_or_404(uid, kind, item_id)
+        owner = _note_chat_owner_or_404(uid, kind, item_id, org_need="reader")
         if chat_id != note_chats.COMMENTS_CHAT_ID:
             chat = note_chats.chat_for_item(chat_id, owner, kind, str(item_id))
             if not note_chats.can_view(chat, uid):

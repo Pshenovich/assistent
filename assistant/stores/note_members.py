@@ -595,6 +595,10 @@ def create_edit_request(
         raise ValueError("Вы уже владелец документа")
     if is_member(owner, int(note_id), req):
         raise ValueError("Редактирование уже разрешено")
+    from assistant.stores import org_kb
+
+    if org_kb.at_least(org_kb.role_for_note(req, int(note_id)), "editor"):
+        raise ValueError("Редактирование уже разрешено")
     with _LOCK:
         existing = _conn().execute(
             """
@@ -668,7 +672,16 @@ def resolve_edit_request(token: str, *, allow: bool) -> Optional[dict[str, Any]]
         )
         _conn().commit()
     if allow:
-        add_member(req["owner_user_id"], int(req["note_id"]), req["requester_user_id"])
+        from assistant.stores import org_kb
+
+        node = org_kb.node_for_note(int(req["note_id"]))
+        if node:
+            # документ базы знаний организации: роль редактора на документе, а не участник заметки
+            org_kb.set_access(
+                req["owner_user_id"], int(node["org_id"]), int(node["id"]), f"u:{req['requester_user_id']}", "editor"
+            )
+        else:
+            add_member(req["owner_user_id"], int(req["note_id"]), req["requester_user_id"])
     updated = get_edit_request(token)
     return updated
 
