@@ -2017,8 +2017,11 @@ def tool_notes_find(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         return _err("Укажите название документа")
     uid = int(ctx.uid)
     pools = [("note", notes_store.list_notes(uid, limit=500))]
+    from assistant.stores import org_kb
+
     for kind, loader in (("transcription", lambda: notes_store.list_transcription_notes(uid, limit=500)),
-                         ("knowledge", lambda: notes_store.list_knowledge_notes(uid))):
+                         ("knowledge", lambda: notes_store.list_knowledge_notes(uid)),
+                         ("knowledge", lambda: org_kb.readable_notes(uid))):  # базы знаний организаций — по правам
         try:
             pools.append((kind, loader()))
         except Exception as e:

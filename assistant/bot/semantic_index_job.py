@@ -34,6 +34,21 @@ def index_all() -> None:
                 print(f"[semantic] uid={uid} {res}")
         except Exception as e:
             print(f"[semantic] uid={uid} err={e!r}")
+    # базы знаний организаций — свой раздел индекса на организацию
+    try:
+        from assistant.stores import orgs_store
+
+        org_ids = orgs_store.all_org_ids()
+    except Exception as e:
+        print(f"[semantic] orgs list err={e!r}")
+        org_ids = []
+    for oid in org_ids:
+        try:
+            res = semantic_memory.index_org(oid)
+            if res["indexed"] or res["removed"]:
+                print(f"[semantic] org={oid} {res}")
+        except Exception as e:
+            print(f"[semantic] org={oid} err={e!r}")
 
 
 async def semantic_index_tick(context: ContextTypes.DEFAULT_TYPE) -> None:

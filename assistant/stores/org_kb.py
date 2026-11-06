@@ -354,6 +354,7 @@ def add_doc(actor_id: int | str, org_id: int, section_id: int, note_id: int) -> 
              _now(), viewer.uid, viewer.uid, _now()),
         )
         conn.commit()
+    _reindex(org_id)
     return {"id": int(cur.lastrowid), "note_id": int(note_id), "parent_id": int(section_id)}
 
 
@@ -412,6 +413,8 @@ def remove(actor_id: int | str, org_id: int, node_id: int) -> None:
         conn.execute("DELETE FROM org_kb_acl WHERE node_id = ?", (int(node_id),))
         conn.execute("DELETE FROM org_kb_nodes WHERE id = ?", (int(node_id),))
         conn.commit()
+    if row["kind"] == "doc":
+        _reindex(org_id)
 
 
 def _valid_principal(org_id: int, principal: str) -> str:
@@ -502,7 +505,7 @@ def verify(actor_id: int | str, note_id: int, *, no_expiry: Optional[bool] = Non
 
 
 def mark_edited(note_id: int, user_id: int | str) -> None:
-    """Правка документа = проверка актуальности. Вызывать после сохранения; не бросает."""
+    """Правка текста документа = проверка актуальности + переиндексация для Лео. Не бросает."""
     try:
         with _LOCK:
             conn = _conn()
@@ -511,8 +514,21 @@ def mark_edited(note_id: int, user_id: int | str) -> None:
                 (_now(), _uid(user_id), int(note_id)),
             )
             conn.commit()
+            row = conn.execute("SELECT org_id FROM org_kb_nodes WHERE note_id = ?", (int(note_id),)).fetchone()
+        if row:
+            _reindex(int(row[0]))
     except Exception as e:
         print(f"[org_kb] mark_edited note={note_id} err={e!r}")
+
+
+def _reindex(org_id: int) -> None:
+    """Поиск Лео по базе знаний организации — пересобрать её раздел индекса (с задержкой, повторы склеиваются)."""
+    try:
+        from assistant.services import semantic_memory
+
+        semantic_memory.org_changed(org_id)
+    except Exception as e:
+        print(f"[org_kb] reindex org={org_id} err={e!r}")
 
 
 def stale_for_owner(user_id: int | str) -> list[dict[str, Any]]:
@@ -687,3 +703,38 @@ def _transfer_outside(ids: list[int], old: str, new: str) -> None:
                 semantic_index.delete_source(old, key)
     except Exception as e:
         print(f"[org_kb] transfer semantic err={e!r}")
+
+
+# ---------- для Лео ----------
+
+
+def org_ids_of(user_id: int | str) -> list[int]:
+    return [int(o["id"]) for o in orgs_store.orgs_for_user(user_id)]
+
+
+def org_doc_note_ids(org_id: int) -> list[int]:
+    with _LOCK:
+        return [int(r[0]) for r in _conn().execute(
+            "SELECT note_id FROM org_kb_nodes WHERE org_id = ? AND kind = 'doc'", (int(org_id),)
+        ).fetchall()]
+
+
+def readable_note_ids(user_id: int | str, org_id: int) -> set[int]:
+    """Документы организации, которые человек может читать (одним проходом по дереву)."""
+    try:
+        return {int(n["note_id"]) for n in tree(org_id, user_id) if n["kind"] == "doc" and n.get("my_role")}
+    except OrgError:
+        return set()
+
+
+def readable_notes(user_id: int | str) -> list[dict[str, Any]]:
+    """Все документы баз знаний организаций, открытые человеку, — для поиска документа по названию."""
+    from assistant.stores import notes as notes_store
+
+    out = []
+    for oid in org_ids_of(user_id):
+        for nid in sorted(readable_note_ids(user_id, oid)):
+            n = notes_store.get_note_by_id(nid)
+            if n:
+                out.append(n)
+    return out

@@ -230,6 +230,42 @@ def _hash(text: str) -> str:
 
 def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 400) -> dict[str, int]:
     """Переиндексировать изменившиеся источники (не больше budget_chunks кусков за проход)."""
+    return _index_sources(uid, sources_for_user(uid), embed=embed, budget_chunks=budget_chunks)
+
+
+def org_owner_key(org_id: int) -> str:
+    """Общий раздел индекса базы знаний организации: документы — один раз на организацию, не на каждого."""
+    return f"org:{int(org_id)}"
+
+
+def org_sources(org_id: int) -> list[dict[str, Any]]:
+    """Документы базы знаний организации со всеми листами. Права — при поиске, не здесь."""
+    from assistant.stores import org_kb
+    from assistant.stores import notes as notes_store
+
+    out: list[dict[str, Any]] = []
+    for nid in org_kb.org_doc_note_ids(org_id):
+        n = notes_store.get_note_by_id(nid)
+        if not n:
+            continue
+        text = _plain(str(n.get("body") or ""))
+        if len(text) >= 40:
+            out.append({"key": f"org:{nid}", "kind": "knowledge", "title": n.get("title") or "Документ",
+                        "date": str(n.get("updated_at") or n.get("created_at") or "")[:10], "text": text,
+                        "ref": {"note_id": nid, "kind": "knowledge", "org_id": int(org_id)}})
+        for sh in _sheet_sources(n, "knowledge"):
+            sh["ref"]["org_id"] = int(org_id)
+            out.append(sh)
+    return out
+
+
+def index_org(org_id: int, *, embed: Optional[Embed] = None, budget_chunks: int = 2000) -> dict[str, int]:
+    return _index_sources(org_owner_key(org_id), org_sources(org_id), embed=embed, budget_chunks=budget_chunks)
+
+
+def _index_sources(owner: Any, sources: list[dict[str, Any]], *, embed: Optional[Embed] = None,
+                   budget_chunks: int = 400) -> dict[str, int]:
+    uid = owner
     embed = embed or embed_client.embed
     meta = idx.source_meta(uid)
     have = {k: v[0] for k, v in meta.items()}
@@ -237,7 +273,7 @@ def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 
     done = skipped = chunks_n = 0
     # сначала короткое и ценное (саммари, заметки, База знаний, дайджесты), длинные транскрипты — последними
     order = {"meeting_summary": 0, "note": 1, "knowledge": 1, "task": 2, "chat_digest": 2, "mail_thread": 3, "transcript": 4}
-    for src in sorted(sources_for_user(uid), key=lambda x: order.get(x["kind"], 9)):
+    for src in sorted(sources, key=lambda x: order.get(x["kind"], 9)):
         seen.add(src["key"])
         h = _hash(src["text"])
         if have.get(src["key"]) == h:
@@ -265,6 +301,29 @@ def index_user(uid: int, *, embed: Optional[Embed] = None, budget_chunks: int = 
         idx.delete_source(uid, key)
         removed += 1
     return {"indexed": done, "skipped": skipped, "removed": removed, "chunks": chunks_n}
+
+
+def _org_partitions(uid: int) -> list[tuple[str, set[int]]]:
+    """Разделы индекса организаций человека и id документов, которые ему открыты."""
+    try:
+        from assistant.stores import org_kb
+
+        out = []
+        for oid in org_kb.org_ids_of(uid):
+            allowed = org_kb.readable_note_ids(uid, oid)
+            if allowed:
+                out.append((org_owner_key(oid), allowed))
+        return out
+    except Exception as e:
+        print(f"[semantic] org partitions uid={uid} err={e!r}")
+        return []
+
+
+def _org_hit_allowed(hit: dict[str, Any], allowed: set[int]) -> bool:
+    try:
+        return int(json.loads(hit.get("ref_json") or "{}").get("note_id") or 0) in allowed
+    except (TypeError, ValueError):
+        return False
 
 
 TITLE_MATCH_RANK = 0.8
@@ -299,6 +358,10 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
     embed = embed or embed_client.embed
     qvec = embed([q])[0]
     hits = idx.search(uid, qvec, k=60)
+    # базы знаний организаций: общий раздел индекса, а показываем только открытое человеку
+    org_parts = _org_partitions(uid)
+    for owner, allowed in org_parts:
+        hits += [h for h in idx.search(owner, qvec, k=60) if _org_hit_allowed(h, allowed)]
     qs = _stems(q)
     for h in hits:
         overlap = len(qs & _stems(h["text"] + " " + h["title"])) / max(1, len(qs))
@@ -308,7 +371,10 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
     by_key = {}
     for h in hits:
         by_key.setdefault(h["source_key"], h)
-    for fc in idx.first_chunks(uid):
+    first = list(idx.first_chunks(uid))
+    for owner, allowed in org_parts:
+        first += [fc for fc in idx.first_chunks(owner) if _org_hit_allowed(fc, allowed)]
+    for fc in first:
         ts = _title_stems(fc["title"])
         if not ts or not ts <= qs:
             continue
@@ -328,6 +394,8 @@ def search(uid: int, query: str, *, k: int = 8, embed: Optional[Embed] = None) -
     for h in hits:
         if per_source.get(h["source_key"], 0) >= 2:
             continue
+        if h["source_key"].startswith("org:") and f"note:{h['source_key'][4:]}" in per_source:
+            continue  # свой документ организации уже нашёлся в личном разделе
         per_source[h["source_key"]] = per_source.get(h["source_key"], 0) + 1
         ref = json.loads(h["ref_json"] or "{}")
         item = {
@@ -372,6 +440,34 @@ def _index_now(uid: int) -> None:
     finally:
         with _T_LOCK:
             _RUNNING.discard(uid)
+
+
+def org_changed(org_id: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:
+    """Документ базы знаний организации изменился, добавлен или убран — переиндексировать её раздел."""
+    if not embed_client.enabled():
+        return
+    try:
+        oid = int(org_id)
+    except (TypeError, ValueError):
+        return
+
+    def run() -> None:
+        try:
+            res = index_org(oid)
+            if res["indexed"] or res["removed"]:
+                print(f"[semantic] on-change org={oid} {res}")
+        except Exception as e:
+            print(f"[semantic] on-change org={oid} err={e!r}")
+
+    key = -oid  # таймеры организаций — отрицательные ключи, рядом с пользовательскими
+    timer = threading.Timer(delay, run)
+    timer.daemon = True
+    with _T_LOCK:
+        old = _TIMERS.get(key)
+        if old is not None:
+            old.cancel()
+        _TIMERS[key] = timer
+    timer.start()
 
 
 def note_changed(uid: Any, *, delay: float = NOTE_DEBOUNCE_SEC) -> None:

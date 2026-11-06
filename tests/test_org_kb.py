@@ -235,3 +235,52 @@ class OrgKbDepartureTests(OrgKbTests):
     def test_leaving_without_kb_docs_is_harmless(self) -> None:
         orgs_store.leave(MANAGER, self.org)
         self.assertEqual(notes_store.get_note_by_id(self.note)["owner_user_id"], str(BACK))
+
+
+class OrgKbLeoSearchTests(OrgKbTests):
+    def setUp(self) -> None:
+        super().setUp()
+        from assistant.stores import semantic_index as idx
+
+        os.environ["SEMANTIC_DB_PATH"] = os.path.join(self._tmpdir.name, "sem.sqlite")
+        idx._CONN = None
+        notes_store.update_note(
+            BACK, self.note,
+            body="<p>Если воркфлоу перестали срабатывать, перезапустите контейнер n8n на сервере и проверьте запуски.</p>",
+            actor_user_id=BACK,
+        )
+
+    def tearDown(self) -> None:
+        from assistant.stores import semantic_index as idx
+
+        idx._CONN = None
+        super().tearDown()
+
+    def _search(self, uid: int) -> list[int]:
+        import hashlib
+        import re
+        from assistant.services import semantic_memory as sm
+
+        def fake_embed(texts):
+            out = []
+            for t in texts:
+                v = [0.0] * 64
+                for w in re.findall(r"[а-яёa-z0-9]{3,}", t.lower()):
+                    v[int(hashlib.md5(w[:5].encode()).hexdigest(), 16) % 64] += 1.0
+                out.append(v)
+            return out
+
+        with mock.patch.object(sm, "sources_for_user", lambda u: []):
+            sm.index_org(self.org, embed=fake_embed)
+            return [h["ref"].get("note_id") for h in sm.search(uid, "как перезапустить n8n контейнер", embed=fake_embed)]
+
+    def test_reader_finds_org_doc(self) -> None:
+        self.assertIn(self.note, self._search(MANAGER))
+
+    def test_no_access_no_hit(self) -> None:
+        self.assertNotIn(self.note, self._search(FRONT))  # в организации, но разделу не открыт
+        self.assertNotIn(self.note, self._search(OUTSIDER))
+
+    def test_notes_find_pool_respects_access(self) -> None:
+        self.assertIn(self.note, [int(n["id"]) for n in org_kb.readable_notes(MANAGER)])
+        self.assertEqual(org_kb.readable_notes(FRONT), [])
