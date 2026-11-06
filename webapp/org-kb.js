@@ -922,7 +922,37 @@
 
   // ---------- доступ к базе знаний для ИИ (Профиль → Аккаунт) ----------
 
-  var ai = { items: [], created: null, command: "", url: "" };
+  var ai = { items: [], created: null, command: "", url: "", client: "claude" };
+
+  // Наш MCP — обычный удалённый MCP по HTTP с токеном в заголовке: подходит любой клиент,
+  // где можно задать адрес и заголовок. Веб-коннекторы claude.ai и ChatGPT требуют OAuth — их нет.
+  var AI_CLIENTS = [
+    { id: "claude", label: "Claude Code", hint: "Выполните команду в терминале — Claude Code подключит базу знаний." },
+    { id: "cursor", label: "Cursor", hint: "Добавьте в ~/.cursor/mcp.json (или .cursor/mcp.json проекта) и включите сервер в настройках MCP." },
+    { id: "vscode", label: "VS Code", hint: "Добавьте в .vscode/mcp.json проекта (или в пользовательский mcp.json) — агент Copilot увидит инструменты." },
+    { id: "desktop", label: "Claude Desktop", hint: "Добавьте в claude_desktop_config.json (Настройки → Разработчик → Изменить конфиг). Нужен Node.js: мост mcp-remote." },
+    { id: "other", label: "Другие", hint: "Windsurf, Codex, Gemini CLI и другие клиенты с удалённым MCP по HTTP: адрес и заголовок Authorization." },
+  ];
+
+  function aiConfig(client, token) {
+    var url = ai.url;
+    var bearer = "Bearer " + token;
+    if (client === "claude") return ai.command;
+    if (client === "cursor") {
+      return JSON.stringify({ mcpServers: { "orbita-kb": { url: url, headers: { Authorization: bearer } } } }, null, 2);
+    }
+    if (client === "vscode") {
+      return JSON.stringify({ servers: { "orbita-kb": { type: "http", url: url, headers: { Authorization: bearer } } } }, null, 2);
+    }
+    if (client === "desktop") {
+      return JSON.stringify({ mcpServers: { "orbita-kb": {
+        command: "npx",
+        args: ["-y", "mcp-remote", url, "--header", "Authorization:${ORBITA_AUTH}"],
+        env: { ORBITA_AUTH: bearer },
+      } } }, null, 2);
+    }
+    return "Адрес (HTTP): " + url + "\nЗаголовок: Authorization: " + bearer;
+  }
 
   function aiApi(path, opts) {
     return app().apiFetch("/ai-tokens" + (path || ""), opts || { method: "GET" });
@@ -951,14 +981,19 @@
     rows += addRowHtml('data-ai="create"', "Новый токен");
     var html = '<div class="pf-list">' + rows + "</div>";
     if (ai.created) {
+      var cur = AI_CLIENTS.filter(function (c) { return c.id === ai.client; })[0] || AI_CLIENTS[0];
       html += '<div class="kb-ai-new">' +
         '<p class="kb-ai-new-title">Токен «' + esc(ai.created.name) + "» — скопируйте сейчас, второй раз его не покажем</p>" +
-        '<pre class="kb-ai-code" data-ai="code">' + esc(ai.command) + "</pre>" +
-        '<div class="kb-ai-actions"><button type="button" class="pf-btn" data-ai="copy">Скопировать команду</button>' +
+        '<div class="pf-seg kb-ai-clients" role="tablist">' + AI_CLIENTS.map(function (c) {
+          return '<button type="button" role="tab" data-ai="client" data-client="' + c.id + '"' +
+            (c.id === cur.id ? ' class="is-on" aria-selected="true"' : ' aria-selected="false"') + ">" + esc(c.label) + "</button>";
+        }).join("") + "</div>" +
+        '<pre class="kb-ai-code" data-ai="code">' + esc(aiConfig(cur.id, ai.created.token)) + "</pre>" +
+        '<div class="kb-ai-actions"><button type="button" class="pf-btn" data-ai="copy">' +
+        (cur.id === "claude" ? "Скопировать команду" : cur.id === "other" ? "Скопировать" : "Скопировать конфиг") + "</button>" +
         '<button type="button" class="pf-link" data-ai="copy-token">Только токен</button>' +
         '<button type="button" class="pf-link pf-link--muted" data-ai="hide">Готово</button></div>' +
-        '<p class="pf-hint">Выполните команду в терминале — Claude Code подключит базу знаний. Для других агентов: адрес ' +
-        esc(ai.url) + ", заголовок Authorization: Bearer и токен.</p></div>";
+        '<p class="pf-hint">' + esc(cur.hint) + " Веб-версии claude.ai и ChatGPT пока не подключаются — им нужен вход по OAuth.</p></div>";
     }
     html += '<p class="pf-hint">Агент видит то же, что вы в базе знаний. С токеном «чтение и запись» — ещё пишет там, где вы редактор. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
     body.innerHTML = html;
@@ -984,7 +1019,7 @@
     var sh = sheet("Новый токен", "");
     sh.body.innerHTML =
       '<div class="pf-group"><div class="pf-list"><label class="pf-field"><span class="pf-field-label">Где будете использовать</span>' +
-      '<input type="text" class="pf-input" data-ai-new="name" maxlength="60" value="Claude Code" placeholder="Например, Claude Code на ноутбуке" /></label></div></div>' +
+      '<input type="text" class="pf-input" data-ai-new="name" maxlength="60" value="" placeholder="Например, Claude Code или Cursor на ноутбуке" /></label></div></div>' +
       '<div class="pf-group"><p class="pf-group-title">Доступ</p><div class="pf-list">' +
       '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Только чтение</span>' +
       '<span class="pf-row-sub pf-row-sub--wrap">Искать и читать документы базы знаний</span></span>' +
@@ -1022,8 +1057,11 @@
           aiApply(r);
         }).catch(function (err) { toast(errText(err)); });
       });
+    } else if (kind === "client") {
+      ai.client = b.getAttribute("data-client") || "claude";
+      renderAi();
     } else if (kind === "copy") {
-      aiCopy(ai.command);
+      if (ai.created) aiCopy(aiConfig(ai.client, ai.created.token));
     } else if (kind === "copy-token") {
       if (ai.created) aiCopy(ai.created.token);
     } else if (kind === "hide") {

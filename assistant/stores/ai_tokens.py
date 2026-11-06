@@ -67,7 +67,7 @@ def create(user_id: int | str, name: str = "", *, scope: str = "kb:read") -> dic
     uid = str(int(user_id))
     if scope not in SCOPES:
         raise ValueError("Неизвестный доступ токена")
-    title = " ".join(str(name or "").split())[:NAME_MAX] or "Claude"
+    title = " ".join(str(name or "").split())[:NAME_MAX] or "ИИ-агент"
     raw = PREFIX + secrets.token_urlsafe(32)
     with _LOCK:
         conn = _conn()

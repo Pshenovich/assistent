@@ -93,6 +93,10 @@ html.kb-note-reader #note-paie-reply-form { display: none; }
   background: var(--surface); border: 1px solid var(--border);
 }
 .kb-ai-new-title { margin: 0 0 8px; font-size: 0.875rem; font-weight: 600; color: var(--text); }
+/* width:0 + min-width:100% — вкладки не раздвигают экран на телефоне, а прокручиваются внутри */
+.kb-ai-clients { margin: 0 0 8px; overflow-x: auto; width: 0; min-width: 100%; box-sizing: border-box; scrollbar-width: none; }
+.kb-ai-clients::-webkit-scrollbar { display: none; }
+.kb-ai-clients button { flex: 1 0 auto; white-space: nowrap; }
 .kb-ai-code {
   margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; background: var(--surface-muted);
   font: 0.75rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text);
