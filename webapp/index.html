@@ -1064,7 +1064,7 @@
                 <button type="button" class="pf-row" id="contacts-teams-open">
                   <span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></svg></span>
                   <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Команды</span></span>
+                    <span class="pf-row-text"><span class="pf-row-title">Мои группы</span></span>
                     <span class="pf-row-val" id="contacts-teams-count"></span>
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
@@ -2186,12 +2186,12 @@
             <p class="pf-hint">Через запятую. Лео узнает человека по любому из этих имён в документах и встречах.</p>
           </div>
           <div class="pf-group contacts-form-teams">
-            <p class="pf-group-title">Команды</p>
+            <p class="pf-group-title">Мои группы</p>
             <div id="contacts-form-teams-list" class="pf-chips"></div>
-            <p id="contacts-form-teams-empty" class="pf-hint hidden">Команд пока нет.</p>
+            <p id="contacts-form-teams-empty" class="pf-hint hidden">Групп пока нет.</p>
           </div>
           <p class="pf-hint" id="contacts-form-rule">Нужна почта или Telegram.</p>
-          <p id="contacts-form-teams-hint" class="pf-hint hidden">Без Telegram файлы команды появятся у человека, когда он откроет Orbita.</p>
+          <p id="contacts-form-teams-hint" class="pf-hint hidden">Без Telegram файлы группы появятся у человека, когда он откроет Orbita.</p>
           <p id="contacts-form-msg" class="pf-hint billing-msg hidden"></p>
           <p id="contacts-form-err" class="pf-field-error hidden"></p>
         </div>
@@ -2271,7 +2271,7 @@
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
-          <h2 id="teams-manage-title" class="modal-title">Команды</h2>
+          <h2 id="teams-manage-title" class="modal-title">Мои группы</h2>
           <button type="button" class="modal-header-btn modal-header-btn--save hidden" id="teams-manage-save" aria-label="Сохранить" title="Сохранить">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M20 6 9 17l-5-5" />
@@ -2286,7 +2286,7 @@
               <div class="pf-row pf-row--static teams-manage-create">
                 <span class="pf-ico pf-add-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></span>
                 <span class="pf-row-body">
-                  <input type="text" id="teams-manage-new-input" class="pf-input" placeholder="Новая команда" maxlength="80" aria-label="Название новой команды" />
+                  <input type="text" id="teams-manage-new-input" class="pf-input" placeholder="Новая группа" maxlength="80" aria-label="Название новой группы" />
                   <button type="button" id="teams-manage-create-btn" class="pf-link">Создать</button>
                 </span>
               </div>
@@ -2294,16 +2294,16 @@
             <div id="teams-manage-list" class="pf-list hidden"></div>
             <div id="teams-manage-empty" class="pf-empty">
               <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4" /><path d="M2 21a7 7 0 0 1 14 0" /><path d="M17 4a4 4 0 0 1 0 8M22 21a6 6 0 0 0-4-5.6" /></svg></span>
-              <p class="pf-empty-title">Команд пока нет</p>
-              <p class="pf-empty-text">Соберите людей в команду — ей можно открыть документы базы знаний.</p>
+              <p class="pf-empty-title">Групп пока нет</p>
+              <p class="pf-empty-text">Соберите людей в группу — ей можно открыть документы базы знаний.</p>
             </div>
-            <p class="pf-hint">Документы, открытые команде, доступны всем её участникам.</p>
+            <p class="pf-hint">Документы, открытые группе, доступны всем её участникам.</p>
           </div>
           <div id="teams-manage-edit-view" class="teams-manage-edit-view pf-screen-body hidden">
             <div class="pf-list">
               <label class="pf-field">
                 <span class="pf-field-label">Название</span>
-                <input type="text" id="teams-manage-edit-name" class="pf-input" maxlength="80" autocomplete="off" aria-label="Название команды" />
+                <input type="text" id="teams-manage-edit-name" class="pf-input" maxlength="80" autocomplete="off" aria-label="Название группы" />
               </label>
             </div>
             <div class="pf-group">
@@ -2338,7 +2338,7 @@
             </div>
             <div class="pf-list">
               <button type="button" class="pf-row pf-row--danger" id="teams-manage-delete">
-                <span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить команду</span></span></span>
+                <span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить группу</span></span></span>
               </button>
             </div>
           </div>
@@ -2555,7 +2555,7 @@
   <script src="/webapp/web-canvas.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261106-mail2" defer></script>
+  <script src="/webapp/app.js?v=20261106-mygroups1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>

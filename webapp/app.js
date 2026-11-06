@@ -10947,7 +10947,7 @@
       chip.type = "button";
       chip.className = "pf-chip" + (contactsFormTeamSelected[id] ? " is-on" : "");
       chip.setAttribute("aria-pressed", contactsFormTeamSelected[id] ? "true" : "false");
-      chip.textContent = team.name || "Команда";
+      chip.textContent = team.name || "Группа";
       chip.addEventListener("click", function () {
         contactsFormTeamSelected[id] = !contactsFormTeamSelected[id];
         chip.classList.toggle("is-on", contactsFormTeamSelected[id]);
@@ -10960,7 +10960,7 @@
     add.className = "pf-chip pf-chip--add";
     add.textContent = "+ Новая";
     add.addEventListener("click", async function () {
-      var name = await promptDialog("Название команды", "");
+      var name = await promptDialog("Название группы", "");
       name = String(name || "").trim();
       if (!name) return;
       try {
@@ -10970,7 +10970,7 @@
         var data = await apiFetch("/teams", { method: "GET" });
         paintContactsFormTeams((data && data.teams) || []);
       } catch (e) {
-        contactsShowFormMsg("", (e && e.message) || "Не удалось создать команду");
+        contactsShowFormMsg("", (e && e.message) || "Не удалось создать группу");
       }
     });
     list.appendChild(add);
@@ -11304,15 +11304,15 @@
     ov.className = "note-share-sheet-overlay hidden";
     ov.innerHTML =
       '<div class="note-share-sheet" role="dialog" aria-labelledby="team-picker-title">' +
-      '<h3 id="team-picker-title" class="note-share-sheet-title">Команды</h3>' +
+      '<h3 id="team-picker-title" class="note-share-sheet-title">Мои группы</h3>' +
       '<p id="team-picker-hint" class="note-share-members-hint muted small"></p>' +
       '<div class="team-picker-create">' +
-      '<input id="team-picker-new-name" type="text" class="field-input" maxlength="80" placeholder="Название команды" autocomplete="off" />' +
+      '<input id="team-picker-new-name" type="text" class="field-input" maxlength="80" placeholder="Название группы" autocomplete="off" />' +
       '<button type="button" class="btn ghost btn-sm" id="team-picker-create">Создать</button>' +
       "</div>" +
       '<p id="team-picker-error" class="error hidden"></p>' +
       '<div id="team-picker-list" class="team-picker-list"></div>' +
-      '<p id="team-picker-empty" class="team-picker-empty muted small">Пока нет команд — создайте первую.</p>' +
+      '<p id="team-picker-empty" class="team-picker-empty muted small">Пока нет групп — создайте первую.</p>' +
       '<div class="note-share-sheet-actions">' +
       '<button type="button" class="btn" id="team-picker-save">Сохранить</button>' +
       '<button type="button" class="btn-text" id="team-picker-cancel">Закрыть</button>' +
@@ -11354,7 +11354,7 @@
       });
       var copy = document.createElement("span");
       var strong = document.createElement("strong");
-      strong.textContent = team.name || "Команда";
+      strong.textContent = team.name || "Группа";
       copy.appendChild(strong);
       var count = Number(team.member_count || 0);
       if (count) {
@@ -11382,11 +11382,11 @@
     }
     if (teamPickerState.mode === "note") {
       hint.textContent =
-        "Выберите команды — документ появится в базе знаний у всех участников.";
+        "Выберите группы — документ появится в базе знаний у всех участников.";
       hint.classList.remove("hidden");
       return;
     }
-    hint.textContent = "Можно выбрать несколько команд.";
+    hint.textContent = "Можно выбрать несколько групп.";
     hint.classList.remove("hidden");
   }
 
@@ -11433,7 +11433,7 @@
       : document.getElementById("team-picker-create");
     var name = String((input && input.value) || "").trim();
     if (!name) {
-      setTeamPickerError("Введите название команды");
+      setTeamPickerError("Введите название группы");
       if (input) input.focus();
       return;
     }
@@ -11453,7 +11453,7 @@
       });
       var team = data && data.team;
       if (!team || team.id == null) {
-        setTeamPickerError("Не удалось создать команду");
+        setTeamPickerError("Не удалось создать группу");
         return;
       }
       mergeTeamsIntoPicker([team], [team.id]);
@@ -11497,7 +11497,7 @@
     if (!contact || !contact.email) return;
     var ov = ensureTeamPickerOverlay();
     var title = ov.querySelector("#team-picker-title");
-    if (title) title.textContent = "Участник команды";
+    if (title) title.textContent = "Участник группы";
     teamPickerState.mode = "contact";
     teamPickerState.email = String(contact.key || contact.email);
     teamPickerState.noteId = "";
@@ -11547,7 +11547,7 @@
     if (!noteId) return;
     var ov = ensureTeamPickerOverlay();
     var title = ov.querySelector("#team-picker-title");
-    if (title) title.textContent = "Поделиться с командой";
+    if (title) title.textContent = "Поделиться с группой";
     teamPickerState.mode = "note";
     teamPickerState.email = "";
     teamPickerState.noteId = noteId;
@@ -11666,8 +11666,8 @@
     var editing = !!teamsManageState.editingId;
     if (title) {
       title.textContent = editing
-        ? (teamsManageState.team && teamsManageState.team.name) || "Команда"
-        : "Команды";
+        ? (teamsManageState.team && teamsManageState.team.name) || "Группа"
+        : "Мои группы";
     }
     if (closeBtn) {
       closeBtn.setAttribute("aria-label", editing ? "Назад" : "Закрыть");
@@ -11723,7 +11723,7 @@
         '<span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg></span>' +
         '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span><span class="pf-row-sub"></span></span>' +
         '<span class="pf-chev" aria-hidden="true">›</span></span>';
-      row.querySelector(".pf-row-title").textContent = team.name || "Команда";
+      row.querySelector(".pf-row-title").textContent = team.name || "Группа";
       row.querySelector(".pf-row-sub").textContent = sub.join(" · ");
       row.addEventListener("click", function () {
         openTeamsManageEdit(team);
@@ -11735,14 +11735,14 @@
   async function deleteTeamFromEdit() {
     var team = teamsManageState.team;
     if (!team) return;
-    var ok = await confirmDialog("Удалить команду «" + (team.name || "") + "»? Контакты останутся.");
+    var ok = await confirmDialog("Удалить группу «" + (team.name || "") + "»? Контакты останутся.");
     if (!ok) return;
     try {
       await apiFetch("/teams/" + encodeURIComponent(String(team.id)), { method: "DELETE" });
       showTeamsManageListView();
       await loadTeamsManageList();
       await loadContacts();
-      showNoteToast("Команда удалена");
+      showNoteToast("Группа удалена");
     } catch (err) {
       setTeamsManageError(err.message || String(err));
     }
@@ -11882,7 +11882,7 @@
     try {
       var fresh = await refreshTeamsManageEditTeam();
       if (!fresh) {
-        setTeamsManageError("Команда не найдена");
+        setTeamsManageError("Группа не найдена");
         showTeamsManageListView();
         await loadTeamsManageList();
         return;
@@ -11899,7 +11899,7 @@
     if (!tid || !input) return;
     var name = String(input.value || "").trim();
     if (!name) {
-      setTeamsManageError("Введите название команды");
+      setTeamsManageError("Введите название группы");
       input.focus();
       return;
     }
@@ -11941,7 +11941,7 @@
     var forPeers = Number(sync.added_for_peers) || 0;
     if (!forMember && !forPeers) return;
     var parts = [];
-    if (forMember) parts.push("новому участнику добавлены в контакты " + ruPeople(forMember) + " команды");
+    if (forMember) parts.push("новому участнику добавлены в контакты " + ruPeople(forMember) + " группы");
     if (forPeers) parts.push("он сам — в контакты ещё у " + forPeers);
     showNoteToast(parts.join(", "));
   }
@@ -11957,7 +11957,7 @@
     applyNoteTeams(noteId, (r && r.teams) || []);
   }
 
-  /* ——— Лейбл «в какую команду расшарен документ» Базы знаний: на карточке и в строке под названием. ——— */
+  /* ——— Лейбл «в какую группу расшарен документ» Базы знаний: на карточке и в строке под названием. ——— */
   var TEAM_CHIP_SVG =
     '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6.5 6.5-6.5s6.5 2.9 6.5 6.5"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 13.8c2.1.8 3.5 2.9 3.5 5.2"/></svg>';
@@ -11968,7 +11968,7 @@
         return t && t.name;
       })
       .map(function (t) {
-        return '<span class="note-team-chip" title="Расшарен команде «' + escapeHtml(t.name) + '»">' + TEAM_CHIP_SVG + "<span>" + escapeHtml(t.name) + "</span></span>";
+        return '<span class="note-team-chip" title="Открыт группе «' + escapeHtml(t.name) + '»">' + TEAM_CHIP_SVG + "<span>" + escapeHtml(t.name) + "</span></span>";
       })
       .join("");
   }
@@ -12147,7 +12147,7 @@
     var input = document.getElementById("teams-manage-new-input");
     var name = String((input && input.value) || "").trim();
     if (!name) {
-      setTeamsManageError("Введите название команды");
+      setTeamsManageError("Введите название группы");
       if (input) input.focus();
       return;
     }
@@ -38063,7 +38063,7 @@
     }
 
     if (wrap._isKnowledge && wrap._isNoteOwner !== false) {
-      addItem("Поделиться с командой", function () {
+      addItem("Поделиться с группой", function () {
         closeNoteMoreMenu();
         openNoteTeamShareSheet();
       });
@@ -53845,7 +53845,7 @@
       });
     }
     if (isKnowledgeNoteItem(n) && isOwner) {
-      addMoreItem("Поделиться с командой", function () {
+      addMoreItem("Поделиться с группой", function () {
         listShareCtx = noteCardShareCtx(n);
         openNoteTeamShareSheet(n);
       });
