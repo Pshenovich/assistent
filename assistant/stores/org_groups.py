@@ -300,3 +300,33 @@ def remove_member(actor_id: int | str, org_id: int, group_id: int, user_id: int 
         if str(row["lead_user_id"] or "") == uid:
             conn.execute("UPDATE org_groups SET lead_user_id = NULL WHERE id = ?", (int(group_id),))
         conn.commit()
+
+
+def labels_for_viewer(viewer_id: int | str) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Отделы и команды людей из организаций человека — для карточек контактов.
+
+    Возвращает (user_id → подписи, почта участника → user_id). Подпись команды — «Отдел · команда»
+    (если название команды уже начинается с отдела — как есть); отдел без команды — его название.
+    """
+    by_user: dict[str, list[str]] = {}
+    email_to_user: dict[str, str] = {}
+    for org in orgs_store.orgs_for_user(viewer_id):
+        oid = int(org["id"])
+        for m in orgs_store.list_members(oid):
+            if m["status"] == "active" and m["user_id"] and m.get("email"):
+                email_to_user[str(m["email"]).lower()] = str(m["user_id"])
+        try:
+            groups = list_groups(oid, viewer_id)
+        except OrgError:
+            continue
+        for dept in groups:
+            in_team: set[str] = set()
+            for t in dept["teams"]:
+                name = t["name"] if t["name"].lower().startswith(dept["name"].lower()) else f"{dept['name']} · {t['name']}"
+                for uid in t["member_ids"]:
+                    by_user.setdefault(uid, []).append(name)
+                    in_team.add(uid)
+            for uid in dept["member_ids"]:
+                if uid not in in_team:
+                    by_user.setdefault(uid, []).append(dept["name"])
+    return by_user, email_to_user

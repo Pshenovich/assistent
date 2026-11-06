@@ -125,3 +125,12 @@ class OrgGroupsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OrgGroupLabelsTests(OrgGroupsTests):
+    def test_labels_for_contact_cards(self) -> None:
+        by_user, by_email = org_groups.labels_for_viewer(BACK)
+        self.assertEqual(by_user[str(BACK)], ["ОКК · бэкенд"])  # название команды уже с отделом — как есть
+        self.assertEqual(by_user[str(MANAGER)], ["ОКК"])  # в отделе без команды
+        self.assertEqual(by_email["u6@obuchat.me"], str(MANAGER))
+        self.assertEqual(org_groups.labels_for_viewer(OUTSIDER), ({}, {}))

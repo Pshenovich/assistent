@@ -11186,7 +11186,8 @@
     title.textContent = c.name || c.email || "Без имени";
     var sub = document.createElement("span");
     sub.className = "pf-row-sub";
-    sub.textContent = [c.email || "", c.telegram_username ? "@" + c.telegram_username : ""].filter(Boolean).join(" · ");
+    sub.textContent = [(c.org_groups || []).join(", "), c.email || "", c.telegram_username ? "@" + c.telegram_username : ""]
+      .filter(Boolean).join(" · ");
     text.appendChild(title);
     if (sub.textContent) text.appendChild(sub);
     body.appendChild(text);
@@ -21529,11 +21530,19 @@
     n.className = "contact-detail-name";
     n.textContent = c.name || c.email || "Без имени";
     head.appendChild(n);
+    // Отделы и команды организации — главное «кто это»; личные «Мои группы» — строкой ниже.
+    var depts = (c.org_groups || []).filter(Boolean);
+    if (depts.length) {
+      var dm = document.createElement("div");
+      dm.className = "contact-detail-meta";
+      dm.textContent = depts.join(", ");
+      head.appendChild(dm);
+    }
     var teams = (c.teams || []).map(function (t) { return t.name; }).filter(Boolean);
     if (teams.length) {
       var meta = document.createElement("div");
       meta.className = "contact-detail-meta";
-      meta.textContent = (teams.length > 1 ? "команды «" : "команда «") + teams.join("», «") + "»";
+      meta.textContent = "в моих группах: «" + teams.join("», «") + "»";
       head.appendChild(meta);
     }
     return head;

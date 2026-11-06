@@ -7163,10 +7163,32 @@ async def miniapp_contacts_list(
         )
         items = enrich_contacts_calendar_flags(list(items or []))
         teams_map = teams_store.teams_by_contact_email(int(principal.telegram_user_id))
+        try:
+            from assistant.stores import accounts, org_groups
+
+            dept_by_user, email_to_user = org_groups.labels_for_viewer(int(principal.telegram_user_id))
+        except Exception as e:
+            print(f"[contacts] org groups err={e!r}")
+            dept_by_user, email_to_user = {}, {}
         for row in items:
             key = contacts_store.contact_key(row)
             row["key"] = key
             row["teams"] = list(teams_map.get(key) or [])
+            if dept_by_user:
+                # отделы и команды организации: по аккаунту Орбиты, иначе по почте участника
+                uid = str(row.get("telegram_user_id") or "")
+                em = str(row.get("email") or "").lower()
+                if uid and uid not in dept_by_user and uid.isdigit():
+                    acc = accounts.get_by_tg(int(uid))  # вошёл по почте, Telegram привязан
+                    if acc and str(acc.get("user_id")) in dept_by_user:
+                        uid = str(acc["user_id"])
+                if (not uid or uid not in dept_by_user) and em:
+                    uid = email_to_user.get(em) or ""
+                    if not uid:
+                        acc = accounts.get_by_email(em)
+                        uid = str(acc["user_id"]) if acc and acc.get("user_id") else ""
+                if uid in dept_by_user:
+                    row["org_groups"] = dept_by_user[uid]
         return items
 
     return {"items": await run_in_threadpool(_load)}
@@ -8266,6 +8288,7 @@ async def miniapp_org_kb_inherit(
 
 class _MiniappAiTokenCreate(BaseModel):
     name: str = ""
+    write: bool = False
 
 
 def _ai_token_setup(token: str = "<токен>") -> dict[str, str]:
@@ -8295,10 +8318,12 @@ async def miniapp_ai_token_create(
 
     uid = int(principal.telegram_user_id)
     try:
-        tok = await run_in_threadpool(ai_tokens.create, uid, body.name)
+        tok = await run_in_threadpool(
+            partial(ai_tokens.create, uid, body.name, scope="kb:write" if body.write else "kb:read")
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    _track(uid, "kb.token_create")
+    _track(uid, "kb.token_create", write=bool(body.write))
     items = await run_in_threadpool(ai_tokens.list_for, uid)
     return {"ok": True, "created": tok, "items": items, **_ai_token_setup(tok["token"])}
 
@@ -18684,7 +18709,8 @@ async def kb_mcp_endpoint(request: Request) -> Response:
 
     auth = request.headers.get("authorization") or ""
     raw = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
-    uid = await run_in_threadpool(ai_tokens.resolve, raw) if raw else None
+    hit = await run_in_threadpool(ai_tokens.resolve_full, raw) if raw else None
+    uid, scope = hit if hit else (None, "")
     if not uid:
         return JSONResponse(
             {"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": "Нужен действующий токен Орбиты"}},
@@ -18696,7 +18722,8 @@ async def kb_mcp_endpoint(request: Request) -> Response:
     except ValueError:
         return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
     _track(uid, "kb.mcp_call", throttle_key="kb.mcp_call", throttle_sec=600)
-    out = await run_in_threadpool(kb_mcp.handle_payload, kb_mcp.KbSource(user_id=int(uid)), payload)
+    src = kb_mcp.KbSource(user_id=int(uid), can_write=scope == "kb:write")
+    out = await run_in_threadpool(kb_mcp.handle_payload, src, payload)
     if out is None:
         return Response(status_code=202)
     return JSONResponse(out, headers={"Cache-Control": "no-store"})

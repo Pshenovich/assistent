@@ -103,3 +103,7 @@ html.kb-note-reader #note-paie-reply-form { display: none; }
 
 /* Шторки базы знаний открываются и поверх документа с «Обсуждением» справа (220) — как #note-unsaved-overlay */
 .modal-overlay.kb-sheet-overlay { z-index: 400; }
+
+/* Выбор доступа токена */
+.kb-radio { flex: none; width: 18px; height: 18px; margin: 0 0 0 12px; accent-color: var(--accent); }
+.kb-sheet-body > .pf-btn { margin-top: 4px; }

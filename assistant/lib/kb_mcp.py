@@ -1,4 +1,4 @@
-"""MCP базы знаний (Streamable HTTP без потоков) для ИИ-агентов по личному токену. Только чтение.
+"""MCP базы знаний (Streamable HTTP без потоков) для ИИ-агентов по личному токену: чтение, с токеном kb:write — запись.
 
 Видно ровно то, что видит человек, и только база знаний: документы баз знаний его организаций
 по правам и его «Мои документы». Остальные документы, почта, задачи и сейфы — никогда.
@@ -64,12 +64,71 @@ TOOLS: list[dict[str, Any]] = [
 ]
 
 
+WRITE_INSTRUCTIONS = (
+    " Токен с записью: create_section, create_doc, update_doc — там, где у человека роль редактора. "
+    "Перед созданием посмотрите list (sections, documents) и search, чтобы не плодить дубли: лучше дополнить "
+    "существующий документ (update_doc mode=append), чем завести второй про то же. Текст — Markdown; "
+    "без паролей, токенов и ключей. Удалять и менять доступ нельзя — это делает человек в Орбите."
+)
+
+_MD = {"type": "string", "description": "Текст в Markdown (заголовки, списки, таблицы)"}
+
+WRITE_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "create_section",
+        "title": "Новый раздел",
+        "description": "Подраздел внутри раздела (parent_id, нужна роль редактора) или раздел верхнего уровня "
+                       "(org_id; только владелец и админы организации).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string"},
+                "parent_id": {"type": "integer", "description": "section_id из list"},
+                "org_id": {"type": "integer", "description": "для раздела верхнего уровня, если организаций несколько"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "create_doc",
+        "title": "Новый документ",
+        "description": "Документ в разделе (section_id из list). Доступ — как у раздела. Автор — человек, чей токен.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"section_id": {"type": "integer"}, "title": {"type": "string"}, "markdown": _MD},
+            "required": ["section_id", "title", "markdown"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "update_doc",
+        "title": "Изменить документ",
+        "description": "Заменить текст (mode=replace), дописать в конец (mode=append) и/или переименовать (title). "
+                       "Прежняя версия остаётся в истории версий.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "markdown": _MD,
+                "mode": {"type": "string", "enum": ["replace", "append"], "default": "replace"},
+                "title": {"type": "string"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+]
+WRITE_TOOLS_BY_NAME = {t["name"] for t in WRITE_TOOLS}
+
+
 @dataclass
 class KbSource:
-    """Чей доступ: id пользователя Орбиты (по токену)."""
+    """Чей доступ: id пользователя Орбиты (по токену) и можно ли писать (токен kb:write)."""
 
     user_id: int
     title: str = "База знаний"
+    can_write: bool = False
 
 
 def _text(s: str) -> dict[str, Any]:
@@ -195,12 +254,145 @@ def _search(src: KbSource, query: str, limit: int) -> list[dict[str, Any]]:
     return out
 
 
+def _sections(uid: int) -> list[dict[str, Any]]:
+    """Разделы, открытые человеку: id (для create_doc / create_section), путь, можно ли писать."""
+    from assistant.stores import org_kb, orgs_store
+
+    out = []
+    for org in orgs_store.orgs_for_user(uid):
+        try:
+            nodes = org_kb.tree(int(org["id"]), uid)
+        except Exception:
+            continue
+        by_id = {n["id"]: n for n in nodes}
+        for n in nodes:
+            if n["kind"] != "section" or n.get("restricted"):
+                continue
+            path, cur = [n["title"]], n.get("parent_id")
+            while cur is not None and cur in by_id:
+                path.insert(0, by_id[cur]["title"])
+                cur = by_id[cur].get("parent_id")
+            out.append({"section_id": n["id"], "org_id": int(org["id"]), "path": f"{org['name']} › " + " › ".join(path),
+                        "can_write": org_kb.at_least(n.get("my_role") or "", "editor")})
+    return out
+
+
 def _list(src: KbSource) -> dict[str, Any]:
     org, personal = _allowed(src.user_id)
     docs = [{"id": nid, "title": m["title"], "where": f"{m['org']} › {m['section']}", "verified_at": m["verified_at"],
-             "stale": m["stale"]} for nid, m in sorted(org.items(), key=lambda kv: (kv[1]["org"], kv[1]["section"], kv[1]["title"]))]
-    docs += [{"id": nid, "title": n.get("title") or "Без названия", "where": "Мои документы"} for nid, n in personal.items()]
-    return {"documents": docs, "count": len(docs)}
+             "stale": m["stale"], "can_write": m["role"] in ("editor", "owner")}
+            for nid, m in sorted(org.items(), key=lambda kv: (kv[1]["org"], kv[1]["section"], kv[1]["title"]))]
+    docs += [{"id": nid, "title": n.get("title") or "Без названия", "where": "Мои документы", "can_write": True}
+             for nid, n in personal.items()]
+    out: dict[str, Any] = {"documents": docs, "count": len(docs)}
+    if src.can_write:
+        out["sections"] = _sections(src.user_id)
+    return out
+
+
+# ---------- запись (токен kb:write): создать раздел / документ, править документ ----------
+
+MAX_MARKDOWN = 200_000
+
+
+def _md_html(markdown: str) -> str:
+    from assistant.lib.note_markdown import markdown_to_html
+
+    md = str(markdown or "")
+    if len(md) > MAX_MARKDOWN:
+        raise ValueError(f"Слишком длинный текст — до {MAX_MARKDOWN} символов за раз")
+    return markdown_to_html(md)
+
+
+def _as_ai(uid: int) -> None:
+    """Правки агента — в истории версий как правки ИИ от имени человека."""
+    try:
+        from assistant.stores import note_versions
+
+        note_versions.set_edit_context(uid, "ai")
+    except Exception:
+        pass
+
+
+def _create_section(src: KbSource, args: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    title = str(args.get("title") or "")
+    parent = args.get("parent_id")
+    if parent not in (None, ""):
+        node = _section_node(src.user_id, int(parent))
+        created = org_kb.create_section(src.user_id, int(node["org_id"]), title, parent_id=int(parent))
+    else:
+        orgs = {s["org_id"] for s in _sections(src.user_id)} or set(org_kb.org_ids_of(src.user_id))
+        oid = args.get("org_id")
+        if oid in (None, ""):
+            if len(orgs) != 1:
+                raise ValueError("Укажите org_id (организаций несколько) или parent_id раздела")
+            oid = next(iter(orgs))
+        created = org_kb.create_section(src.user_id, int(oid), title)
+    return {"section_id": created["id"], "title": created["title"],
+            "note": "Новый раздел верхнего уровня видят только вы и руководство — откройте его коллегам в Орбите."
+            if created.get("parent_id") is None else "Раздел наследует доступ родителя."}
+
+
+def _section_node(uid: int, section_id: int) -> dict[str, Any]:
+    from assistant.stores import org_kb
+
+    with org_kb._LOCK:
+        row = org_kb._conn().execute(
+            "SELECT * FROM org_kb_nodes WHERE id = ? AND kind = 'section'", (int(section_id),)
+        ).fetchone()
+    if not row or not org_kb.orgs_store.role_of(int(row["org_id"]), uid):
+        raise ValueError("Раздел не найден")
+    return dict(row)
+
+
+def _create_doc(src: KbSource, args: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+    from assistant.stores import org_kb
+
+    title = " ".join(str(args.get("title") or "").split())[:200]
+    if not title:
+        raise ValueError("Нужно название документа")
+    node = _section_node(src.user_id, int(args.get("section_id") or 0))
+    html = _md_html(str(args.get("markdown") or ""))
+    _as_ai(src.user_id)
+    note = notes_store.create_note(src.user_id, title, html)
+    try:
+        org_kb.add_doc(src.user_id, int(node["org_id"]), int(node["id"]), int(note["id"]))
+    except Exception:
+        notes_store.delete_note(src.user_id, int(note["id"]))
+        raise
+    return {"id": int(note["id"]), "title": title, "url": _url(int(note["id"]))}
+
+
+def _update_doc(src: KbSource, args: dict[str, Any]) -> dict[str, Any]:
+    from assistant.stores import notes as notes_store
+
+    nid = int(args.get("id") or 0)
+    org, personal = _allowed(src.user_id)
+    if nid not in org and nid not in personal:
+        raise ValueError("Документа нет в вашей базе знаний или он вам не открыт")
+    note = notes_store.get_accessible_note(src.user_id, nid, with_sharing=False)  # только редактор и владелец
+    if not note:
+        raise ValueError("У вас нет прав редактировать этот документ — попросите роль редактора")
+    mode = str(args.get("mode") or "replace")
+    if mode not in ("replace", "append"):
+        raise ValueError("mode: replace или append")
+    title = " ".join(str(args.get("title") or "").split())[:200] or None
+    body = None
+    if args.get("markdown") not in (None, ""):
+        html = _md_html(str(args["markdown"]))
+        body = (str(note.get("body") or "") + "\n" + html) if mode == "append" else html
+    if body is None and title is None:
+        raise ValueError("Нечего менять: передайте markdown и/или title")
+    _as_ai(src.user_id)
+    out = notes_store.update_note(str(note.get("owner_user_id") or src.user_id), nid, title=title, body=body,
+                                  actor_user_id=src.user_id, allow_empty_body=False)
+    if not out:
+        raise ValueError("Не удалось сохранить документ")
+    return {"id": nid, "title": out.get("title"), "mode": mode, "url": _url(nid),
+            "note": "Прежняя версия — в истории версий документа."}
 
 
 def _read(src: KbSource, note_id: int) -> dict[str, Any]:
@@ -250,6 +442,12 @@ def call_tool(src: KbSource, name: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"content": [_text(_json({"results": res}) if res else "Ничего не нашлось.")]}
         if name == "list":
             return {"content": [_text(_json(_list(src)))]}
+        if name in WRITE_TOOLS_BY_NAME:
+            if not src.can_write:
+                return {"content": [_text("Токен только на чтение — для записи выпустите токен «чтение и запись»")],
+                        "isError": True}
+            fn = {"create_section": _create_section, "create_doc": _create_doc, "update_doc": _update_doc}[name]
+            return {"content": [_text(_json(fn(src, args)))]}
         if name == "read":
             doc = _read(src, int(args.get("id") or 0))
             head = {k: v for k, v in doc.items() if k != "text"}
@@ -279,10 +477,11 @@ def handle_payload(src: KbSource, payload: Any) -> Any:
                     "protocolVersion": want if want in design_mcp.PROTOCOL_VERSIONS else design_mcp.PROTOCOL_VERSIONS[0],
                     "capabilities": {"tools": {"listChanged": False}},
                     "serverInfo": {"name": SERVER_NAME, "title": src.title, "version": SERVER_VERSION},
-                    "instructions": INSTRUCTIONS,
+                    "instructions": INSTRUCTIONS + (WRITE_INSTRUCTIONS if src.can_write else ""),
                 }}
             if method == "tools/list":
-                return {"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": TOOLS}}
+                tools = TOOLS + (WRITE_TOOLS if src.can_write else [])
+                return {"jsonrpc": "2.0", "id": msg["id"], "result": {"tools": tools}}
             if method == "tools/call":
                 return {"jsonrpc": "2.0", "id": msg["id"],
                         "result": call_tool(src, str(params.get("name") or ""), params.get("arguments") or {})}

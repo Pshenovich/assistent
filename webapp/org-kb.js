@@ -941,7 +941,8 @@
     if (!body || !group) return;
     group.classList.remove("hidden");
     var rows = ai.items.map(function (t) {
-      var used = t.last_used_at ? "использовался " + ago(t.last_used_at) : "ещё не использовался";
+      var used = (t.scope === "kb:write" ? "чтение и запись · " : "только чтение · ") +
+        (t.last_used_at ? "использовался " + ago(t.last_used_at) : "ещё не использовался");
       return '<div class="pf-row pf-row--static"><span class="pf-ico" aria-hidden="true">' + ICO.key + "</span>" +
         '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(t.name) + "</span>" +
         '<span class="pf-row-sub">' + esc(t.hint + " · " + used) + "</span></span>" +
@@ -959,7 +960,7 @@
         '<p class="pf-hint">Выполните команду в терминале — Claude Code подключит базу знаний. Для других агентов: адрес ' +
         esc(ai.url) + ", заголовок Authorization: Bearer и токен.</p></div>";
     }
-    html += '<p class="pf-hint">Агент видит то же, что вы в базе знаний, и только читает. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
+    html += '<p class="pf-hint">Агент видит то же, что вы в базе знаний. С токеном «чтение и запись» — ещё пишет там, где вы редактор. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
     body.innerHTML = html;
     if (ai.scrollTo) {
       ai.scrollTo = false;
@@ -978,18 +979,40 @@
     }
   }
 
+  // Новый токен: название и доступ — только чтение (по умолчанию) или ещё и запись.
+  function openAiCreate() {
+    var sh = sheet("Новый токен", "");
+    sh.body.innerHTML =
+      '<div class="pf-group"><div class="pf-list"><label class="pf-field"><span class="pf-field-label">Где будете использовать</span>' +
+      '<input type="text" class="pf-input" data-ai-new="name" maxlength="60" value="Claude Code" placeholder="Например, Claude Code на ноутбуке" /></label></div></div>' +
+      '<div class="pf-group"><p class="pf-group-title">Доступ</p><div class="pf-list">' +
+      '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Только чтение</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">Искать и читать документы базы знаний</span></span>' +
+      '<input type="radio" class="kb-radio" name="ai-scope" value="read" checked /></span></label>' +
+      '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Чтение и запись</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">Ещё создавать разделы и документы и править документы — там, где вы редактор. Удалять и менять доступ агент не может</span></span>' +
+      '<input type="radio" class="kb-radio" name="ai-scope" value="write" /></span></label>' +
+      '</div><p class="pf-hint">Правки агента сохраняются в истории версий документа с пометкой «ИИ» — любую можно откатить.</p></div>' +
+      '<button type="button" class="pf-btn" data-ai-new="go">Создать токен</button>';
+    var input = sh.body.querySelector('[data-ai-new="name"]');
+    if (input) input.focus();
+    sh.body.querySelector('[data-ai-new="go"]').addEventListener("click", function () {
+      var name = String((input && input.value) || "").trim();
+      var write = !!sh.body.querySelector('input[name="ai-scope"][value="write"]:checked');
+      aiApi("", json("POST", { name: name, write: write })).then(function (r) {
+        sh.close();
+        ai.created = r.created;
+        aiApply(r);
+      }).catch(function (err) { toast(errText(err)); });
+    });
+  }
+
   function onAiClick(e) {
     var b = e.target.closest("[data-ai]");
     if (!b) return;
     var kind = b.getAttribute("data-ai");
     if (kind === "create") {
-      prompt("Новый токен", "Где будете использовать? Например, «Claude Code на ноутбуке»", "Claude Code").then(function (name) {
-        if (name == null) return;
-        aiApi("", json("POST", { name: String(name).trim() })).then(function (r) {
-          ai.created = r.created;
-          aiApply(r);
-        }).catch(function (err) { toast(errText(err)); });
-      });
+      openAiCreate();
     } else if (kind === "revoke") {
       var ok = app().confirm ? app().confirm("Отозвать токен? Агенты с ним сразу потеряют доступ.") : Promise.resolve(window.confirm("Отозвать токен?"));
       Promise.resolve(ok).then(function (yes) {

@@ -253,3 +253,55 @@ def test_kb_mcp_with_personal_token(env, monkeypatch, tmp_path):
     tid = c.get("/api/miniapp/ai-tokens", headers=_headers(guest)).json()["items"][0]["id"]
     c.delete(f"/api/miniapp/ai-tokens/{tid}", headers=_headers(guest))
     assert rpc("tools/list").status_code == 401
+
+
+def test_kb_mcp_write_token(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("NOTE_VERSIONS_DB_PATH", str(tmp_path / "versions.sqlite"))
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    base = "/api/miniapp/orgs"
+    oid = c.post(base, headers=_headers(owner), json={"name": "MCP-запись"}).json()["org"]["id"]
+    token = c.post(f"{base}/{oid}/invites", headers=_headers(owner)).json()["invite"]["token"]
+    c.post(f"{base}/invite/{token}/accept", headers=_headers(guest))
+    sec = c.post(f"{base}/{oid}/kb/sections", headers=_headers(owner), json={"title": "Проект"}).json()["created"]["id"]
+    c.put(f"{base}/{oid}/kb/nodes/{sec}/access", headers=_headers(owner), json={"principal": "all", "role": "editor"})
+    closed = c.post(f"{base}/{oid}/kb/sections", headers=_headers(owner), json={"title": "Закрытое"}).json()["created"]["id"]
+    c.put(f"{base}/{oid}/kb/nodes/{closed}/access", headers=_headers(owner), json={"principal": "all", "role": "reader"})
+    locked = c.post(f"{base}/{oid}/kb/docs", headers=_headers(owner), json={"section_id": closed, "title": "Только читать"}).json()["created"]["note_id"]
+
+    ro = c.post("/api/miniapp/ai-tokens", headers=_headers(guest), json={"name": "ro"}).json()["created"]
+    rw = c.post("/api/miniapp/ai-tokens", headers=_headers(guest), json={"name": "rw", "write": True}).json()["created"]
+    assert ro["scope"] == "kb:read" and rw["scope"] == "kb:write"
+
+    def call(tok, name, args):
+        r = c.post("/mcp/kb", headers={"Authorization": f"Bearer {tok}"},
+                   json={"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})
+        return r.json()["result"]
+
+    def tools(tok):
+        r = c.post("/mcp/kb", headers={"Authorization": f"Bearer {tok}"}, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+        return {t["name"] for t in r.json()["result"]["tools"]}
+
+    assert "create_doc" not in tools(ro["token"]) and "create_doc" in tools(rw["token"])
+    assert call(ro["token"], "create_doc", {"section_id": sec, "title": "x", "markdown": "y"}).get("isError")
+
+    sub = json.loads(call(rw["token"], "create_section", {"title": "Архитектура", "parent_id": sec})["content"][0]["text"])
+    made = call(rw["token"], "create_doc", {"section_id": sub["section_id"], "title": "Обзор проекта",
+                                            "markdown": "# Обзор\n\n- сервис A\n- сервис B"})
+    assert not made.get("isError"), made
+    doc_id = json.loads(made["content"][0]["text"])["id"]
+    up = call(rw["token"], "update_doc", {"id": doc_id, "markdown": "## Деплой\n\nЧерез скрипт.", "mode": "append"})
+    assert not up.get("isError"), up
+    text = call(rw["token"], "read", {"id": doc_id})["content"][0]["text"]
+    assert "сервис A" in text and "Деплой" in text
+    from assistant.stores import note_versions
+
+    cur = note_versions.current_states(doc_id)
+    assert any(str(v.get("source") or "") == "ai" for v in cur.values()), cur  # в истории — правка ИИ
+    # владелец видит документ в пространстве, автор — человек с токеном
+    nodes = c.get(f"{base}/{oid}/kb", headers=_headers(owner)).json()["nodes"]
+    doc = next(n for n in nodes if n.get("note_id") == doc_id)
+    assert doc["owner_user_id"] == str(guest)
+    # куда права только на чтение — не пишет; верхний уровень — только руководство
+    assert call(rw["token"], "update_doc", {"id": locked, "markdown": "взлом"}).get("isError")
+    assert call(rw["token"], "create_doc", {"section_id": closed, "title": "x", "markdown": "y"}).get("isError")
+    assert call(rw["token"], "create_section", {"title": "Своё", "org_id": oid}).get("isError")
