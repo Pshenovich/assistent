@@ -284,3 +284,22 @@ class OrgKbLeoSearchTests(OrgKbTests):
     def test_notes_find_pool_respects_access(self) -> None:
         self.assertIn(self.note, [int(n["id"]) for n in org_kb.readable_notes(MANAGER)])
         self.assertEqual(org_kb.readable_notes(FRONT), [])
+
+
+class OrgKbFocusTests(OrgKbTests):
+    def test_weekly_stale_card_for_author(self) -> None:
+        from datetime import timezone as tz_
+        from assistant.services import proactive
+
+        now = datetime(2026, 11, 11, 9, 0, tzinfo=tz_.utc)  # среда
+        self.assertEqual(proactive.rule_kb_stale(BACK, now, tz_.utc), [])
+        with orgs_store._LOCK:
+            c = org_kb._conn()
+            c.execute("UPDATE org_kb_nodes SET verified_at = '2026-01-01T00:00:00+00:00' WHERE id = ?", (self.doc,))
+            c.commit()
+        cards = proactive.rule_kb_stale(BACK, now, tz_.utc)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["key"], "kb_stale:2026-11-09")  # ключ недели — закрыл до понедельника
+        self.assertEqual(cards[0]["note"]["id"], self.note)
+        self.assertIn("1 документ давно не проверялся", cards[0]["title"])
+        self.assertEqual(proactive.rule_kb_stale(MANAGER, now, tz_.utc), [])  # не автор — не ему

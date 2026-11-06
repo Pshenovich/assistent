@@ -707,6 +707,37 @@ def rank(items: list[dict[str, Any]], dismissed: set[str]) -> list[dict[str, Any
 
 # ---------------------------------------------------------------- сборка
 
+def rule_kb_stale(uid: int, now: datetime, tz: Any) -> list[dict[str, Any]]:
+    """Раз в неделю: документы базы знаний организации, где человек автор и которые давно не проверяли.
+
+    Ключ — неделя: закрыл карточку — до следующего понедельника её нет.
+    """
+    from assistant.stores import org_kb
+
+    stale = org_kb.stale_for_owner(uid)
+    if not stale:
+        return []
+    local = now.astimezone(tz)
+    monday = (local - timedelta(days=local.weekday())).date()
+    stale.sort(key=lambda d: str(d.get("verified_at") or ""))
+    first = stale[0]
+    names = ", ".join(f"«{d['title'] or 'Без названия'}»" for d in stale[:3])
+    more = f" и ещё {len(stale) - 3}" if len(stale) > 3 else ""
+    n = len(stale)
+    word = "документ давно не проверялся" if n % 10 == 1 and n % 100 != 11 else "документа давно не проверялись" \
+        if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "документов давно не проверялись"
+    return [{
+        "key": f"kb_stale:{monday.isoformat()}",
+        "type": "kb_stale",
+        "tag": "📚 база знаний",
+        "urgency": 1,
+        "title": f"{n} {word}",
+        "source": f"{names}{more} — откройте и нажмите «Всё актуально» или поправьте",
+        "note": {"id": int(first["note_id"]), "kind": "note", "title": first.get("title") or ""},
+        "actions": [{"label": "Открыть", "act": "open_note", "primary": True}],
+    }]
+
+
 def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime] = None) -> list[dict[str, Any]]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks
@@ -783,6 +814,10 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
             wc = proactive_reports.weekly_card(uid, now=now)
             if wc:
                 items.append(wc)
+        try:
+            items += rule_kb_stale(uid, now, tz)
+        except Exception as e:
+            print(f"[proactive] kb stale failed uid={uid} err={e!r}")
     except Exception as e:
         print(f"[proactive] insights failed uid={uid} err={e!r}")
     try:
