@@ -50,6 +50,14 @@ class OrgKbTests(unittest.TestCase):
         self._tmpdir.cleanup()
         notes_store._CONN = None  # type: ignore[attr-defined]
 
+    def test_org_doc_hidden_from_documents_list_but_searchable(self) -> None:
+        own = notes_store.create_note(BACK, "Личный черновик", "<p>своё</p>")["id"]
+        listed = {int(n["id"]) for n in notes_store.list_notes(BACK, include_org_kb=False)}
+        self.assertIn(own, listed)
+        self.assertNotIn(self.note, listed)  # документ раздела живёт в базе знаний, не в «Документах»
+        self.assertIn(self.note, {int(n["id"]) for n in notes_store.list_notes(BACK)})  # поиск и Лео — видят
+        self.assertIn(self.note, [int(n["id"]) for n in notes_store.search_notes(BACK, "перезапустить n8n")])
+
     def test_roles_inherit_from_section(self) -> None:
         self.assertEqual(org_kb.role_for_note(BACK, self.note), "owner")  # автор
         self.assertEqual(org_kb.role_for_note(MANAGER, self.note), "reader")

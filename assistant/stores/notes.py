@@ -359,9 +359,21 @@ def list_notes(
     limit: int = 200,
     include_knowledge: bool = False,
     include_transcription: bool = False,
+    include_org_kb: bool = True,
 ) -> list[dict[str, Any]]:
+    """include_org_kb=False — без документов баз знаний организаций: в списке «Документы» их
+    нет, они живут в разделах базы (поиск и Лео по-прежнему их видят)."""
     uid = str(int(user_id))
     lim = max(1, min(int(limit), 5000))
+    org_kb_ids: set[int] = set()
+    if not include_org_kb:
+        try:
+            from assistant.stores import org_kb
+
+            org_kb_ids = org_kb.all_doc_note_ids()
+        except Exception:
+            org_kb_ids = set()
+    lim_sql = lim + len(org_kb_ids)  # документы базы не должны съедать места в странице
     excluded = _excluded_list_roles(
         include_knowledge=include_knowledge,
         include_transcription=include_transcription,
@@ -374,7 +386,7 @@ def list_notes(
             ORDER BY updated_at DESC
             LIMIT ?
             """
-        params: tuple[Any, ...] = (uid, *excluded, lim)
+        params: tuple[Any, ...] = (uid, *excluded, lim_sql)
     else:
         sql = """
             SELECT * FROM local_notes
@@ -382,7 +394,7 @@ def list_notes(
             ORDER BY updated_at DESC
             LIMIT ?
             """
-        params = (uid, lim)
+        params = (uid, lim_sql)
     with _LOCK:
         cur = _conn().execute(sql, params)
         own = [_row_to_dict(r) for r in cur.fetchall()]
@@ -392,6 +404,8 @@ def list_notes(
         include_knowledge=include_knowledge,
         include_transcription=include_transcription,
     )
+    if org_kb_ids:
+        notes = [n for n in notes if int(n["id"]) not in org_kb_ids]
     notes.sort(key=lambda n: str(n.get("updated_at") or ""), reverse=True)
     notes = notes[:lim]
     out = _with_sharing_many(notes, uid)

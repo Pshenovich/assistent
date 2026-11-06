@@ -11540,7 +11540,7 @@ async def miniapp_notes_bundle(
         from assistant.stores import notes as notes_store
 
         local_notes = await run_in_threadpool(
-            partial(notes_store.list_notes, uid, limit=lim)
+            partial(notes_store.list_notes, uid, limit=lim, include_org_kb=False)
         )
     except Exception as e:
         local_notes = []
@@ -11572,7 +11572,7 @@ async def miniapp_notes_bundle(
 
         if hashtags_store.migrate_extra_tags_to_hashtags(uid):
             # Миграция дописала хэштеги в тела — перечитываем список (обычно ничего не переносится).
-            local_notes[:] = notes_store.list_notes(uid, limit=lim)
+            local_notes[:] = notes_store.list_notes(uid, limit=lim, include_org_kb=False)
         tag_items: list[tuple[str, str]] = []
         for n in local_notes:
             tag_items.append(("local", str(n.get("id"))))
@@ -12883,7 +12883,7 @@ async def miniapp_notes_page(
     lim = min(max(int(limit), 1), 300)
 
     def _run() -> tuple[list[dict[str, Any]], bool]:
-        rows = notes_store.list_notes(uid, limit=off + lim + 1)
+        rows = notes_store.list_notes(uid, limit=off + lim + 1, include_org_kb=False)
         page = rows[off : off + lim]
         return _decorate_notes_for_list(uid, page), len(rows) > off + lim
 
