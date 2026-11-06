@@ -22,7 +22,10 @@ def attach_local_bot_api(builder: ApplicationBuilder, *, log_prefix: str) -> App
         return builder
     if not telegram_bot_api_is_loopback(api_base):
         # Зеркало api.telegram.org вне РФ (из российского ДЦ Telegram режут): тот же API, облачные лимиты.
-        print(f"[{log_prefix}] Bot API через зеркало: {api_base}")
+        from assistant.lib.tg_api_failover import api_bases
+
+        spare = ", ".join(api_bases()[1:]) or "нет"
+        print(f"[{log_prefix}] Bot API через зеркало: {api_base} (запасное: {spare})")
         return builder.base_url(f"{api_base}/bot").base_file_url(f"{api_base}/file/bot")
     if not telegram_bot_api_reachable(api_base):
         print(

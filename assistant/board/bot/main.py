@@ -73,8 +73,12 @@ def build_application() -> Application:
     store.init_db()
     proxy = _effective_proxy()
     builder = Application.builder().token(token)
+    # Свой HTTP-слой: запасное зеркало Bot API (assistant/lib/tg_api_failover.py).
+    from assistant.lib.tg_api_failover import FailoverRequest
+
+    builder = builder.request(FailoverRequest(connection_pool_size=256, proxy=proxy or None))
+    builder = builder.get_updates_request(FailoverRequest(connection_pool_size=1, proxy=proxy or None))
     if proxy:
-        builder = builder.proxy(proxy).get_updates_proxy(proxy)
         print(f"[board] telegram_proxy=configured")
     else:
         print("[board] telegram_proxy=none")

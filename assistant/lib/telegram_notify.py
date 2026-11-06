@@ -469,7 +469,9 @@ def get_user_profile_photo_bytes(
                 from assistant.config import telegram_api_root
 
                 url = f"{telegram_api_root()}/file/bot{token}/{file_path}"
-        img = requests.get(url, timeout=20, proxies=proxies)
+        from assistant.lib.tg_api_failover import request as tg_request
+
+        img = tg_request("GET", url, timeout=20, proxies=proxies)
         if img.ok and img.content:
             return img.content
     except Exception as e:

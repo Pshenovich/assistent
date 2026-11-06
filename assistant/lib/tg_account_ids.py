@@ -19,8 +19,11 @@ import threading
 import time
 from typing import Any, Optional
 
-from telegram.request import HTTPXRequest, RequestData
+from telegram.request import HTTPXRequest, RequestData  # noqa: F401 — HTTPXRequest для тестов
 from telegram.request._requestparameter import RequestParameter
+
+from assistant.lib.tg_api_failover import FailoverRequest
+from assistant.lib.tg_api_failover import request as _failover_request
 
 _CACHE_TTL = 30.0
 _LOCK = threading.Lock()
@@ -144,8 +147,8 @@ def incoming_updates(body: bytes) -> bytes:
     return json.dumps(data).encode() if _rewrite_users(data["result"]) else body
 
 
-class AccountMappingRequest(HTTPXRequest):
-    """HTTPXRequest с переводом id (см. модуль)."""
+class AccountMappingRequest(FailoverRequest):
+    """HTTPXRequest с переводом id (см. модуль) и запасным зеркалом Bot API."""
 
     async def do_request(self, url: str, method: str, request_data: Optional[RequestData] = None, **kw: Any):
         if request_data is not None:
@@ -166,7 +169,7 @@ class AccountMappingRequest(HTTPXRequest):
 
 
 def post(url: str, **kwargs: Any):
-    """``requests.post`` к Bot API с тем же переводом id (уведомления мимо python-telegram-bot)."""
+    """``requests.post`` к Bot API с тем же переводом id и запасным зеркалом (уведомления мимо python-telegram-bot)."""
     import requests
 
     for field in ("json", "data"):
@@ -181,4 +184,4 @@ def post(url: str, **kwargs: Any):
             if field == "data" and mapped is not params:
                 mapped = {k: (str(v) if k in _ID_PARAMS else v) for k, v in mapped.items()}
             kwargs[field] = mapped
-    return requests.post(url, **kwargs)
+    return _failover_request("POST", url, **kwargs)
