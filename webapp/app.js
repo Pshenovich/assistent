@@ -202,7 +202,7 @@
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261105-design43",
     "/webapp/board-figma.js?v=20261105-design43",
-    "/webapp/board.js?v=20261105-design44",
+    "/webapp/board.js?v=20261106-figcopy1",
   ];
   let boardScriptsPromise = null;
 

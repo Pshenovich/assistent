@@ -4816,7 +4816,8 @@
         '<label class="lb-iselect" title="Формат"><select data-exp="fmt">' + [["png", "PNG"], ["jpg", "JPG"], ["svg", "SVG"], ["pdf", "PDF"]].map(function (f) {
           return '<option value="' + f[0] + '"' + (expFmt === f[0] ? " selected" : "") + ">" + f[1] + "</option>";
         }).join("") + "</select></label></div>" +
-        '<button type="button" class="lb-ibtn is-wide lb-iexport" data-act="export">Скачать ' + (one && one.type === "frame" ? "фрейм" : list.length > 1 ? "выделенное" : "объект") + "</button></div>");
+        '<button type="button" class="lb-ibtn is-wide lb-iexport" data-act="export">Скачать ' + (one && one.type === "frame" ? "фрейм" : list.length > 1 ? "выделенное" : "объект") + "</button>" +
+        '<button type="button" class="lb-ibtn is-wide lb-iexport" data-act="copyFigma" title="Вставляется во Figma векторами и текстом (⇧⌘C)">Копировать для Figma</button></div>');
       var anyGroup = list.some(function (e) {
         return e.group;
       });
@@ -6607,6 +6608,7 @@
           return { ratio: x.ratio ? undefined : true };
         });
         else if (a === "export") exportSelection(expFmt, expScale);
+        else if (a === "copyFigma") copyForFigma();
         else if (a === "link") {
           var lk = selList()[0];
           if (lk) o.blockActions.link([{ id: lk.id, text: lk.type === "frame" ? lk.name || "Фрейм" : lk.text || "", label: lk.name || lk.text || "Объект макета" }]);
@@ -8829,6 +8831,8 @@
         if (!readOnly) redo();
       } else if (mod && (k === "a" || k === "ф")) {
         setSelection(Array.from(els.keys()));
+      } else if (mod && e.shiftKey && !e.altKey && e.code === "KeyC" && mode === "design") {
+        copyForFigma();
       } else if (mod && (k === "d" || k === "в")) {
         if (!readOnly) duplicateSel();
       } else if (mod && (k === "g" || k === "п" || k === "G" || k === "П" || e.code === "KeyG")) {
@@ -9541,8 +9545,10 @@
       }).replace(/var\(--[\w-]+\)/g, "#000000");
     }
 
-    /** SVG выделенного: те же фигуры, что на экране (градиенты, обводка внутрь/наружу, тень и размытие — фильтрами). */
-    function selectionSvg(ids) {
+    /** SVG выделенного: те же фигуры, что на экране (градиенты, обводка внутрь/наружу, тень и размытие — фильтрами).
+     * opts.figma — тексты по обычной базовой линии: импорт SVG во Figma не знает dominant-baseline. */
+    function selectionSvg(ids, opts) {
+      opts = opts || {};
       var set = {};
       withFrameKids(ids).forEach(function (id) {
         set[id] = 1;
@@ -9616,11 +9622,19 @@
         var tl = el.type !== "frame" && textLayout(measure, el, colors);
         if (tl) {
           var color = el.type === "sticky" ? "#1f2328" : autoTextColor(el) || colors.ink(st.textColor || "ink");
+          // Для Figma: центр строки → базовая линия (середина em-квадрата над ней; шрифт уже выставлен в textLayout).
+          var dy = 0;
+          if (opts.figma) {
+            var tm = measure.measureText("Hg");
+            dy = tm.emHeightAscent != null ? (tm.emHeightAscent - tm.emHeightDescent) / 2 :
+              tm.fontBoundingBoxAscent != null ? (tm.fontBoundingBoxAscent - tm.fontBoundingBoxDescent) / 2 : tl.fs * 0.35;
+            dy = Math.round(dy * 100) / 100;
+          }
           out.push('<text font-size="' + tl.fs + '" font-family="' + esc(tl.fam) + '"' + (tl.wt !== 400 ? ' font-weight="' + tl.wt + '"' : "") +
             (tl.ls ? ' letter-spacing="' + Math.round(tl.ls * 100) / 100 + '"' : "") + (tl.deco ? ' text-decoration="' + (tl.deco === "strike" ? "line-through" : "underline") + '"' : "") +
             ' fill="' + color + '" text-anchor="' + (tl.align === "center" ? "middle" : tl.align === "right" ? "end" : "start") +
-            '" dominant-baseline="central">' + tl.lines.map(function (l, i) {
-              return '<tspan x="' + tl.x + '" y="' + (tl.y + i * tl.lh) + '">' + esc(l) + "</tspan>";
+            '"' + (opts.figma ? "" : ' dominant-baseline="central"') + ">" + tl.lines.map(function (l, i) {
+              return '<tspan x="' + tl.x + '" y="' + (Math.round((tl.y + i * tl.lh + dy) * 100) / 100) + '">' + esc(l) + "</tspan>";
             }).join("") + "</text>");
         }
         out.push("</g></g>");
@@ -9750,6 +9764,19 @@
       for (var i = 1; i <= 5; i++) x += ("0000000000" + offs[i]).slice(-10) + " 00000 n \n";
       push(x + "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF");
       return new Blob(parts, { type: "application/pdf" });
+    }
+
+    /** Выделенное — в буфер SVG-кодом: Figma вставляет его векторами и текстовыми слоями (без автолэйаута). */
+    function copyForFigma() {
+      var ids = Array.from(selected);
+      var sv = ids.length ? selectionSvg(ids, { figma: true }) : null;
+      if (!sv) return notify("Выделите объект или фрейм");
+      // Figma ждёт одно имя шрифта (не CSS-стек; системный → Inter) и не знает fill="transparent".
+      var svg = sv.svg.replace(/font-family="([^"]*)"/g, function (_, stack) {
+        var first = stack.split(",")[0].replace(/&quot;|['"]/g, "").trim();
+        return 'font-family="' + (!first || /^(-apple-system|system-ui|sans-serif|BlinkMacSystemFont)$/i.test(first) ? "Inter" : first) + '"';
+      }).replace(/(fill|stroke)="transparent"/g, '$1="none"');
+      copyText(svg, "Скопировано — вставьте в Figma (⌘V)");
     }
 
     function exportSelection(fmt, k) {
