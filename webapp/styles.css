@@ -24546,6 +24546,13 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   pointer-events: auto;
 }
 
+/* Текст прокручен: полоса прилипла к верху окна — непрозрачная, чтобы кнопки не висели поверх текста. */
+#note-editor-overlay .note-editor-sheet.note-head-inline.note-head-stuck .note-editor-web-back-bar:not(.hidden) {
+  background: var(--vkui--color_background, var(--bg));
+  border-bottom: 1px solid var(--border);
+  pointer-events: auto;
+}
+
 #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-pad--title-in-body {
   /* Строка 1: заголовок (сжимается до «…») и проект рядом; строка 2: вкладки во всю ширину. */
   display: grid;

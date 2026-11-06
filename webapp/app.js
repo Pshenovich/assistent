@@ -31707,6 +31707,8 @@
       if (e.target && e.target.id === "note-editor-title-input") markNoteTitleClipped(e.target);
     });
     window.addEventListener("resize", scheduleNoteHeadInline);
+    // Прокрутка текста: полоса с кнопками едет вместе со строкой заголовка, у верха — прилипает с фоном.
+    sheet.addEventListener("scroll", scheduleNoteHeadInline, { capture: true, passive: true });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleNoteHeadInline);
   }
 
@@ -31732,7 +31734,10 @@
     // Только когда есть место: на телефоне и в узкой колонке — шапка как раньше (в несколько строк).
     var on = !!pad && !bar.classList.contains("hidden") && sheet.clientWidth >= 640;
     sheet.classList.toggle("note-head-inline", on);
-    if (!on) return;
+    if (!on) {
+      sheet.classList.remove("note-head-stuck");
+      return;
+    }
     var back = document.getElementById("note-editor-web-back");
     var more = document.getElementById("note-editor-more-wrap");
     var pr = pad.getBoundingClientRect();
@@ -31755,7 +31760,10 @@
     // Полоса с кнопками — по центру строки заголовка (у блока заголовка свой отступ сверху).
     var title = document.getElementById("note-editor-title-input");
     var tr = title ? title.getBoundingClientRect() : pr;
-    sheet.style.setProperty("--head-t", Math.max(0, Math.round(tr.top + tr.height / 2 - 24 - sr.top)) + "px");
+    var headT = Math.round(tr.top + tr.height / 2 - 24 - sr.top);
+    sheet.style.setProperty("--head-t", Math.max(0, headT) + "px");
+    // Заголовок ушёл вверх — полоса остаётся у края с фоном, текст прокручивается под ней, а не сквозь кнопки.
+    sheet.classList.toggle("note-head-stuck", headT < 0);
     markNoteTitleClipped(title);
   }
 
