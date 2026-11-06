@@ -141,4 +141,31 @@ assert.equal(ph.frame, f2.id);
   assert.deepEqual(ln.paths, [{ d: "M0 0L100 50", stroke: "#e03131", sw: 3, cap: "round", join: "round" }]);
   assert.deepEqual([pen.x, pen.y, pen.paths[0].sw, pen.paths[0].stroke], [300, 300, 3, "#1f2328"]);
 }
+// Готовая раскладка текста (глифы): без неё Figma показывает текстовый слой пустым до первого щелчка.
+{
+  await F._addFont("Inter", 400, new Uint8Array(fs.readFileSync(new URL("./fixtures/inter-cyrillic-400.woff", import.meta.url))));
+  const els3 = [
+    { id: "w", type: "frame", name: "Ф", x: 0, y: 0, w: 300, h: 200, style: {} },
+    { id: "p", type: "text", frame: "w", x: 10, y: 10, w: 100, h: 20, text: "Привет мир\nещё", style: { fontSize: 20, lineHeight: 24, align: "center" } },
+    { id: "q", type: "text", frame: "w", x: 10, y: 120, w: 10, h: 20, autoW: true, text: "Да", style: { fontSize: 20 } },
+  ];
+  assert.equal(F.fontsReady(els3), true);
+  const m3 = await F._decode(F.toHtml(els3, {}));
+  const [p, q] = m3.nodeChanges.filter((n) => n.type === "TEXT");
+  const dt = p.derivedTextData;
+  // «Привет мир» не влезает в 100 — перенос по пробелу; «ещё» — с новой строки.
+  assert.deepEqual(dt.baselines.map((b) => [b.firstCharacter, b.endCharacter, b.lineY, b.lineHeight]), [[0, 7, 0, 24], [7, 10, 24, 24], [11, 14, 48, 24]]);
+  assert.equal(dt.glyphs.length, 12); // пробел и перевод строки — без глифа
+  assert.deepEqual([p.size.x, p.size.y], [100, 72]);
+  const b0 = dt.baselines[0];
+  assert.ok(b0.position.x > 0 && Math.abs(b0.position.x * 2 + b0.width - 100) < 0.01); // по центру
+  assert.ok(b0.position.y > 12 && b0.position.y < 24); // базовая линия внутри первой строки
+  const blob = m3.blobs[dt.glyphs[0].commandsBlob].bytes;
+  assert.equal(blob[0], 1); // контур «П»: M … Z, в долях em
+  assert.equal(blob[blob.length - 1], 0);
+  assert.ok(dt.fontMetaData[0].fontLineHeight > 1 && dt.fontMetaData[0].fontLineHeight < 1.5);
+  // «По содержимому» — ширина по тексту, а не по старой рамке.
+  assert.ok(q.size.x > 20 && q.size.x < 40, String(q.size.x));
+  assert.equal(q.derivedTextData.layoutSize.x, q.size.x);
+}
 console.log("board figma encode ok");

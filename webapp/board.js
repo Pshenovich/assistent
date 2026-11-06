@@ -3827,8 +3827,7 @@
       mode = m;
       root.classList.toggle("is-mode-design", m === "design");
       root.classList.toggle("is-mode-board", m !== "design");
-      // Макет копируется и в буфер Figma — схема распаковывается заранее, чтобы ⌘C успел синхронно.
-      if (m === "design" && window.LeoBoardFigma && window.LeoBoardFigma.prepare) window.LeoBoardFigma.prepare();
+      if (m === "design") figmaWarmup();
       if (typeof o.onModeChange === "function") o.onModeChange(m);
       drawTools();
       renderEmptyHint();
@@ -9770,26 +9769,40 @@
       return new Blob(parts, { type: "application/pdf" });
     }
 
-    /** Выделенное → родной буфер Figma (webapp/board-figma.js): фреймы с автолэйаутом, стили, тексты. "" — не вышло. */
-    function figmaClipHtml(ids) {
+    /** Макет копируется и в буфер Figma — схема и шрифты текстов грузятся заранее, чтобы ⌘C успел синхронно. */
+    function figmaWarmup() {
       var F = window.LeoBoardFigma;
-      if (!F || !F.toHtml || !ids.length) return "";
-      if (!F.isReady()) {
-        F.prepare();
-        return "";
-      }
+      if (!F || !F.prepare) return;
+      F.prepare();
+      if (F.loadFonts) F.loadFonts(Array.from(els.values()));
+    }
+
+    function figmaList(ids) {
       var set = {};
       withFrameKids(ids).forEach(function (id) {
         set[id] = 1;
       });
-      var list = sortedEls().filter(function (el) {
+      return sortedEls().filter(function (el) {
         return set[el.id];
+      }).map(function (el) {
+        return serializeEl(el, getEl, pathOptsOf);
       });
+    }
+
+    /** Выделенное → родной буфер Figma (webapp/board-figma.js): фреймы с автолэйаутом, стили, тексты с глифами. "" — не вышло. */
+    function figmaClipHtml(ids, list) {
+      var F = window.LeoBoardFigma;
+      if (!F || !F.toHtml || !ids.length) return "";
+      list = list || figmaList(ids);
+      // Шрифт ещё не загружен — текст в Figma будет пустым до первого щелчка; грузим к следующему копированию.
+      if (F.loadFonts && !F.fontsReady(list)) F.loadFonts(list);
+      if (!F.isReady()) {
+        F.prepare();
+        return "";
+      }
       var colors = exportColors();
       try {
-        return F.toHtml(list.map(function (el) {
-          return serializeEl(el, getEl, pathOptsOf);
-        }), {
+        return F.toHtml(list, {
           ink: colors.ink,
           fill: colors.fill,
           textColor: function (el) {
@@ -9807,11 +9820,16 @@
       var ids = Array.from(selected);
       var sv = ids.length ? selectionSvg(ids, { figma: true }) : null;
       if (!sv) return notify("Выделите объект или фрейм");
-      var fig = figmaClipHtml(ids);
-      if (fig && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
-        navigator.clipboard.write([new ClipboardItem({
-          "text/html": new Blob(['<meta charset="utf-8">' + fig], { type: "text/html" }),
-        })]).then(function () {
+      var F = window.LeoBoardFigma;
+      if (F && F.toHtml && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        // Схема и шрифты могут ещё грузиться: ClipboardItem ждёт обещание, жест пользователя не теряется.
+        var list = figmaList(ids);
+        var html = Promise.all([F.prepare(), F.loadFonts ? F.loadFonts(list) : null]).then(function () {
+          var fig = figmaClipHtml(ids, list);
+          if (!fig) throw new Error("figma");
+          return new Blob(['<meta charset="utf-8">' + fig], { type: "text/html" });
+        });
+        navigator.clipboard.write([new ClipboardItem({ "text/html": html })]).then(function () {
           notify("Скопировано — вставьте в Figma (⌘V): фреймы с автолэйаутом");
         }, function () {
           copySvgForFigma(sv);
@@ -9889,6 +9907,7 @@
       selected = keep;
       orderDirty = true;
       schedule();
+      if (mode === "design") figmaWarmup(); // шрифты текстов — для буфера Figma
     }
 
     function setJson(json, keepView) {
@@ -10137,7 +10156,6 @@
     }, true);
 
     root.classList.add(mode === "design" ? "is-mode-design" : "is-mode-board");
-    if (mode === "design" && window.LeoBoardFigma && window.LeoBoardFigma.prepare) window.LeoBoardFigma.prepare();
     renderEmptyHint();
     emptyHint.addEventListener("click", function (e) {
       var c = e.target.closest("[data-tpl]");

@@ -10,6 +10,7 @@
 import { decompress as zstd } from "fzstd";
 import { buildMessage, encodeKiwi, zstdRaw, figKiwi, b64 } from "./board-figma-encode.mjs";
 import { SCHEMA_B64, SCHEMA_VERSION } from "./board-figma-schema.mjs";
+import { facesFor, loadFace, addFont } from "./board-figma-font.mjs";
 
 var FIGMA_RE = /\(figma\)([A-Za-z0-9+/=]+)\(\/figma\)/;
 
@@ -1116,9 +1117,47 @@ function prepare() {
   return preparing;
 }
 
+var STYLE_W = { Thin: 100, "Extra Light": 200, Light: 300, Regular: 400, Medium: 500, "Semi Bold": 600, Bold: 700, "Extra Bold": 800, Black: 900 };
+
+/** Шрифты текстов из элементов: [{family, weight}] (как их назовёт кодировщик). */
+function fontsOf(elements) {
+  var seen = {};
+  var out = [];
+  (elements || []).forEach(function (el) {
+    if (!el || !el.text || !/^(text|rect|ellipse|sticky)$/.test(el.type)) return;
+    var st = el.style || {};
+    var fam = st.fontFamily && /^[A-Za-z0-9 ]{1,40}$/.test(st.fontFamily) ? st.fontFamily : "Inter";
+    var w = Math.max(100, Math.min(900, Math.round((Number(st.fontWeight) || (st.bold ? 600 : 400)) / 100) * 100));
+    if (!seen[fam + w]) {
+      seen[fam + w] = 1;
+      out.push({ family: fam, weight: w });
+    }
+  });
+  return out;
+}
+
+/** Загрузить шрифты для текстов (раскладка в буфере Figma). Ошибки сети — не страшно: текст будет без глифов. */
+function loadFonts(elements) {
+  return Promise.all(fontsOf(elements).map(function (f) {
+    return loadFace(f.family, f.weight).catch(function () {
+      return null;
+    });
+  }));
+}
+
+/** Все ли шрифты текстов уже загружены (тогда ⌘C даст видимый в Figma текст). */
+function fontsReady(elements) {
+  return fontsOf(elements).every(function (f) {
+    return !!facesFor(f.family, f.weight);
+  });
+}
+
 /** Элементы макета → text/html, который Figma вставляет фреймами с автолэйаутом. Схема не готова — null. */
 function toHtml(elements, opts) {
   if (!schemaDefs) return null;
+  opts = Object.assign({ faces: function (family, style) {
+    return facesFor(family, STYLE_W[style] || 400);
+  } }, opts);
   var built = buildMessage(elements, opts);
   if (!built.topGuids.length) return null;
   var msg = built.message;
@@ -1147,6 +1186,6 @@ var api = { fromHtml: fromHtml, isFigma: function (html) {
   return FIGMA_RE.test(String(html || ""));
 }, prepare: prepare, isReady: function () {
   return !!schemaDefs;
-}, toHtml: toHtml, _decode: decodeFigma, _fromFigma: fromFigma };
+}, toHtml: toHtml, loadFonts: loadFonts, fontsReady: fontsReady, _addFont: addFont, _decode: decodeFigma, _fromFigma: fromFigma };
 if (typeof window !== "undefined") window.LeoBoardFigma = api;
 else globalThis.LeoBoardFigma = api;

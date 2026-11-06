@@ -5,6 +5,8 @@
 // Буфер: text/html со <span data-metadata="<!--(figmeta)…(/figmeta)-->"> и <span data-buffer="<!--(figma)…(/figma)-->">,
 // внутри — fig-kiwi: заголовок, схема kiwi (как в образце — deflate-raw, хранится готовой) и сообщение (zstd).
 
+import { layoutText } from "./board-figma-font.mjs";
+
 // ---- kiwi: запись сообщения по схеме (формат evanw/kiwi) ----
 function Writer() {
   this.b = new Uint8Array(1 << 14);
@@ -438,7 +440,8 @@ function pathBounds(subs) {
 // ---- элементы макета → NodeChange[] ----
 /**
  * elements — элементы доски (как serializeEl в board.js: x/y/w/h в координатах листа, frame — родитель, порядок — снизу вверх).
- * opts.ink(k) / opts.fill(k) — цвета палитры доски в hex; opts.textColor(el) — цвет текста как на экране (автоконтраст).
+ * opts.ink(k) / opts.fill(k) — цвета палитры доски в hex; opts.textColor(el) — цвет текста как на экране (автоконтраст);
+ * opts.faces(family, style) — загруженные шрифты для раскладки текста (board-figma-font.mjs), нет — текст без глифов.
  * → { message, topIds } — сообщение для схемы Message.
  */
 export function buildMessage(elements, opts) {
@@ -777,6 +780,22 @@ export function buildMessage(elements, opts) {
   children(root, tops).forEach(function (n) {
     topGuids.push(n.guid);
   });
+
+  // Готовая раскладка текстов (глифы) — без неё Figma показывает текстовый слой пустым, пока его не тронешь.
+  if (opts.faces) {
+    nodes.forEach(function (n) {
+      if (n.type !== "TEXT") return;
+      var dt = layoutText(n, opts.faces(n.fontName.family, n.fontName.style), function (bytes) {
+        blobs.push({ bytes: bytes });
+        return blobs.length - 1;
+      });
+      if (!dt) return;
+      n.derivedTextData = dt;
+      // Размер слоя — как у раскладки (по содержимому — ширина, «авто-высота» — высота).
+      if (n.textAutoResize === "WIDTH_AND_HEIGHT") n.size = { x: dt.layoutSize.x, y: dt.layoutSize.y };
+      else if (n.textAutoResize === "HEIGHT") n.size = { x: n.size.x, y: dt.layoutSize.y };
+    });
+  }
 
   var message = {
     type: "NODE_CHANGES", sessionID: 0, ackID: 0, pasteID: Math.floor(Math.random() * 2e9), pasteFileKey: opts.fileKey || "orbita",
