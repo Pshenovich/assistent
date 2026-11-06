@@ -187,3 +187,51 @@ class OrgKbEditRequestTests(OrgKbTests):
         self.assertFalse(note_members.is_member(str(BACK), self.note, str(MANAGER)))  # не участник заметки
         with self.assertRaises(ValueError):
             note_members.create_edit_request(owner_user_id=BACK, note_id=self.note, requester_user_id=MANAGER)
+
+
+class OrgKbDepartureTests(OrgKbTests):
+    def test_leaving_author_hands_docs_to_org_owner(self) -> None:
+        from assistant.stores import note_members, share_comments, tags
+
+        note_members.add_member(BACK, self.note, OWNER)  # владелец организации был участником
+        note_members.add_member(BACK, self.note, FRONT)
+        share_comments.add_comment(BACK, "local", self.note, author_user_id=MANAGER, author_name="М", body="вопрос")
+        tag = tags.create_tag(BACK, "мои заметки")
+        tags.set_item_tags(BACK, "local", self.note, [int(tag["id"])])
+        org_kb.set_access(OWNER, self.org, self.sec, f"u:{BACK}", "editor")
+        notes_store.update_note(BACK, self.note, body="<p>шаги: 1, 2</p>", actor_user_id=BACK)
+
+        row = next(m for m in orgs_store.list_members(self.org) if m["user_id"] == str(BACK))
+        orgs_store.remove_member(OWNER, self.org, row["id"])
+
+        n = notes_store.get_note_by_id(self.note)
+        self.assertEqual(n["owner_user_id"], str(OWNER))
+        # ушедший больше не видит документ ни как автор, ни через пространство
+        self.assertIsNone(notes_store.get_readable_note(BACK, self.note))
+        self.assertIsNone(notes_store.get_note(BACK, self.note))
+        # остальные доступы и обсуждение — на месте, у нового владельца
+        self.assertTrue(note_members.is_member(str(OWNER), self.note, str(FRONT)))
+        with orgs_store._LOCK:
+            self_rows = org_kb._conn().execute(
+                "SELECT COUNT(*) FROM note_members WHERE note_id = ? AND member_user_id = ?", (self.note, str(OWNER))
+            ).fetchone()[0]
+        self.assertEqual(self_rows, 0)  # новый владелец не числится участником своего документа
+        from assistant.stores import note_versions
+
+        with note_versions._LOCK:
+            owners = {r[0] for r in note_versions._conn().execute(
+                "SELECT owner_user_id FROM note_versions WHERE note_id = ?", (self.note,)
+            ).fetchall()}
+        self.assertEqual(owners, {str(OWNER)})  # история версий — у нового владельца
+        self.assertEqual(len(share_comments.list_comments(str(OWNER), "local", str(self.note))), 1)
+        self.assertEqual(org_kb.role_for_note(MANAGER, self.note), "reader")
+        self.assertEqual(org_kb.role_for_note(OWNER, self.note), "owner")
+        # личные теги ушедшего на документе удалены
+        self.assertEqual(tags.get_item_tags(BACK, "local", self.note), [])
+        with orgs_store._LOCK:
+            acl = org_kb._conn().execute("SELECT COUNT(*) FROM org_kb_acl WHERE principal = ?", (f"u:{BACK}",)).fetchone()[0]
+        self.assertEqual(acl, 0)
+
+    def test_leaving_without_kb_docs_is_harmless(self) -> None:
+        orgs_store.leave(MANAGER, self.org)
+        self.assertEqual(notes_store.get_note_by_id(self.note)["owner_user_id"], str(BACK))

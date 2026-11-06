@@ -883,6 +883,8 @@ def remove_member(actor_id: int | str, org_id: int, member_row_id: int) -> None:
         if m["user_id"]:
             _drop_from_groups(conn, org_id, str(m["user_id"]))
         conn.commit()
+    if m["user_id"]:
+        _hand_over_docs(org_id, str(m["user_id"]))
 
 
 def _drop_from_groups(conn: sqlite3.Connection, org_id: int, user_id: str) -> None:
@@ -892,6 +894,16 @@ def _drop_from_groups(conn: sqlite3.Connection, org_id: int, user_id: str) -> No
         (user_id, int(org_id)),
     )
     conn.execute("UPDATE org_groups SET lead_user_id = NULL WHERE org_id = ? AND lead_user_id = ?", (int(org_id), user_id))
+
+
+def _hand_over_docs(org_id: int, user_id: str) -> None:
+    """Документы ушедшего в базе знаний организации — владельцу организации (см. org_kb.transfer_docs). Не бросает."""
+    try:
+        from assistant.stores import org_kb
+
+        org_kb.transfer_docs(org_id, user_id)
+    except Exception as e:
+        print(f"[orgs] hand over docs org={org_id} user={user_id} err={e!r}")
 
 
 def leave(user_id: int | str, org_id: int) -> None:
@@ -906,6 +918,7 @@ def leave(user_id: int | str, org_id: int) -> None:
         _drop_from_groups(conn, org_id, _uid(user_id))
         conn.execute("INSERT OR IGNORE INTO org_dismissed (user_id, org_id) VALUES (?, ?)", (_uid(user_id), int(org_id)))
         conn.commit()
+    _hand_over_docs(org_id, _uid(user_id))
 
 
 # ---------- ссылки-приглашения ----------

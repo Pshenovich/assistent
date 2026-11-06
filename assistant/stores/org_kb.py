@@ -575,3 +575,115 @@ def my_docs(org_id: int, user_id: int | str, *, limit: int = 300) -> list[dict[s
         out.append({"note_id": int(n["id"]), "title": n.get("title") or "Без названия",
                     "updated_at": n.get("updated_at"), "is_knowledge": bool(n.get("is_knowledge"))})
     return out
+
+
+# ---------- уход автора ----------
+
+# Таблицы базы заметок, где документ привязан к владельцу: (таблица, колонка владельца, как найти документ).
+# «note» — колонка note_id; «item» — пара item_kind='local' + item_id (текстом).
+_OWNED_BY_NOTE = (
+    ("note_members", "owner_user_id", "note"),
+    ("note_edit_requests", "owner_user_id", "note"),
+    ("meeting_links", "owner_user_id", "note"),
+    ("note_people", "owner_user_id", "note"),
+    ("share_comments", "owner_user_id", "item"),
+    ("share_comment_files", "owner_user_id", "item"),
+    ("note_chats", "owner_user_id", "item"),
+    ("note_chat_reads", "owner_user_id", "item"),
+    ("discussion_unread", "owner_user_id", "item"),
+    ("share_links", "user_id", "item"),
+)
+# Личное ушедшего на документе — удалить, а не передавать.
+_PERSONAL_BY_ITEM = ("tag_links", "hashtag_links", "note_pins")
+_NOOP = __import__("contextlib").nullcontext()
+
+
+def _table_cols(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _new_owner(org_id: int, leaving: str) -> Optional[str]:
+    for m in orgs_store.list_members(org_id):
+        if m["status"] == "active" and m["role"] == "owner" and m["user_id"] and m["user_id"] != leaving:
+            return str(m["user_id"])
+    return None
+
+
+def transfer_docs(org_id: int, from_user_id: int | str) -> list[int]:
+    """Человек ушёл из организации: его документы базы знаний переходят владельцу организации.
+
+    Вместе с документом — участники, комментарии, чаты, ссылки, встречи и история версий;
+    его личные теги и закрепления на этих документах удаляются, копия в его поиске Лео — тоже.
+    Его личные права в пространстве снимаются. Возвращает id переданных документов.
+    """
+    old = _uid(from_user_id)
+    new = _new_owner(org_id, old)
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "DELETE FROM org_kb_acl WHERE principal = ? AND node_id IN (SELECT id FROM org_kb_nodes WHERE org_id = ?)",
+            (f"u:{old}", int(org_id)),
+        )
+        ids = [int(r[0]) for r in conn.execute(
+            "SELECT n.note_id FROM org_kb_nodes n JOIN local_notes l ON l.id = n.note_id "
+            "WHERE n.org_id = ? AND n.kind = 'doc' AND l.user_id = ?",
+            (int(org_id), old),
+        ).fetchall()]
+        if not ids or not new:
+            conn.commit()
+            if ids:
+                print(f"[org_kb] transfer org={org_id} from={old}: no other owner, {len(ids)} docs stay")
+            return []
+        tables = {str(r[0]) for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        for nid in ids:
+            conn.execute("UPDATE local_notes SET user_id = ? WHERE id = ? AND user_id = ?", (new, nid, old))
+            for table, col, how in _OWNED_BY_NOTE:
+                if table not in tables:
+                    continue
+                if how == "note":
+                    if table == "note_members":
+                        # новый владелец был участником — теперь он владелец, строка участника лишняя
+                        conn.execute("DELETE FROM note_members WHERE note_id = ? AND owner_user_id = ? AND member_user_id = ?",
+                                     (nid, old, new))
+                    conn.execute(f"UPDATE OR IGNORE {table} SET {col} = ? WHERE note_id = ? AND {col} = ?", (new, nid, old))
+                    conn.execute(f"DELETE FROM {table} WHERE note_id = ? AND {col} = ?", (nid, old))
+                else:
+                    conn.execute(
+                        f"UPDATE OR IGNORE {table} SET {col} = ? WHERE item_kind = 'local' AND item_id = ? AND {col} = ?",
+                        (new, str(nid), old),
+                    )
+                    conn.execute(f"DELETE FROM {table} WHERE item_kind = 'local' AND item_id = ? AND {col} = ?",
+                                 (str(nid), old))
+            if "team_note_shares" in tables:
+                conn.execute("DELETE FROM team_note_shares WHERE note_id = ? AND owner_user_id = ?", (nid, old))
+            for table in _PERSONAL_BY_ITEM:
+                if table in tables and "user_id" in _table_cols(conn, table):
+                    conn.execute(f"DELETE FROM {table} WHERE user_id = ? AND item_kind = 'local' AND item_id = ?",
+                                 (old, str(nid)))
+        conn.commit()
+    _transfer_outside(ids, old, new)
+    print(f"[org_kb] transfer org={org_id} from={old} to={new} docs={ids}")
+    return ids
+
+
+def _transfer_outside(ids: list[int], old: str, new: str) -> None:
+    """Отдельные базы: история версий — новому владельцу, поиск Лео ушедшего — без этих документов."""
+    try:
+        from assistant.stores import note_versions
+
+        with getattr(note_versions, "_LOCK", _NOOP):
+            vconn = note_versions._conn()  # type: ignore[attr-defined]
+            for nid in ids:
+                vconn.execute("UPDATE note_versions SET owner_user_id = ? WHERE note_id = ? AND owner_user_id = ?",
+                              (new, nid, old))
+            vconn.commit()
+    except Exception as e:
+        print(f"[org_kb] transfer versions err={e!r}")
+    try:
+        from assistant.stores import semantic_index
+
+        for nid in ids:
+            for key in (f"note:{nid}", f"kb:{nid}"):
+                semantic_index.delete_source(old, key)
+    except Exception as e:
+        print(f"[org_kb] transfer semantic err={e!r}")

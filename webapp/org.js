@@ -852,7 +852,7 @@
     }
     if (kind === "remove") {
       return act(async function () {
-        if (!(await confirm("Исключить из организации?"))) return;
+        if (!(await confirm("Исключить из организации? Его документы в базе знаний перейдут владельцу организации."))) return;
         await applyDetail(await api("/" + id + "/members/" + btn.getAttribute("data-mid"), { method: "DELETE" }));
       });
     }
@@ -883,7 +883,7 @@
     }
     if (kind === "leave") {
       return act(async function () {
-        if (!(await confirm("Выйти из организации «" + state.detail.org.name + "»?"))) return;
+        if (!(await confirm("Выйти из организации «" + state.detail.org.name + "»? Ваши документы в её базе знаний останутся у организации — у вас их больше не будет."))) return;
         await api("/" + id + "/leave", { method: "POST" });
         await reload();
       });
