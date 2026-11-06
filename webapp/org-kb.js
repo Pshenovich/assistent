@@ -328,6 +328,9 @@
       if (atLeast(role, "editor")) {
         manage += '<button type="button" class="pf-row" data-kb="rename" data-id="' + sec.id + '"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Переименовать раздел</span></span></span></button>';
       }
+      if (role === "owner" && sec.parent_id != null) {
+        manage += '<button type="button" class="pf-row" data-kb="move-section" data-id="' + sec.id + '"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Переместить раздел…</span></span></span></button>';
+      }
       if (role === "owner") {
         manage += '<button type="button" class="pf-row pf-row--danger" data-kb="remove" data-id="' + sec.id + '"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Убрать раздел</span></span></span></button>';
       }
@@ -704,6 +707,102 @@
     });
   }
 
+  // ---------- перенести документ или раздел ----------
+
+  function nodeForNote(noteId) {
+    var hit = null;
+    state.orgs.forEach(function (o) {
+      (o.kb.nodes || []).forEach(function (n) {
+        if (n.kind === "doc" && String(n.note_id) === String(noteId)) hit = { org: o.org, kb: o.kb, node: n };
+      });
+    });
+    return hit;
+  }
+
+  // Куда можно положить: разделы, где человек редактор; для раздела — не он сам и не его подразделы.
+  function targetsFor(moving) {
+    var skip = {};
+    if (moving && moving.node.kind === "section") {
+      (function mark(id) {
+        skip[id] = true;
+        childrenOf(moving.kb, id).forEach(function (c) { if (c.kind === "section") mark(c.id); });
+      })(moving.node.id);
+    }
+    return editableSections().filter(function (s) {
+      if (moving && s.org.id !== moving.org.id) return false; // между организациями не переносим
+      if (skip[s.node.id]) return false;
+      return !(moving && moving.node.parent_id === s.node.id);
+    }).sort(function (a, b) {
+      return (a.org.name + " " + sectionPath(a.kb, a.node)).localeCompare(b.org.name + " " + sectionPath(b.kb, b.node), "ru");
+    });
+  }
+
+  function chooseSection(title, lead, targets, onPick) {
+    var sh = sheet(title, "");
+    if (!targets.length) {
+      sh.body.innerHTML = '<p class="pf-hint">Нет разделов, куда у вас есть права добавлять. Попросите владельца раздела дать вам роль редактора.</p>';
+      return;
+    }
+    sh.body.innerHTML = (lead ? '<p class="kb-crumbs">' + lead + "</p>" : "") + '<div class="pf-list">' +
+      targets.map(function (t, i) {
+        return '<button type="button" class="pf-row" data-kb-target="' + i + '"><span class="pf-ico kb-ico" aria-hidden="true">' + ICO.folder + "</span>" +
+          '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(sectionPath(t.kb, t.node)) + "</span>" +
+          '<span class="pf-row-sub">' + esc(t.org.name + " · " + accessLine(t.kb, t.node)) + "</span></span></span></button>";
+      }).join("") + "</div>" +
+      '<p class="pf-hint">Документ получит доступ нового раздела.</p>';
+    sh.body.addEventListener("click", function (e) {
+      var b = e.target.closest("[data-kb-target]");
+      if (!b) return;
+      sh.close();
+      onPick(targets[Number(b.getAttribute("data-kb-target"))]);
+    });
+  }
+
+  async function moveNode(moving, target) {
+    try {
+      var d = await api("/" + moving.org.id + "/kb/nodes/" + moving.node.id, json("PATCH", { parent_id: target.node.id }));
+      await refreshOrg(moving.org.id, d);
+      toast("Перенесено в «" + target.node.title + "»");
+      return true;
+    } catch (e) {
+      toast(errText(e));
+      return false;
+    }
+  }
+
+  // onDone(org, section) — документ теперь в этом разделе (обновить полоску открытого документа)
+  async function placeNote(noteId, onDone) {
+    if (!state.loaded) await load();
+    var cur = nodeForNote(noteId);
+    if (cur) {
+      chooseSection("Переместить документ", "Документ <b>«" + esc(cur.node.title) + "»</b>", targetsFor(cur), function (t) {
+        moveNode(cur, t).then(function (ok) {
+          if (ok && onDone) onDone(t.org, t.node);
+        });
+      });
+      return;
+    }
+    chooseSection("В базу знаний", "Документ останется вашим, доступ к нему получат все, кому открыт раздел.", targetsFor(null), async function (t) {
+      try {
+        var d = await api("/" + t.org.id + "/kb/docs", json("POST", { section_id: t.node.id, note_id: Number(noteId) }));
+        await refreshOrg(t.org.id, d);
+        toast("Документ в разделе «" + t.node.title + "»");
+        if (onDone) onDone(t.org, t.node);
+      } catch (e) {
+        toast(errText(e));
+      }
+    });
+  }
+
+  function moveSection(orgId, id) {
+    var kb = kbOf(orgId);
+    var moving = { org: orgOf(orgId), kb: kb, node: nodeOf(kb, id) };
+    if (!moving.node) return;
+    chooseSection("Переместить раздел", "Раздел <b>«" + esc(moving.node.title) + "»</b> со всем, что внутри", targetsFor(moving), function (t) {
+      moveNode(moving, t);
+    });
+  }
+
   function onClick(e) {
     var b = e.target.closest("[data-kb]");
     if (!b) return;
@@ -727,6 +826,7 @@
     if (kind === "add-doc") return addMyDoc(orgId, id);
     if (kind === "access") return openAccess(orgId, id);
     if (kind === "rename") return renameSection(orgId, id);
+    if (kind === "move-section") return moveSection(orgId, id);
     if (kind === "remove") return removeSection(orgId, id);
     if (kind === "org-open") {
       if (window.LeoOrg && window.LeoOrg.open) {
@@ -760,7 +860,10 @@
         ? '<span class="kb-banner-done">Запрос отправлен</span>'
         : '<button type="button" class="pf-link" data-kb-banner="request">Попросить править</button>';
     }
-    if (role === "owner") action += '<button type="button" class="pf-link" data-kb-banner="access">Доступ</button>';
+    if (role === "owner") {
+      action += '<button type="button" class="pf-link" data-kb-banner="move">Переместить</button>' +
+        '<button type="button" class="pf-link" data-kb-banner="access">Доступ</button>';
+    }
     var ico = kb.stale && !kb.no_expiry ? ICO.clock : canEdit ? ICO.check : ICO.eye;
     return crumb + '<div class="' + cls + '">' + ico + "<span>" + esc(text) + "</span>" + action + "</div>";
   }
@@ -802,6 +905,11 @@
         } catch (err) {
           toast(errText(err));
         }
+      } else if (kind === "move") {
+        placeNote(note.id, function (org, sec) {
+          note.org_kb.section_title = sec.title;
+          box.innerHTML = bannerHtml(note);
+        });
       } else if (kind === "access") {
         if (!kbOf(note.org_kb.org_id)) await load();
         openAccess(note.org_kb.org_id, note.org_kb.node_id);
@@ -853,6 +961,12 @@
     }
     html += '<p class="pf-hint">Агент видит то же, что вы в базе знаний, и только читает. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
     body.innerHTML = html;
+    if (ai.scrollTo) {
+      ai.scrollTo = false;
+      setTimeout(function () {
+        if (group.scrollIntoView) group.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 50);
+    }
   }
 
   async function aiCopy(text) {
@@ -959,20 +1073,38 @@
         }
       }).observe(account, { attributes: true, attributeFilter: ["class"] });
     }
+    // разделы нужны и вне вкладки — для пункта «В базу знаний…» в меню документа
+    setTimeout(function () {
+      if (!state.loaded) load();
+    }, 3000);
     var aiOpen = document.getElementById("knowledge-ai-open");
+    var profileAi = document.getElementById("profile-ai-open");
+    if (profileAi) {
+      profileAi.addEventListener("click", function () {
+        ai.scrollTo = true; // прокрутить к токенам, когда они загрузятся (renderAi)
+        if (app().openAccount) app().openAccount();
+      });
+    }
     if (aiOpen) {
       aiOpen.addEventListener("click", function () {
         if (app().setTab) app().setTab("profile");
+        ai.scrollTo = true; // прокрутить к токенам, когда они загрузятся (renderAi)
         if (app().openAccount) app().openAccount();
-        setTimeout(function () {
-          var g = document.getElementById("account-ai-group");
-          if (g && g.scrollIntoView) g.scrollIntoView({ block: "start", behavior: "smooth" });
-        }, 300);
       });
     }
   }
 
-  window.LeoOrgKb = { reload: load };
+  window.LeoOrgKb = {
+    reload: load,
+    // для меню «⋯» документа (app.js)
+    canPlace: function () {
+      return editableSections().length > 0;
+    },
+    inKb: function (noteId) {
+      return !!nodeForNote(noteId);
+    },
+    place: placeNote,
+  };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();

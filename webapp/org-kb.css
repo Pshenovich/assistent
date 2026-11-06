@@ -100,3 +100,6 @@ html.kb-note-reader #note-paie-reply-form { display: none; }
 }
 .kb-ai-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .kb-ai-actions .pf-btn { width: auto; padding: 8px 14px; font-size: 0.875rem; }
+
+/* Шторки базы знаний открываются и поверх документа с «Обсуждением» справа (220) — как #note-unsaved-overlay */
+.modal-overlay.kb-sheet-overlay { z-index: 400; }

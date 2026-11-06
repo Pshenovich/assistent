@@ -38138,9 +38138,17 @@
     }
 
     if (shareId && shareKind === "local" && !wrap._isKnowledge) {
-      addItem("Копировать в Базу знаний", function () {
+      addItem("Копия в «Мои документы» базы знаний", function () {
         closeNoteMoreMenu();
         copyLocalNoteToKnowledge(shareId);
+      });
+    }
+
+    // База знаний организации: положить свой документ в раздел или перенести в другой (org-kb.js).
+    if (shareId && shareKind === "local" && window.LeoOrgKb && window.LeoOrgKb.canPlace()) {
+      addItem(window.LeoOrgKb.inKb(shareId) ? "Переместить в другой раздел…" : "В базу знаний организации…", function () {
+        closeNoteMoreMenu();
+        window.LeoOrgKb.place(shareId);
       });
     }
 
@@ -53949,7 +53957,7 @@
       duplicateLocalNote(id);
     });
     if (!isKnowledgeNoteItem(n)) {
-      addMoreItem("Копировать в Базу знаний", function () {
+      addMoreItem("Копия в «Мои документы» базы знаний", function () {
         copyLocalNoteToKnowledge(id);
       });
     }
@@ -54903,7 +54911,7 @@
       },
     ].concat(isKnowledgeNoteItem(n) ? [] : [
       {
-        label: "Копировать в Базу знаний",
+        label: "Копия в «Мои документы» базы знаний",
         icon: "copy",
         onClick: function () {
           copyLocalNoteToKnowledge(id);
