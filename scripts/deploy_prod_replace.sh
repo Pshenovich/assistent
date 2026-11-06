@@ -269,6 +269,11 @@ if [[ -f .env ]]; then
   grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env || echo 'USAGE_DASHBOARD_URL_PREFIX=/dashboard' >> .env
   # Ошибки бота и веба в Sentry (проект orbita). DSN не секрет — это адрес приёма событий.
   grep -q '^SENTRY_DSN=' .env || echo 'SENTRY_DSN=https://8701c2c70e3ddadcb106150aac9c264e@o4512332678430720.ingest.de.sentry.io/4512332863570000' >> .env
+  # Продуктовая аналитика → PostHog (проект Orbita, EU). Ключ phc_ публичный — только приём событий.
+  # Соль хэша id создаётся один раз и больше не меняется (иначе в PostHog люди «раздвоятся»).
+  grep -q '^ANALYTICS_FORWARD=' .env || echo 'ANALYTICS_FORWARD=posthog' >> .env
+  grep -qE '^POSTHOG_(KEY|TOKEN)=.+' .env || echo 'POSTHOG_TOKEN=phc_y6HEjBNkVc3nSXbprhWeZamVVmoXSEvtXx8vUvZoeUFz' >> .env
+  grep -qE '^ANALYTICS_ID_SALT=.+' .env || echo "ANALYTICS_ID_SALT=$(python3 -c 'import secrets;print(secrets.token_hex(32))')" >> .env
   if grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env; then
     sed -i 's|^USAGE_DASHBOARD_URL_PREFIX=.*|USAGE_DASHBOARD_URL_PREFIX=/dashboard|' .env
   fi
