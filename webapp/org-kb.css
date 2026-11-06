@@ -79,7 +79,8 @@ html.kb-note-readonly #note-editor-toolbar-wrap { display: none; }
 
 /* Читатель: без «+ лист», «Сделать: …» и кнопок правки презентации */
 html.kb-note-readonly .note-sheet-chip--add,
-html.kb-note-readonly .sheet-kind-pick { display: none; }
+html.kb-note-readonly .sheet-kind-pick,
+html.kb-note-readonly .note-sheet-chip-more { display: none; }
 .note-web-canvas.is-readonly .note-web-canvas-pick-btn:not(.note-web-canvas-refresh-btn):not(.note-web-canvas-pdf-btn),
 .note-web-canvas.is-readonly .note-web-canvas-theme,
 .note-web-canvas.is-readonly .note-web-canvas-insert-bar { display: none !important; }

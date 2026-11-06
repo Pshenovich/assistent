@@ -16828,6 +16828,26 @@ mark.note-highlight { background: color-mix(in srgb, var(--warning) 32%, transpa
 /* Иконки ссылок у вкладок — серые и мельче: важно, что лист открыт, но не кричать об этом. */
 .note-sheet-chip-share { color: var(--text-secondary); width: 18px; height: 18px; opacity: 0.8; }
 .note-sheet-chip-share svg { width: 12px; height: 12px; }
+/* «⋯» у открытой вкладки и его меню: переименовать, тип листа, удалить. */
+.note-sheet-chip.has-more { display: inline-flex; align-items: center; gap: 4px; }
+.note-sheet-chip-more {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: -4px -6px -4px 0;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.note-sheet-chip-more:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.note-sheet-chip-menu { min-width: 13rem; }
+.note-sheet-chip-menu .note-sheet-kind-menu-item { flex-direction: row; align-items: center; padding: 0.45rem 0.7rem; }
+.note-sheet-chip-menu .note-sheet-kind-menu-item.is-checked::after { content: "✓"; margin-left: auto; color: var(--accent); font-size: 0.8125rem; }
+.note-sheet-chip-menu .note-sheet-kind-menu-item:disabled { cursor: default; opacity: 0.45; }
+.note-sheet-chip-menu .note-sheet-kind-menu-item:disabled:hover { background: transparent; }
+.note-sheet-chip-menu-sep { margin: 4px 6px; padding-top: 6px; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-tertiary); }
+.note-sheet-chip-menu-sep:empty { padding-top: 0; }
 
 /* Меню проекта в строке свойств: обёртка с z-index 1 прятала его под текстом заметки */
 #note-editor-overlay .note-editor-meta .tag-picker-add-wrap { position: relative; z-index: 130; }

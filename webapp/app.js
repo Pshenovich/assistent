@@ -7549,16 +7549,14 @@
     var add = addMinutes == null ? 60 : Number(addMinutes) || 0;
     var day = meetingsPageDate || todayIsoLocal();
     var today = todayIsoLocal();
-    if (!day || day === today || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
-      var d = new Date();
-      d.setMinutes(d.getMinutes() + add);
-      d.setSeconds(0, 0);
-      return isoToDatetimeLocalValue(d.toISOString());
-    }
-    // Открытый день календаря: то же время суток, что «сейчас + add», на выбранной дате.
+    // «Сейчас + add», округлённое вверх до четверти часа: 15:21 → 15:30.
     var t = new Date();
-    t.setMinutes(t.getMinutes() + add);
     t.setSeconds(0, 0);
+    t.setMinutes(Math.ceil((t.getMinutes() + add) / 15) * 15);
+    if (!day || day === today || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return isoToDatetimeLocalValue(t.toISOString());
+    }
+    // Открытый день календаря: то же время суток на выбранной дате.
     return (
       day +
       "T" +
@@ -42720,6 +42718,103 @@
       .catch(function () {});
   }
 
+  function closeSheetChipMenu() {
+    var m = document.getElementById("note-sheet-chip-menu");
+    if (m && m.parentNode) m.parentNode.removeChild(m);
+    document.removeEventListener("click", onSheetChipMenuDocClick, true);
+    document.removeEventListener("keydown", onSheetChipMenuKey, true);
+  }
+
+  function onSheetChipMenuDocClick(e) {
+    var m = document.getElementById("note-sheet-chip-menu");
+    if (m && e.target && m.contains(e.target)) return;
+    closeSheetChipMenu();
+  }
+
+  function onSheetChipMenuKey(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation(); // Escape закрывает только меню, не документ.
+      closeSheetChipMenu();
+    }
+  }
+
+  // «⋯» у открытой вкладки: переименовать, тип листа (пока лист пуст), удалить.
+  function openSheetChipMenu(anchor, chip, sheet) {
+    if (document.getElementById("note-sheet-chip-menu")) {
+      closeSheetChipMenu();
+      return;
+    }
+    closeNewSheetKindMenu();
+    closeSheetShareMenu();
+    var menu = document.createElement("div");
+    menu.id = "note-sheet-chip-menu";
+    menu.className = "note-sheet-kind-menu note-sheet-share-menu note-sheet-chip-menu";
+    menu.setAttribute("role", "menu");
+    function item(label, fn, o) {
+      o = o || {};
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className =
+        "note-sheet-kind-menu-item" + (o.danger ? " is-danger" : "") + (o.checked ? " is-checked" : "");
+      b.setAttribute("role", o.checked != null ? "menuitemradio" : "menuitem");
+      if (o.checked != null) b.setAttribute("aria-checked", o.checked ? "true" : "false");
+      if (o.disabled) b.disabled = true;
+      var t = document.createElement("span");
+      t.className = "note-sheet-kind-menu-title";
+      t.textContent = label;
+      b.appendChild(t);
+      b.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeSheetChipMenu();
+        fn();
+      });
+      menu.appendChild(b);
+    }
+    function sep(text) {
+      var h = document.createElement("div");
+      h.className = "note-sheet-chip-menu-sep";
+      if (text) h.textContent = text;
+      menu.appendChild(h);
+    }
+    item("Переименовать", function () {
+      var live = document.querySelector('#note-editor-sheets .note-sheet-chip[data-sheet-id="' + String(sheet.id) + '"]') || chip;
+      startNoteSheetRename(live, sheet);
+    });
+    var cur = sheetKindKey(sheet);
+    var blank = noteSheetIsBlank(sheet);
+    sep(blank ? "Тип листа" : "Тип листа · меняется, пока лист пуст");
+    ["doc", "board", "design", "web"].forEach(function (k) {
+      item(
+        SHEET_KIND_LABELS[k],
+        function () {
+          if (k !== cur) changeLeftSheetKind(k);
+        },
+        { checked: k === cur, disabled: k !== cur && !blank }
+      );
+    });
+    sep("");
+    item(
+      "Удалить лист",
+      function () {
+        deleteNoteSheet(sheet);
+      },
+      { danger: true }
+    );
+    document.body.appendChild(menu);
+    var r = anchor.getBoundingClientRect();
+    var left = Math.min(Math.max(8, r.left - 8), window.innerWidth - menu.offsetWidth - 8);
+    var top = r.bottom + 6;
+    if (top + menu.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - menu.offsetHeight - 6);
+    menu.style.left = Math.round(left) + "px";
+    menu.style.top = Math.round(top) + "px";
+    setTimeout(function () {
+      document.addEventListener("click", onSheetChipMenuDocClick, true);
+      document.addEventListener("keydown", onSheetChipMenuKey, true);
+    }, 0);
+  }
+
   function closeSheetShareMenu() {
     var m = document.getElementById("note-sheet-share-menu");
     if (m && m.parentNode) m.parentNode.removeChild(m);
@@ -42983,11 +43078,12 @@
       if (transcriptSheetActive(transNote) && transcriptHasSpeakers(transNote)) toolsHost.appendChild(transcriptViewSwitch());
       return;
     }
-    renderSheetKindPick(tools);
     var extras = extraNoteSheets();
     var hidePrimary = primarySheetHidden();
     // Без пустой «Основной» остался один лист — вкладки не нужны, как у документа из одного листа.
     var showBar = extras.length > (hidePrimary ? 1 : 0);
+    // Есть вкладки — тип меняется в «⋯» у открытого листа; без вкладок — «Сделать: …» справа.
+    if (!showBar) renderSheetKindPick(tools);
     host.classList.toggle("hidden", !showBar && extras.length === 0);
     if (!showBar) {
       var quiet = document.createElement("button");
@@ -43034,9 +43130,32 @@
         chip.appendChild(shareIco);
         chip.classList.add("is-shared");
       }
+      var isActive = String(s.id) === String(noteSheetState.leftId);
+      var editable = !(s.is_primary && noteSheetState.primaryLocked);
+      if (isActive && editable) {
+        // «⋯» у открытого листа: переименовать, сменить тип, удалить.
+        var more = document.createElement("span");
+        more.className = "note-sheet-chip-more";
+        more.setAttribute("role", "button");
+        more.setAttribute("aria-label", "Действия с листом");
+        more.setAttribute("aria-haspopup", "menu");
+        more.innerHTML =
+          '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+          '<circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+        more.addEventListener("pointerdown", function (e) {
+          e.stopPropagation();
+        });
+        more.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openSheetChipMenu(more, chip, s);
+        });
+        chip.appendChild(more);
+        chip.classList.add("has-more");
+      }
       chip.addEventListener("click", function (e) {
         e.preventDefault();
-        if (String(s.id) === String(noteSheetState.leftId) && !(s.is_primary && noteSheetState.primaryLocked)) {
+        if (isActive && editable) {
           startNoteSheetRename(chip, s);
           return;
         }
@@ -43215,19 +43334,6 @@
     }
     fitRenameInput();
     input.addEventListener("input", fitRenameInput);
-    var delBtn = document.createElement("span");
-    delBtn.className = "note-sheet-chip-delete";
-    delBtn.setAttribute("role", "button");
-    delBtn.setAttribute("aria-label", "Удалить лист");
-    delBtn.innerHTML =
-      '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-      'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<polyline points="3 6 5 6 21 6"/>' +
-      '<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>' +
-      '<path d="M10 11v6M14 11v6"/>' +
-      '<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>' +
-      "</svg>";
-    chip.appendChild(delBtn);
     input.focus();
     input.select();
     var done = false;
@@ -43267,18 +43373,6 @@
       renderNoteSheetChips();
       renderNoteKnowledgeMenu();
     }
-    function guardDeletePointer(e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    delBtn.addEventListener("pointerdown", guardDeletePointer);
-    delBtn.addEventListener("mousedown", guardDeletePointer);
-    delBtn.addEventListener("click", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      done = true;
-      deleteNoteSheet(sheet);
-    });
     input.addEventListener("blur", function () {
       finish(true);
     });
