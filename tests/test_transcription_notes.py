@@ -119,3 +119,25 @@ class TranscriptionNotesTests(unittest.TestCase):
         self.assertEqual(only_tr["primary_sheet_title"], "Транскрипции")
         self.assertIn("Сырой", only_tr["preview"])
         self.assertEqual(notes_store.list_notes(8), [])
+
+
+class SummaryBodyTests(unittest.TestCase):
+    def test_footer_link_does_not_block_tasks_table(self) -> None:
+        # бот: Markdown саммари + HTML-подвал «Сообщение в Telegram» — задачи всё равно таблицей
+        md = (
+            "## 📝 Саммари: Тема\n\n## 📋 Задачи\n\n- [ ] Разместить сервис\n\n"
+            '<footer><a href="https://t.me/x/1">💬 Сообщение в Telegram</a></footer>'
+        )
+        meta = {"tasks": [{"task": "Разместить сервис", "assignee": ""}]}
+        body = tnotes._summary_body(md, meta)
+        self.assertIn("<table>", body)
+        self.assertNotIn("note-task-list", body)
+        self.assertIn('data-leo-item="' + meta["tasks"][0]["id"] + '"', body)
+        self.assertTrue(body.endswith('<p><a href="https://t.me/x/1">💬 Сообщение в Telegram</a></p>'))
+
+    def test_all_tasks_dropped_still_table(self) -> None:
+        md = "## 📋 Задачи\n\n- Разместить сервис\n"
+        meta = {"tasks": [], "tasks_dropped": [{"task": "Разместить сервис", "kind": "not_task"}]}
+        body = tnotes._summary_body(md, meta)
+        self.assertIn("<table>", body)
+        self.assertEqual(meta["tasks_dropped"], [])
