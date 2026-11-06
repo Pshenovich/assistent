@@ -738,3 +738,9 @@ def readable_notes(user_id: int | str) -> list[dict[str, Any]]:
             if n:
                 out.append(n)
     return out
+
+
+def all_doc_note_ids() -> set[int]:
+    """Все документы баз знаний организаций — их индексирует раздел организации, а не личный раздел автора."""
+    with _LOCK:
+        return {int(r[0]) for r in _conn().execute("SELECT note_id FROM org_kb_nodes WHERE kind = 'doc'").fetchall()}

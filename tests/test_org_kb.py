@@ -303,3 +303,13 @@ class OrgKbFocusTests(OrgKbTests):
         self.assertEqual(cards[0]["note"]["id"], self.note)
         self.assertIn("1 документ давно не проверялся", cards[0]["title"])
         self.assertEqual(proactive.rule_kb_stale(MANAGER, now, tz_.utc), [])  # не автор — не ему
+
+
+class OrgKbNoDoubleIndexTests(OrgKbTests):
+    def test_author_personal_sources_skip_org_docs(self) -> None:
+        from assistant.services import semantic_memory as sm
+
+        notes_store.update_note(BACK, self.note, body="<p>" + "Перезапуск n8n на сервере. " * 5 + "</p>", actor_user_id=BACK)
+        keys = [s["key"] for s in sm.sources_for_user(BACK)]
+        self.assertNotIn(f"note:{self.note}", keys)  # только в разделе организации
+        self.assertIn(f"org:{self.note}", [s["key"] for s in sm.org_sources(self.org)])

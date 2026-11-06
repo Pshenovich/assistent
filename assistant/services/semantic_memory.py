@@ -112,7 +112,16 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
         # Лист «Транскрипция» уже выше (tr_txt) — остальные листы встречи отдельно.
         skip = (notes_store.TRANSCRIPT_SHEET_TITLE,) if tnotes.has_summary(full) else ()
         out += _sheet_sources(full, "transcription", skip_titles=skip)
+    try:
+        from assistant.stores import org_kb
+
+        org_docs = org_kb.all_doc_note_ids()  # индексируются один раз в разделе организации (org_sources)
+    except Exception as e:
+        print(f"[semantic] org docs uid={uid} err={e!r}")
+        org_docs = set()
     for n in notes_store.list_notes(uid, limit=500):
+        if int(n["id"]) in org_docs:
+            continue
         text = _plain(str(n.get("body") or ""))
         if len(text) >= 40:
             out.append({"key": f"note:{n['id']}", "kind": "note", "title": n.get("title") or "Заметка",
@@ -122,6 +131,8 @@ def sources_for_user(uid: int) -> list[dict[str, Any]]:
     # База знаний (свои документы и расшаренные командой) — тоже в памяти, со всеми листами.
     try:
         for n in notes_store.list_knowledge_notes(uid):
+            if int(n["id"]) in org_docs:
+                continue
             text = _plain(str(n.get("body") or ""))
             if len(text) >= 40:
                 out.append({"key": f"kb:{n['id']}", "kind": "knowledge", "title": n.get("title") or "Документ",
