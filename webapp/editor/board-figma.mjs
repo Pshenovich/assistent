@@ -8,6 +8,8 @@
 // Сборка: npm run build (→ webapp/board-figma.js, window.LeoBoardFigma).
 // LeoBoardFigma.fromHtml(html, uid) → Promise<{source, elements, skipped} | null>.
 import { decompress as zstd } from "fzstd";
+import { buildMessage, encodeKiwi, zstdRaw, figKiwi, b64 } from "./board-figma-encode.mjs";
+import { SCHEMA_B64, SCHEMA_VERSION } from "./board-figma-schema.mjs";
 
 var FIGMA_RE = /\(figma\)([A-Za-z0-9+/=]+)\(\/figma\)/;
 
@@ -909,6 +911,14 @@ function fromFigma(msg, uid) {
       if (n.stackChildAlignSelf === "STRETCH") g += parentDir === "h" ? "h" : "w";
       return g ? (g.indexOf("w") >= 0 ? "w" : "") + (g.indexOf("h") >= 0 ? "h" : "") : "";
     };
+    var PIN_H = { MAX: "r", STRETCH: "lr", CENTER: "c", SCALE: "s" };
+    var PIN_V = { MAX: "b", STRETCH: "tb", CENTER: "c", SCALE: "s" };
+    /** Привязки к краям фрейма (constraints) → pin доски «h v»; «слева сверху» — по умолчанию, не пишем. */
+    var pinOf = function (n) {
+      var h = PIN_H[n.horizontalConstraint] || "l";
+      var v = PIN_V[n.verticalConstraint] || "t";
+      return h === "l" && v === "t" ? "" : h + " " + v;
+    };
     function walkD(n0, world, parentFrame, groupId, ctx, parentDir) {
       var n = merged(n0, ctx);
       if (n.visible === false) return;
@@ -916,8 +926,10 @@ function fromFigma(msg, uid) {
       var pos = box(n, world);
       var b = pos.b;
       var grow = growOf(n, parentDir);
+      var pin = parentFrame && !parentDir ? pinOf(n) : "";
       var withGrow = function (el) {
         if (grow) el.grow = grow;
+        if (pin) el.pin = pin;
         return el;
       };
       if (type === "FRAME" || type === "COMPONENT" || type === "COMPONENT_SET" || type === "SYMBOL" || type === "INSTANCE" || type === "SECTION") {
@@ -1082,8 +1094,59 @@ async function fromHtml(html, uid) {
   }
 }
 
+// ---- обратно: Макет → буфер Figma ----
+var schemaBytes = null;
+var schemaDefs = null;
+var preparing = null;
+
+/** Схема kiwi распаковывается один раз (асинхронно); после этого toHtml — синхронный (годится для onCopy). */
+function prepare() {
+  if (schemaDefs) return Promise.resolve(true);
+  if (!preparing) {
+    schemaBytes = b64bytes(SCHEMA_B64);
+    preparing = inflateRaw(schemaBytes).then(function (raw) {
+      schemaDefs = readSchema(raw);
+      return true;
+    }, function (e) {
+      preparing = null;
+      if (typeof console !== "undefined") console.warn("[board] Figma schema:", e && e.message);
+      return false;
+    });
+  }
+  return preparing;
+}
+
+/** Элементы макета → text/html, который Figma вставляет фреймами с автолэйаутом. Схема не готова — null. */
+function toHtml(elements, opts) {
+  if (!schemaDefs) return null;
+  var built = buildMessage(elements, opts);
+  if (!built.topGuids.length) return null;
+  var msg = built.message;
+  var data = encodeKiwi(schemaDefs, "Message", msg);
+  var buf = figKiwi(SCHEMA_VERSION, [schemaBytes, zstdRaw(data)]);
+  var nt = schemaDefs.find(function (d) {
+    return d.name === "NodeType";
+  });
+  var typeNo = function (t) {
+    var f = nt && nt.fields.find(function (x) {
+      return x.name === t;
+    });
+    return f ? f.value : 4;
+  };
+  var meta = JSON.stringify({
+    fileKey: msg.pasteFileKey, pasteID: msg.pasteID, dataType: "scene", editorType: "design", environment: "www.figma.com",
+    selectedNodeData: built.topGuids.map(function (g, i) {
+      return g.sessionID + ":" + g.localID + "|" + typeNo(built.types[i]) + "|0|0";
+    }).join(","), imageHashes: {},
+  });
+  return '<span data-metadata="<!--(figmeta)' + b64(new TextEncoder().encode(meta)) + '(/figmeta)-->"></span>' +
+    '<span data-buffer="<!--(figma)' + b64(buf) + '(/figma)-->"></span>';
+}
+
 var api = { fromHtml: fromHtml, isFigma: function (html) {
   return FIGMA_RE.test(String(html || ""));
-}, _decode: decodeFigma, _fromFigma: fromFigma };
+}, prepare: prepare, isReady: function () {
+  return !!schemaDefs;
+}, toHtml: toHtml, _decode: decodeFigma, _fromFigma: fromFigma };
 if (typeof window !== "undefined") window.LeoBoardFigma = api;
 else globalThis.LeoBoardFigma = api;

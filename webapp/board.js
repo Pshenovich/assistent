@@ -3827,6 +3827,8 @@
       mode = m;
       root.classList.toggle("is-mode-design", m === "design");
       root.classList.toggle("is-mode-board", m !== "design");
+      // Макет копируется и в буфер Figma — схема распаковывается заранее, чтобы ⌘C успел синхронно.
+      if (m === "design" && window.LeoBoardFigma && window.LeoBoardFigma.prepare) window.LeoBoardFigma.prepare();
       if (typeof o.onModeChange === "function") o.onModeChange(m);
       drawTools();
       renderEmptyHint();
@@ -7196,10 +7198,12 @@
       var text = list.map(function (el) {
         return elText(el);
       }).filter(Boolean).join("\n");
+      // В макете — ещё и родной буфер Figma (фреймы с автолэйаутом); своя вставка берёт CLIP_MIME / data-leo-board.
+      var fig = mode === "design" ? figmaClipHtml(Array.from(selected)) : "";
       try {
         e.clipboardData.setData(CLIP_MIME, payload);
         e.clipboardData.setData("text/plain", text || " ");
-        e.clipboardData.setData("text/html", '<span data-leo-board="' + esc(payload) + '">' + esc(text) + "</span>");
+        e.clipboardData.setData("text/html", '<meta charset="utf-8"><span data-leo-board="' + esc(payload) + '">' + esc(text) + "</span>" + fig);
         e.preventDefault();
       } catch (_) {}
       return true;
@@ -9766,11 +9770,58 @@
       return new Blob(parts, { type: "application/pdf" });
     }
 
-    /** Выделенное — в буфер SVG-кодом: Figma вставляет его векторами и текстовыми слоями (без автолэйаута). */
+    /** Выделенное → родной буфер Figma (webapp/board-figma.js): фреймы с автолэйаутом, стили, тексты. "" — не вышло. */
+    function figmaClipHtml(ids) {
+      var F = window.LeoBoardFigma;
+      if (!F || !F.toHtml || !ids.length) return "";
+      if (!F.isReady()) {
+        F.prepare();
+        return "";
+      }
+      var set = {};
+      withFrameKids(ids).forEach(function (id) {
+        set[id] = 1;
+      });
+      var list = sortedEls().filter(function (el) {
+        return set[el.id];
+      });
+      var colors = exportColors();
+      try {
+        return F.toHtml(list.map(function (el) {
+          return serializeEl(el, getEl, pathOptsOf);
+        }), {
+          ink: colors.ink,
+          fill: colors.fill,
+          textColor: function (el) {
+            return autoTextColor(el) || colors.ink((el.style && el.style.textColor) || "ink");
+          },
+        }) || "";
+      } catch (err) {
+        if (window.console) console.warn("[board] Figma copy:", err && err.message);
+        return "";
+      }
+    }
+
+    /** Выделенное — в буфер для Figma: родной буфер (фреймы с автолэйаутом), а не вышло — SVG-кодом (векторы и текст). */
     function copyForFigma() {
       var ids = Array.from(selected);
       var sv = ids.length ? selectionSvg(ids, { figma: true }) : null;
       if (!sv) return notify("Выделите объект или фрейм");
+      var fig = figmaClipHtml(ids);
+      if (fig && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        navigator.clipboard.write([new ClipboardItem({
+          "text/html": new Blob(['<meta charset="utf-8">' + fig], { type: "text/html" }),
+        })]).then(function () {
+          notify("Скопировано — вставьте в Figma (⌘V): фреймы с автолэйаутом");
+        }, function () {
+          copySvgForFigma(sv);
+        });
+        return;
+      }
+      copySvgForFigma(sv);
+    }
+
+    function copySvgForFigma(sv) {
       // Figma ждёт одно имя шрифта (не CSS-стек; системный → Inter) и не знает fill="transparent".
       var svg = sv.svg.replace(/font-family="([^"]*)"/g, function (_, stack) {
         var first = stack.split(",")[0].replace(/&quot;|['"]/g, "").trim();
@@ -10086,6 +10137,7 @@
     }, true);
 
     root.classList.add(mode === "design" ? "is-mode-design" : "is-mode-board");
+    if (mode === "design" && window.LeoBoardFigma && window.LeoBoardFigma.prepare) window.LeoBoardFigma.prepare();
     renderEmptyHint();
     emptyHint.addEventListener("click", function (e) {
       var c = e.target.closest("[data-tpl]");
