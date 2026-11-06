@@ -684,6 +684,20 @@ def claim_by_tg(user_id: int | str, username: str | None) -> list[int]:
     return joined
 
 
+def reassign_user(old_user_id: int | str, new_user_id: int | str) -> None:
+    """Склейка аккаунтов: членство старого id переходит на новый (если там уже есть — дубль удаляем)."""
+    old, new = _uid(old_user_id), _uid(new_user_id)
+    with _LOCK:
+        conn = _conn()
+        for r in conn.execute("SELECT id, org_id FROM org_members WHERE user_id = ?", (old,)).fetchall():
+            if _membership(r["org_id"], new):
+                conn.execute("DELETE FROM org_members WHERE id = ?", (r["id"],))
+            else:
+                conn.execute("UPDATE org_members SET user_id = ? WHERE id = ?", (new, r["id"]))
+        conn.execute("UPDATE orgs SET created_by = ? WHERE created_by = ?", (new, old))
+        conn.commit()
+
+
 def invited_orgs_for_email(email: str) -> list[dict[str, Any]]:
     """Организации, куда пригласили эту почту (ещё не вошедшего человека)."""
     with _LOCK:

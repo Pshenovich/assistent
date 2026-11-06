@@ -194,12 +194,18 @@ async def link_by_start(update: Update, context: ContextTypes.DEFAULT_TYPE, toke
         await msg.reply_text("Этот Telegram уже привязан к аккаунту Орбиты. Чтобы перенести его на другую почту, напишите в поддержку.")
         return
     try:
-        acc, old = await asyncio.to_thread(accounts.link_tg_by_token, token, uid_now)
+        acc, old, merged = await asyncio.to_thread(accounts.link_tg_by_token, token, uid_now)
     except accounts.AccountError as e:
         await msg.reply_text(str(e))
         return
     tg_account_ids.forget(uid_now, int(acc["user_id"]), *([old] if old else []))
     context.user_data.pop(STATE_KEY, None)  # type: ignore[union-attr]
+    if merged:
+        await msg.reply_text(
+            f"Нашёл ваш аккаунт Орбиты — теперь в него входят по почте {acc['email']}, все данные на месте. "
+            "Вернитесь в Орбиту в браузере — она обновится сама."
+        )
+        return
     await msg.reply_text(f"Готово: этот Telegram привязан к аккаунту {acc['email']}.")
     if old:
         try:

@@ -219,3 +219,27 @@ def test_mail_templates_render():
     assert "Войти в Орбиту" not in h2 and "6 5 4 3 2 1" in h2
     assert "&lt;script&gt;" in h3 and "<script>" not in h3 and "login_email=" in h3
     assert "icon-192.png" in h1
+
+
+def test_session_of_merged_account_follows_alias(env):
+    from assistant.stores import note_members
+
+    c = env["c"]
+    email = _email()
+    r = c.post("/api/miniapp/auth/email/verify", json={"email": email, "code": _code(env, email)})
+    assert r.json()["created"] is True
+    fresh = r.json()["user"]["id"]
+    token = r.json()["session_token"]
+    legacy = next(_ids)
+    note_members.upsert_profile(legacy, username=f"old{legacy}", first_name="Old")
+    accounts.link_tg_by_token(accounts.issue_tg_link(fresh), legacy)
+    me = c.get("/api/miniapp/me", headers={"Authorization": "session " + token}).json()
+    assert me["id"] == legacy and me["email"] == email and me["need_email"] is False
+    # повторный вход по той же почте — сразу старый аккаунт
+    real_now = accounts._now
+    accounts._now = lambda: real_now() + accounts.RESEND_GAP_SEC + 1  # type: ignore[assignment]
+    try:
+        r = c.post("/api/miniapp/auth/email/verify", json={"email": email, "code": _code(env, email)})
+    finally:
+        accounts._now = real_now  # type: ignore[assignment]
+    assert r.json()["user"]["id"] == legacy and r.json()["created"] is False

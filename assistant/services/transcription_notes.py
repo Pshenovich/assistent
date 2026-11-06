@@ -288,6 +288,10 @@ def create_transcript_only(
     return enrich(note)
 
 
+_FOOTER_RE = re.compile(r"<footer>(.*?)</footer>", re.S)
+_FOOTER_TAIL_RE = re.compile(r"(?:\s*<footer>.*?</footer>)+\s*$", re.S)
+
+
 def _summary_body(summary: str, meta: Optional[dict[str, Any]]) -> str:
     """Тело саммари для заметки — сразу HTML, а у каждой задачи ID на её строке.
 
@@ -298,6 +302,13 @@ def _summary_body(summary: str, meta: Optional[dict[str, Any]]) -> str:
     body = (summary or "").strip()
     if not body:
         return ""
+    # подвал-ссылка («💬 Сообщение в Telegram», запись) — HTML в конце Markdown: без него тело
+    # уходило в ветку «чужой HTML» сырым Markdown, и задачи оставались списком, а не таблицей
+    foot = ""
+    m = _FOOTER_TAIL_RE.search(body)
+    if m and not note_items.is_html_body(body):
+        foot = "".join(f"<p>{x.strip()}</p>" for x in _FOOTER_RE.findall(m.group(0)))
+        body = body[: m.start()].rstrip()
     if note_items.is_html_body(body):
         out = body
     elif "<" in body and ">" in body and "<table" not in body:
@@ -306,13 +317,18 @@ def _summary_body(summary: str, meta: Optional[dict[str, Any]]) -> str:
         out = markdown_to_html(body)
     else:
         out = _as_html(body)
+    if foot and note_items.is_html_body(out):
+        out += foot
+    if meta is not None and note_items.is_html_body(out):
+        from assistant.services import meeting_tasks
+
+        # отброшенные проверкой — не теряем: в таблицу, свёрнутыми «Возможно, не задача».
+        # До проверки «есть ли задачи»: проверка могла отбросить все, и тогда оставался список модели
+        meeting_tasks.merge_doubtful(meta)
     tasks = (meta or {}).get("tasks")
     if isinstance(tasks, list) and tasks and note_items.is_html_body(out):
         from assistant.services import meeting_tasks
 
-        # отброшенные проверкой — не теряем: в таблицу, свёрнутыми «Возможно, не задача»
-        meeting_tasks.merge_doubtful(meta)
-        tasks = meta["tasks"]
         # задачи — таблица «Задача | Статус | Ответственный | Дедлайн», ID пункта на его строке
         out = meeting_tasks.replace_tasks_section(out, tasks)
         out = note_items.stamp_summary_tasks(out, tasks)
