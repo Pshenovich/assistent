@@ -25,6 +25,9 @@ WINDOW_OVERLAP = 1500
 SINGLE_PASS_MAX = 40000  # до этой длины факты берём одним вызовом по всему транскрипту
 TRANSCRIPT_MAX = 200000  # ~3 часа речи
 MAX_WORKERS = 4
+# Запас под рассуждения (gpt-5.5 тратит на них 2,5–3 тыс. токенов из ответа): с лимитом 4096
+# кандидаты задач обрезались посреди JSON — и у встречи 0 задач. Модели без рассуждений не тратят его.
+REASONING_TOKENS = 12000
 
 Chat = Callable[..., str]
 
@@ -70,11 +73,14 @@ def _call_json(chat: Chat, system: str, payload: dict[str, Any], *, operation: s
 
     try:
         raw = chat(system, json.dumps(payload, ensure_ascii=False), operation=operation, model=model,
-                   timeout=300, temperature=temperature, max_tokens=max_tokens)
+                   timeout=300, temperature=temperature, max_tokens=max_tokens + REASONING_TOKENS)
     except Exception as e:
         print(f"[summary_v2] {operation} failed: {e!r}")
         return None
-    return _json_obj(raw)
+    obj = _json_obj(raw)
+    if obj is None:
+        print(f"[summary_v2] {operation} unparsable len={len(raw or '')} tail={(raw or '')[-80:]!r}")
+    return obj
 
 
 def merge_speaker_maps(maps: list[Any], transcript: str) -> dict[str, dict[str, Any]]:
