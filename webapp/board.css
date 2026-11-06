@@ -1284,6 +1284,11 @@ html:has(.leo-board) body {
   padding: 2px;
 }
 
+.lb-start-sub {
+  margin: -8px 0 14px;
+  font-size: 13px;
+}
+
 .lb-start-hint {
   margin-top: 14px;
   font-size: 13px;

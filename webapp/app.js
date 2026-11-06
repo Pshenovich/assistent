@@ -202,7 +202,7 @@
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261105-design43",
     "/webapp/board-figma.js?v=20261106-figcopy3",
-    "/webapp/board.js?v=20261106-figcopy4",
+    "/webapp/board.js?v=20261106-empty1",
   ];
   let boardScriptsPromise = null;
 
@@ -2028,10 +2028,7 @@
     txt.className = "meetings-empty-day-text";
     var b = document.createElement("b");
     b.textContent = "На этот день ничего нет";
-    var sm = document.createElement("span");
-    sm.textContent = "Нажмите на время в сетке или добавьте сразу";
     txt.appendChild(b);
-    txt.appendChild(sm);
     box.appendChild(txt);
     var acts = document.createElement("div");
     acts.className = "meetings-empty-day-acts";
@@ -8968,6 +8965,18 @@
     }
   }
 
+  // Ник бота — с сервера (me.bot_username), в разметке его нет.
+  function syncProfileChatsEmptyText() {
+    var el = document.getElementById("profile-chats-empty-text");
+    var bot = (cachedBotUsername || "").replace(/^@/, "");
+    if (!el) return;
+    el.textContent =
+      "Пригласите Leo" + (bot ? " (@" + bot + ")" : "") +
+      " в рабочую группу (например, чат проекта или отдела) и напишите там сообщение. Чат появится здесь.";
+    var btn = el.parentNode && el.parentNode.querySelector('[data-empty-action="tg-add-to-group"]');
+    if (btn) setHidden(btn, !bot);
+  }
+
   async function loadProfileChatsScreen() {
     var list = document.getElementById("profile-chats-list");
     var empty = document.getElementById("profile-chats-empty");
@@ -8990,6 +8999,7 @@
         list.classList.remove("pf-skel-list");
       }
       setHidden(empty, chats.length > 0);
+      if (!chats.length) syncProfileChatsEmptyText();
       setHidden(document.getElementById("profile-chats-group"), !chats.length);
       chats.forEach(function (chat) {
         var row = document.createElement("label");
@@ -13659,8 +13669,12 @@
     var all = (data && data.notes) || [];
     var list = all.filter(knowledgeItemMatchesFilter);
     if (!all.length) {
-      pane.innerHTML =
-        '<p class="muted empty-hint">Документов пока нет. Нажмите «+», чтобы создать.</p>';
+      pane.innerHTML = emptyStateHtml({
+        title: "В базе знаний пусто",
+        text: "Добавьте документы, по которым Лео будет отвечать: регламенты, описание продукта, FAQ для клиентов, онбординг для новичков.",
+        btn: "Добавить документ",
+        action: "knowledge-create",
+      });
       return;
     }
     if (!list.length) {
@@ -20719,11 +20733,17 @@
       list.appendChild(card);
     });
     if (!pending && !items.length) {
+      // кнопки «Добавить запись / Надиктовать / Создать документ» — сразу под списком
       var empty = document.createElement("p");
       empty.className = "ev-materials-empty";
-      empty.textContent = eventIsPast(ev)
-        ? "Пока ничего нет. Добавьте запись встречи, надиктуйте или запишите итоги."
-        : "Встреча ещё не прошла. Можно заранее создать документ — например, повестку; после встречи сюда добавятся запись и итоги.";
+      var past = eventIsPast(ev);
+      var et = document.createElement("b");
+      et.textContent = past ? "Материалов пока нет" : "Встреча ещё не прошла";
+      empty.appendChild(et);
+      empty.appendChild(document.createElement("br"));
+      empty.appendChild(document.createTextNode(past
+        ? "Добавьте запись встречи или надиктуйте итоги. Лео сделает саммари и выделит задачи."
+        : "Подготовьте заранее повестку, вопросы к участникам или презентацию."));
       list.appendChild(empty);
     }
   }
@@ -26661,13 +26681,40 @@
       setHidden(emptyEl, true);
       return;
     }
-    var p = document.createElement("p");
-    if (kind === "archive") p.textContent = "Здесь будут задачи, которые вы приняли или отменили.";
-    else if (kind === "archive-search") p.textContent = "Ничего не нашлось.";
-    else p.textContent = "Поставьте задачу коллеге — здесь будет видно, где нужны вы и что идёт по плану.";
-    emptyEl.appendChild(p);
-    if (kind === "none") emptyEl.appendChild(postedBtn("Поставить задачу", "pt-btn--primary", openNewPostedTask));
+    if (kind === "archive") ptEmptyFill(emptyEl, "", "Здесь будут задачи, которые вы приняли или отменили.");
+    else if (kind === "archive-search") ptEmptyFill(emptyEl, "", "Ничего не нашлось.");
+    else if (kind === "none-archived") {
+      ptEmptyFill(emptyEl, "Активных задач нет", "Все поставленные задачи приняты или отменены — они в «Принятых».");
+    } else {
+      // «Принятые» ещё не загрузились — не утверждаем, что задач не ставили
+      ptEmptyFill(
+        emptyEl,
+        kind === "none" ? "Вы ещё никому не ставили задач" : "Активных задач нет",
+        "Поставьте задачу коллеге — здесь будет видно, что идёт по плану, а где нужны вы. Например: «Согласовать договор», «Собрать фидбек от клиентов»."
+      );
+    }
+    if (kind === "none" || kind === "none-archived" || kind === "none-pending") {
+      emptyEl.appendChild(postedBtn("Поставить задачу", "pt-btn--primary", openNewPostedTask));
+    }
+    if (kind === "none-archived") {
+      emptyEl.appendChild(postedBtn("Принятые", "pt-btn--link", function () {
+        setPostedTasksTab("archive");
+      }));
+    }
     setHidden(emptyEl, false);
+  }
+
+  // Пустой экран задач: заголовок (может не быть) и текст.
+  function ptEmptyFill(el, title, text) {
+    if (title) {
+      var h = document.createElement("p");
+      h.className = "pt-empty-title";
+      h.textContent = title;
+      el.appendChild(h);
+    }
+    var p = document.createElement("p");
+    p.textContent = text;
+    el.appendChild(p);
   }
 
   // Группы «В работе» по дате выполнения.
@@ -26699,7 +26746,9 @@
     var all = lastPostedTasksItems.filter(function (t) {
       return !postedTaskIsArchived(t);
     });
-    renderPostedEmpty(all.length ? "" : "none");
+    renderPostedEmpty(
+      all.length ? "" : !postedArchiveLoaded ? "none-pending" : postedArchiveItems.length ? "none-archived" : "none"
+    );
     var attn = items
       .filter(function (t) {
         return !!postedAttention(t);
@@ -28508,6 +28557,7 @@
   var myTasksItems = [];
   var myTasksDoneItems = [];
   var myTasksDoneLoaded = false;
+  var myTasksDoneProbed = false; // пробуем загрузить выполненные один раз, чтобы ошибка не зациклила загрузку
   var myTasksInbox = 0;
   var myTasksTab = "open"; // open | done («Выполненные»)
   var myTasksFrom = ""; // фильтр: "" — все, "self" — свои, иначе id постановщика
@@ -28538,6 +28588,7 @@
       myTasksTab = "open";
       myTasksFrom = "";
       myTasksDoneLoaded = false;
+      myTasksDoneProbed = false;
       myTasksSelectedId = "";
       postedCardHosts.side = null;
       renderMyTasksScreen();
@@ -28635,6 +28686,7 @@
       task.done = next;
       if (task.event) task.event.done = next;
       myTasksDoneLoaded = false;
+      myTasksDoneProbed = false;
       loadActual({ silent: true, skipCachePaint: true });
     } catch (err) {
       btn.classList.toggle("is-done", !next);
@@ -28698,12 +28750,27 @@
       emptyEl.innerHTML = "";
       var showEmpty = done ? myTasksDoneLoaded && !all.length : !all.length;
       if (showEmpty) {
-        var p = document.createElement("p");
-        p.textContent = done
-          ? "Здесь будут задачи, которые вы выполнили."
-          : "Открытых задач нет. Здесь будут ваши задачи и те, что вам поставили и вы взяли.";
-        emptyEl.appendChild(p);
+        var hasDone = myTasksDoneLoaded && myTasksDoneItems.length > 0;
+        if (done) ptEmptyFill(emptyEl, "", "Здесь будут задачи, которые вы выполнили.");
+        else if (hasDone) ptEmptyFill(emptyEl, "Всё сделано 🎉", "Выполненные задачи лежат во вкладке «Выполненные».");
+        else {
+          ptEmptyFill(
+            emptyEl,
+            "Открытых задач нет",
+            "Здесь будут ваши задачи и задачи, которые вам поставили. Например: «Отправить КП до пятницы», «Подготовить отчёт за месяц»."
+          );
+        }
         if (!done) emptyEl.appendChild(postedBtn("Новая задача", "pt-btn--primary", openNewMyTask));
+        if (!done && hasDone) {
+          emptyEl.appendChild(postedBtn("Выполненные", "pt-btn--link", function () {
+            setMyTasksTab("done");
+          }));
+        }
+        // выполненные ещё не грузили — узнаем, были ли задачи вообще
+        if (!done && !myTasksDoneLoaded && !myTasksDoneProbed) {
+          myTasksDoneProbed = true;
+          loadMyTasksDone();
+        }
       }
       setHidden(emptyEl, !showEmpty);
     }
@@ -28962,6 +29029,7 @@
       if (next) postedHaptic();
       syncMyTask((r && r.task) || Object.assign({}, task, { done: next }));
       myTasksDoneLoaded = false;
+      myTasksDoneProbed = false;
       loadActual({ silent: true, skipCachePaint: true });
     } catch (err) {
       showNoteToast((err && err.message) || "Не удалось изменить задачу");
@@ -31377,7 +31445,8 @@
     list.innerHTML = "";
     var tags = getUserTagsFromCache().slice();
     if (!tags.length) {
-      list.innerHTML = '<p class="muted small">Проектов пока нет. Создайте первый ниже.</p>';
+      list.innerHTML =
+        '<p class="muted small">Проектов пока нет. Группируйте документы и задачи по проектам, например «Запуск сайта» или «Q4-отчёт». Создайте первый ниже.</p>';
       return;
     }
     tags.forEach(function (tag) {
@@ -35308,7 +35377,12 @@
     if (!rows.length) {
       list.innerHTML = all.length
         ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск.</p>'
-        : '<p class="muted empty-hint">Чатов пока нет. Нажмите «+», чтобы начать диалог с ИИ.</p>';
+        : emptyStateHtml({
+            title: "Чатов пока нет",
+            text: "Спросите Лео о чём угодно: «Что у меня сегодня?», «Найди время для встречи с Анной», «Составь письмо клиенту».",
+            btn: "Новый чат",
+            action: "chat-new",
+          });
       return;
     }
     // Обычный список чатов (строки), в стиле нового дизайна.
@@ -54072,7 +54146,12 @@
         ? '<p class="muted empty-hint">Ищем во всём тексте заметок…</p>'
         : localAll.length && (notesSearchQuery.trim() || notesActiveProjectId || notesFilterActiveCount())
           ? '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект, #хэштег или фильтр.</p>'
-          : '<p class="muted empty-hint">Документов пока нет — нажмите «+», чтобы создать первый: лист, доску, макет или презентацию. Ещё документ можно создать в чате с ботом.</p>';
+          : emptyStateHtml({
+              title: "Документов пока нет",
+              text: "Создайте лист, доску, макет или презентацию. Например: повестку встречи, план проекта, таблицу задач, схему процесса или макет экрана.",
+              btn: "Создать документ",
+              action: "notes-create",
+            });
     } else {
       appendNotesListGrouped(pn, local, function (n) {
         var id = String(localNoteIdFrom(n) || "");
@@ -54090,8 +54169,12 @@
     if (!searchQ) sortNotesForList(trans);
     window.setTimeout(syncNotesSplitLayout, 0);
     if (!transAll.length) {
-      pt.innerHTML =
-        '<p class="muted empty-hint">Транскрипций пока нет. Нажмите «+», чтобы загрузить файл.</p>';
+      pt.innerHTML = emptyStateHtml({
+        title: "Транскрипций пока нет",
+        text: "Загрузите запись встречи, созвона или голосовое сообщение. Лео сделает расшифровку, саммари и найдёт задачи.",
+        btn: "Загрузить запись",
+        action: "transcript-upload",
+      });
     } else if (!trans.length) {
       pt.innerHTML =
         '<p class="muted empty-hint">Ничего не найдено. Измените поиск, проект, #хэштег или фильтр.</p>';
@@ -55012,6 +55095,24 @@
     }
   }
 
+  // Пустая правая половина: текст и кнопка — под открытую вкладку списка.
+  function syncNotesSplitPlaceholder() {
+    var trans = notesSubTab === "transcriptions";
+    var title = document.getElementById("notes-split-placeholder-title");
+    var text = document.getElementById("notes-split-placeholder-text");
+    var btn = document.getElementById("notes-split-placeholder-btn");
+    if (title) title.textContent = trans ? "Выберите транскрипцию слева" : "Выберите документ слева";
+    if (text) {
+      text.textContent = trans
+        ? "…или загрузите новую запись. Лео расшифрует её и сделает саммари с задачами."
+        : "…или создайте новый: заметку, протокол встречи, доску для мозгового штурма.";
+    }
+    if (btn) {
+      btn.textContent = trans ? "Загрузить запись" : "Новый документ";
+      btn.setAttribute("data-empty-action", trans ? "transcript-upload" : "notes-create");
+    }
+  }
+
   function syncNotesSplitLayout() {
     var root = document.documentElement;
     syncNotesColLayout();
@@ -55023,6 +55124,7 @@
     var wasSplit = root.classList.contains("notes-split");
     root.classList.toggle("notes-split", split);
     root.classList.toggle("notes-split-empty", split && !open);
+    if (split && !open) syncNotesSplitPlaceholder();
     if (wasSplit !== split) syncNotesCreateFab();
     if (split) {
       var notesRoot = document.getElementById("notes-root");
@@ -56058,6 +56160,69 @@
       alert(e.message || String(e));
     }
   }
+
+  // Пустой экран «ещё ничего не создали»: заголовок, примеры и кнопка. Кнопка — data-empty-action,
+  // клик ловит общий обработчик ниже (разметка ставится через innerHTML).
+  var EMPTY_STATE_ACTIONS = {
+    "notes-create": function () {
+      // через тик: иначе общий «клик мимо меню» тут же его закроет
+      window.setTimeout(toggleNotesCreateMenu, 0);
+    },
+    "transcript-upload": function () {
+      openTranscriptionUploadModal();
+    },
+    "knowledge-create": function () {
+      openNewKnowledgeNote();
+    },
+    "chat-new": function () {
+      createAndOpenChatThread();
+    },
+    "digest-pick-chats": function () {
+      setTab("profile");
+      profileScreen("chats");
+      loadProfileChatsScreen();
+    },
+    "kb-source-focus": function () {
+      focusEmptyStateField("profile-kb-title");
+    },
+    "team-create-focus": function () {
+      focusEmptyStateField("teams-manage-new-input");
+    },
+    "tg-add-to-group": function () {
+      var bot = (cachedBotUsername || "").replace(/^@/, "");
+      if (!bot) return;
+      var url = "https://t.me/" + encodeURIComponent(bot) + "?startgroup=1";
+      if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.openTelegramLink) {
+        window.Telegram.WebApp.openTelegramLink(url);
+      } else {
+        window.open(url, "_blank", "noopener");
+      }
+    },
+  };
+
+  function focusEmptyStateField(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.focus({ preventScroll: true });
+  }
+
+  function emptyStateHtml(o) {
+    return (
+      '<div class="muted empty-hint empty-state">' +
+      '<p class="empty-state-title">' + escapeHtml(o.title) + "</p>" +
+      (o.text ? '<p class="empty-state-text">' + escapeHtml(o.text) + "</p>" : "") +
+      (o.btn ? '<button type="button" class="pf-btn" data-empty-action="' + o.action + '">' + escapeHtml(o.btn) + "</button>" : "") +
+      "</div>"
+    );
+  }
+
+  document.addEventListener("click", function (e) {
+    var b = e.target && e.target.closest && e.target.closest("[data-empty-action]");
+    if (!b) return;
+    var fn = EMPTY_STATE_ACTIONS[b.getAttribute("data-empty-action")];
+    if (fn) fn();
+  });
 
   function closeNotesCreateMenu() {
     var menu = document.getElementById("notes-create-menu");

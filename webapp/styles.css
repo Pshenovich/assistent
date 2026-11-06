@@ -893,6 +893,34 @@ html.boot-open-app #app.hidden {
   background: var(--surface-muted);
 }
 
+/* Пустой экран с примерами и кнопкой (emptyStateHtml) */
+.empty-hint.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 0.4rem;
+}
+
+.empty-state-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.empty-state-text {
+  margin: 0;
+  max-width: 24rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.empty-state .pf-btn {
+  width: auto;
+  margin-top: 0.5rem;
+  padding: 0.55rem 1.25rem;
+}
+
 /* ——— Hero / summary ——— */
 .hero-card,
 .stat-banner {
@@ -15251,6 +15279,32 @@ html.modal-sheet-open body {
   font-size: 0.9375rem;
 }
 
+.chat-thread-empty:not(.hidden) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chat-thread-empty .pf-btn {
+  width: auto;
+  margin-top: 0.25rem;
+  padding: 0.55rem 1.25rem;
+}
+
+/* Лео над заголовком пустой правой половины (заполняет onboarding.js по data-leo-pose) */
+.empty-leo {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin-bottom: 4px;
+}
+
+.empty-leo .leo {
+  width: 100%;
+  height: 100%;
+}
+
 html.notes-chats-tab.chats-split-open #note-discussion-close {
   display: none !important;
 }
@@ -15882,6 +15936,8 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   line-height: 1.45;
 }
 .pt-empty p { margin: 0; }
+.pt-empty .pt-empty-title { margin-bottom: -8px; font-size: 1rem; font-weight: 600; color: var(--text); }
+.pt-empty .pt-btn.pt-btn--link { min-height: 0; padding: 0; border: 0; background: none; color: var(--accent); }
 .pt-muted-note { margin: 14px 0 0; text-align: center; font-size: 0.82rem; color: var(--text-tertiary); }
 .pt-side { display: none; }
 
@@ -17258,6 +17314,8 @@ html.notes-chats-tab .notes-project-btn { display: none; }
   html.notes-split-empty .notes-split-placeholder { display: flex; position: fixed; top: 0; bottom: 0; right: 0; left: var(--notes-split-left, 660px); z-index: 4; flex-direction: column; align-items: center; justify-content: center; gap: 6px; border-left: 1px solid var(--border); color: var(--text-secondary); text-align: center; pointer-events: none; }
   .notes-split-placeholder p { margin: 8px 0 0; font-size: 1rem; color: var(--text); }
   .notes-split-placeholder small { font-size: 0.8125rem; }
+  .notes-split-placeholder small { max-width: 22rem; line-height: 1.45; }
+  .notes-split-placeholder .pf-btn { width: auto; margin-top: 10px; padding: 0.55rem 1.25rem; pointer-events: auto; }
   html.notes-split .nl-card.is-current { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent); background: color-mix(in srgb, var(--accent) 9%, transparent); }
   .nl-sheet-overlay.is-anchored { background: transparent !important; align-items: flex-start; justify-content: flex-start; padding: 0; }
   .nl-sheet-overlay.is-anchored .nl-sheet { transform: none; max-width: none; }
@@ -17532,6 +17590,7 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .ev-materials-head { font-size: 0.75rem; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-tertiary); padding: 2px 2px 0; }
 .ev-materials-list { display: flex; flex-direction: column; gap: 8px; }
 .ev-materials-empty { margin: 0; padding: 4px 2px; font-size: 0.85rem; line-height: 1.45; color: var(--text-secondary); }
+.ev-materials-empty b { font-weight: 600; color: var(--text); }
 .ev-mat { border-radius: 14px; background: var(--surface-elevated); padding: 10px 12px; }
 .ev-mat-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9rem; }
 .ev-mat-head svg { flex-shrink: 0; color: var(--accent); }
@@ -22237,6 +22296,29 @@ form.pf-list .pf-add-row .pf-row-body {
   padding: 2rem 1rem;
   text-align: center;
   color: var(--text-secondary);
+}
+
+.dgx-empty--start {
+  display: grid;
+  justify-items: center;
+  gap: 0.4rem;
+}
+
+.dgx-empty--start b {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.dgx-empty--start span {
+  max-width: 24rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
+.dgx-empty--start .pf-btn {
+  width: auto;
+  margin-top: 0.5rem;
+  padding: 0.55rem 1.25rem;
 }
 
 .dgx-dhead {

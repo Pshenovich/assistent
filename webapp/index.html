@@ -100,8 +100,8 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261106-mail1" />
-  <link rel="stylesheet" href="/webapp/board.css?v=20261105-design44" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261106-empty1" />
+  <link rel="stylesheet" href="/webapp/board.css?v=20261106-empty1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261106-groups1" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
@@ -451,16 +451,21 @@
             <div id="chat-threads-list" class="chat-threads-list" role="list"></div>
             <div class="chat-threads-splitter" aria-hidden="true"></div>
             <div id="chat-thread-pane" class="chat-thread-pane">
-              <p id="chat-thread-empty" class="chat-thread-empty muted">Выберите чат или создайте новый</p>
+              <div id="chat-thread-empty" class="chat-thread-empty muted">
+                <span class="empty-leo" data-leo-pose="point-left"></span>
+                <p class="empty-state-title">Выберите чат или начните новый</p>
+                <button type="button" class="pf-btn" data-empty-action="chat-new">Новый чат</button>
+              </div>
             </div>
           </div>
           <div id="notes-pane-transcriptions" class="notes-pane notes-pane--stack hidden"></div>
           <p id="notes-global-error" class="error hidden"></p>
         </div>
-        <div id="notes-split-placeholder" class="notes-split-placeholder" aria-hidden="true">
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6"/></svg>
-          <p>Выберите документ слева</p>
-          <small>или нажмите «+», чтобы создать новый</small>
+        <div id="notes-split-placeholder" class="notes-split-placeholder">
+          <span class="empty-leo" data-leo-pose="point-left"></span>
+          <p id="notes-split-placeholder-title">Выберите документ слева</p>
+          <small id="notes-split-placeholder-text">…или создайте новый: заметку, протокол встречи, доску для мозгового штурма.</small>
+          <button type="button" class="pf-btn" id="notes-split-placeholder-btn" data-empty-action="notes-create">Новый документ</button>
         </div>
         <button
           type="button"
@@ -618,7 +623,8 @@
                 <div id="profile-kb-empty" class="pf-empty hidden">
                   <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" /></svg></span>
                   <p class="pf-empty-title">Источников пока нет</p>
-                  <p class="pf-empty-text">Подключите документ или папку — PAIE будет отвечать по ним.</p>
+                  <p class="pf-empty-text">Подключите документ или папку, например регламенты, wiki или договоры. Лео будет отвечать по ним.</p>
+                  <button type="button" class="pf-btn" data-empty-action="kb-source-focus">Подключить источник</button>
                 </div>
               </div>
               <div class="pf-group hidden" id="profile-kb-members-section">
@@ -1074,7 +1080,7 @@
               <div id="contacts-empty" class="pf-empty hidden">
                 <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg></span>
                 <p class="pf-empty-title">Пока нет контактов</p>
-                <p class="pf-empty-text">Добавьте коллег — Лео подставит их в гостей встреч и узнает в документах.</p>
+                <p class="pf-empty-text">Добавьте коллег, клиентов и партнёров: Лео подставит их в гостей встреч и узнает в документах.</p>
                 <button type="button" class="pf-btn" id="contacts-empty-add">Добавить контакт</button>
               </div>
               <p id="contacts-nothing" class="pf-hint hidden">Никого не нашли.</p>
@@ -1163,7 +1169,8 @@
               <div id="profile-chats-empty" class="pf-empty hidden">
                 <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg></span>
                 <p class="pf-empty-title">Чатов пока нет</p>
-                <p class="pf-empty-text">Пригласите бота Orbita в рабочую группу и напишите там сообщение — чат появится здесь.</p>
+                <p class="pf-empty-text" id="profile-chats-empty-text">Пригласите Leo в рабочую группу (например, чат проекта или отдела) и напишите там сообщение. Чат появится здесь.</p>
+                <button type="button" class="pf-btn" data-empty-action="tg-add-to-group">Добавить Leo в группу</button>
               </div>
               <button type="button" class="pf-btn pf-btn--ghost hidden" id="digest-demo-seed-btn">Создать демо-отчёт за вчера</button>
               <p id="profile-chats-msg" class="pf-hint billing-msg hidden"></p>
@@ -1525,7 +1532,7 @@
               <div class="pf-group hidden" id="profile-zoom-recordings-group">
                 <p class="pf-group-title">Записи встреч</p>
                 <div id="profile-zoom-recordings" class="pf-list"></div>
-                <p id="profile-zoom-recordings-empty" class="pf-hint hidden">Записей пока нет. Включите автозапись или пришлите боту ссылку на Zoom.</p>
+                <p id="profile-zoom-recordings-empty" class="pf-hint hidden">Записей пока нет. Включите автозапись (нужен Zoom Pro), и записи встреч появятся здесь. На бесплатном Zoom пришлите Leo файл записи после встречи.</p>
               </div>
               <p id="profile-zoom-msg" class="pf-hint billing-msg hidden"></p>
               <p id="profile-zoom-err" class="pf-field-error hidden"></p>
@@ -2295,7 +2302,8 @@
             <div id="teams-manage-empty" class="pf-empty">
               <span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="4" /><path d="M2 21a7 7 0 0 1 14 0" /><path d="M17 4a4 4 0 0 1 0 8M22 21a6 6 0 0 0-4-5.6" /></svg></span>
               <p class="pf-empty-title">Групп пока нет</p>
-              <p class="pf-empty-text">Соберите людей в группу — ей можно открыть документы базы знаний.</p>
+              <p class="pf-empty-text">Соберите людей в группу, например «Продажи», «Дизайн» или «Проект Альфа», и откройте ей документы базы знаний.</p>
+              <button type="button" class="pf-btn" data-empty-action="team-create-focus">Создать группу</button>
             </div>
             <p class="pf-hint">Документы, открытые группе, доступны всем её участникам.</p>
           </div>
@@ -2555,13 +2563,13 @@
   <script src="/webapp/web-canvas.js?v=20261104-doctype2" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261029-spktools" defer></script>
-  <script src="/webapp/app.js?v=20261106-mygroups1" defer></script>
+  <script src="/webapp/app.js?v=20261106-empty1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
-  <script src="/webapp/digest-chats.js?v=20261025-mobfix" defer></script>
+  <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
-  <script src="/webapp/org.js?v=20261106-groups1" defer></script>
-  <script src="/webapp/onboarding.js?v=20261104-doctype2" defer></script>
+  <script src="/webapp/org.js?v=20261106-empty1" defer></script>
+  <script src="/webapp/onboarding.js?v=20261106-empty1" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>
 </body>
 </html>

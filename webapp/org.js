@@ -210,7 +210,7 @@
     return (
       '<div class="pf-empty org-empty"><span class="pf-empty-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M10 21v-4h4v4" /></svg></span>' +
       '<p class="pf-empty-title">Организации пока нет</p>' +
-      '<p class="pf-empty-text">Организация — общее пространство команды: участники, роли и общие настройки, например выпуск «Рынок».</p></div>' +
+      '<p class="pf-empty-text">Общее пространство команды: участники, роли и общие настройки.</p></div>' +
       "<div>" +
       '<div class="pf-list">' +
       '<label class="pf-field"><span class="pf-field-label">Название</span><input type="text" class="pf-input" id="org-new-name" maxlength="80" placeholder="Например, Обучат" /></label>' +

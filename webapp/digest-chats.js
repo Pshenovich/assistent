@@ -134,7 +134,10 @@
       (d.with_labels ? ' <span class="dgx-chip-count">' + d.with_labels + "</span>" : "") + "</button></div></div>";
     if (st.loading) h += '<div class="dgx-empty">Загружаю…</div>';
     else if (d.error) h += '<div class="dgx-empty">' + esc(d.error) + "</div>";
-    else if (!(d.chats || []).length) h += '<div class="dgx-empty">Пока нет отчётов. Чаты для дайджеста выбираются в профиле → «Чаты».</div>';
+    else if (!(d.chats || []).length) h +=
+        '<div class="dgx-empty dgx-empty--start"><b>Отчётов пока нет</b>' +
+        "<span>Выберите чаты для дайджеста, например чат отдела или клиента, и Лео будет присылать главное за день.</span>" +
+        '<button type="button" class="pf-btn" data-empty-action="digest-pick-chats">Выбрать чаты</button></div>';
     else if (!chats.length)
       h += '<div class="dgx-empty">' + (st.filter === "labels" ? 'В чатах ничего важного. <button type="button" class="pf-link" data-dgx="filter" data-f="all">Показать все</button>' : "Ничего не найдено") + "</div>";
     chats.forEach(function (c) {

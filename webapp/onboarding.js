@@ -1188,6 +1188,10 @@
     show: show,
     scan: scan,
   };
+  // Лео-иллюстрации пустых экранов в разметке: <span data-leo-pose="point-left">.
+  document.querySelectorAll("[data-leo-pose]").forEach(function (el) {
+    if (!el.firstChild) el.innerHTML = leoAvatar(el.getAttribute("data-leo-pose"));
+  });
   var pending = window.__leoOnboardingPending;
   if (pending) {
     window.__leoOnboardingPending = null;

@@ -909,7 +909,8 @@
       (readOnly
         ? "Доска пуста"
         : TPL
-          ? '<div class="lb-start-title">С чего начнём?</div><div class="lb-start-cards"></div>' +
+          ? '<div class="lb-start-title">С чего начнём?</div>' +
+            '<div class="lb-start-sub">Например: ретро, карта пути клиента, роадмап, диаграмма Ганта</div><div class="lb-start-cards"></div>' +
             '<div class="lb-start-hint">или выберите инструмент и начните рисовать</div>'
           : "Выберите инструмент или дважды нажмите на доску, чтобы добавить текст") +
       "</div>";
@@ -3625,14 +3626,17 @@
     function renderEmptyHint() {
       if (readOnly || !emptyHint.classList.contains("has-start")) return;
       if (mode === "design") {
-        emptyHint.innerHTML = '<div class="lb-start-title">Добавьте фрейм</div><div class="lb-start-devices">' +
+        emptyHint.innerHTML = '<div class="lb-start-title">Добавьте фрейм</div>' +
+          '<div class="lb-start-sub">Например: экран приложения, лендинг, баннер</div><div class="lb-start-devices">' +
           DEVICES.map(function (d) {
             return '<button type="button" class="lb-device" data-device="' + d.id + '"><span class="lb-device-pre" style="--ar:' + d.w / d.h + '"></span>' +
               '<span class="lb-tpl-t">' + esc(d.title) + '</span><span class="lb-tpl-h">' + d.w + " × " + d.h + "</span></button>";
           }).join("") +
           '</div><div class="lb-start-hint">или вставьте макет из Figma (⌘V) · инструмент «Фрейм» (F) — свой размер</div>';
       } else {
-        emptyHint.innerHTML = '<div class="lb-start-title">С чего начнём?</div><div class="lb-start-cards">' + templateCards() + "</div>" +
+        emptyHint.innerHTML = '<div class="lb-start-title">С чего начнём?</div>' +
+          '<div class="lb-start-sub">Например: ретро, карта пути клиента, роадмап, диаграмма Ганта</div>' +
+          '<div class="lb-start-cards">' + templateCards() + "</div>" +
           '<div class="lb-start-hint">или выберите инструмент и начните рисовать</div>';
       }
     }
