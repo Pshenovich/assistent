@@ -775,3 +775,7 @@ fi
 
 echo "Готово: https://assistent.networ.ru/webapp/"
 echo "Дашборд: https://assistent.networ.ru/dashboard/?access_token=<USAGE_DASHBOARD_TOKEN>"
+echo ""
+echo "Выкачен коммит: $(git rev-parse --short HEAD 2>/dev/null || echo '?') ($(date -u '+%Y-%m-%d %H:%M UTC'))"
+echo "АГЕНТУ: обнови «Техническое описание» в базе знаний (orbita-kb, документ 10000016):"
+echo "  поправь затронутые разделы и добавь запись в «Журнал выкаток». Порядок — в CLAUDE.md."
