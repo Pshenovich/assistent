@@ -16011,6 +16011,9 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .pt-c-result p { margin: 4px 0 0; font-size: 0.9rem; line-height: 1.45; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .pt-feed { display: flex; flex-direction: column; gap: 10px; }
 .pt-sys { margin: 0; text-align: center; font-size: 0.76rem; color: var(--text-tertiary); }
+.pt-sys-rated { color: var(--text-secondary); }
+.pt-rate-toast { display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; }
+.pt-rate-toast .note-toast-copy { flex-basis: 100%; }
 .pt-msg { display: flex; align-items: flex-end; gap: 8px; }
 .pt-msg.is-mine { flex-direction: row-reverse; }
 .pt-bub {

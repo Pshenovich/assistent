@@ -147,6 +147,50 @@
     return group("Отпуск и больничный", rows + form, "Сроки, которые пришлись на эти дни, не засчитываются.");
   }
 
+  function ratingsText(a) {
+    var r = a.ratings || {};
+    if (!a.rated) return "—";
+    return [["good", "хорошо"], ["ok", "нормально"], ["bad", "плохо"]]
+      .filter(function (p) { return r[p[0]]; })
+      .map(function (p) { return p[1] + " " + r[p[0]]; }).join(" · ");
+  }
+
+  function chatsHtml(c, self) {
+    if (!c || !c.requests) return "";
+    return group("Ответы в рабочих чатах",
+      row(self ? "Обращались к вам" : "Обращений", String(c.requests), c.chats ? "в " + c.chats + " " + plural(c.chats, "чате", "чатах", "чатах") : "") +
+      row("Ответ, обычно", c.reply_hours == null ? "мало данных" : hours(c.reply_hours)) +
+      row("Без ответа три рабочих дня", String(c.unanswered)) +
+      (c.late_replies ? row("Ответ позже трёх рабочих дней", String(c.late_replies)) : ""),
+      "Считаются только ответ на сообщение и @упоминание в рабочих группах, где есть Лео. Тексты сообщений не показываются.");
+  }
+
+  function contributionHtml(c, s) {
+    c = c || {};
+    if (!c.kb_added && !c.kb_updated && !(s && s.accepted)) return "";
+    return group("Вклад",
+      row("Добавлено в базу знаний", String(c.kb_added || 0)) +
+      row("Обновлено или подтверждено", String(c.kb_updated || 0)) +
+      (s && s.posted ? row("Своих поручений доведено до «Принято»", String(s.accepted || 0), s.rated ? "оценено: " + s.rated : "") : ""),
+      "Только как контекст: объём не равен качеству.");
+  }
+
+  // Вывод Лео подгружается после карточки: модель формулирует по уже посчитанным числам.
+  async function loadLead(path) {
+    var el = document.querySelector("[data-metrics-lead]");
+    if (!el || !app().apiFetch) return;
+    var key = el.getAttribute("data-metrics-lead-key") || "";
+    try {
+      var r = await app().apiFetch(path, { method: "GET" });
+      var cur = document.querySelector("[data-metrics-lead]");
+      if (!r || !r.text || !cur || cur.getAttribute("data-metrics-lead-key") !== key) return;
+      cur.textContent = r.text;
+      cur.classList.add("is-leo");
+    } catch (_) {
+      /* остаётся текст по шаблону */
+    }
+  }
+
   function segHtml(days) {
     return '<div class="pf-seg" role="tablist" aria-label="Период">' +
       [[28, "4 недели"], [84, "12 недель"]].map(function (p) {
@@ -159,7 +203,8 @@
   function cardHtml(d, opts) {
     var self = !!(opts && opts.self);
     var a = d.assignee, t = d.trend, s = d.setter;
-    var html = '<p class="metrics-lead">' + esc(leadText(d, self)) +
+    var html = '<p class="metrics-lead"><span class="metrics-lead-text" data-metrics-lead data-metrics-lead-key="' +
+      esc((d.user_id || "") + ":" + d.days) + '">' + esc(leadText(d, self)) + "</span>" +
       (self ? "<small>Руководитель отдела видит те же цифры. Тексты переписки и задач ему не показываются.</small>"
         : "<small>Человек видит у себя ровно эти цифры.</small>") + "</p>";
     html += '<div class="metrics-kpis">' +
@@ -178,9 +223,12 @@
       row("Принято постановщиком", String(a.accepted)) +
       row("С первого раза", String(a.first_time)) +
       row("Возвраты на доработку", String(a.returns)) +
-      row("Отказы с причиной", String(a.declines)),
+      row("Отказы с причиной", String(a.declines)) +
+      row("Оценки постановщиков", ratingsText(a), a.rated ? "" : "Постановщик может оценить работу, когда нажимает «Принять»"),
       "Отказ с причиной — не минус: он честнее, чем взять и не сделать.");
     html += excusedHtml(a, self);
+    html += chatsHtml(d.chats, self);
+    html += contributionHtml(d.contribution, s);
     if (s.posted) {
       html += group("Как постановщик",
         row("Поставили поручений", String(s.posted)) +
@@ -206,6 +254,7 @@
       return;
     }
     el.innerHTML = seg + cardHtml(d, { self: true });
+    loadLead("/metrics/me/summary?days=" + state.days);
   }
 
   async function load() {
@@ -279,7 +328,7 @@
     if (el) el.addEventListener("click", onClick);
   }
 
-  window.LeoMetrics = { open: open, cardHtml: cardHtml, segHtml: segHtml, esc: esc, plural: plural, hours: hours, trend: trend };
+  window.LeoMetrics = { open: open, cardHtml: cardHtml, loadLead: loadLead, segHtml: segHtml, esc: esc, plural: plural, hours: hours, trend: trend };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();

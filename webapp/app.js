@@ -26452,12 +26452,57 @@
       var r = await postedApi(taskId, "accept");
       if (r && r.task) upsertPostedTask(r.task);
       postedHaptic();
-      showNoteToast("Принято — в «Принятых»");
+      var assignee = postedAssigneeUid(r && r.task);
+      if (assignee && assignee !== postedMeUid()) postedRateToast(taskId, "Принято. Как сделано?");
+      else showNoteToast("Принято — в «Принятых»");
       return r;
     } catch (err) {
       showNoteToast((err && err.message) || "Не получилось принять");
       return null;
     }
+  }
+
+  // Оценка постановщика — необязательная, одним нажатием в тосте. Исполнитель видит её в ленте задачи,
+  // в его показателях она идёт в «Качество» (people_metrics). Нажатие «Оценить» в карточке — тот же тост.
+  var POSTED_RATINGS = [
+    { id: "good", label: "Хорошо" },
+    { id: "ok", label: "Нормально" },
+    { id: "bad", label: "Плохо" },
+  ];
+
+  function postedRatingLabel(id) {
+    var hit = POSTED_RATINGS.filter(function (r) { return r.id === id; })[0];
+    return hit ? hit.label : "";
+  }
+
+  function postedRateToast(taskId, text, state) {
+    var node = document.createElement("span");
+    node.className = "pt-rate-toast";
+    var copy = document.createElement("span");
+    copy.className = "note-toast-copy";
+    copy.textContent = text;
+    node.appendChild(copy);
+    POSTED_RATINGS.forEach(function (it) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "note-toast-link pt-rate-btn";
+      b.textContent = it.label;
+      b.addEventListener("click", async function () {
+        try {
+          var r = await postedApi(taskId, "rate", { rating: it.id });
+          showNoteToast("Оценка «" + it.label + "» — исполнитель увидит её в задаче");
+          if (state && r) {
+            if (r.task) state.task = Object.assign({}, state.task, r.task);
+            if (r.events) state.events = r.events;
+            if (document.body.contains(state.host)) paintPostedCard(state);
+          }
+        } catch (err) {
+          showNoteToast((err && err.message) || "Не получилось оценить");
+        }
+      });
+      node.appendChild(b);
+    });
+    showNoteToast("", { node: node, actionable: true, duration: 7000 });
   }
 
   function postedTimeShort(iso) {
@@ -27486,6 +27531,12 @@
         bar.appendChild(postedActBtn("undo", "Вернуть в работу", false, function () {
           setPostedCardMode(state, "return");
         }));
+        var rated = (state.events || []).some(function (e) { return e.kind === "rated"; });
+        if (postedTaskOutcome(task) === "accepted" && !rated && postedAssigneeUid(task) && postedAssigneeUid(task) !== postedMeUid()) {
+          bar.appendChild(postedActBtn("check", "Оценить", false, function () {
+            postedRateToast(task.id, "Как сделано?", state);
+          }));
+        }
       } else if (done) {
         bar.appendChild(postedActBtn("check", "Принять", true, async function (b) {
           b.disabled = true;
@@ -27766,6 +27817,15 @@
         bub.appendChild(time);
         msg.appendChild(bub);
         feed.appendChild(msg);
+        return;
+      }
+      if (e.kind === "rated") {
+        var rt = document.createElement("p");
+        rt.className = "pt-sys pt-sys-rated";
+        var rating = (e.meta && e.meta.rating) || "";
+        rt.textContent = "Оценка постановщика: " + (postedRatingLabel(rating) || "—") +
+          (e.text ? " — «" + e.text + "»" : "") + " · " + postedTimeShort(e.at);
+        feed.appendChild(rt);
         return;
       }
       var sys = document.createElement("p");

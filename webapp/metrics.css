@@ -13,6 +13,8 @@
   line-height: 1.5;
   color: var(--text);
 }
+.metrics-lead-text { display: block; }
+.metrics-lead-text.is-leo::before { content: "Лео: "; font-weight: 600; }
 .metrics-lead small { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: var(--text-secondary); }
 
 /* Четыре крупных числа */

@@ -230,6 +230,7 @@ def assignee_metrics(
     # Качество: что приняли за период — с первого ли раза.
     accepted = returned_before = 0
     returns = declines = 0
+    ratings = {"good": 0, "ok": 0, "bad": 0}  # последняя оценка постановщика по принятому за период
     for t in tasks:
         if str(t.get("assignee_user_id") or "") != uid or str(t.get("owner_user_id") or "") == uid:
             continue
@@ -241,6 +242,9 @@ def assignee_metrics(
             accepted += 1
             if any(e.get("kind") == "returned" for e in evs):
                 returned_before += 1
+            last = [e for e in evs if e.get("kind") == "rated" and e.get("rating") in ratings]
+            if last:
+                ratings[last[-1]["rating"]] += 1
 
     # Отзывчивость: от постановки до первой реакции исполнителя, в рабочих часах.
     reactions: list[float] = []
@@ -280,6 +284,8 @@ def assignee_metrics(
         "first_time_pct": _pct(accepted - returned_before, accepted),
         "returns": returns,
         "declines": declines,
+        "ratings": ratings,
+        "rated": sum(ratings.values()),
         "reaction_hours": _median_hours(reactions),
         "stale": len(stale),
         "enough_data": len(counted) >= MIN_SAMPLE,
@@ -363,10 +369,15 @@ def setter_metrics(
         answers += [work_hours_between(a, b, tz) for a, b in pauses if b <= now]
     silent_returns = 0
     waiting = 0
+    accepted = rated = 0
     for t in tasks:
         if str(t.get("owner_user_id") or "") != uid:
             continue
         evs = events.get(int(t["id"]), [])
+        if (t.get("outcome") == "accepted" and str(t.get("assignee_user_id") or "") not in ("", uid)
+                and _in(_dt(t.get("accepted_at")), start, end)):
+            accepted += 1
+            rated += any(e.get("kind") == "rated" for e in evs)
         silent_returns += sum(
             1 for e in evs
             if e.get("kind") == "returned" and not str(e.get("text") or "").strip() and _in(_dt(e.get("at")), start, end)
@@ -383,6 +394,8 @@ def setter_metrics(
         "silent_returns": silent_returns,
         "answer_hours": _median_hours(answers),
         "waiting_on_me": waiting,
+        "accepted": accepted,
+        "rated": rated,
     }
 
 
@@ -431,9 +444,94 @@ def member_metrics(
             "reaction_hours": _trend(cur["reaction_hours"], prev["reaction_hours"]),
         },
         "setter": setter,
+        "chats": _safe(lambda: chat_metrics(uid, start=start, end=now, now=now, tz=tz), {}),
+        "contribution": _safe(lambda: contribution(uid, start=start, end=now), {}),
         "tasks": items,
         "absences": absences,
     }
+
+
+def _safe(fn, default):
+    """Дополнительные источники (чаты, база знаний) не должны ронять карточку."""
+    try:
+        return fn()
+    except Exception as e:
+        print(f"[people_metrics] source failed err={e!r}")
+        return default
+
+
+# ---------- ответы в рабочих чатах ----------
+
+CHAT_REPLY_WINDOW_DAYS = 5   # дальше ответа не ищем
+CHAT_NO_REPLY_WORK_HOURS = 30.0  # три рабочих дня без ответа — «без ответа»; моложе — ещё рано судить
+
+
+def chat_metrics(
+    user_id: str,
+    *,
+    start: datetime,
+    end: datetime,
+    now: datetime,
+    tz: ZoneInfo | timezone = timezone.utc,
+) -> dict[str, Any]:
+    """Сколько рабочих часов человек отвечает, когда к нему обращаются в групповых чатах с ботом.
+
+    Обращение — только явное: ответ (reply) на его сообщение или @упоминание, от человека
+    (не бот, не пересылка). Ответ — первое его сообщение в том же чате и той же теме после обращения.
+    Несколько обращений, закрытых одним ответом, — одно обращение (с самого раннего).
+    Имя в тексте и личные чаты не считаем: так меньше ложных «к нему обращались».
+    """
+    from assistant.stores import chat_digest, note_members
+
+    uid = str(user_id)
+    if not uid.isdigit():
+        return {}
+    prof = note_members.get_profile(uid) or {}
+    nick = str(prof.get("username") or "").strip().lstrip("@").lower()
+    rows = chat_digest.addressed_requests(
+        int(uid), nick=nick, since=start.isoformat(), until=end.isoformat(),
+        window_days=CHAT_REPLY_WINDOW_DAYS,
+    )
+    first_for_reply: dict[tuple[int, int], dict[str, Any]] = {}
+    unanswered = 0
+    durations: list[float] = []
+    for r in rows:
+        asked = _dt(r["ts_utc"])
+        if asked is None:
+            continue
+        reply_at = _dt(r.get("reply_ts_utc"))
+        if reply_at is None:
+            if work_hours_between(asked, now, tz) >= CHAT_NO_REPLY_WORK_HOURS:
+                unanswered += 1
+            continue
+        key = (int(r["chat_id"]), int(r["reply_message_id"]))
+        if key not in first_for_reply or asked < _dt(first_for_reply[key]["ts_utc"]):
+            first_for_reply[key] = r
+    for r in first_for_reply.values():
+        durations.append(work_hours_between(_dt(r["ts_utc"]), _dt(r["reply_ts_utc"]), tz))
+    answered = len(durations)
+    late = sum(1 for d in durations if d > CHAT_NO_REPLY_WORK_HOURS)
+    return {
+        "requests": answered + unanswered,
+        "answered": answered,
+        "unanswered": unanswered,
+        "late_replies": late,
+        "reply_hours": _median_hours(durations) if answered >= MIN_SAMPLE else None,
+        "chats": len({int(r["chat_id"]) for r in rows}),
+        "enough_data": answered >= MIN_SAMPLE,
+    }
+
+
+# ---------- вклад: база знаний ----------
+
+
+def contribution(user_id: str, *, start: datetime, end: datetime) -> dict[str, Any]:
+    """Документы базы знаний организаций: добавил за период и обновил/подтвердил актуальность."""
+    from assistant.stores import org_kb
+
+    uid = str(user_id)
+    added, updated = org_kb.contribution_counts(uid, since=start.isoformat(), until=end.isoformat())
+    return {"kb_added": added, "kb_updated": updated}
 
 
 # ---------- организация: раздел «Люди» ----------
@@ -518,6 +616,12 @@ def signals(m: dict[str, Any], *, absence: Optional[dict[str, str]] = None) -> l
         out.append({"kind": "warn", "text": f"{a['returns']} возврата" if a["returns"] < 5 else f"{a['returns']} возвратов"})
     if t["on_time_pct"] is not None and t["on_time_pct"] <= -10:
         out.append({"kind": "warn", "text": "сроки просели"})
+    bad = (a.get("ratings") or {}).get("bad", 0)
+    if bad >= 2:
+        out.append({"kind": "warn", "text": f"оценок «плохо»: {bad}"})
+    silent = (m.get("chats") or {}).get("unanswered", 0)
+    if silent >= 3:
+        out.append({"kind": "warn", "text": f"без ответа в чатах: {silent}"})
     return out
 
 
@@ -624,3 +728,85 @@ def person_view(
     m["absences"] = [a for a in m["absences"] if a["to"] >= (now or datetime.now(timezone.utc)).date().isoformat()]
     m["name"] = note_members.profile_display_name(note_members.get_profile(target), fallback="Участник")
     return m
+
+
+# ---------- вывод Лео ----------
+
+SUMMARY_SYSTEM = """Ты — Лео, помощник в рабочем приложении. По готовым показателям сотрудника за период напиши
+2–3 коротких предложения по-русски: что идёт хорошо, на что посмотреть, и, если есть, поправку на нагрузку
+или отпуск. Только по данным, ничего не придумывай и не пересчитывай. Не ставь оценок человеку
+(«плохой работник», «ленится»), не сравнивай с коллегами, не давай советов про увольнение и премии.
+Если данных мало — так и скажи одной фразой. Пиши о человеке в третьем лице по имени, если пишешь
+руководителю, и на «вы», если человек читает про себя. Без списков, без markdown, без эмодзи."""
+
+_SUMMARY_CACHE: dict[str, tuple[float, str]] = {}
+_SUMMARY_TTL = 6 * 3600.0
+
+
+def summary_facts(m: dict[str, Any]) -> dict[str, Any]:
+    """Только числа — без названий задач и текста переписки (в модель уходит лишь это)."""
+    a, st, ch, co = m["assignee"], m["setter"], m.get("chats") or {}, m.get("contribution") or {}
+    return {
+        "период_дней": m["days"],
+        "дней_отпуска_в_периоде": m.get("absent_days", 0),
+        "поручений_получено": a["received"],
+        "сроков_учтено": a["deadlines"],
+        "в_срок_процент": a["on_time_pct"],
+        "в_срок_сдвиг_к_прошлому_периоду": m["trend"].get("on_time_pct"),
+        "опоздал_но_предупредил": a["late_warned"],
+        "просрочено_сейчас": a["late_open"],
+        "не_засчитано_в_просрочку": a["excused"],
+        "принято_работ": a["accepted"],
+        "с_первого_раза_процент": a["first_time_pct"],
+        "возвратов": a["returns"],
+        "оценки_постановщиков": a.get("ratings") or {},
+        "реакция_на_поручение_рабочих_часов": a["reaction_hours"],
+        "висят_больше_10_дней": a["stale"],
+        "ответ_в_чатах_рабочих_часов": ch.get("reply_hours"),
+        "обращений_в_чатах": ch.get("requests"),
+        "без_ответа_в_чатах": ch.get("unanswered"),
+        "поставил_поручений_другим": st["posted"],
+        "из_них_со_сроком_меньше_дня": st["short_notice"],
+        "добавил_в_базу_знаний": co.get("kb_added"),
+        "обновил_в_базе_знаний": co.get("kb_updated"),
+        "мало_данных": not a["enough_data"],
+    }
+
+
+def leo_summary(m: dict[str, Any], *, name: str = "", self_view: bool, actor_id: int | str) -> Optional[str]:
+    """2–3 фразы от Лео по уже посчитанным числам. LLM только формулирует. None — модель недоступна."""
+    import hashlib
+    import json
+    import time
+
+    facts = summary_facts(m)
+    if not facts["поручений_получено"] and not facts["поставил_поручений_другим"] and not facts["обращений_в_чатах"]:
+        return None
+    payload = {"кто_читает": "сам сотрудник" if self_view else "руководитель", "имя": name or "", "показатели": facts}
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    key = hashlib.sha1(body.encode()).hexdigest()
+    hit = _SUMMARY_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _SUMMARY_TTL:
+        return hit[1]
+    try:
+        from assistant.integrations.openrouter_client import is_llm_configured, set_openrouter_usage_telegram_user
+        from assistant.nlu import llm
+
+        if not is_llm_configured():
+            return None
+        set_openrouter_usage_telegram_user(telegram_user_id=actor_id)
+        text = llm._chat(
+            SUMMARY_SYSTEM, body, operation="people_metrics_summary", model=llm._model_chat_digest(),
+            timeout=40, temperature=0.2, max_tokens=300,
+        )
+    except Exception as e:
+        print(f"[people_metrics] summary failed err={e!r}")
+        return None
+    text = " ".join(str(text or "").replace("*", "").split()).strip()
+    if not text:
+        return None
+    text = text[:600]
+    if len(_SUMMARY_CACHE) > 2000:
+        _SUMMARY_CACHE.clear()
+    _SUMMARY_CACHE[key] = (time.monotonic(), text)
+    return text

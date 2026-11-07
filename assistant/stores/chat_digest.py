@@ -661,6 +661,47 @@ def is_human_member(chat_id: int, user_id: int | None) -> bool:
 # ---------------------------------------------------------------- топики форумов
 
 
+def addressed_requests(
+    user_id: int, *, nick: str, since: str, until: str, window_days: int = 5
+) -> list[dict[str, Any]]:
+    """Явные обращения к человеку в групповых чатах за [since, until) и его первый ответ после каждого.
+
+    Обращение — reply на его сообщение или @ник / id:<user_id> в упоминаниях; автор — другой человек,
+    не автосообщение. Ответ — первое его сообщение в том же чате и теме не позже ``window_days`` дней.
+    Для показателей работы (people_metrics)."""
+    uid = int(user_id)
+    marks = [f"%,id:{uid},%"] + ([f"%,@{nick.lower().lstrip('@')},%"] if nick else [])
+    mention_sql = " OR ".join("(',' || m.mentions || ',') LIKE ?" for _ in marks)
+    sql = f"""
+        SELECT m.chat_id, m.message_id, m.ts_utc,
+               (SELECT r.message_id FROM leo_chat_messages r
+                 WHERE r.chat_id = m.chat_id AND r.user_id = ? AND IFNULL(r.thread_id, 0) = IFNULL(m.thread_id, 0)
+                   AND r.ts_utc > m.ts_utc AND r.ts_utc <= strftime('%Y-%m-%dT%H:%M:%S', m.ts_utc, '+{int(window_days)} days')
+                 ORDER BY r.ts_utc ASC LIMIT 1) AS reply_message_id
+        FROM leo_chat_messages m
+        WHERE m.chat_id < 0 AND m.ts_utc >= ? AND m.ts_utc < ?
+          AND m.user_id IS NOT NULL AND m.user_id != ? AND m.is_auto = 0
+          AND (m.reply_to_user_id = ? OR {mention_sql})
+        ORDER BY m.ts_utc ASC
+        LIMIT 5000
+    """
+    with _LOCK:
+        conn = _conn()
+        rows = conn.execute(sql, (uid, since, until, uid, uid, *marks)).fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            item = {"chat_id": int(r[0]), "message_id": int(r[1]), "ts_utc": str(r[2]),
+                    "reply_message_id": None, "reply_ts_utc": None}
+            if r[3] is not None:
+                rep = conn.execute(
+                    "SELECT ts_utc FROM leo_chat_messages WHERE chat_id = ? AND message_id = ?", (int(r[0]), int(r[3]))
+                ).fetchone()
+                item["reply_message_id"] = int(r[3])
+                item["reply_ts_utc"] = str(rep[0]) if rep else None
+            out.append(item)
+    return out
+
+
 def upsert_topic(chat_id: int, thread_id: int, name: str) -> None:
     """Название топика — из сервисных forum_topic_created / forum_topic_edited."""
     nm = (name or "").strip()[:120]

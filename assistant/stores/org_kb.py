@@ -521,6 +521,24 @@ def mark_edited(note_id: int, user_id: int | str) -> None:
         print(f"[org_kb] mark_edited note={note_id} err={e!r}")
 
 
+def contribution_counts(user_id: int | str, *, since: str, until: str) -> tuple[int, int]:
+    """(добавил документов в базу знаний, обновил или подтвердил чужие/свои старые) за [since, until).
+    Последнее — по отметке актуальности: её ставит правка текста человеком или «Всё актуально»."""
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        added = conn.execute(
+            "SELECT COUNT(*) FROM org_kb_nodes WHERE kind = 'doc' AND created_by = ? AND created_at >= ? AND created_at < ?",
+            (uid, since, until),
+        ).fetchone()[0]
+        updated = conn.execute(
+            "SELECT COUNT(*) FROM org_kb_nodes WHERE kind = 'doc' AND verified_by = ? AND verified_at >= ? AND verified_at < ?"
+            " AND NOT (created_by = ? AND created_at >= ?)",
+            (uid, since, until, uid, since),
+        ).fetchone()[0]
+    return int(added or 0), int(updated or 0)
+
+
 def _reindex(org_id: int) -> None:
     """Поиск Лео по базе знаний организации — пересобрать её раздел индекса (с задержкой, повторы склеиваются)."""
     try:

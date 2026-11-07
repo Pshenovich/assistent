@@ -272,3 +272,106 @@ def test_person_view_hides_titles_of_other_setters(org_env) -> None:
     card = pm.person_view(org, LEAD, WORKER)
     assert [t["title"] for t in card["tasks"]] == ["От руководителя"]
     assert card["hidden_tasks"] == 1 and card["assignee"]["received"] == 2
+
+
+# ---------- этап 4: оценка, чаты, вклад, вывод Лео ----------
+
+
+def test_rating_after_accept_only_by_setter(tasks_db) -> None:
+    store = tasks_db
+    t = store.create_task(10, title="Отчёт", start_at=MON, assignee_user_id=20)
+    assert store.rate_task(10, t["id"], "good") is None  # ещё не принято
+    store.update_task(20, t["id"], done=True)
+    store.accept_task(10, t["id"])
+    assert store.rate_task(20, t["id"], "good") is None  # исполнитель себя не оценивает
+    assert store.rate_task(10, t["id"], "excellent") is None
+    assert store.rate_task(10, t["id"], "bad", "Без таблицы") is not None
+    assert store.rate_task(10, t["id"], "good") is not None  # передумал — считается последняя
+    evs = store.events_by_task([t["id"]])[t["id"]]
+    assert [e.get("rating") for e in evs if e["kind"] == "rated"] == ["bad", "good"]
+    rows = store.list_involved_tasks("20", limit=10)
+    m = pm.assignee_metrics("20", rows, store.events_by_task([t["id"]]),
+                            start=datetime.now(UTC) - timedelta(days=1), end=datetime.now(UTC) + timedelta(minutes=1),
+                            now=datetime.now(UTC) + timedelta(minutes=1))
+    assert m["ratings"] == {"good": 1, "ok": 0, "bad": 0} and m["rated"] == 1
+    s = pm.setter_metrics("10", rows, store.events_by_task([t["id"]]),
+                          start=datetime.now(UTC) - timedelta(days=1), end=datetime.now(UTC) + timedelta(minutes=1),
+                          now=datetime.now(UTC))
+    assert s["accepted"] == 1 and s["rated"] == 1
+
+
+@pytest.fixture()
+def chat_db(tmp_path, monkeypatch):
+    from assistant.stores import chat_digest, note_members
+
+    monkeypatch.setenv("CHAT_DIGEST_DB_PATH", str(tmp_path / "chat.sqlite"))
+    chat_digest._CONN = None  # type: ignore[attr-defined]
+    monkeypatch.setattr(note_members, "get_profile", lambda uid: {"username": "Ivan"})
+    yield chat_digest
+    chat_digest._CONN = None  # type: ignore[attr-defined]
+
+
+def test_chat_reply_time_counts_only_explicit_requests(chat_db) -> None:
+    db = chat_db
+    n = [0]
+
+    def msg(at, user, text="ок", chat=-100, **kw):
+        n[0] += 1
+        db.insert_message(chat_id=chat, message_id=n[0], user_id=user, username=None, display_name=None,
+                          text=text, ts_utc=at, **kw)
+
+    me, col = 20, 30
+    for day in range(6):  # шесть обращений реплаем, ответ через 30 минут
+        at = MON - timedelta(days=7) + timedelta(days=day, hours=1)
+        msg(at, col, "Посмотришь?", reply_to_user_id=me)
+        msg(at + timedelta(minutes=30), me)
+    msg(MON - timedelta(days=14), col, "@ivan глянь", mentions=["@ivan"], thread_id=7)  # в этой теме не ответил
+    msg(MON - timedelta(days=12), col, "Иван, привет")  # имя в тексте — не считаем
+    msg(MON - timedelta(days=12), col, "сам себе", reply_to_user_id=me, chat=555)  # личный чат — не считаем
+    msg(MON - timedelta(days=11), col, "авто", reply_to_user_id=me, is_auto=True)
+    c = pm.chat_metrics("20", start=MON - timedelta(days=28), end=MON, now=MON)
+    assert c["answered"] == 6 and c["reply_hours"] == 0.5
+    assert c["unanswered"] == 1 and c["requests"] == 7 and c["chats"] == 1
+
+
+def test_kb_contribution_counts(org_env) -> None:
+    from assistant.stores import org_kb
+
+    now = datetime.now(UTC)
+    conn = org_kb._conn()
+    for created_by, created, verified_by, verified in (
+        (str(WORKER), now - timedelta(days=2), str(WORKER), now - timedelta(days=2)),  # добавил
+        (str(LEAD), now - timedelta(days=90), str(WORKER), now - timedelta(days=1)),  # обновил чужой
+        (str(WORKER), now - timedelta(days=90), str(LEAD), now - timedelta(days=1)),  # обновил другой
+    ):
+        conn.execute(
+            "INSERT INTO org_kb_nodes (org_id, kind, title, created_by, created_at, verified_by, verified_at)"
+            " VALUES (?, 'doc', 'Док', ?, ?, ?, ?)",
+            (org_env["org"], created_by, created.isoformat(), verified_by, verified.isoformat()),
+        )
+    conn.commit()
+    c = pm.contribution(str(WORKER), start=now - timedelta(days=28), end=now)
+    assert c == {"kb_added": 1, "kb_updated": 1}
+
+
+def test_leo_summary_gets_numbers_only_and_is_cached(monkeypatch) -> None:
+    from assistant.integrations import openrouter_client
+    from assistant.nlu import llm
+
+    calls: list[str] = []
+    monkeypatch.setattr(openrouter_client, "is_llm_configured", lambda: True)
+    monkeypatch.setattr(llm, "_chat", lambda system, user, **kw: calls.append(user) or "Сроки **держит**.  Возвратов мало.")
+    pm._SUMMARY_CACHE.clear()
+    tasks = _many(6, late=1)
+    for t in tasks:
+        t["title"] = "Секретный проект"
+    a = pm.assignee_metrics(ME, tasks, {}, start=MON - timedelta(days=28), end=MON + timedelta(days=20), now=MON + timedelta(days=20))
+    m = {"days": 28, "absent_days": 0, "assignee": a, "trend": {"on_time_pct": None},
+         "setter": pm.setter_metrics(ME, tasks, {}, start=MON - timedelta(days=28), end=MON, now=MON),
+         "chats": {}, "contribution": {}, "tasks": tasks}
+    text = pm.leo_summary(m, name="Аня", self_view=False, actor_id=1)
+    assert text == "Сроки держит. Возвратов мало."
+    assert "Секретный" not in calls[0] and "руководитель" in calls[0]
+    assert pm.leo_summary(m, name="Аня", self_view=False, actor_id=1) == text and len(calls) == 1
+    empty = dict(m, assignee=dict(a, received=0), setter=dict(m["setter"], posted=0))
+    assert pm.leo_summary(empty, self_view=True, actor_id=1) is None

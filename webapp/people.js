@@ -89,6 +89,9 @@
     }
     if (state.person) {
       el.innerHTML = state.personData ? personHtml(state.personData) : '<p class="pf-hint">Считаю…</p>';
+      if (state.personData && M().loadLead) {
+        M().loadLead("/orgs/" + state.orgId + "/people/" + encodeURIComponent(state.person) + "/summary?days=" + state.days);
+      }
       return;
     }
     el.innerHTML = state.list ? listHtml(state.list) : '<p class="pf-hint">Считаю…</p>';

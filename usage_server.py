@@ -6248,6 +6248,20 @@ async def miniapp_metrics_me(
     return data
 
 
+@miniapp_router.get("/metrics/me/summary")
+async def miniapp_metrics_me_summary(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    days: int = Query(28, ge=7, le=91),
+) -> dict[str, Any]:
+    """Вывод Лео к «Моим показателям» — отдельным запросом, чтобы карточка не ждала модель."""
+    from assistant.services import people_metrics
+
+    uid = int(principal.telegram_user_id)
+    data = await run_in_threadpool(partial(people_metrics.member_metrics, uid, days=days))
+    text = await run_in_threadpool(partial(people_metrics.leo_summary, data, self_view=True, actor_id=uid))
+    return {"text": text or ""}
+
+
 class _AbsencesBody(BaseModel):
     absences: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -6782,6 +6796,33 @@ async def miniapp_calendar_tasks_accept(
 ) -> dict[str, Any]:
     _track(principal.telegram_user_id, "task.triage", action="accept")
     return await _owner_task_action(task_id, principal, "accept")
+
+
+class _MiniappTaskRateBody(BaseModel):
+    rating: str
+    text: str = ""
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/rate")
+async def miniapp_calendar_tasks_rate(
+    task_id: int,
+    body: _MiniappTaskRateBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Необязательная оценка принятого поручения — видит исполнитель, идёт в «Качество» его показателей."""
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    row = await run_in_threadpool(partial(
+        calendar_tasks_store.rate_task, uid, task_id, str(body.rating or ""), body.text,
+        actor_name=_principal_display_name(principal),
+    ))
+    if not row:
+        raise HTTPException(status_code=400, detail="Оценить можно принятое поручение, которое вы поставили другому")
+    _track(principal.telegram_user_id, "task.rated", rating=str(body.rating))
+    events = await run_in_threadpool(calendar_tasks_store.list_events, row)
+    return {"ok": True, "task": _task_api(row, tz=_tz_for(uid), viewer_id=uid), "events": events}
 
 
 @miniapp_router.post("/calendar/tasks/{task_id}/return")
@@ -8202,6 +8243,23 @@ async def miniapp_orgs_person(
     for t in data["tasks"]:
         t["owner_name"] = names.get(t["owner_user_id"], "")
     return data
+
+
+@miniapp_router.get("/orgs/{org_id}/people/{user_id}/summary")
+async def miniapp_orgs_person_summary(
+    org_id: int,
+    user_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    days: int = Query(28, ge=7, le=91),
+) -> dict[str, Any]:
+    from assistant.services import people_metrics
+
+    uid = int(principal.telegram_user_id)
+    data = await _people_call(people_metrics.person_view, org_id, uid, user_id, days=days)
+    text = await run_in_threadpool(partial(
+        people_metrics.leo_summary, data, name=str(data.get("name") or ""), self_view=False, actor_id=uid,
+    ))
+    return {"text": text or ""}
 
 
 @miniapp_router.post("/orgs/{org_id}/groups")

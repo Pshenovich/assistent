@@ -1591,8 +1591,10 @@ def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[st
 # ——— Лента поручения: события и переписка постановщика с исполнителем ———
 EVENT_KINDS = (
     "created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled",
-    "taken", "snoozed", "declined", "insisted",
+    "taken", "snoozed", "declined", "insisted", "rated",
 )
+RATINGS = ("good", "ok", "bad")
+RATING_LABEL = {"good": "Хорошо", "ok": "Нормально", "bad": "Плохо"}
 MAX_MESSAGE_LEN = 2000
 
 
@@ -1716,7 +1718,7 @@ def events_by_task(task_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
         part = ids[i:i + 500]
         with _LOCK:
             rows = _conn().execute(
-                f"SELECT task_id, at, actor_user_id, kind, text FROM task_events"
+                f"SELECT task_id, at, actor_user_id, kind, text, meta_json FROM task_events"
                 f" WHERE task_id IN ({','.join('?' * len(part))}) ORDER BY at ASC, id ASC",
                 part,
             ).fetchall()
@@ -1724,6 +1726,7 @@ def events_by_task(task_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
             out.setdefault(int(r["task_id"]), []).append({
                 "at": str(r["at"] or ""), "kind": str(r["kind"]),
                 "actor_user_id": str(r["actor_user_id"] or ""), "text": str(r["text"] or ""),
+                **({"rating": str(_event_meta(r).get("rating") or "")} if r["kind"] == "rated" else {}),
             })
     return out
 
@@ -1815,6 +1818,21 @@ def accept_task(owner_id: int | str, task_id: int | str, *, actor_name: str = ""
         )
         _conn().commit()
     add_event(task["id"], "accepted", actor_user_id=owner_id, actor_name=actor_name)
+    return _get_task_row(int(task["id"]))
+
+
+def rate_task(
+    owner_id: int | str, task_id: int | str, rating: str, text: str = "", *, actor_name: str = ""
+) -> Optional[dict[str, Any]]:
+    """Оценка постановщика после «Принять»: хорошо / нормально / плохо и, если хочет, пара слов.
+    Необязательная; можно поменять — в показателях считается последняя."""
+    task = _owner_task(owner_id, task_id)
+    if not task or rating not in RATINGS:
+        return None
+    if task.get("outcome") != "accepted" or str(task.get("assignee_user_id") or "") in ("", str(owner_id)):
+        return None
+    add_event(task["id"], "rated", actor_user_id=owner_id, actor_name=actor_name,
+              text=_clip(text, 300), meta={"rating": rating})
     return _get_task_row(int(task["id"]))
 
 
