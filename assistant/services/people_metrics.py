@@ -434,3 +434,193 @@ def member_metrics(
         "tasks": items,
         "absences": absences,
     }
+
+
+# ---------- организация: раздел «Люди» ----------
+
+SETTING = "people_metrics"
+
+
+class PeopleMetricsError(Exception):
+    def __init__(self, message: str, code: int = 400) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def enabled(org_id: int) -> bool:
+    from assistant.stores import orgs_store
+
+    return bool((orgs_store.get_settings(org_id).get(SETTING) or {}).get("enabled"))
+
+
+def can_toggle(org_id: int, user_id: int | str) -> bool:
+    from assistant.stores import orgs_store
+
+    return orgs_store.role_of(org_id, user_id) in ("owner", "admin")
+
+
+def set_enabled(org_id: int, actor_id: int | str, on: bool) -> bool:
+    """Включить/выключить. Возвращает True, если показатели только что включились (пора уведомить людей)."""
+    from assistant.stores import orgs_store
+
+    if not can_toggle(org_id, actor_id):
+        raise PeopleMetricsError("Включать показатели могут владелец и админы организации")
+    was = enabled(org_id)
+    orgs_store.set_settings(actor_id, org_id, SETTING, {
+        "enabled": bool(on), "changed_at": datetime.now(timezone.utc).isoformat(), "by": str(actor_id),
+    })
+    return bool(on) and not was
+
+
+def announce_text(org_name: str) -> str:
+    return (
+        f"В «Орбите» организации «{org_name}» включены показатели работы: сроки и качество поручений, "
+        "скорость реакции на них. Их видит руководитель вашего отдела — и вы сами, в тех же цифрах: "
+        "Профиль → «Мои показатели». Тексты переписки и задач руководителю не показываются; "
+        "переносы срока постановщиком, ожидание ответа на вопрос и отпуск вам в минус не идут."
+    )
+
+
+def announce_recipients(org_id: int, actor_id: int | str) -> list[str]:
+    from assistant.stores import orgs_store
+
+    return [
+        str(m["user_id"]) for m in orgs_store.list_members(org_id)
+        if m.get("status") == "active" and m.get("user_id") and not m.get("guest")
+        and str(m["user_id"]) != str(actor_id)
+    ]
+
+
+def _require_view(org_id: int, viewer_id: int | str) -> list[str]:
+    from assistant.stores import org_groups, orgs_store
+
+    if not orgs_store.get_org(org_id) or not orgs_store.role_of(org_id, viewer_id):
+        raise PeopleMetricsError("Организация не найдена", 404)
+    if not enabled(org_id):
+        raise PeopleMetricsError("Показатели сотрудников в организации выключены")
+    ids = org_groups.metrics_visible_ids(org_id, viewer_id)
+    if len(ids) <= 1:
+        raise PeopleMetricsError("Показатели других людей видят руководители отделов и админы организации")
+    return ids
+
+
+def signals(m: dict[str, Any], *, absence: Optional[dict[str, str]] = None) -> list[dict[str, str]]:
+    """«На что посмотреть» — короткие поводы для разговора, не оценки."""
+    a, t = m["assignee"], m["trend"]
+    out: list[dict[str, str]] = []
+    if absence:
+        out.append({"kind": "info", "text": "в отпуске до " + absence["to"][8:10] + "." + absence["to"][5:7]})
+    if a["late_open"]:
+        out.append({"kind": "bad", "text": f"просрочено: {a['late_open']}"})
+    if a["stale"] >= 3:
+        out.append({"kind": "warn", "text": f"{a['stale']} висят >10 дн."})
+    if a["returns"] >= 3:
+        out.append({"kind": "warn", "text": f"{a['returns']} возврата" if a["returns"] < 5 else f"{a['returns']} возвратов"})
+    if t["on_time_pct"] is not None and t["on_time_pct"] <= -10:
+        out.append({"kind": "warn", "text": "сроки просели"})
+    return out
+
+
+def _labels(org_id: int, viewer_id: int | str) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+    from assistant.stores import org_groups, orgs_store
+
+    groups = org_groups.list_groups(org_id, viewer_id)
+    admin = orgs_store.role_of(org_id, viewer_id) in ("owner", "admin")
+    me = str(viewer_id)
+    depts = [d for d in groups if admin or d.get("lead_user_id") == me]
+    by_user: dict[str, list[str]] = {}
+    for d in groups:
+        in_team: set[str] = set()
+        for t in d["teams"]:
+            for u in t["member_ids"]:
+                by_user.setdefault(u, []).append(t["name"])
+                in_team.add(u)
+        for u in d["member_ids"]:
+            if u not in in_team:
+                by_user.setdefault(u, []).append(d["name"])
+    return [{"id": d["id"], "name": d["name"]} for d in depts], by_user
+
+
+def team_overview(
+    org_id: int,
+    viewer_id: int | str,
+    *,
+    days: int = 28,
+    group_id: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Строка на человека: в срок, с первого раза, реакция, поводы посмотреть. По алфавиту, без рейтинга."""
+    from assistant.stores import note_members, org_groups, user_prefs
+
+    ids = _require_view(org_id, viewer_id)
+    depts, labels = _labels(org_id, viewer_id)
+    if group_id:
+        if not any(d["id"] == int(group_id) for d in depts):
+            raise PeopleMetricsError("Этот отдел вам не виден")
+        scope = set(org_groups.member_ids(org_id, int(group_id)))
+        ids = [u for u in ids if u in scope]
+    ids = [u for u in ids if u != str(viewer_id)]
+    now = now or datetime.now(timezone.utc)
+    today = now.date().isoformat()
+    rows: list[dict[str, Any]] = []
+    tot = {"deadlines": 0, "on_time": 0, "accepted": 0, "first_time": 0, "late_open": 0, "stale": 0}
+    for uid in ids:
+        m = member_metrics(uid, days=days, now=now)
+        a = m["assignee"]
+        for k in tot:
+            tot[k] += a[k]
+        absence = user_prefs.absent_on(int(uid), today) if uid.isdigit() else None
+        name = note_members.profile_display_name(note_members.get_profile(uid), fallback="Участник")
+        rows.append({
+            "user_id": uid,
+            "name": name,
+            "groups": labels.get(uid, []),
+            "received": a["received"],
+            "on_time_pct": a["on_time_pct"],
+            "first_time_pct": a["first_time_pct"],
+            "reaction_hours": a["reaction_hours"],
+            "deadlines": a["deadlines"],
+            "trend": m["trend"],
+            "absent_days": m["absent_days"],
+            "signals": signals(m, absence=absence),
+        })
+    rows.sort(key=lambda r: r["name"].casefold())
+    return {
+        "days": days,
+        "departments": depts,
+        "group_id": int(group_id) if group_id else None,
+        "people": rows,
+        "summary": {
+            "people": len(rows),
+            "on_time_pct": round(100 * tot["on_time"] / tot["deadlines"]) if tot["deadlines"] >= MIN_SAMPLE else None,
+            "first_time_pct": round(100 * tot["first_time"] / tot["accepted"]) if tot["accepted"] >= MIN_SAMPLE else None,
+            "late_open": tot["late_open"],
+            "stale": tot["stale"],
+        },
+    }
+
+
+def person_view(
+    org_id: int,
+    viewer_id: int | str,
+    target_id: int | str,
+    *,
+    days: int = 28,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Карточка человека для руководителя: те же цифры, что у него самого.
+    Названия поручений — только тех, что поставил сам руководитель; остальные — числом."""
+    from assistant.stores import note_members
+
+    ids = _require_view(org_id, viewer_id)
+    target = str(target_id)
+    if target not in ids:
+        raise PeopleMetricsError("Показатели этого человека вам не видны")
+    m = member_metrics(target, days=days, now=now)
+    viewer = str(viewer_id)
+    own = [t for t in m["tasks"] if t["owner_user_id"] == viewer]
+    m["hidden_tasks"] = len(m["tasks"]) - len(own)
+    m["tasks"] = own
+    m["absences"] = [a for a in m["absences"] if a["to"] >= (now or datetime.now(timezone.utc)).date().isoformat()]
+    m["name"] = note_members.profile_display_name(note_members.get_profile(target), fallback="Участник")
+    return m

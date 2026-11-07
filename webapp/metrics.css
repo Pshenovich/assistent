@@ -51,3 +51,54 @@
 .metrics-absence-form input[type="date"] { flex: 1 1 8rem; min-width: 0; }
 .metrics-absence-form .pf-btn { width: auto; flex: none; padding-inline: 1.25rem; }
 .metrics-abs-del { flex: none; margin-right: 1rem; }
+
+/* ---------- Организация → «Люди» ---------- */
+.people-filters { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; }
+.people-filters .pf-seg { flex: 1 1 16rem; }
+.people-group { flex: 0 1 14rem; width: auto; }
+.people-none { color: var(--text-secondary); font-weight: 400; }
+
+.people-table {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface);
+}
+.people-head,
+.people-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.7rem 1rem;
+}
+.people-head { font-size: 0.75rem; color: var(--text-secondary); border-bottom: 1px solid var(--border); }
+.people-row {
+  width: 100%;
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  cursor: pointer;
+}
+.people-head + .people-row { border-top: 0; }
+.people-row:hover { background: var(--surface-muted); }
+.people-who { display: grid; min-width: 0; }
+.people-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.people-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: var(--text-secondary); }
+.people-num { font-size: 0.875rem; white-space: nowrap; }
+.people-signals { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.people-signals .metrics-tag { margin-right: 0; }
+
+/* Узко: имя сверху, числа строкой с подписями, поводы ниже */
+@media (max-width: 640px) {
+  .people-head { display: none; }
+  .people-row { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 0.4rem; }
+  .people-who, .people-signals { grid-column: 1 / -1; }
+  .people-num::before { content: attr(data-label); display: block; font-size: 0.6875rem; color: var(--text-secondary); }
+  .people-signals:has(> .people-none) { display: none; }
+}
+

@@ -235,6 +235,7 @@
     html += membersHtml(d);
     html += groupsHtml(d);
     if (can.invite) html += joinHtml(d) + invitesHtml(d);
+    html += peopleMetricsHtml(d);
     html += creditsHtml(d);
     html += billingHtml(d);
     html += marketHtml(state.market);
@@ -251,6 +252,25 @@
       html += '<button type="button" class="pf-btn pf-btn--ghost" data-org="show-create">Создать ещё одну организацию</button>';
     }
     return html;
+  }
+
+  // «Показатели сотрудников»: включает владелец или админ; раздел «Люди» — руководителям отделов и админам.
+  function peopleMetricsHtml(d) {
+    var pm = d.people_metrics;
+    if (!pm || (!pm.can_toggle && !pm.can_view)) return "";
+    var list = "";
+    if (pm.can_view) {
+      list += '<button type="button" class="pf-row" data-org="people-open"><span class="pf-row-body">' +
+        textHtml("Люди", "Сроки и качество поручений — по отделу") + '<span class="pf-chev" aria-hidden="true">›</span></span></button>';
+    }
+    if (pm.can_toggle) {
+      list += staticRow("Показатели сотрудников", pm.enabled ? "Включены" : "Выключены",
+        '<input type="checkbox" class="pf-switch" id="org-people-metrics"' + (pm.enabled ? " checked" : "") + ' aria-label="Показатели сотрудников" />', "label");
+    }
+    var hint = pm.enabled
+      ? "Руководители отделов видят показатели своих людей, владелец и админы — всех. Каждый видит свои: Профиль → «Мои показатели»."
+      : "Сроки и качество поручений, реакция на них. Руководитель отдела увидит своих людей, каждый — себя в тех же цифрах. При включении всем участникам придёт сообщение, что и кому видно.";
+    return group("Показатели сотрудников", "people", '<div><div class="pf-list">' + list + '</div><p class="pf-hint">' + esc(hint) + "</p></div>");
   }
 
   // Выпуск «Рынок» организации: о компании, конкуренты, темы, свои источники, время + личное «в Telegram».
@@ -764,6 +784,10 @@
     if (!btn || btn.tagName === "SELECT") return;
     var kind = btn.getAttribute("data-org");
     var id = currentId();
+    if (kind === "people-open") {
+      if (window.LeoPeople) window.LeoPeople.open(id);
+      return;
+    }
     if (kind === "group-toggle") {
       var gid = btn.getAttribute("data-gid");
       state.openGroup = state.openGroup === gid ? null : gid;
@@ -1008,6 +1032,24 @@
     }
     if (t.id === "org-mkt-telegram") {
       saveMarket({ telegram: !!t.checked });
+      return true;
+    }
+    if (t.id === "org-people-metrics") {
+      var on = !!t.checked;
+      act(async function () {
+        if (on && !(await confirm("Включить показатели сотрудников? Всем участникам организации придёт сообщение: что считается и кто это видит."))) {
+          t.checked = false;
+          return;
+        }
+        setSaved("people", "busy", "Сохраняю…");
+        try {
+          await api("/" + id + "/people-metrics", json("PATCH", { enabled: on }));
+          setSaved("people", "ok", "Сохранено ✓");
+        } catch (e) {
+          setSaved("people", "err", errText(e));
+        }
+        await reload();
+      });
       return true;
     }
     if (t.id === "org-seats") {

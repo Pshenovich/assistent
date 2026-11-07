@@ -69,11 +69,13 @@
       '<div class="pf-list">' + inner + "</div>" + (hint ? '<p class="pf-hint">' + esc(hint) + "</p>" : "") + "</div>";
   }
 
-  // Короткий вывод словами — из уже посчитанных чисел, без оценки.
-  function leadText(d) {
+  // Короткий вывод словами — из уже посчитанных чисел, без оценки. self — про себя («вы»), иначе безлично.
+  function leadText(d, self) {
     var a = d.assignee, t = d.trend, s = [];
     if (!a.received && !a.deadlines && !a.accepted) {
-      return "За этот период вам не ставили поручений — показателям не из чего складываться. Здесь считаются только задачи, которые вам поставили другие.";
+      return self
+        ? "За этот период вам не ставили поручений — показателям не из чего складываться. Здесь считаются только задачи, которые вам поставили другие."
+        : "За этот период поручений от других не было — показателям не из чего складываться.";
     }
     if (a.on_time_pct == null) {
       s.push("Сроков пока мало для процента: " + a.deadlines + " из " + a.received + " " + plural(a.received, "поручения", "поручений", "поручений") + " дошли до срока.");
@@ -81,14 +83,17 @@
       s.push("В срок — " + a.on_time_pct + "% поручений" + (t.on_time_pct ? (t.on_time_pct > 0 ? ", лучше" : ", хуже") + " прошлого периода" : "") + ".");
     }
     if (a.late) {
-      s.push(a.late_warned ? "О " + a.late_warned + " из " + a.late + " " + plural(a.late, "срыва", "срывов", "срывов") + " вы предупредили заранее." : "О срывах сроков заранее не предупреждали — перенос или вопрос до срока засчитывается как «предупредил».");
+      s.push(a.late_warned
+        ? "О " + a.late_warned + " из " + a.late + " " + plural(a.late, "срыва", "срывов", "срывов") + (self ? " вы предупредили" : " предупредили") + " заранее."
+        : "О срывах сроков заранее не предупреждали — перенос или вопрос до срока засчитывается как «предупредил».");
     }
     if (a.first_time_pct != null) s.push("С первого раза принято " + a.first_time_pct + "%.");
     if (a.stale) s.push(a.stale + " " + plural(a.stale, "поручение висит", "поручения висят", "поручений висят") + " дольше 10 дней.");
+    if (!self && d.absent_days) s.push("В периоде " + d.absent_days + " " + plural(d.absent_days, "день", "дня", "дней") + " отпуска — сроки в эти дни не считаются.");
     return s.join(" ");
   }
 
-  function excusedHtml(a) {
+  function excusedHtml(a, self) {
     var keys = Object.keys(a.excused || {});
     if (!keys.length) return "";
     var total = keys.reduce(function (n, k) { return n + a.excused[k]; }, 0);
@@ -96,7 +101,7 @@
       var label = REASON[k] || k;
       return row(label.charAt(0).toUpperCase() + label.slice(1), String(a.excused[k]));
     }).join("");
-    return group("Не засчитано в просрочку · " + total, inner, "Эти сроки не идут вам в минус.");
+    return group("Не засчитано в просрочку · " + total, inner, self ? "Эти сроки не идут вам в минус." : "Эти сроки не идут в минус: причина не на исполнителе.");
   }
 
   function tagFor(t) {
@@ -109,21 +114,29 @@
     if (t.status === "excluded") return ["", REASON[t.reason] || "не учитывается"];
     return ["", ""];
   }
-  function tasksHtml(d) {
-    if (!d.tasks.length) return "";
+  function tasksHtml(d, self) {
+    var hidden = d.hidden_tasks || 0;
+    if (!d.tasks.length && !hidden) return "";
     var inner = d.tasks.map(function (t) {
       var tag = tagFor(t);
-      var sub = (t.owner_name ? "от " + t.owner_name + " · " : "") + "срок " + fmtDate(t.deadline);
+      var sub = (self && t.owner_name ? "от " + t.owner_name + " · " : "") + "срок " + fmtDate(t.deadline);
       return '<button type="button" class="pf-row" data-task="' + t.id + '"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
         esc(t.title) + '</span><span class="pf-row-sub">' + esc(sub) + "</span></span>" +
         (tag[1] ? '<span class="metrics-tag' + (tag[0] ? " metrics-tag--" + tag[0] : "") + '">' + esc(tag[1]) + "</span>" : "") +
         "</span></button>";
     }).join("");
-    return group("Поручения", inner);
+    if (hidden) {
+      inner += row("От других постановщиков", String(hidden), "Названия видят только они — здесь только число");
+    }
+    return group(self ? "Поручения" : "Ваши поручения", inner);
   }
 
-  function absenceHtml(d) {
+  function absenceHtml(d, self) {
     var items = d.absences || [];
+    if (!self) {
+      if (!items.length) return "";
+      return group("Отпуск и больничный", items.map(function (it) { return row(fmtDay(it.from) + " — " + fmtDay(it.to), ""); }).join(""));
+    }
     var rows = items.map(function (it, i) {
       return '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
         esc(fmtDay(it.from) + " — " + fmtDay(it.to)) + '</span></span><button type="button" class="btn-text metrics-abs-del" data-absence-del="' + i + '">Убрать</button></span></div>';
@@ -134,23 +147,21 @@
     return group("Отпуск и больничный", rows + form, "Сроки, которые пришлись на эти дни, не засчитываются.");
   }
 
-  function render() {
-    var el = root();
-    if (!el) return;
-    var d = state.data;
-    var seg = '<div class="pf-seg" role="tablist" aria-label="Период">' +
+  function segHtml(days) {
+    return '<div class="pf-seg" role="tablist" aria-label="Период">' +
       [[28, "4 недели"], [84, "12 недель"]].map(function (p) {
-        var on = p[0] === state.days;
+        var on = p[0] === days;
         return '<button type="button" role="tab" data-days="' + p[0] + '" aria-selected="' + on + '"' + (on ? ' class="is-on"' : "") + ">" + p[1] + "</button>";
       }).join("") + "</div>";
-    if (!d) {
-      el.innerHTML = seg + '<p class="pf-hint">' + (state.loading ? "Считаю…" : "") + "</p>";
-      return;
-    }
+  }
+
+  // Карточка показателей: своя (self) или человека для руководителя — те же цифры.
+  function cardHtml(d, opts) {
+    var self = !!(opts && opts.self);
     var a = d.assignee, t = d.trend, s = d.setter;
-    var html = seg;
-    html += '<p class="metrics-lead">' + esc(leadText(d)) +
-      "<small>Руководитель отдела видит те же цифры. Тексты переписки и задач ему не показываются.</small></p>";
+    var html = '<p class="metrics-lead">' + esc(leadText(d, self)) +
+      (self ? "<small>Руководитель отдела видит те же цифры. Тексты переписки и задач ему не показываются.</small>"
+        : "<small>Человек видит у себя ровно эти цифры.</small>") + "</p>";
     html += '<div class="metrics-kpis">' +
       kpi("В срок", a.on_time_pct == null ? null : a.on_time_pct + "%", trend(t.on_time_pct, false, " п.п.")) +
       kpi("С первого раза", a.first_time_pct == null ? null : a.first_time_pct + "%", trend(t.first_time_pct, false, " п.п.")) +
@@ -169,20 +180,32 @@
       row("Возвраты на доработку", String(a.returns)) +
       row("Отказы с причиной", String(a.declines)),
       "Отказ с причиной — не минус: он честнее, чем взять и не сделать.");
-    html += excusedHtml(a);
+    html += excusedHtml(a, self);
     if (s.posted) {
       html += group("Как постановщик",
         row("Поставили поручений", String(s.posted)) +
         row("Со сроком меньше рабочего дня", String(s.short_notice)) +
         row("Вызвали вопросы", String(s.with_questions)) +
-        row("Ваш ответ на вопрос", hours(s.answer_hours)) +
+        row(self ? "Ваш ответ на вопрос" : "Ответ на вопросы исполнителей", hours(s.answer_hours)) +
         row("Возвраты без пояснения", String(s.silent_returns)) +
-        (s.waiting_on_me ? row("Ждут вашего ответа сейчас", String(s.waiting_on_me)) : ""),
-        "Это ваша сторона: короткие сроки и непонятные задачи мешают людям успевать.");
+        (s.waiting_on_me ? row(self ? "Ждут вашего ответа сейчас" : "Ждут ответа сейчас", String(s.waiting_on_me)) : ""),
+        self ? "Это ваша сторона: короткие сроки и непонятные задачи мешают людям успевать." : "Короткие сроки и непонятные задачи мешают людям успевать.");
     }
-    html += tasksHtml(d);
-    html += absenceHtml(d);
-    el.innerHTML = html;
+    html += tasksHtml(d, self);
+    html += absenceHtml(d, self);
+    return html;
+  }
+
+  function render() {
+    var el = root();
+    if (!el) return;
+    var d = state.data;
+    var seg = segHtml(state.days);
+    if (!d) {
+      el.innerHTML = seg + '<p class="pf-hint">' + (state.loading ? "Считаю…" : "") + "</p>";
+      return;
+    }
+    el.innerHTML = seg + cardHtml(d, { self: true });
   }
 
   async function load() {
@@ -256,7 +279,7 @@
     if (el) el.addEventListener("click", onClick);
   }
 
-  window.LeoMetrics = { open: open };
+  window.LeoMetrics = { open: open, cardHtml: cardHtml, segHtml: segHtml, esc: esc, plural: plural, hours: hours, trend: trend };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();

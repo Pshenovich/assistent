@@ -200,3 +200,75 @@ def test_metrics_me_endpoint_and_absences(tmp_path, monkeypatch) -> None:
         assert client.get("/api/miniapp/metrics/me?days=3", headers=_headers(22)).status_code == 422
     finally:
         calendar_tasks._CONN = None  # type: ignore[attr-defined]
+
+
+# ---------- организация: раздел «Люди» ----------
+
+ORG_OWNER, LEAD, WORKER, OTHER_DEPT, SETTER = 1, 3, 4, 5, 6
+
+
+@pytest.fixture()
+def org_env(tmp_path, monkeypatch):
+    from unittest import mock
+
+    from assistant.stores import calendar_tasks, notes as notes_store, org_groups, orgs_store
+
+    monkeypatch.setenv("NOTES_DB_PATH", str(tmp_path / "notes.sqlite"))
+    monkeypatch.setenv("TELEGRAM_REGISTRY_PATH", str(tmp_path / "reg.json"))
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "calendar_tasks.sqlite"))
+    monkeypatch.setenv("USER_PREFS_DIR", str(tmp_path / "users"))
+    notes_store._CONN = None  # type: ignore[attr-defined]
+    calendar_tasks._CONN = None  # type: ignore[attr-defined]
+    patches = [
+        mock.patch.object(orgs_store, "verified_emails", lambda uid: [f"u{int(uid)}@obuchat.me"]),
+        mock.patch.object(orgs_store, "_username", lambda uid: ""),
+        mock.patch.object(orgs_store, "_resolve_key", lambda actor, key: int(key.split("@")[0][1:])),
+    ]
+    for p in patches:
+        p.start()
+    org = orgs_store.create_org(ORG_OWNER, "Обучат", domain="obuchat.me")["id"]
+    for uid in (LEAD, WORKER, OTHER_DEPT, SETTER):
+        orgs_store.add_member(ORG_OWNER, org, f"u{uid}@obuchat.me")
+    sales = org_groups.create(ORG_OWNER, org, "Продажи")["id"]
+    org_groups.set_lead(ORG_OWNER, org, sales, LEAD)
+    org_groups.add_member(LEAD, org, sales, WORKER)
+    ops = org_groups.create(ORG_OWNER, org, "Операции")["id"]
+    org_groups.add_member(ORG_OWNER, org, ops, OTHER_DEPT)
+    yield {"org": org, "sales": sales, "ops": ops, "tasks": calendar_tasks}
+    for p in patches:
+        p.stop()
+    notes_store._CONN = None  # type: ignore[attr-defined]
+    calendar_tasks._CONN = None  # type: ignore[attr-defined]
+
+
+def test_people_view_needs_setting_and_role(org_env) -> None:
+    org = org_env["org"]
+    with pytest.raises(pm.PeopleMetricsError):
+        pm.team_overview(org, LEAD)  # выключено
+    with pytest.raises(pm.PeopleMetricsError):
+        pm.set_enabled(org, WORKER, True)  # участник не включает
+    assert pm.set_enabled(org, ORG_OWNER, True) is True
+    assert pm.set_enabled(org, ORG_OWNER, True) is False  # повторно — не «только что включили»
+    lead = pm.team_overview(org, LEAD)
+    assert [p["user_id"] for p in lead["people"]] == [str(WORKER)]
+    assert [d["name"] for d in lead["departments"]] == ["Продажи"]
+    with pytest.raises(pm.PeopleMetricsError):
+        pm.team_overview(org, WORKER)  # видит только себя — раздела нет
+    with pytest.raises(pm.PeopleMetricsError):
+        pm.person_view(org, LEAD, OTHER_DEPT)  # чужой отдел
+    with pytest.raises(pm.PeopleMetricsError):
+        pm.team_overview(org, LEAD, group_id=org_env["ops"])
+    owner = {p["user_id"] for p in pm.team_overview(org, ORG_OWNER)["people"]}
+    assert owner == {str(LEAD), str(WORKER), str(OTHER_DEPT), str(SETTER)}
+    assert str(SETTER) in pm.announce_recipients(org, ORG_OWNER) and str(ORG_OWNER) not in pm.announce_recipients(org, ORG_OWNER)
+
+
+def test_person_view_hides_titles_of_other_setters(org_env) -> None:
+    org, store = org_env["org"], org_env["tasks"]
+    pm.set_enabled(org, ORG_OWNER, True)
+    soon = datetime.now(UTC) + timedelta(days=3)
+    store.create_task(LEAD, title="От руководителя", start_at=soon, assignee_user_id=WORKER)
+    store.create_task(SETTER, title="Секретное от коллеги", start_at=soon, assignee_user_id=WORKER)
+    card = pm.person_view(org, LEAD, WORKER)
+    assert [t["title"] for t in card["tasks"]] == ["От руководителя"]
+    assert card["hidden_tasks"] == 1 and card["assignee"]["received"] == 2

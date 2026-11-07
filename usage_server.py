@@ -7746,7 +7746,20 @@ def _org_detail(uid: int, org_id: int) -> dict[str, Any]:
         # оплата не подключена: тарифы видны и меняются, но ни на что не влияют
         "billing_enabled": False,
         "plans": [{"id": k, "label": v} for k, v in orgs_store.PLANS.items()],
+        "people_metrics": _org_people_metrics_state(uid, org_id),
         **_org_credits_detail(org_id, members, manage=_org_can_manage_ai(uid, org_id)),
+    }
+
+
+def _org_people_metrics_state(uid: int, org_id: int) -> dict[str, Any]:
+    from assistant.services import people_metrics
+    from assistant.stores import org_groups
+
+    on = people_metrics.enabled(org_id)
+    return {
+        "enabled": on,
+        "can_toggle": people_metrics.can_toggle(org_id, uid),
+        "can_view": on and len(org_groups.metrics_visible_ids(org_id, uid)) > 1,
     }
 
 
@@ -8111,6 +8124,84 @@ async def miniapp_orgs_member_guest(
 
 
 # ---------- отделы и команды ----------
+
+
+class _OrgPeopleMetricsToggle(BaseModel):
+    enabled: bool
+
+
+async def _people_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    from assistant.services.people_metrics import PeopleMetricsError
+    from assistant.stores.orgs_store import OrgError
+
+    try:
+        return await run_in_threadpool(partial(fn, *args, **kwargs))
+    except (PeopleMetricsError, OrgError) as e:
+        raise HTTPException(status_code=e.code, detail=str(e)) from e
+
+
+def _announce_people_metrics(org_id: int, actor_id: int) -> None:
+    """Сообщение всем участникам: что показывают и кому. Фоном — людей может быть много."""
+    from assistant.lib import telegram_notify
+    from assistant.services import people_metrics
+    from assistant.stores import orgs_store
+
+    org = orgs_store.get_org(org_id) or {}
+    text = people_metrics.announce_text(str(org.get("name") or ""))
+    for uid in people_metrics.announce_recipients(org_id, actor_id):
+        try:
+            telegram_notify.send_message(int(uid), text, parse_mode=None)
+        except Exception as e:  # уведомление не должно ронять включение
+            print(f"[people_metrics] announce failed org={org_id} uid={uid} err={e!r}")
+
+
+@miniapp_router.patch("/orgs/{org_id}/people-metrics")
+async def miniapp_orgs_people_metrics_toggle(
+    org_id: int, body: _OrgPeopleMetricsToggle, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Включить «Показатели сотрудников». При включении каждый участник получает сообщение."""
+    from assistant.services import people_metrics
+
+    uid = int(principal.telegram_user_id)
+    fresh = await _people_call(people_metrics.set_enabled, org_id, uid, body.enabled)
+    _track(uid, "org.people_metrics", enabled=body.enabled)
+    if fresh:
+        import threading
+
+        threading.Thread(target=_announce_people_metrics, args=(org_id, uid), daemon=True).start()
+    return await _org_call(_org_detail, uid, org_id)
+
+
+@miniapp_router.get("/orgs/{org_id}/people")
+async def miniapp_orgs_people(
+    org_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    days: int = Query(28, ge=7, le=91),
+    group: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    """Раздел «Люди»: показатели отдела для руководителя отдела, всей организации — для админов."""
+    from assistant.services import people_metrics
+
+    uid = int(principal.telegram_user_id)
+    _track(uid, "metrics.view", throttle_key=f"metrics-team:{uid}", throttle_sec=3600, scope="team")
+    return await _people_call(people_metrics.team_overview, org_id, uid, days=days, group_id=group or None)
+
+
+@miniapp_router.get("/orgs/{org_id}/people/{user_id}")
+async def miniapp_orgs_person(
+    org_id: int,
+    user_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    days: int = Query(28, ge=7, le=91),
+) -> dict[str, Any]:
+    from assistant.services import people_metrics
+
+    uid = int(principal.telegram_user_id)
+    data = await _people_call(people_metrics.person_view, org_id, uid, user_id, days=days)
+    names = await run_in_threadpool(_metrics_names, {t["owner_user_id"] for t in data["tasks"]})
+    for t in data["tasks"]:
+        t["owner_name"] = names.get(t["owner_user_id"], "")
+    return data
 
 
 @miniapp_router.post("/orgs/{org_id}/groups")
