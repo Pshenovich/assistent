@@ -169,3 +169,34 @@ def test_store_writes_created_and_done_events_for_delegated_tasks(tasks_db) -> N
     kinds = [e["kind"] for e in store.events_by_task([t["id"]])[t["id"]]]
     assert kinds == ["created", "done"]
     assert own["id"] not in store.events_by_task([own["id"]])
+
+
+def test_metrics_me_endpoint_and_absences(tmp_path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+
+    import usage_server
+    from assistant.bot import access_gate
+    from assistant.stores import calendar_tasks
+    from tests.test_canvas_endpoints import BOT_TOKEN, _headers
+
+    monkeypatch.setenv("CALENDAR_TASKS_DB_PATH", str(tmp_path / "calendar_tasks.sqlite"))
+    monkeypatch.setenv("USER_PREFS_DIR", str(tmp_path / "users"))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
+    monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
+    monkeypatch.setattr(usage_server, "_sync_task_google", lambda *a, **k: None)
+    calendar_tasks._CONN = None  # type: ignore[attr-defined]
+    try:
+        calendar_tasks.create_task(11, title="Отчёт", start_at=datetime.now(UTC) + timedelta(days=3), assignee_user_id=22)
+        client = TestClient(usage_server.app, raise_server_exceptions=False)
+        r = client.get("/api/miniapp/metrics/me?days=28", headers=_headers(22))
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["assignee"]["received"] == 1 and body["assignee"]["on_time_pct"] is None
+        assert [t["title"] for t in body["tasks"]] == ["Отчёт"]
+        r = client.put("/api/miniapp/me/absences", json={"absences": [{"from": "2026-12-01", "to": "2026-12-10"}, {"from": "bad"}]},
+                       headers=_headers(22))
+        assert r.status_code == 200 and r.json()["absences"] == [{"from": "2026-12-01", "to": "2026-12-10", "kind": "other"}]
+        assert client.get("/api/miniapp/metrics/me?days=3", headers=_headers(22)).status_code == 422
+    finally:
+        calendar_tasks._CONN = None  # type: ignore[attr-defined]

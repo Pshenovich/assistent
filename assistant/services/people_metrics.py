@@ -286,6 +286,52 @@ def assignee_metrics(
     }
 
 
+def task_items(
+    user_id: str,
+    tasks: list[dict[str, Any]],
+    events: dict[int, list[dict[str, Any]]],
+    *,
+    start: datetime,
+    now: datetime,
+    tz: ZoneInfo | timezone = timezone.utc,
+    absences: Iterable[dict[str, str]] = (),
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Поручения человеку за период — с вердиктом по сроку, для разбора на карточке.
+    Сначала то, что горит (просрочено и не сдано), потом свежие."""
+    uid = str(user_id)
+    out: list[dict[str, Any]] = []
+    for t in tasks:
+        if str(t.get("assignee_user_id") or "") != uid or str(t.get("owner_user_id") or "") in ("", uid):
+            continue
+        if t.get("outcome") == "cancelled" or t.get("assignee_triage") == "declined":
+            continue
+        evs = events.get(int(t["id"]), [])
+        v = deadline_verdict(t, evs, now=now, tz=tz, absences=absences)
+        dl = _dt(v.get("deadline")) or _dt(t.get("end_at"))
+        created = _dt(t.get("created_at"))
+        if not ((dl and dl >= start) or (created and created >= start)):
+            continue
+        late_days = 0
+        if v["status"] in ("late", "late_warned") and v.get("open") and dl:
+            late_days = max(1, (now - dl).days)
+        out.append({
+            "id": int(t["id"]),
+            "title": str(t.get("title") or ""),
+            "owner_user_id": str(t.get("owner_user_id") or ""),
+            "deadline": v.get("deadline") or str(t.get("end_at") or ""),
+            "status": v["status"],
+            "reason": v.get("reason", ""),
+            "open": not t.get("done"),
+            "late_days": late_days,
+            "accepted": t.get("outcome") == "accepted",
+            "returns": sum(1 for e in evs if e.get("kind") == "returned"),
+        })
+    hot = [x for x in out if x["open"] and x["late_days"]]
+    rest = sorted((x for x in out if not (x["open"] and x["late_days"])), key=lambda x: x["deadline"], reverse=True)
+    return (hot + rest)[:limit]
+
+
 def setter_metrics(
     user_id: str,
     tasks: list[dict[str, Any]],
@@ -369,6 +415,7 @@ def member_metrics(
     cur = assignee_metrics(uid, tasks, events, start=start, end=now, now=now, tz=tz, absences=absences)
     prev = assignee_metrics(uid, tasks, events, start=prev_start, end=start, now=now, tz=tz, absences=absences)
     setter = setter_metrics(uid, tasks, events, start=start, end=now, now=now, tz=tz)
+    items = task_items(uid, tasks, events, start=start, now=now, tz=tz, absences=absences)
     period_days = {(start + timedelta(days=i)).date() for i in range(days)}
     absent_days = sum(1 for d in period_days if _absent(d, absences))
     return {
@@ -384,4 +431,6 @@ def member_metrics(
             "reaction_hours": _trend(cur["reaction_hours"], prev["reaction_hours"]),
         },
         "setter": setter,
+        "tasks": items,
+        "absences": absences,
     }

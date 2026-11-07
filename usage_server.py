@@ -6219,6 +6219,52 @@ def _resolve_calendar_task_assignee(
         return raw
 
 
+def _metrics_names(uids: set[str]) -> dict[str, str]:
+    from assistant.stores import note_members
+
+    out: dict[str, str] = {}
+    for u in uids:
+        try:
+            out[u] = note_members.profile_display_name(note_members.get_profile(u), fallback="")
+        except Exception:
+            out[u] = ""
+    return out
+
+
+@miniapp_router.get("/metrics/me")
+async def miniapp_metrics_me(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    days: int = Query(28, ge=7, le=91),
+) -> dict[str, Any]:
+    """«Мои показатели»: сроки, качество и реакция по поручениям от других — те же цифры, что видит руководитель."""
+    from assistant.services import people_metrics
+
+    uid = int(principal.telegram_user_id)
+    data = await run_in_threadpool(partial(people_metrics.member_metrics, uid, days=days))
+    names = await run_in_threadpool(_metrics_names, {t["owner_user_id"] for t in data["tasks"]})
+    for t in data["tasks"]:
+        t["owner_name"] = names.get(t["owner_user_id"], "")
+    _track(uid, "metrics.view", throttle_key=f"metrics:{uid}", throttle_sec=3600, scope="me")
+    return data
+
+
+class _AbsencesBody(BaseModel):
+    absences: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@miniapp_router.put("/me/absences")
+async def miniapp_set_absences(
+    body: _AbsencesBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Отпуск / больничный: срок поручения в эти дни не засчитывается в показатели."""
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(user_prefs.set_absences, uid, body.absences)
+    return {"absences": items}
+
+
 @miniapp_router.get("/calendar/tasks/posted")
 async def miniapp_calendar_tasks_posted(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),

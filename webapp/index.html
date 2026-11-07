@@ -104,6 +104,7 @@
   <link rel="stylesheet" href="/webapp/board.css?v=20261107-embed1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261106-groups1" />
+  <link rel="stylesheet" href="/webapp/metrics.css?v=20261107-metrics1" />
   <link rel="stylesheet" href="/webapp/org-kb.css?v=20261106-sheetmenu" />
   <!-- Same-origin, defer: до app.js, чтобы Telegram.WebApp был готов (критично для iOS). -->
   <script src="/webapp/telegram-web-app.js?v=20260831-vpn-pwa" defer></script>
@@ -809,6 +810,15 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
+                <button type="button" class="pf-row" id="profile-metrics-open">
+                  <span class="pf-ico pf-ico--green" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Мои показатели</span><span class="pf-row-sub">Сроки и качество поручений</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
                 <button type="button" class="pf-row" id="profile-ai-open">
                   <span class="pf-ico pf-ico--violet" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="m12 3 1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" /></svg>
@@ -1073,6 +1083,17 @@
           </div>
           <div class="subscreen-body">
             <div class="pf-screen-body org-screen" id="org-root"></div>
+          </div>
+        </div>
+
+        <div id="profile-metrics" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-metrics-back">← Назад</button>
+            <span class="detail-title">Мои показатели</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pf-screen-body metrics-screen" id="metrics-root"></div>
           </div>
         </div>
 
@@ -2596,6 +2617,7 @@
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261106-kbleave1" defer></script>
+  <script src="/webapp/metrics.js?v=20261107-metrics1" defer></script>
   <script src="/webapp/org-kb.js?v=20261106-aiclients" defer></script>
   <script src="/webapp/onboarding.js?v=20261106-empty1" defer></script>
   <script src="/webapp/contact-share.js?v=20261029-share" defer></script>

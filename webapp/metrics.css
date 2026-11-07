@@ -1,0 +1,53 @@
+/* Профиль → «Мои показатели». Собрано из компонентов Профиля (pf-*); здесь только своё.
+   Цвета только из токенов темы. */
+
+.metrics-screen { display: grid; gap: 1.25rem; }
+
+/* Короткий вывод сверху */
+.metrics-lead {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--surface-muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text);
+}
+.metrics-lead small { display: block; margin-top: 0.35rem; font-size: 0.75rem; color: var(--text-secondary); }
+
+/* Четыре крупных числа */
+.metrics-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.6rem; }
+@media (min-width: 640px) { .metrics-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.metrics-kpi { padding: 0.7rem 0.85rem; border-radius: var(--radius-lg, 12px); background: var(--surface-muted); min-width: 0; }
+.metrics-kpi-label { display: block; font-size: 0.75rem; color: var(--text-secondary); }
+.metrics-kpi-value { display: block; margin-top: 0.15rem; font-size: 1.375rem; font-weight: 600; color: var(--text); }
+.metrics-kpi-value--none { font-size: 0.9375rem; font-weight: 500; color: var(--text-secondary); }
+
+/* Сдвиг к прошлому периоду */
+.metrics-trend { margin-left: 0.3rem; font-size: 0.75rem; font-weight: 500; }
+.metrics-trend--up { color: var(--emerald-text); }
+.metrics-trend--down { color: var(--danger-text); }
+
+.metrics-screen .pf-row-val { white-space: nowrap; color: var(--text); }
+.metrics-screen .pf-row-text { min-width: 0; }
+
+/* Метки у поручений */
+.metrics-tag {
+  flex: none;
+  margin-right: 1rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+}
+.metrics-tag--bad { color: var(--danger-text); background: var(--danger-muted); }
+.metrics-tag--warn { color: var(--warning-text); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+.metrics-tag--ok { color: var(--emerald-text); background: var(--success-muted); }
+
+/* Отпуск: две даты и кнопка в одной строке */
+.metrics-absence-form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.75rem 1rem; }
+.metrics-absence-form input[type="date"] { flex: 1 1 8rem; min-width: 0; }
+.metrics-absence-form .pf-btn { width: auto; flex: none; padding-inline: 1.25rem; }
+.metrics-abs-del { flex: none; margin-right: 1rem; }
