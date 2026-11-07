@@ -155,6 +155,30 @@
       .map(function (p) { return p[1] + " " + r[p[0]]; }).join(" · ");
   }
 
+  function hrs(v) {
+    return v == null ? "—" : String(v).replace(".", ",") + " ч";
+  }
+
+  // Нагрузка — контекст рядом с поручениями: объясняет сроки, в минус не идёт.
+  function calendarHtml(c, self) {
+    if (!c) return "";
+    var hint = "Контекст, а не оценка: встречи считаются, где есть другие участники; отклонённые и «свободен» — нет.";
+    if (!c.has_calendar) {
+      return self ? group("Нагрузка календаря", row("Календарь не подключён", ""), "Подключите Google Календарь в профиле или ведите встречи в Орбите — здесь появятся часы встреч и время без встреч.") : "";
+    }
+    if (!c.workdays) {
+      return group("Нагрузка календаря", row("История календаря собирается", ""), "Орбита сохраняет календарь у себя — цифры появятся после первой сверки.");
+    }
+    if (c.covered_from) hint = "Считается с " + fmtDate(c.covered_from) + ": раньше календарь в Орбиту не сохранялся. " + hint;
+    return group("Нагрузка календаря",
+      row("Встречи, в среднем за рабочий день", hrs(c.meeting_hours_per_day), c.meetings + " " + plural(c.meetings, "встреча", "встречи", "встреч") + " · " + hrs(c.meeting_hours) + " всего") +
+      row("Время без встреч, в среднем за день", hrs(c.focus_hours_per_day), "окна от 2 часов подряд с 9 до 19") +
+      row("Дней без 2 свободных часов подряд", c.low_focus_days + " из " + c.workdays) +
+      row("Встречи вне рабочих часов", hrs(c.after_hours), "до 9, после 19 и в выходные") +
+      (c.task_hours ? row("Задачи в календаре", hrs(c.task_hours)) : ""),
+      hint);
+  }
+
   function chatsHtml(c, self) {
     if (!c || !c.requests) return "";
     return group("Ответы в рабочих чатах",
@@ -227,6 +251,7 @@
       row("Оценки постановщиков", ratingsText(a), a.rated ? "" : "Постановщик может оценить работу, когда нажимает «Принять»"),
       "Отказ с причиной — не минус: он честнее, чем взять и не сделать.");
     html += excusedHtml(a, self);
+    html += calendarHtml(d.calendar, self);
     html += chatsHtml(d.chats, self);
     html += contributionHtml(d.contribution, s);
     if (s.posted) {

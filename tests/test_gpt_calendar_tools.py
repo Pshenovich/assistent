@@ -46,18 +46,30 @@ def _ev(title, start, mins, emails=()):
 
 
 def test_time_stats_counts_people_titles(monkeypatch):
+    from assistant.services import calendar_load
+    from assistant.stores import user_prefs
+
     evs = [
         _ev("Планёрка", "2026-10-12T10:00", 60, ["andrey@x.ru"]),
         _ev("Планёрка", "2026-10-13T10:00", 60, ["andrey@x.ru"]),
         _ev("1:1", "2026-10-14T12:00", 30, ["boss@x.ru"]),
+        _ev("Отклонил", "2026-10-14T15:00", 60, ["boss@x.ru"]),
+        _ev("Пишу отчёт", "2026-10-15T10:00", 120),
     ]
-    monkeypatch.setattr(g, "_events_in_window", lambda ctx, a, b, q="": evs)
+    evs[3]["raw"]["attendees"].append({"self": True, "responseStatus": "declined"})
+    for e in evs:
+        e["raw"].update(start={"dateTime": e["start"].isoformat()}, summary=e["summary"])
+    items = [calendar_load._from_gcal("google", e["raw"], e["start"], e["end"]) for e in evs]
+    monkeypatch.setattr(calendar_load, "collect", lambda uid, a, b, live=False: {
+        "items": [i for i in items if i], "google": True, "covered_from": a})
+    monkeypatch.setattr(user_prefs, "get_absences", lambda uid: [])
     ctx = g.GptCalendarContext(uid=1)
     out = json.loads(g.tool_calendar_time_stats(ctx, {"start_date": "2026-10-12", "end_date": "2026-10-16"}))
     assert out["meetings"] == 3
     assert out["hours_in_meetings"] == 2.5
     assert out["top_people_hours"][0] == ["Андрей", 2.0]
-    assert out["top_titles_hours"][0] == ["Планёрка", 2.0]
+    assert out["by_kind_hours"] == {"встречи": 2.5, "свои блоки в календаре": 2.0}
+    assert out["load_past_part"]["workdays"] == 5 and out["load_past_part"]["low_focus_days"] == 0
 
 
 def test_create_event_conflict_returns_alternatives(monkeypatch):

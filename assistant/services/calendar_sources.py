@@ -254,6 +254,7 @@ def list_events_in_window(
     ids = calendar_ids or get_active_calendar_ids(user_id)
     q = (query or "").strip() or None
     collected: list[dict[str, Any]] = []
+    answered: list[str] = []
     for cal_id in ids:
         try:
             page_token: str | None = None
@@ -280,9 +281,15 @@ def list_events_in_window(
                 page_token = str(res.get("nextPageToken") or "").strip() or None
                 if not page_token:
                     break
+            answered.append(cal_id)
         except Exception as e:
             print(f"[calendar_sources] list_failed uid={user_id} cal={cal_id} err={e!r}")
             continue
+    if not q:
+        # Зеркало в Орбите: история для нагрузки и «на что ушло время» (до дедупа — по каждому календарю).
+        from assistant.stores import calendar_mirror
+
+        calendar_mirror.record_window(user_id, collected, time_min=time_min, time_max=time_max, calendar_ids=answered)
     return dedupe_events(collected)
 
 

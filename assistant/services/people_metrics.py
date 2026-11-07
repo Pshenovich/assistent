@@ -446,9 +446,19 @@ def member_metrics(
         "setter": setter,
         "chats": _safe(lambda: chat_metrics(uid, start=start, end=now, now=now, tz=tz), {}),
         "contribution": _safe(lambda: contribution(uid, start=start, end=now), {}),
+        "calendar": _safe(lambda: _calendar(uid, start=start, now=now, tz=tz, absences=absences), {}),
         "tasks": items,
         "absences": absences,
     }
+
+
+def _calendar(uid: str, *, start: datetime, now: datetime, tz, absences) -> dict[str, Any]:
+    """Нагрузка календаря — контекст рядом с поручениями (числа, без названий встреч)."""
+    from assistant.services import calendar_load
+
+    if not uid.isdigit():
+        return {}
+    return calendar_load.summary(int(uid), start=start, end=now, now=now, tz=tz, absences=absences)
 
 
 def _safe(fn, default):
@@ -619,6 +629,11 @@ def signals(m: dict[str, Any], *, absence: Optional[dict[str, str]] = None) -> l
     bad = (a.get("ratings") or {}).get("bad", 0)
     if bad >= 2:
         out.append({"kind": "warn", "text": f"оценок «плохо»: {bad}"})
+    cal = m.get("calendar") or {}
+    if cal.get("enough_data") and cal["low_focus_days"] * 2 >= cal["workdays"]:
+        out.append({"kind": "warn", "text": "мало времени без встреч"})
+    if cal.get("enough_data") and cal["after_hours"] >= 4:
+        out.append({"kind": "warn", "text": f"вне рабочих часов: {cal['after_hours']:g} ч".replace(".", ",")})
     silent = (m.get("chats") or {}).get("unanswered", 0)
     if silent >= 3:
         out.append({"kind": "warn", "text": f"без ответа в чатах: {silent}"})
@@ -686,6 +701,8 @@ def team_overview(
             "deadlines": a["deadlines"],
             "trend": m["trend"],
             "absent_days": m["absent_days"],
+            "meeting_hours_per_day": (m.get("calendar") or {}).get("meeting_hours_per_day"),
+            "focus_hours_per_day": (m.get("calendar") or {}).get("focus_hours_per_day"),
             "signals": signals(m, absence=absence),
         })
     rows.sort(key=lambda r: r["name"].casefold())
@@ -734,7 +751,8 @@ def person_view(
 
 SUMMARY_SYSTEM = """Ты — Лео, помощник в рабочем приложении. По готовым показателям сотрудника за период напиши
 2–3 коротких предложения по-русски: что идёт хорошо, на что посмотреть, и, если есть, поправку на нагрузку
-или отпуск. Только по данным, ничего не придумывай и не пересчитывай. Не ставь оценок человеку
+(часы встреч в день, мало времени без встреч, встречи вне рабочих часов) или отпуск. Нагрузка — объяснение,
+а не упрёк. Только по данным, ничего не придумывай и не пересчитывай. Не ставь оценок человеку
 («плохой работник», «ленится»), не сравнивай с коллегами, не давай советов про увольнение и премии.
 Если данных мало — так и скажи одной фразой. Пиши о человеке в третьем лице по имени, если пишешь
 руководителю, и на «вы», если человек читает про себя. Без списков, без markdown, без эмодзи."""
@@ -767,6 +785,10 @@ def summary_facts(m: dict[str, Any]) -> dict[str, Any]:
         "без_ответа_в_чатах": ch.get("unanswered"),
         "поставил_поручений_другим": st["posted"],
         "из_них_со_сроком_меньше_дня": st["short_notice"],
+        "календарь": {
+            k: (m.get("calendar") or {}).get(k)
+            for k in ("workdays", "meeting_hours_per_day", "focus_hours_per_day", "low_focus_days", "after_hours", "task_hours")
+        } if (m.get("calendar") or {}).get("workdays") else None,
         "добавил_в_базу_знаний": co.get("kb_added"),
         "обновил_в_базе_знаний": co.get("kb_updated"),
         "мало_данных": not a["enough_data"],

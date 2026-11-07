@@ -69,10 +69,11 @@
         '<span class="people-num" data-label="В срок">' + pct(p.on_time_pct) + (M().trend ? M().trend(p.trend.on_time_pct, false, "") : "") + "</span>" +
         '<span class="people-num" data-label="С 1-го раза">' + pct(p.first_time_pct) + "</span>" +
         '<span class="people-num" data-label="Реакция">' + esc(react) + "</span>" +
+        '<span class="people-num" data-label="Встречи в день">' + esc(p.meeting_hours_per_day == null ? "—" : String(p.meeting_hours_per_day).replace(".", ",") + " ч") + "</span>" +
         '<span class="people-signals">' + (p.signals.length ? p.signals.map(signalHtml).join("") : '<span class="people-none">—</span>') + "</span>" +
         "</button>";
     }).join("");
-    var head = '<div class="people-head" aria-hidden="true"><span>Сотрудник</span><span>В срок</span><span>С 1-го раза</span><span>Реакция</span><span>На что посмотреть</span></div>';
+    var head = '<div class="people-head" aria-hidden="true"><span>Сотрудник</span><span>В срок</span><span>С 1-го раза</span><span>Реакция</span><span>Встречи в день</span><span>На что посмотреть</span></div>';
     return html + '<div class="people-table">' + head + rows + "</div>";
   }
 

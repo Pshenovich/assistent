@@ -338,7 +338,8 @@ TOOLS: list[dict[str, Any]] = [
         {"date": _DATE, "duration_min": {"type": "integer", "default": 30}, "with_people": _PEOPLE}, ["date"]),
     _fn("calendar_availability", "Занятость пользователя и людей из контактов в день (без названий чужих встреч).",
         {"date": _DATE, "people": _PEOPLE}, ["date", "people"]),
-    _fn("calendar_time_stats", "Статистика времени во встречах за период: часы, по людям, по названиям, по дням недели.",
+    _fn("calendar_time_stats", "На что ушло время за период: часы встреч, свои блоки и задачи в календаре, по названиям, "
+        "по людям, по дням недели, время без встреч и вне рабочих часов. Для вопросов «на что ушло время», «сколько встреч».",
         {"start_date": _DATE, "end_date": _DATE}, ["start_date", "end_date"]),
     _fn("contacts_find", "Найти контакты пользователя по имени/нику (пусто — все).",
         {"query": {"type": "string"}}),
@@ -665,44 +666,36 @@ def tool_calendar_availability(ctx: GptCalendarContext, args: dict[str, Any]) ->
 
 
 def tool_calendar_time_stats(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    """На что ушло время: встречи (Google и Орбита, без отклонённых и «свободен»), свои блоки и задачи
+    в календаре, время без встреч, вне рабочих часов. Расчёт — services/calendar_load."""
+    from assistant.services import calendar_load
+    from assistant.stores import user_prefs
+
     t0, t1 = _window(ctx.uid, args.get("start_date"), args.get("end_date"))
-    names = _email_names(ctx)
-    total_min = 0
-    count = 0
-    by_person: Counter = Counter()
-    by_title: Counter = Counter()
+    tz = _tz(ctx.uid)
+    data = calendar_load.collect(ctx.uid, t0, t1, live=True)
+    items = data["items"]
+    meetings = [i for i in items if i["kind"] == "meeting"]
     by_weekday: Counter = Counter()
-    longest: list[tuple[int, str, str]] = []
-    for ev in _events_in_window(ctx, t0, t1):
-        st, en = ev.get("start"), ev.get("end")
-        if not isinstance(st, datetime) or not isinstance(en, datetime):
-            continue
-        mins = int((en - st).total_seconds() // 60)
-        if mins <= 0 or mins >= 24 * 60:  # события на весь день не считаем
-            continue
-        raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
-        count += 1
-        total_min += mins
-        title = str(ev.get("summary") or "Встреча").strip()
-        by_title[title] += mins
-        by_weekday[_WD[st.astimezone(_tz(ctx.uid)).weekday()]] += mins
-        for a in raw.get("attendees") or []:
-            if not isinstance(a, dict) or a.get("self"):
-                continue
-            em = str(a.get("email") or "").strip().lower()
-            by_person[names.get(em) or str(a.get("displayName") or em)] += mins
-        longest.append((mins, title, _fmt_dt(st, ctx.uid)))
-    workdays = sum(1 for i in range((t1 - t0).days) if (t0 + timedelta(days=i)).weekday() < 5)
-    hours = round(total_min / 60, 1)
+    for i in meetings:
+        by_weekday[_WD[i["start"].astimezone(tz).weekday()]] += (i["end"] - i["start"]).total_seconds() / 60
+    longest = sorted(meetings, key=lambda i: i["end"] - i["start"], reverse=True)[:5]
+    load = calendar_load.summary(
+        ctx.uid, start=t0, end=t1, tz=tz, absences=user_prefs.get_absences(ctx.uid), data=data, now=datetime.now(tz),
+    )
     res = {
         "period": f"{t0.date()} — {(t1 - timedelta(days=1)).date()}",
-        "meetings": count,
-        "hours_in_meetings": hours,
-        "share_of_workdays_8h": f"{round(100 * total_min / max(1, workdays * 480))}%",
-        "top_people_hours": [[k, round(v / 60, 1)] for k, v in by_person.most_common(10)],
-        "top_titles_hours": [[k, round(v / 60, 1)] for k, v in by_title.most_common(10)],
-        "by_weekday_hours": {k: round(v / 60, 1) for k, v in by_weekday.items()},
-        "longest": [[t, d, m] for m, t, d in sorted(longest, reverse=True)[:5]],
+        "meetings": len(meetings),
+        "hours_in_meetings": round(sum(
+            (min(i["end"], t1) - max(i["start"], t0)).total_seconds() for i in meetings) / 3600, 1),
+        **calendar_load.breakdown(items, start=t0, end=t1, names=_email_names(ctx)),
+        "by_weekday_meeting_hours": {k: round(v / 60, 1) for k, v in by_weekday.items()},
+        "longest_meetings": [[i["title"], _fmt_dt(i["start"], ctx.uid), int((i["end"] - i["start"]).total_seconds() // 60)]
+                             for i in longest],
+        "load_past_part": {k: load.get(k) for k in ("workdays", "meeting_hours_per_day", "focus_hours_per_day",
+                                                    "low_focus_days", "after_hours", "task_hours")},
+        "notes": "Встречи — где есть другие участники; свои блоки — события без участников; отклонённые не считаются. "
+                 "focus_hours_per_day — окна от 2 часов без встреч в 9–19; load_past_part — только прошедшие дни.",
     }
     return _ok(res)
 

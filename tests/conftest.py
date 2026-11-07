@@ -49,6 +49,7 @@ _FILE_ENV = {
     "CREDITS_DB_PATH": "data/credits.sqlite",
     "ANALYTICS_DB_PATH": "data/analytics.sqlite",
     "GCAL_PUSH_DB_PATH": "data/gcal_push.sqlite",
+    "CALENDAR_MIRROR_DB_PATH": "data/calendar_mirror.sqlite",
     "RESEARCH_JOBS_PATH": "data/research_jobs.json",
     "PAEI_JOBS_PATH": "data/paei_jobs.json",
     "CALENDAR_PENDING_STORE_PATH": "calendar_pending.json",

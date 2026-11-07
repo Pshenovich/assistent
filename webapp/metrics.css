@@ -69,7 +69,7 @@
 .people-head,
 .people-row {
   display: grid;
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr);
   gap: 0.75rem;
   align-items: center;
   padding: 0.7rem 1rem;
@@ -91,14 +91,16 @@
 .people-who { display: grid; min-width: 0; }
 .people-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .people-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.75rem; color: var(--text-secondary); }
-.people-num { font-size: 0.875rem; white-space: nowrap; }
+.people-num { min-width: 0; font-size: 0.875rem; }
+.people-num .people-none { font-size: 0.75rem; line-height: 1.2; }
 .people-signals { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.people-signals .metrics-tag { margin-right: 0; }
+.people-signals { min-width: 0; }
+.people-signals .metrics-tag { margin-right: 0; max-width: 100%; white-space: normal; }
 
 /* Узко: имя сверху, числа строкой с подписями, поводы ниже */
 @media (max-width: 640px) {
   .people-head { display: none; }
-  .people-row { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 0.4rem; }
+  .people-row { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 0.4rem; }
   .people-who, .people-signals { grid-column: 1 / -1; }
   .people-num::before { content: attr(data-label); display: block; font-size: 0.6875rem; color: var(--text-secondary); }
   .people-signals:has(> .people-none) { display: none; }

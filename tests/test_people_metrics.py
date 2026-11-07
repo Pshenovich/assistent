@@ -375,3 +375,12 @@ def test_leo_summary_gets_numbers_only_and_is_cached(monkeypatch) -> None:
     assert pm.leo_summary(m, name="Аня", self_view=False, actor_id=1) == text and len(calls) == 1
     empty = dict(m, assignee=dict(a, received=0), setter=dict(m["setter"], posted=0))
     assert pm.leo_summary(empty, self_view=True, actor_id=1) is None
+
+
+def test_calendar_load_signals() -> None:
+    a = pm.assignee_metrics(ME, [], {}, start=MON - timedelta(days=28), end=MON, now=MON)
+    m = {"assignee": a, "trend": {"on_time_pct": None},
+         "calendar": {"enough_data": True, "workdays": 10, "low_focus_days": 6, "after_hours": 5.5}}
+    assert [s["text"] for s in pm.signals(m)] == ["мало времени без встреч", "вне рабочих часов: 5,5 ч"]
+    m["calendar"] = {"enough_data": False, "workdays": 2, "low_focus_days": 2, "after_hours": 9}
+    assert pm.signals(m) == []
