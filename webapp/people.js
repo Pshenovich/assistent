@@ -4,7 +4,9 @@
 (function () {
   "use strict";
 
-  var state = { orgId: null, days: 28, group: 0, list: null, person: null, personData: null, loading: false, error: "" };
+  var TITLE = "Показатели сотрудников";
+  var state = { orgId: null, days: 28, group: 0, list: null, person: null, personData: null, loading: false, error: "",
+    fromProfile: false, off: null };
 
   function app() {
     return window.LeoApp || {};
@@ -77,6 +79,43 @@
     return html + '<div class="people-table">' + head + rows + "</div>";
   }
 
+  // Показатели выключены: что это и кто видит; переключатель — владельцу и админам, остальным — «попросите».
+  function offHtml(info) {
+    var org = info.org_name || "организации";
+    var html = '<p class="metrics-lead">Сроки и качество поручений, реакция на них, ответы в рабочих чатах, нагрузка календаря. ' +
+      "Руководитель отдела видит своих людей, владелец и админы — всех. Каждый видит себя в тех же цифрах. Без рейтинга и итогового балла.</p>";
+    if (info.can_toggle) {
+      html += '<div class="pf-list"><label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text">' +
+        '<span class="pf-row-title">Включить в «' + esc(org) + '»</span></span>' +
+        '<input type="checkbox" class="pf-switch" id="people-enable" aria-label="Включить показатели сотрудников" /></span></label></div>' +
+        '<p class="pf-hint">При включении всем участникам придёт сообщение: что считается и кто это видит.</p>';
+    } else {
+      html += '<p class="pf-hint">Показатели в «' + esc(org) + "» выключены. Включить их может владелец или админ организации — попросите их.</p>";
+    }
+    return html;
+  }
+
+  async function enable(input) {
+    var msg = "Включить показатели сотрудников? Всем участникам организации придёт сообщение: что считается и кто это видит.";
+    if (!(await (app().confirm ? app().confirm(msg) : window.confirm(msg)))) {
+      input.checked = false;
+      return;
+    }
+    input.disabled = true;
+    try {
+      await app().apiFetch("/orgs/" + state.orgId + "/people-metrics", {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }),
+      });
+      state.off = null;
+      if (window.LeoOrg && window.LeoOrg.syncPeopleRow) window.LeoOrg.syncPeopleRow();
+      load();
+    } catch (e) {
+      input.checked = false;
+      input.disabled = false;
+      if (app().toast) app().toast((e && (e.detail || e.message)) || "Не получилось включить");
+    }
+  }
+
   function personHtml(d) {
     return M().segHtml(state.days) + M().cardHtml(d, { self: false });
   }
@@ -86,6 +125,10 @@
     if (!el) return;
     if (state.error) {
       el.innerHTML = '<p class="error">' + esc(state.error) + "</p>";
+      return;
+    }
+    if (state.off) {
+      el.innerHTML = offHtml(state.off);
       return;
     }
     if (state.person) {
@@ -107,7 +150,7 @@
         title(state.personData.name || "Человек");
       } else {
         state.list = await app().apiFetch("/orgs/" + state.orgId + "/people?days=" + state.days + "&group=" + state.group, { method: "GET" });
-        title("Люди");
+        title(TITLE);
       }
     } catch (e) {
       state.error = (e && (e.detail || e.message)) || "Не получилось загрузить";
@@ -134,20 +177,33 @@
     }
   }
   function onChange(e) {
+    if (e.target.id === "people-enable") {
+      if (e.target.checked) enable(e.target);
+      return;
+    }
     if (e.target.id !== "people-group") return;
     state.group = Number(e.target.value || 0);
     state.list = null;
     load();
   }
 
-  function open(orgId) {
+  // Из Профиля → «Показатели сотрудников»: info — overview.people_metrics (+ org_name).
+  function openEntry(info) {
+    open(info.org_id, { fromProfile: true, off: info.enabled ? null : info });
+  }
+
+  function open(orgId, opts) {
+    opts = opts || {};
+    state.fromProfile = !!opts.fromProfile;
+    state.off = opts.off || null;
     state.orgId = orgId;
     state.person = null;
     state.personData = null;
     state.list = null;
     if (app().profileScreen) app().profileScreen("people");
-    title("Люди");
-    load();
+    title(TITLE);
+    if (state.off) render();
+    else load();
   }
 
   function init() {
@@ -161,12 +217,12 @@
         if (state.person) {
           state.person = null;
           state.personData = null;
-          title("Люди");
+          title(TITLE);
           render();
           if (!state.list) load();
           return;
         }
-        if (window.LeoOrg && window.LeoOrg.open) window.LeoOrg.open();
+        if (!state.fromProfile && window.LeoOrg && window.LeoOrg.open) window.LeoOrg.open();
         else app().profileScreen("main");
       });
     }
@@ -177,7 +233,7 @@
     }
   }
 
-  window.LeoPeople = { open: open };
+  window.LeoPeople = { open: open, openEntry: openEntry };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();

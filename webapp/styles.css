@@ -20543,10 +20543,19 @@ form.pf-list .pf-add-row .pf-row-body {
   }
 
   #profile-main .pf-body {
-    grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
-    /* Три блока («Лео», «Мои данные», «Сервисы») — одной высоты, по самому высокому. */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    /* Три колонки: «Лео» | «Мои данные» и под ними «Орбита» | «Сервисы»; крайние — на всю высоту. */
     align-items: stretch;
   }
+  /* Ошибка загрузки — над колонками (строка 1), колонки — строки 2–3, выход — ниже. */
+  #profile-main .pf-body > .pf-error { grid-row: 1; }
+  #profile-main .pf-body > #profile-onboarding-reset-wrap { grid-row: 4; }
+  #profile-main .pf-body > #profile-logout-wrap { grid-row: 5; }
+  #profile-main .pf-body > .profile-legal-footer { grid-row: 6; }
+  #profile-main .pf-body > .pf-group--leo { grid-column: 1; grid-row: 2 / span 2; }
+  #profile-main .pf-body > .pf-group--data { grid-column: 2; grid-row: 2; }
+  #profile-main .pf-body > .pf-group--orbita { grid-column: 2; grid-row: 3; }
+  #profile-main .pf-body > .pf-group--svc { grid-column: 3; grid-row: 2 / span 2; }
   #profile-main .pf-body > .pf-group {
     display: flex;
     flex-direction: column;

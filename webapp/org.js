@@ -110,6 +110,33 @@
       return !s.pending;
     })[0];
     hint.textContent = cur ? cur.name : sug ? sug.name + " уже в Орбите — вступить" : "Команда, участники и права";
+    syncPeopleRow();
+  }
+
+  // Профиль → «Показатели сотрудников»: только владельцу, админам и руководителям отделов текущей организации.
+  function syncPeopleRow() {
+    var row = document.getElementById("profile-people-open");
+    var pm = state.overview && state.overview.people_metrics;
+    if (!row) return;
+    row.classList.toggle("hidden", !(pm && pm.show));
+    var hint = document.getElementById("profile-people-hint");
+    if (hint && pm) {
+      hint.textContent = pm.enabled ? "Сроки, качество, нагрузка — по отделу" : pm.can_toggle ? "Выключены · включить" : "Выключены в организации";
+    }
+  }
+
+  async function openPeopleFromProfile() {
+    try {
+      state.overview = await api("");
+    } catch (e) {
+      toast(errText(e));
+      return;
+    }
+    syncPeopleRow();
+    var pm = state.overview.people_metrics;
+    if (!pm || !pm.show || !window.LeoPeople) return;
+    var cur = (state.overview.orgs || []).filter(function (o) { return o.id === state.overview.current_id; })[0];
+    window.LeoPeople.openEntry(Object.assign({ org_name: cur ? cur.name : "" }, pm));
   }
 
   // ---------- отрисовка ----------
@@ -1138,6 +1165,8 @@
     }
     var openBtn = document.getElementById("profile-org-open");
     if (openBtn) openBtn.addEventListener("click", open);
+    var peopleBtn = document.getElementById("profile-people-open");
+    if (peopleBtn) peopleBtn.addEventListener("click", openPeopleFromProfile);
     var back = document.getElementById("profile-org-back");
     if (back) back.addEventListener("click", function () { app().profileScreen("main"); });
     var el = root();
@@ -1182,6 +1211,12 @@
   // Для онбординга (экран «С кем вы работаете?»): те же вызовы, что и в Профиле → «Организация».
   window.LeoOrg = {
     open: open,
+    syncPeopleRow: function () {
+      return api("").then(function (ov) {
+        state.overview = ov;
+        syncPeopleRow();
+      }).catch(function () {});
+    },
     reload: reload,
     overview: function () {
       return api("");

@@ -567,6 +567,21 @@ def can_toggle(org_id: int, user_id: int | str) -> bool:
     return orgs_store.role_of(org_id, user_id) in ("owner", "admin")
 
 
+def leads_department(org_id: int, user_id: int | str) -> bool:
+    from assistant.stores import org_groups
+
+    return any(str(g.get("lead_user_id") or "") == str(user_id) and not g.get("parent_id")
+               for g in org_groups.list_groups(org_id, user_id))
+
+
+def entry(org_id: int, user_id: int | str) -> dict[str, Any]:
+    """Строка «Показатели сотрудников» в Профиле: видна владельцу, админам и руководителям отделов —
+    и когда показатели выключены (тогда ведёт к включению или к «попросите владельца»)."""
+    toggle = can_toggle(org_id, user_id)
+    lead = leads_department(org_id, user_id)
+    return {"org_id": int(org_id), "show": toggle or lead, "enabled": enabled(org_id), "can_toggle": toggle}
+
+
 def set_enabled(org_id: int, actor_id: int | str, on: bool) -> bool:
     """Включить/выключить. Возвращает True, если показатели только что включились (пора уведомить людей)."""
     from assistant.stores import orgs_store

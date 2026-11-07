@@ -263,6 +263,16 @@ def test_people_view_needs_setting_and_role(org_env) -> None:
     assert str(SETTER) in pm.announce_recipients(org, ORG_OWNER) and str(ORG_OWNER) not in pm.announce_recipients(org, ORG_OWNER)
 
 
+def test_profile_entry_for_owner_and_leads_only(org_env) -> None:
+    org = org_env["org"]
+    owner, lead, worker = pm.entry(org, ORG_OWNER), pm.entry(org, LEAD), pm.entry(org, WORKER)
+    assert owner == {"org_id": org, "show": True, "enabled": False, "can_toggle": True}
+    assert lead["show"] is True and lead["can_toggle"] is False  # видит строку, но включить не может
+    assert worker["show"] is False
+    pm.set_enabled(org, ORG_OWNER, True)
+    assert pm.entry(org, LEAD)["enabled"] is True
+
+
 def test_person_view_hides_titles_of_other_setters(org_env) -> None:
     org, store = org_env["org"], org_env["tasks"]
     pm.set_enabled(org, ORG_OWNER, True)

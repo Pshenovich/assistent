@@ -7760,7 +7760,19 @@ def _org_overview(uid: int) -> dict[str, Any]:
         "current_id": cur["id"] if cur else None,
         "suggestions": orgs_store.suggestions(uid),
         "my_domains": orgs_store.user_domains(uid),
+        "people_metrics": _org_people_entry(uid, cur["id"]) if cur else None,
     }
+
+
+def _org_people_entry(uid: int, org_id: int) -> dict[str, Any] | None:
+    """Строка «Показатели сотрудников» в Профиле (см. people_metrics.entry); ошибка не ломает обзор."""
+    from assistant.services import people_metrics
+
+    try:
+        return people_metrics.entry(org_id, uid)
+    except Exception as e:
+        print(f"[people_metrics] entry uid={uid} org={org_id} err={e!r}")
+        return None
 
 
 def _org_detail(uid: int, org_id: int) -> dict[str, Any]:
