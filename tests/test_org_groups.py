@@ -53,6 +53,17 @@ class OrgGroupsTests(unittest.TestCase):
         self.assertNotIn(f"g:{self.frontend}", p)
         self.assertIn(org_groups.ALL, p)
 
+    def test_metrics_visibility(self) -> None:
+        lead_sees = set(org_groups.metrics_visible_ids(self.org, LEAD))
+        self.assertEqual(lead_sees, {str(LEAD), str(BACK), str(FRONT), str(MANAGER)})
+        admin_sees = set(org_groups.metrics_visible_ids(self.org, ADMIN))
+        self.assertIn(str(OWNER), admin_sees)
+        self.assertNotIn(str(GUEST), admin_sees)
+        self.assertEqual(org_groups.metrics_visible_ids(self.org, BACK), [str(BACK)])
+        self.assertTrue(org_groups.can_view_metrics(self.org, LEAD, FRONT))
+        self.assertFalse(org_groups.can_view_metrics(self.org, BACK, FRONT))
+        self.assertEqual(org_groups.metrics_visible_ids(self.org, OUTSIDER), [])
+
     def test_department_member_does_not_get_team_access(self) -> None:
         p = org_groups.principals(self.org, MANAGER)
         self.assertIn(f"g:{self.okk}", p)

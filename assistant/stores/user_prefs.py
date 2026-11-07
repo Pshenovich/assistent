@@ -539,3 +539,42 @@ def set_tg_leo_cut_id(user_id: int, comment_id: int) -> None:
     prefs = load_prefs(user_id)
     prefs[TG_LEO_CUT_KEY] = max(0, int(comment_id or 0))
     save_prefs(user_id, prefs)
+
+
+# ---------- отсутствие (отпуск / больничный) ----------
+ABSENCE_KINDS = ("vacation", "sick", "other")
+MAX_ABSENCES = 50
+
+
+def _clean_absences(raw: Any) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for it in raw if isinstance(raw, list) else []:
+        if not isinstance(it, dict):
+            continue
+        a, b = str(it.get("from") or "")[:10], str(it.get("to") or "")[:10]
+        if len(a) == 10 and len(b) == 10 and a <= b:
+            kind = str(it.get("kind") or "other")
+            out.append({"from": a, "to": b, "kind": kind if kind in ABSENCE_KINDS else "other"})
+    return sorted(out, key=lambda x: x["from"])[-MAX_ABSENCES:]
+
+
+def get_absences(user_id: int) -> list[dict[str, str]]:
+    """Периоды отсутствия: [{from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', kind}], по дате начала.
+    Показатели работы исключают эти дни, постановщики видят «в отпуске до…»."""
+    return _clean_absences(load_prefs(user_id).get("absences"))
+
+
+def set_absences(user_id: int, items: list[dict[str, Any]]) -> list[dict[str, str]]:
+    prefs = load_prefs(user_id)
+    prefs["absences"] = _clean_absences(items)
+    save_prefs(user_id, prefs)
+    return prefs["absences"]
+
+
+def absent_on(user_id: int, day: str) -> dict[str, str] | None:
+    """Период отсутствия, в который попадает день 'YYYY-MM-DD', или None."""
+    d = str(day or "")[:10]
+    for it in get_absences(user_id):
+        if it["from"] <= d <= it["to"]:
+            return it
+    return None

@@ -772,6 +772,9 @@ def create_task(
         _conn().commit()
     if parent_id is not None:
         _sync_inline_triage(tid)
+    if task_is_delegated({"owner_user_id": uid, "assignee_user_id": assignee}):
+        # Явное «поставлено» — для показателей сотрудника (раньше достраивалось из created_at).
+        add_event(tid, "created", actor_user_id=uid, at=now, notify=False)
     item = get_task(uid, tid)
     assert item is not None
     if parent_id is not None:
@@ -1510,6 +1513,10 @@ def update_task(
         _sync_inline_triage(int(existing["id"]))
     if fields["done"] and not existing["done"] and not reassigned:
         mark_triaged(existing)  # сдал из обхода разбора — значит, взял
+    if fields["done"] and not existing["done"] and task_is_delegated(existing):
+        # Каждая сдача — событием: после «Вернуть» done_at стирается, а история сдач нужна показателям.
+        add_event(existing["id"], "done", actor_user_id=uid, at=done_at,
+                  text=str(fields["result"] or ""), notify=False)
     if bool(fields["done"]) != bool(existing["done"]):
         try:  # задача из пункта встречи — в саммари «Выполнено» / снова «поставлена»
             from assistant.services import focus_items
@@ -1598,6 +1605,7 @@ def add_event(
     text: str = "",
     at: str = "",
     meta: dict[str, Any] | None = None,
+    notify: bool = True,
 ) -> None:
     tid = _parse_task_id(task_id)
     if tid is None or kind not in EVENT_KINDS:
@@ -1613,7 +1621,7 @@ def add_event(
         who = _conn().execute(
             "SELECT owner_user_id, assignee_user_id FROM calendar_tasks WHERE id = ?", (tid,)
         ).fetchone()
-    if who:
+    if who and notify:
         from assistant.realtime import notify as realtime_notify
 
         realtime_notify.task_changed(tid, [who[0], who[1]], actor_user_id=actor_user_id)
@@ -1674,7 +1682,8 @@ def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
                        "actor_name": str(task.get("assignee_name") or ""), "text": str(task.get("result") or "")})
     if legacy:
         # Достроенные события старше записанных: при равном времени — первыми (сортировка устойчивая).
-        out = sorted(legacy + out, key=lambda e: e["at"])
+        # «Поставлено» всегда первым — даже если «видел» пришлось на ту же секунду.
+        out = sorted(legacy + out, key=lambda e: (e["at"], e["kind"] != "created"))
     return out
 
 
@@ -1695,6 +1704,26 @@ def discussion_by_task(task_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
             out.setdefault(int(r["task_id"]), []).append({
                 "at": str(r["at"] or ""), "kind": str(r["kind"]), "actor_user_id": str(r["actor_user_id"] or ""),
                 "actor_name": str(r["actor_name"] or ""), "text": str(r["text"] or ""),
+            })
+    return out
+
+
+def events_by_task(task_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """Все записанные события поручений одним запросом, по времени (для показателей работы)."""
+    ids = sorted({int(t) for t in task_ids if str(t).isdigit()})
+    out: dict[int, list[dict[str, Any]]] = {}
+    for i in range(0, len(ids), 500):
+        part = ids[i:i + 500]
+        with _LOCK:
+            rows = _conn().execute(
+                f"SELECT task_id, at, actor_user_id, kind, text FROM task_events"
+                f" WHERE task_id IN ({','.join('?' * len(part))}) ORDER BY at ASC, id ASC",
+                part,
+            ).fetchall()
+        for r in rows:
+            out.setdefault(int(r["task_id"]), []).append({
+                "at": str(r["at"] or ""), "kind": str(r["kind"]),
+                "actor_user_id": str(r["actor_user_id"] or ""), "text": str(r["text"] or ""),
             })
     return out
 

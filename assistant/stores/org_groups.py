@@ -186,6 +186,39 @@ def member_ids(org_id: int, group_id: int) -> list[str]:
     return [str(r["user_id"]) for r in rows]
 
 
+def metrics_visible_ids(org_id: int, viewer_id: int | str) -> list[str]:
+    """Чьи показатели работы видит человек: владелец и админы — всех, кроме гостей;
+    руководитель отдела — участников отдела и его команд; каждый — себя."""
+    viewer = _uid(viewer_id)
+    role = orgs_store.role_of(org_id, viewer)
+    if not role:
+        return []
+    with _LOCK:
+        conn = _conn()
+        active = {
+            str(r["user_id"]): bool(r["guest"])
+            for r in conn.execute(
+                "SELECT user_id, guest FROM org_members WHERE org_id = ? AND status = 'active'", (int(org_id),)
+            ).fetchall()
+        }
+        led = [int(r["id"]) for r in conn.execute(
+            "SELECT id FROM org_groups WHERE org_id = ? AND parent_id IS NULL AND lead_user_id = ?",
+            (int(org_id), viewer),
+        ).fetchall()]
+    if role in ("owner", "admin"):
+        seen = {u for u, guest in active.items() if not guest}
+    else:
+        seen = set()
+        for gid in led:
+            seen |= {u for u in member_ids(org_id, gid) if u in active and not active[u]}
+    seen.add(viewer)
+    return sorted(seen, key=lambda u: (u != viewer, u))
+
+
+def can_view_metrics(org_id: int, viewer_id: int | str, target_id: int | str) -> bool:
+    return _uid(target_id) in metrics_visible_ids(org_id, viewer_id)
+
+
 # ---------- изменение ----------
 
 
