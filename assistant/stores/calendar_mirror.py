@@ -6,13 +6,15 @@
 
 * Прочитали окно календаря целиком (без поиска, календарь ответил) — что в окне было, а теперь нет,
   помечаем ``cancelled`` (удалили или отменили в Google). Строки не удаляем — прошлое остаётся.
-* Храним только то, что нужно для подсчёта: время, название, сколько участников, мой ответ,
-  «занят/свободен», тип (встреча / задача / нет на месте / фокус). Описание и ссылки — нет.
+* Храним событие целиком для работы в Орбите: время, название, описание, место, ссылку на событие
+  и на видеовстречу, участников с ответами, организатора, «занят/свободен», тип
+  (встреча / задача / нет на месте / фокус). Руководителю в показателях — только числа.
 * ``synced_from`` — с какого дня у человека есть история (раньше — не знаем, а не «было пусто»).
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import threading
@@ -87,9 +89,18 @@ def _conn() -> sqlite3.Connection:
         );
         """
     )
+    have = {r[1] for r in conn.execute("PRAGMA table_info(mirror_events)").fetchall()}
+    for col in _CONTENT_COLS:
+        if col not in have:
+            conn.execute(f"ALTER TABLE mirror_events ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
     conn.commit()
     _CONN, _CONN_PATH = conn, path
     return conn
+
+
+# Содержимое события (колонки добавлены после первой версии таблицы — отсюда ALTER).
+_CONTENT_COLS = ("description", "location", "html_link", "meeting_url", "organizer_email", "attendees_json", "g_updated")
+MAX_DESCRIPTION = 20000
 
 
 def _utc(dt: datetime) -> str:
@@ -133,7 +144,24 @@ def row_from_gcal(raw: dict[str, Any], start: datetime, end: datetime) -> dict[s
     org = raw.get("organizer") if isinstance(raw.get("organizer"), dict) else {}
     organizer_self = bool(org.get("self")) or not (raw.get("attendees") or [])
     st = raw.get("start") if isinstance(raw.get("start"), dict) else {}
+    people = [
+        {k: a[k] for k in ("email", "displayName", "responseStatus", "organizer", "self", "optional", "resource") if a.get(k)}
+        for a in raw.get("attendees") or [] if isinstance(a, dict)
+    ]
+    try:
+        from assistant.lib.meeting_links import extract_online_meeting_url
+
+        meeting_url = extract_online_meeting_url(raw) or ""
+    except Exception:
+        meeting_url = str(raw.get("hangoutLink") or "")
     return {
+        "description": str(raw.get("description") or "")[:MAX_DESCRIPTION],
+        "location": str(raw.get("location") or "")[:500],
+        "html_link": str(raw.get("htmlLink") or "")[:500],
+        "meeting_url": str(meeting_url or "")[:500],
+        "organizer_email": str(org.get("email") or "").strip().lower()[:200],
+        "attendees_json": json.dumps(people, ensure_ascii=False)[:20000] if people else "",
+        "g_updated": str(raw.get("updated") or ""),
         "series_id": str(raw.get("recurringEventId") or ""),
         "title": str(raw.get("summary") or "").strip()[:200],
         "start_utc": _utc(start),
@@ -179,7 +207,7 @@ def record_window(
         r = row_from_gcal(raw, e["start"], e["end"])
         rows.append((uid, source, cal, eid, r["series_id"], r["title"], r["start_utc"], r["end_utc"], r["all_day"],
                      r["kind"], r["my_response"], r["organizer_self"], r["others"], r["other_emails"], r["transparent"],
-                     now, now))
+                     now, now, *(r[c] for c in _CONTENT_COLS)))
     lo, hi = _utc(time_min), _utc(time_max)
     try:
         with _LOCK:
@@ -187,14 +215,18 @@ def record_window(
             conn.executemany(
                 """
                 INSERT INTO mirror_events (user_id, source, calendar_id, event_id, series_id, title, start_utc, end_utc,
-                    all_day, kind, status, my_response, organizer_self, others, other_emails, transparent, first_seen, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?)
+                    all_day, kind, status, my_response, organizer_self, others, other_emails, transparent, first_seen, updated_at,
+                    description, location, html_link, meeting_url, organizer_email, attendees_json, g_updated)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, source, calendar_id, event_id) DO UPDATE SET
                     series_id = excluded.series_id, title = excluded.title, start_utc = excluded.start_utc,
                     end_utc = excluded.end_utc, all_day = excluded.all_day, kind = excluded.kind, status = 'confirmed',
                     my_response = excluded.my_response, organizer_self = excluded.organizer_self,
                     others = excluded.others, other_emails = excluded.other_emails,
-                    transparent = excluded.transparent, updated_at = excluded.updated_at
+                    transparent = excluded.transparent, updated_at = excluded.updated_at,
+                    description = excluded.description, location = excluded.location, html_link = excluded.html_link,
+                    meeting_url = excluded.meeting_url, organizer_email = excluded.organizer_email,
+                    attendees_json = excluded.attendees_json, g_updated = excluded.g_updated
                 """,
                 rows,
             )
@@ -248,5 +280,9 @@ def events(user_id: int | str, start: datetime, end: datetime, *, source: str = 
         d = dict(r)
         d["start"] = datetime.fromisoformat(d["start_utc"])
         d["end"] = datetime.fromisoformat(d["end_utc"])
+        try:
+            d["attendees"] = json.loads(d.get("attendees_json") or "[]")
+        except ValueError:
+            d["attendees"] = []
         out.append(d)
     return out

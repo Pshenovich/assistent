@@ -135,3 +135,16 @@ def test_mirror_job_backfills_once(monkeypatch) -> None:
     cm.record_window(5, [], time_min=now - timedelta(days=91), time_max=now, calendar_ids=["primary"])
     job.sync_user(5, now=now)
     assert seen == [91 + 14, 14 + 14]
+
+
+def test_mirror_keeps_event_content() -> None:
+    e = ev("Демо", MON.replace(hour=10), 60, description="Повестка: цены", location="Переговорка 2",
+           htmlLink="https://calendar.google.com/e/1", hangoutLink="https://meet.google.com/abc-defg-hij",
+           organizer={"email": "Boss@X.ru"})
+    e["raw"]["attendees"][1].update(displayName="Аня", responseStatus="tentative")
+    cm.record_window(1, [e], time_min=MON, time_max=MON + timedelta(days=1), calendar_ids=["primary"])
+    got = cm.events(1, MON, MON + timedelta(days=1))[0]
+    assert got["description"] == "Повестка: цены" and got["location"] == "Переговорка 2"
+    assert got["meeting_url"] == "https://meet.google.com/abc-defg-hij" and got["organizer_email"] == "boss@x.ru"
+    assert got["html_link"].endswith("/e/1")
+    assert {"email": "a@x.ru", "displayName": "Аня", "responseStatus": "tentative"} in got["attendees"]

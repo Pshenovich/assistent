@@ -452,6 +452,9 @@ async def google_calendar_oauth_callback(
             fetch_google_timezone(int(uid))
         except Exception as tz_err:
             print(f"[oauth] timezone_fetch err={tz_err!r}")
+        from assistant.services import calendar_push
+
+        calendar_push.start_user(int(uid))  # подписки на изменения и история календаря в Орбиту — в фоне
     except ValueError as e:
         return HTMLResponse(
             f"<html><head><meta charset=\"utf-8\"/></head><body><p>{html_lib.escape(str(e))}</p></body></html>",
@@ -9409,6 +9412,9 @@ async def miniapp_calendar_sources_excluded(
     def _run() -> dict[str, Any]:
         uid = int(principal.telegram_user_id)
         cs.set_calendar_excluded(uid, list(body.excluded_ids or []))
+        from assistant.services import calendar_push
+
+        calendar_push.start_user(uid)  # новый календарь — подписка и история сразу, а не через 6 часов
         return {"ok": True, "calendars": cs.calendar_sources_for_miniapp(uid)}
 
     try:

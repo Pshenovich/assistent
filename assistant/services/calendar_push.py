@@ -2,11 +2,12 @@
 
 Раньше напоминания, приглашения и брифы раз в минуту спрашивали Google о каждом
 человеке по каждому календарю (~3 запроса × календари в минуту) — при сотнях людей это
-упирается в дневную квоту Google. Теперь (GCAL_PUSH_ENABLED=1):
+упирается в дневную квоту Google. Теперь (по умолчанию; GCAL_PUSH_ENABLED=0 — выключить):
 
 - на каждый календарь оформлена подписка (events.watch, ~неделя; продлевает воркер);
 - Google стучится в /webhook/google-calendar при любом изменении → «календарь изменился»
-  (отметка в общей базе: веб и воркер — разные процессы);
+  (отметка в общей базе: веб и воркер — разные процессы), и этот календарь сразу перечитывается
+  в зеркало Орбиты (stores/calendar_mirror) — через 1–2 секунды после правки в Google;
 - фоновые задачи читают копию событий за [−1 ч, +15 дн]; копия перечитывается из Google,
   только если пришло изменение, и для страховки раз в GCAL_CACHE_TTL_SEC (30 мин).
 
@@ -42,7 +43,8 @@ _CONN_PATH: Path | None = None
 
 
 def enabled() -> bool:
-    return os.getenv("GCAL_PUSH_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+    """Подписки включены по умолчанию (выключить — GCAL_PUSH_ENABLED=0)."""
+    return os.getenv("GCAL_PUSH_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def cache_ttl_sec() -> float:
@@ -317,15 +319,86 @@ def handle_notification(headers: dict[str, str]) -> int:
     if not ch_id or not hmac.compare_digest(token, channel_token(ch_id)):
         return 403
     with _lock:
-        row = _conn().execute("SELECT user_id FROM gcal_channels WHERE channel_id = ?", (ch_id,)).fetchone()
+        row = _conn().execute("SELECT user_id, calendar_id FROM gcal_channels WHERE channel_id = ?", (ch_id,)).fetchone()
     if row is None:
         return 200  # старая или снятая подписка — Google перестанет слать после stop/истечения
     if state != "sync":  # sync — проверка при оформлении подписки, событий ещё нет
         mark_dirty(row["user_id"])
+        sync_soon(row["user_id"], row["calendar_id"])
         try:
             from assistant.realtime import notify as realtime_notify
 
-            realtime_notify.calendar_changed(row["user_id"])  # открытый экран обновится сам
+            realtime_notify.calendar_changed(row["user_id"])  # открытый экран обновится сам (он читает Google)
         except Exception as e:
             print(f"[gcal_push] realtime notify failed uid={row['user_id']} err={e!r}")
     return 200
+
+
+# ── зеркало: изменившийся календарь — сразу в Орбиту ─────────────────────────
+
+MIRROR_BACK = timedelta(days=7)
+MIRROR_AHEAD = timedelta(days=120)
+SYNC_SETTLE_SEC = 0.3  # Google шлёт пачку уведомлений на одну правку — ждём, пока утихнет
+
+_pending: dict[tuple[str, str], bool] = {}  # (user, calendar) → пришло ещё уведомление, пока читали
+_pending_lock = threading.Lock()
+
+
+def sync_soon(user_id: str | int, calendar_id: str) -> None:
+    """Перечитать один календарь в зеркало (stores/calendar_mirror) в фоне — обычно за 1–2 секунды
+    после правки в Google. Повторные уведомления, пока идёт чтение, сливаются в ещё один проход."""
+    key = (str(user_id), str(calendar_id))
+    with _pending_lock:
+        if key in _pending:
+            _pending[key] = True
+            return
+        _pending[key] = False
+    threading.Thread(target=_sync_loop, args=key, name="gcal-mirror", daemon=True).start()
+
+
+def _sync_loop(uid: str, cal_id: str) -> None:
+    key = (uid, cal_id)
+    try:
+        while True:
+            time.sleep(SYNC_SETTLE_SEC)
+            with _pending_lock:
+                _pending[key] = False
+            sync_calendar_now(int(uid), cal_id)
+            with _pending_lock:
+                if not _pending.get(key):
+                    break
+    finally:
+        with _pending_lock:
+            _pending.pop(key, None)
+
+
+def sync_calendar_now(user_id: int, calendar_id: str) -> int:
+    """Окно [−7 дн, +120 дн] одного календаря → зеркало (с отметкой удалённых). Не бросает."""
+    from assistant.services import calendar_sources as cal_sources
+
+    now = datetime.now().astimezone()
+    try:
+        t0 = time.monotonic()
+        n = len(cal_sources.list_events_in_window(user_id, now - MIRROR_BACK, now + MIRROR_AHEAD,
+                                                   calendar_ids=[calendar_id]))
+        print(f"[gcal_push] mirror uid={user_id} cal={calendar_id[:24]} events={n} {time.monotonic() - t0:.1f}s")
+        return n
+    except Exception as e:
+        print(f"[gcal_push] mirror sync failed uid={user_id} err={e!r}")
+        return 0
+
+
+def start_user(user_id: int) -> None:
+    """Сразу после подключения Google или смены набора календарей: подписки и история в зеркало — в фоне."""
+
+    def run() -> None:
+        try:
+            if enabled():
+                ensure_channels(int(user_id))
+            from assistant.bot.calendar_mirror_job import sync_user
+
+            sync_user(int(user_id))
+        except Exception as e:
+            print(f"[gcal_push] start_user uid={user_id} err={e!r}")
+
+    threading.Thread(target=run, name=f"gcal-start-{user_id}", daemon=True).start()

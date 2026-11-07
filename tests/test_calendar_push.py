@@ -188,3 +188,38 @@ def test_change_notifies_open_screens(env, monkeypatch):
     assert sent == []  # проверка подписки — экран не дёргаем
     cp.handle_notification({**h, "X-Goog-Resource-State": "exists"})
     assert sent and sent[-1][1] == {"type": "calendar.changed"} and sent[-1][0].endswith("7")
+
+
+def test_notification_mirrors_that_calendar_right_away(env, monkeypatch):
+    import threading
+
+    synced, done = [], threading.Event()
+
+    def fake_sync(uid, cal_id):
+        synced.append((uid, cal_id))
+        done.set()
+        return 1
+
+    monkeypatch.setattr(cp, "sync_calendar_now", fake_sync)
+    monkeypatch.setattr(cp, "SYNC_SETTLE_SEC", 0.05)
+    cp.ensure_channels(7)
+    ch_id = env["svc"].watched[0][1]["id"]
+    headers = {"X-Goog-Channel-ID": ch_id, "X-Goog-Channel-Token": cp.channel_token(ch_id), "X-Goog-Resource-State": "exists"}
+    for _ in range(5):  # пачка уведомлений на одну правку
+        assert cp.handle_notification(headers) == 200
+    assert done.wait(2)
+    import time
+
+    time.sleep(0.3)
+    assert synced[0] == (7, "primary") and 1 <= len(synced) <= 2
+    synced.clear()
+    cp.handle_notification({**headers, "X-Goog-Resource-State": "sync"})
+    time.sleep(0.2)
+    assert synced == []  # проверка подписки — не изменение
+
+
+def test_push_is_on_by_default(monkeypatch):
+    monkeypatch.delenv("GCAL_PUSH_ENABLED", raising=False)
+    assert cp.enabled() is True
+    monkeypatch.setenv("GCAL_PUSH_ENABLED", "0")
+    assert cp.enabled() is False
