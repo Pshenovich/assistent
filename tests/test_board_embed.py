@@ -72,5 +72,35 @@ class BoardEmbedTests(unittest.TestCase):
         self.assertIn("[Доска «Лист»]", out)
 
 
+    def test_design_and_deck(self) -> None:
+        note = notes_store.create_note(1, "Продукт", "")
+        design = json.loads(BOARD)
+        design["mode"] = "design"
+        mk = sheets.create_sheet(note, "Экраны", body=json.dumps(design), kind="board")
+        deck_html = (
+            "<!DOCTYPE html><html><head><style>.x{}</style><script>var a=1</script></head><body><div class=\"deck\">"
+            '<section class="slide"><h1>Цели</h1><p>Рост</p></section>'
+            '<section class="slide"><h1>План</h1></section></div></body></html>'
+        )
+        dk = sheets.create_sheet(note, "Питч", body=deck_html, kind="web")
+        body = (
+            f'<div data-leo-board="{note["id"]}:{mk["id"]}" data-kind="design">Макет «Экраны»</div>'
+            f'<div data-leo-deck="{note["id"]}:{dk["id"]}">Презентация «Питч»</div>'
+        )
+        self.assertEqual(len(board_doc.board_embed_refs(body)), 2)
+        out = board_doc.expand_board_embeds(body, sheets.board_embed_resolver(note["id"]))
+        self.assertIn("Макет «Экраны»", out)
+        self.assertIn("Презентация «Питч»", out)
+        self.assertIn("Слайд 1: Цели Рост", out)
+        self.assertIn("Слайд 2: План", out)
+        self.assertNotIn("var a", out)
+        # Рамка-презентация на лист-доску (и наоборот) — только подпись.
+        wrong = f'<div data-leo-deck="{note["id"]}:{mk["id"]}">Презентация «?»</div>'
+        self.assertIn("[Презентация «?»]", board_doc.expand_board_embeds(wrong, sheets.board_embed_resolver(note["id"])))
+        got = sheets.share_board_embeds(note, body)
+        self.assertIn("board", got[f"{note['id']}:{mk['id']}"])
+        self.assertIn("Цели", got[f"{note['id']}:{dk['id']}"]["html"])
+
+
 if __name__ == "__main__":
     unittest.main()

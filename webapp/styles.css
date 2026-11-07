@@ -24772,3 +24772,85 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 .ProseMirror:not([contenteditable="true"]) .note-board-embed-grip {
   display: none;
 }
+
+/* Презентация в тексте: слайд 16:9 по ширине и своя панель ← N/M → под ним. */
+.note-board-embed.is-deck {
+  height: auto;
+}
+
+.note-board-embed.is-deck .note-board-embed-host {
+  position: relative;
+  inset: auto;
+  min-height: 120px;
+}
+
+.note-deck-embed {
+  display: flex;
+  flex-direction: column;
+}
+
+.note-deck-embed-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  background: var(--surface);
+}
+
+.note-deck-embed-shield {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 44px;
+}
+
+.note-deck-embed-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  font: 13px/1 var(--font);
+  color: var(--text-secondary);
+}
+
+.note-deck-embed-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.note-deck-embed-bar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.note-deck-embed-bar.is-single [data-d] {
+  display: none;
+}
+
+.note-deck-embed-count {
+  min-width: 48px;
+  text-align: center;
+}
+
+.note-deck-embed-sep {
+  flex: 1;
+}
+
+.note-board-embed.is-deck .note-board-embed-msg {
+  position: relative;
+  min-height: 160px;
+}

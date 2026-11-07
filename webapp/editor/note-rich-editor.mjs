@@ -3150,6 +3150,10 @@ var NOTE_REF_KINDS = [
   { kind: "person", label: "Человек", icon: refSvg('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>') },
   { kind: "reminder", label: "Напоминание", icon: refSvg('<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>') },
   { kind: "board", label: "Доска", icon: refSvg('<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M7 9h4M7 13h7"/>') },
+  { kind: "design", label: "Макет", icon: refSvg('<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>') },
+  { kind: "deck", label: "Презентация", icon: refSvg('<rect x="2" y="4" width="20" height="13" rx="2"/><path d="m10 8 5 2.5-5 2.5z"/><path d="M12 17v4M8 21h8"/>') },
+  // Только из «/ → … из документа»: все три вида листов сразу; в списке типов «+» не показываем.
+  { kind: "embed", label: "Доска, макет, презентация", hidden: true, icon: refSvg('<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M7 9h4M7 13h7"/>') },
 ];
 var NOTE_REF_CHAT_ICON_SVG = refSvg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>');
 var NOTE_REF_SEARCH_ICON_SVG = refSvg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>');
@@ -3353,7 +3357,7 @@ function createNoteRefExtensions(ctx) {
               hideSuggest();
               if (item.boardEmbed) {
                 // «+» → «Доска»: не чип, а доска-встройка блоком.
-                insertBoardEmbed(ctx.editor, { noteId: item.noteId, sheetId: item.sheetId, title: item.label }, { from: from, to: to });
+                insertBoardEmbed(ctx.editor, { noteId: item.noteId, sheetId: item.sheetId, title: item.label, kind: item.embedKind }, { from: from, to: to });
                 return;
               }
               view.dispatch(view.state.tr.delete(from, to));
@@ -3406,7 +3410,7 @@ function createNoteRefExtensions(ctx) {
                 (i === ctx.refIndex ? " is-active" : "");
               var icon = document.createElement("span");
               icon.className = "note-ref-suggest-icon";
-              icon.innerHTML = noteRefIconFor(row.pickKind || row.refKind || (row.boardEmbed ? "board" : "") || (row.chatId ? "chat" : ""));
+              icon.innerHTML = noteRefIconFor(row.pickKind || row.refKind || (row.boardEmbed ? (row.embedKind === "web" ? "deck" : row.embedKind || "board") : "") || (row.chatId ? "chat" : ""));
               btn.appendChild(icon);
               var copy = document.createElement("span");
               copy.className = "note-ref-suggest-copy";
@@ -3491,6 +3495,7 @@ function createNoteRefExtensions(ctx) {
             function kindRows(query) {
               var q = String(query || "").trim().toLowerCase();
               return NOTE_REF_KINDS.filter(function (k) {
+                if (k.hidden) return false;
                 return !q || k.label.toLowerCase().indexOf(q) === 0;
               }).map(function (k) {
                 return { pickKind: k.kind, label: k.label };
@@ -3794,9 +3799,10 @@ function collectLeoTaskIds(doc) {
   return ids;
 }
 
-// ---- Доска в тексте: блок-ссылка на лист kind=board (только просмотр) ----
-// В HTML — <div data-leo-board="noteId:sheetId" data-height="320">Доска «…»</div>. Сама доска живёт
-// в своём листе (своя Yjs-комната); рамку рисует app.js через ctx.mountBoardEmbed.
+// ---- Доска, макет, презентация в тексте: блок-ссылка на лист (только просмотр) ----
+// В HTML: доска — <div data-leo-board="noteId:sheetId" data-height="320">Доска «…»</div>, макет — то же
+// с data-kind="design", презентация — <div data-leo-deck="noteId:sheetId">Презентация «…»</div>.
+// Сам лист живёт отдельно (своя Yjs-комната); рамку рисует app.js через ctx.mountBoardEmbed.
 var BOARD_EMBED_MIN_H = 160;
 var BOARD_EMBED_MAX_H = 1200;
 var BOARD_EMBED_DEFAULT_H = 320;
@@ -3812,9 +3818,20 @@ function clampBoardEmbedHeight(h) {
   return Math.max(BOARD_EMBED_MIN_H, Math.min(BOARD_EMBED_MAX_H, n));
 }
 
-function boardEmbedLabel(title) {
+var EMBED_KIND_LABEL = { board: "Доска", design: "Макет", web: "Презентация" };
+
+function normalizeEmbedKind(kind) {
+  return kind === "design" || kind === "web" ? kind : "board";
+}
+
+function boardEmbedLabel(title, kind) {
   var t = String(title || "").trim();
-  return t ? "Доска «" + t + "»" : "Доска";
+  var k = EMBED_KIND_LABEL[normalizeEmbedKind(kind)];
+  return t ? k + " «" + t + "»" : k;
+}
+
+function embedRefAttr(kind) {
+  return normalizeEmbedKind(kind) === "web" ? "data-leo-deck" : "data-leo-board";
 }
 
 function createBoardEmbedExtensions(ctx) {
@@ -3830,6 +3847,8 @@ function createBoardEmbedExtensions(ctx) {
         sheetId: { default: "" },
         height: { default: BOARD_EMBED_DEFAULT_H },
         title: { default: "" },
+        // board | design (макет — та же доска) | web (презентация)
+        kind: { default: "board" },
       };
     },
     parseHTML: function () {
@@ -3844,6 +3863,21 @@ function createBoardEmbedExtensions(ctx) {
               sheetId: ref.sheetId,
               height: clampBoardEmbedHeight(el.getAttribute("data-height")),
               title: el.getAttribute("data-title") || "",
+              kind: el.getAttribute("data-kind") === "design" ? "design" : "board",
+            };
+          },
+        },
+        {
+          tag: "div[data-leo-deck]",
+          getAttrs: function (el) {
+            var ref = parseBoardEmbedRef(el.getAttribute("data-leo-deck"));
+            if (!ref) return false;
+            return {
+              noteId: ref.noteId,
+              sheetId: ref.sheetId,
+              height: BOARD_EMBED_DEFAULT_H,
+              title: el.getAttribute("data-title") || "",
+              kind: "web",
             };
           },
         },
@@ -3851,32 +3885,33 @@ function createBoardEmbedExtensions(ctx) {
     },
     renderHTML: function (_ref) {
       var a = _ref.HTMLAttributes;
-      var attrs = {
-        "data-leo-board": String(a.noteId || "") + ":" + String(a.sheetId || ""),
-        "data-height": String(clampBoardEmbedHeight(a.height)),
-        class: "note-board-embed",
-        contenteditable: "false",
-      };
+      var kind = normalizeEmbedKind(a.kind);
+      var attrs = { class: "note-board-embed", contenteditable: "false" };
+      attrs[embedRefAttr(kind)] = String(a.noteId || "") + ":" + String(a.sheetId || "");
+      // Презентация — 16:9 по ширине, высоту не храним.
+      if (kind !== "web") attrs["data-height"] = String(clampBoardEmbedHeight(a.height));
+      if (kind === "design") attrs["data-kind"] = "design";
       if (a.title) attrs["data-title"] = String(a.title);
       // Текст внутри — запасной вид для мест, которые узел не знают (превью, письма, старые клиенты).
-      return ["div", attrs, boardEmbedLabel(a.title)];
+      return ["div", attrs, boardEmbedLabel(a.title, kind)];
     },
     addNodeView: function () {
       return function (props) {
         var node = props.node;
         var getPos = props.getPos;
+        var isDeck = normalizeEmbedKind(node.attrs.kind) === "web";
         var dom = document.createElement("div");
-        dom.className = "note-board-embed";
+        dom.className = "note-board-embed" + (isDeck ? " is-deck" : "");
         dom.setAttribute("contenteditable", "false");
-        dom.setAttribute("data-leo-board", node.attrs.noteId + ":" + node.attrs.sheetId);
-        dom.style.height = clampBoardEmbedHeight(node.attrs.height) + "px";
+        dom.setAttribute(embedRefAttr(node.attrs.kind), node.attrs.noteId + ":" + node.attrs.sheetId);
+        if (!isDeck) dom.style.height = clampBoardEmbedHeight(node.attrs.height) + "px";
         var host = document.createElement("div");
         host.className = "note-board-embed-host";
         dom.appendChild(host);
         var grip = document.createElement("div");
         grip.className = "note-board-embed-grip";
         grip.title = "Потяните, чтобы изменить высоту";
-        dom.appendChild(grip);
+        if (!isDeck) dom.appendChild(grip);
 
         function setAttrs(patch) {
           var pos = typeof getPos === "function" ? getPos() : null;
@@ -3933,7 +3968,7 @@ function createBoardEmbedExtensions(ctx) {
             },
           });
         } else {
-          host.textContent = boardEmbedLabel(node.attrs.title);
+          host.textContent = boardEmbedLabel(node.attrs.title, node.attrs.kind);
         }
 
         return {
@@ -3954,8 +3989,9 @@ function createBoardEmbedExtensions(ctx) {
           update: function (updated) {
             if (!updated || updated.type.name !== "leoBoardEmbed") return false;
             if (updated.attrs.noteId !== node.attrs.noteId || updated.attrs.sheetId !== node.attrs.sheetId) return false;
+            if ((normalizeEmbedKind(updated.attrs.kind) === "web") !== isDeck) return false;
             node = updated;
-            if (!dom.classList.contains("is-resizing")) {
+            if (!isDeck && !dom.classList.contains("is-resizing")) {
               dom.style.height = clampBoardEmbedHeight(node.attrs.height) + "px";
               if (handle && handle.resized) handle.resized();
             }
@@ -3983,6 +4019,7 @@ function insertBoardEmbed(editor, attrs, range) {
       sheetId: String(attrs.sheetId),
       height: clampBoardEmbedHeight(attrs.height || BOARD_EMBED_DEFAULT_H),
       title: String(attrs.title || ""),
+      kind: normalizeEmbedKind(attrs.kind),
     },
   };
   var chain = editor.chain().focus();
@@ -4000,7 +4037,9 @@ function insertBoardEmbed(editor, attrs, range) {
 
 var BOARD_SLASH_ITEMS = [
   { action: "new", label: "Новая доска", words: ["доска", "схема", "board", "miro", "новая"] },
-  { action: "pick", label: "Доска из документа…", words: ["доска", "схема", "board", "готовая", "из"] },
+  { action: "new-design", label: "Новый макет", words: ["макет", "экран", "дизайн", "design", "figma", "новый"] },
+  { action: "new-web", label: "Новая презентация", words: ["презентация", "слайды", "deck", "новая"] },
+  { action: "pick", label: "Доска, макет или презентация из документа…", words: ["доска", "макет", "презентация", "слайды", "схема", "готовая", "из"] },
   { action: "leo", label: "Лео, нарисуй схему по тексту", words: ["лео", "нарисуй", "схема", "доска", "ии"] },
 ];
 
@@ -4207,7 +4246,7 @@ function createLeoTaskExtensions(ctx) {
                 // Выбор готовой доски — тем же поиском, что «+», с фильтром «Доска».
                 view.dispatch(view.state.tr.insertText("+", from, to));
                 view.focus();
-                if (typeof ctx.openRefKind === "function") ctx.openRefKind("board");
+                if (typeof ctx.openRefKind === "function") ctx.openRefKind("embed");
                 return;
               }
               view.dispatch(view.state.tr.delete(from, to));
@@ -6230,7 +6269,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261107-boardembed",
+  assetVersion: "20261107-embed3kinds",
   Y: Y,
   mount: mount,
   mountTable: mountTable,

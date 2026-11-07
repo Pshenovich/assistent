@@ -1137,6 +1137,8 @@
         });
       }
       emptyHint.classList.toggle("hidden", els.size > 0 || !!gesture);
+      // Просмотр: пустой макет — «Макет пуст», не «Доска пуста».
+      if (readOnly && !els.size) emptyHint.textContent = mode === "design" ? "Макет пуст" : "Доска пуста";
       renderOverlay();
       renderProps();
       scheduleMinimap();

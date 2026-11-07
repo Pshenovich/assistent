@@ -191,7 +191,7 @@
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
   // Запись встречи на транскрибацию — = TRANSCRIPTION_UPLOAD_MAX_MB на сервере (файл идёт через диск).
   const TRANSCRIPTION_UPLOAD_MAX_MB = 500;
-  const NOTE_EDITOR_ASSET_V = "20261107-boardembed"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261107-embed3kinds"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
   // Доска и макет (kind=board): скрипты грузятся при первом открытии, а не с каждой страницей.
@@ -202,7 +202,7 @@
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261105-design43",
     "/webapp/board-figma.js?v=20261106-figcopy3",
-    "/webapp/board.js?v=20261107-embed1",
+    "/webapp/board.js?v=20261107-embed2",
   ];
   let boardScriptsPromise = null;
 
@@ -32263,14 +32263,32 @@
   }
 
 
-  // ---- Доска в тексте документа (узел leoBoardEmbed, webapp/editor/note-rich-editor.mjs) ----
-  // Рамка только для просмотра: двигать, масштабировать (⌘ + колесо, щипок), «Открыть оригинал».
-  // Доска своего документа берётся из noteSheetState и обновляется вместе с листом; чужая — GET …/sheets.
+  // ---- Доска, макет, презентация в тексте документа (узел leoBoardEmbed, webapp/editor/note-rich-editor.mjs) ----
+  // Рамка только для просмотра. Доска и макет: двигать, масштабировать (⌘ + колесо, щипок). Презентация:
+  // слайды 16:9 и свои ← N/M →, колесо листает страницу. Везде «Открыть оригинал».
+  // Лист своего документа берётся из noteSheetState и обновляется вместе с ним; чужой — GET …/sheets.
   var boardEmbeds = new Set();
   var foreignBoardSheetsCache = Object.create(null);
-  var BOARD_EMBED_ICON =
-    '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M7 9h4M7 13h7"/></svg>';
+  var EMBED_KIND_RU = { board: "Доска", design: "Макет", web: "Презентация" };
+  var EMBED_GONE_RU = { board: "Доска удалена", design: "Макет удалён", web: "Презентация удалена" };
+  var EMBED_ICON_PATHS = {
+    board: '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M7 9h4M7 13h7"/>',
+    design: '<rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/>',
+    web: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="m10 8 5 2.5-5 2.5z"/><path d="M12 17v4M8 21h8"/>',
+  };
+  function embedIcon(kind) {
+    return (
+      '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      (EMBED_ICON_PATHS[kind] || EMBED_ICON_PATHS.board) +
+      "</svg>"
+    );
+  }
+
+  /** Вид листа для рамки: board | design | web; текстовый лист — null. */
+  function embedKindOf(sheet) {
+    var k = sheet ? sheetKindKey(sheet) : "doc";
+    return k === "board" || k === "design" || k === "web" ? k : null;
+  }
 
   function fetchForeignBoardSheet(noteId, sheetId) {
     var nid = String(noteId);
@@ -32316,12 +32334,49 @@
     openNoteRefFromChip(nid, sid);
   }
 
+  // Презентация в рамке: прячем её панель показа и управляем слайдами снаружи сообщениями
+  // (iframe без allow-same-origin — в документ не залезть). Скрипт показа деки слушает стрелки.
+  var DECK_EMBED_INJECT =
+    '<style id="leo-embed-style">.leo-present-ui{display:none!important}html,body{overflow:hidden!important}</style>' +
+    '<script id="leo-embed-nav">(function(){' +
+    // Шаблонная дека (скрипт показа, класс leo-deck-js) листается стрелками; свободная вёрстка —
+    // слайды столбиком — прокруткой к слайду.
+    "var cur=0;function js(){return document.documentElement.classList.contains('leo-deck-js');}" +
+    "function sl(){var s=[].slice.call(document.querySelectorAll('.deck > .slide'));return s.length?s:[].slice.call(document.querySelectorAll('.slide'));}" +
+    "function idx(){if(!js())return cur;var s=sl();for(var i=0;i<s.length;i++){if(s[i].classList.contains('is-active'))return i;}return 0;}" +
+    "function info(){try{parent.postMessage({source:'leo-embed',type:'info',count:sl().length,index:idx()},'*');}catch(e){}}" +
+    "function key(k){document.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true}));}" +
+    "function show(n){var s=sl();cur=Math.max(0,Math.min(s.length-1,n));if(s[cur])window.scrollTo(0,s[cur].getBoundingClientRect().top+window.scrollY);}" +
+    "window.addEventListener('message',function(e){var d=e.data||{};if(d.source!=='leo-embed-host')return;" +
+    "if(d.type==='go'){if(js())key(d.d>0?'ArrowRight':'ArrowLeft');else show(cur+(d.d>0?1:-1));}" +
+    "else if(d.type==='goto'){var n=Math.max(0,d.i|0);if(!js())show(n);else{for(var g=0;g<200&&idx()<n;g++)key('ArrowRight');}}" +
+    "info();});" +
+    "if(document.readyState==='complete')setTimeout(info,30);else window.addEventListener('load',function(){setTimeout(info,30);});" +
+    "})();</script>";
+
+  function deckEmbedSrcdoc(html) {
+    var raw = String(html || "");
+    if (/<\/body>/i.test(raw)) return raw.replace(/<\/body>(?![\s\S]*<\/body>)/i, DECK_EMBED_INJECT + "</body>");
+    return raw + DECK_EMBED_INJECT;
+  }
+
+  var deckEmbedFrames = new Map();
+  window.addEventListener("message", function (e) {
+    var d = e && e.data;
+    if (!d || d.source !== "leo-embed" || d.type !== "info") return;
+    var st = deckEmbedFrames.get(e.source);
+    if (st && st.onDeckInfo) st.onDeckInfo(d);
+  });
+
   function mountBoardEmbed(host, attrs, api) {
+    var kind0 = attrs.kind === "web" || attrs.kind === "design" ? attrs.kind : "board";
     var state = {
       noteId: String(attrs.noteId || ""),
       sheetId: String(attrs.sheetId || ""),
       title: String(attrs.title || ""),
+      kind: kind0,
       board: null,
+      deck: null,
       json: null,
       destroyed: false,
       started: false,
@@ -32331,8 +32386,8 @@
     tag.className = "note-board-embed-tag";
     tag.title = "Выделить блок (удалить — Backspace)";
     function renderTag() {
-      tag.innerHTML = BOARD_EMBED_ICON + "<span></span>";
-      tag.querySelector("span").textContent = (state.title || "Доска") + " · только просмотр";
+      tag.innerHTML = embedIcon(state.kind) + "<span></span>";
+      tag.querySelector("span").textContent = (state.title || EMBED_KIND_RU[state.kind]) + " · только просмотр";
     }
     renderTag();
     tag.addEventListener("click", function (e) {
@@ -32340,11 +32395,19 @@
       if (api && api.select) api.select();
     });
 
-    function showMessage(text, withOpen) {
-      if (state.board) {
-        state.board.destroy();
-        state.board = null;
+    function dropViews() {
+      if (state.board) state.board.destroy();
+      state.board = null;
+      if (state.deck) {
+        deckEmbedFrames.delete(state.deck.win);
+        clearTimeout(state.deck.timer);
       }
+      state.deck = null;
+    }
+
+    function showMessage(text, withOpen) {
+      dropViews();
+      state.json = null;
       host.innerHTML = "";
       var box = document.createElement("div");
       box.className = "note-board-embed-msg";
@@ -32364,19 +32427,7 @@
       host.appendChild(tag);
     }
 
-    function render(sheet) {
-      if (state.destroyed) return;
-      if (!sheet || !isBoardSheet(sheet)) {
-        showMessage(sheet ? "Лист больше не доска" : "Доска удалена или нет доступа", false);
-        return;
-      }
-      var title = String(sheet.title || "Доска");
-      if (title !== state.title) {
-        state.title = title;
-        renderTag();
-        if (api && api.isEditable && api.isEditable() && api.setTitle) api.setTitle(title);
-      }
-      var json = String(sheet.body || sheet.description || "");
+    function renderBoard(json) {
       if (state.board && json === state.json) return;
       state.json = json;
       if (state.board) {
@@ -32386,6 +32437,7 @@
       loadBoardScripts()
         .then(function () {
           if (state.destroyed || state.board) return;
+          dropViews();
           host.innerHTML = "";
           state.board = window.LeoBoard.create({
             host: host,
@@ -32405,8 +32457,119 @@
           });
         })
         .catch(function () {
-          showMessage("Не удалось загрузить доску", true);
+          showMessage("Не удалось загрузить " + (state.kind === "design" ? "макет" : "доску"), true);
         });
+    }
+
+    function renderDeck(html) {
+      if (state.deck && html === state.json) return;
+      state.json = html;
+      if (state.deck) {
+        // Правка презентации: перерисовываем не чаще раза в секунду и возвращаемся на тот же слайд.
+        var dk = state.deck;
+        clearTimeout(dk.timer);
+        dk.timer = setTimeout(function () {
+          if (state.deck !== dk) return;
+          dk.pendingIndex = dk.index;
+          dk.frame.srcdoc = deckEmbedSrcdoc(state.json);
+        }, 1000);
+        return;
+      }
+      dropViews();
+      host.innerHTML = "";
+      var wrap = document.createElement("div");
+      wrap.className = "note-deck-embed";
+      var frame = document.createElement("iframe");
+      frame.className = "note-deck-embed-frame";
+      frame.setAttribute("sandbox", "allow-scripts");
+      frame.setAttribute("title", state.title || "Презентация");
+      frame.setAttribute("tabindex", "-1");
+      // Слой поверх слайда: колесо и клики не уходят в презентацию — страница листается как обычно.
+      var shield = document.createElement("div");
+      shield.className = "note-deck-embed-shield";
+      var bar = document.createElement("div");
+      bar.className = "note-deck-embed-bar";
+      bar.innerHTML =
+        '<button type="button" data-d="-1" aria-label="Предыдущий слайд">←</button>' +
+        '<span class="note-deck-embed-count"></span>' +
+        '<button type="button" data-d="1" aria-label="Следующий слайд">→</button>' +
+        '<span class="note-deck-embed-sep"></span>' +
+        '<button type="button" data-open="1">' + embedIcon("open") + "Открыть оригинал</button>";
+      bar.querySelector("[data-open] svg").innerHTML = '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>';
+      wrap.appendChild(frame);
+      wrap.appendChild(shield);
+      wrap.appendChild(bar);
+      host.appendChild(wrap);
+      host.appendChild(tag);
+      var dk = { frame: frame, win: null, count: 0, index: 0, pendingIndex: 0, timer: null };
+      state.deck = dk;
+      var countEl = bar.querySelector(".note-deck-embed-count");
+      function syncBar() {
+        var many = dk.count > 1;
+        bar.classList.toggle("is-single", !many);
+        countEl.textContent = many ? dk.index + 1 + " / " + dk.count : "";
+        bar.querySelector('[data-d="-1"]').disabled = !many || dk.index <= 0;
+        bar.querySelector('[data-d="1"]').disabled = !many || dk.index >= dk.count - 1;
+      }
+      syncBar();
+      function post(msg) {
+        try {
+          if (frame.contentWindow) frame.contentWindow.postMessage(Object.assign({ source: "leo-embed-host" }, msg), "*");
+        } catch (_) {}
+      }
+      state.onDeckInfo = function (d) {
+        dk.count = Math.max(0, d.count | 0);
+        dk.index = Math.max(0, d.index | 0);
+        if (dk.pendingIndex && dk.index !== dk.pendingIndex && dk.pendingIndex < dk.count) {
+          var to = dk.pendingIndex;
+          dk.pendingIndex = 0;
+          post({ type: "goto", i: to });
+          return;
+        }
+        dk.pendingIndex = 0;
+        syncBar();
+      };
+      bar.addEventListener("click", function (e) {
+        var b = e.target.closest("button");
+        if (!b || b.disabled) return;
+        e.preventDefault();
+        if (b.hasAttribute("data-open")) {
+          openBoardEmbedOriginal(state.noteId, state.sheetId);
+          return;
+        }
+        post({ type: "go", d: +b.getAttribute("data-d") });
+      });
+      frame.srcdoc = deckEmbedSrcdoc(html);
+      dk.win = frame.contentWindow;
+      deckEmbedFrames.set(dk.win, state);
+    }
+
+    function render(sheet) {
+      if (state.destroyed) return;
+      var k = embedKindOf(sheet);
+      if (!sheet || !k) {
+        showMessage(sheet ? "Лист больше не " + EMBED_KIND_RU[state.kind].toLowerCase() : EMBED_GONE_RU[state.kind] + " или нет доступа", !!sheet);
+        return;
+      }
+      if ((k === "web") !== (state.kind === "web")) {
+        showMessage("Тип листа поменялся — откройте оригинал", true);
+        return;
+      }
+      var changed = false;
+      if (k !== state.kind) {
+        state.kind = k;
+        changed = true;
+      }
+      var title = String(sheet.title || EMBED_KIND_RU[k]);
+      if (title !== state.title) {
+        state.title = title;
+        changed = true;
+        if (api && api.isEditable && api.isEditable() && api.setTitle) api.setTitle(title);
+      }
+      if (changed) renderTag();
+      var body = String(sheet.body || sheet.description || "");
+      if (k === "web") renderDeck(body);
+      else renderBoard(body);
     }
 
     function refresh() {
@@ -32421,8 +32584,8 @@
       if (state.started && String(state.noteId) === String(noteSheetsNoteId() || "")) render(sheet);
     };
 
-    showMessage("Загружаю доску…", false);
-    // Доску грузим, только когда рамка видна: длинный документ с несколькими досками не тормозит.
+    showMessage("Загружаю…", false);
+    // Грузим, только когда рамка видна: длинный документ с несколькими досками не тормозит.
     var io = null;
     function start() {
       if (state.started || state.destroyed) return;
@@ -32445,7 +32608,7 @@
 
     return {
       update: function (next) {
-        if (next && next.title && next.title !== state.title && !state.board) {
+        if (next && next.title && next.title !== state.title && !state.board && !state.deck) {
           state.title = String(next.title);
           renderTag();
         }
@@ -32455,13 +32618,12 @@
         state.destroyed = true;
         if (io) io.disconnect();
         boardEmbeds.delete(state);
-        if (state.board) state.board.destroy();
-        state.board = null;
+        dropViews();
       },
     };
   }
 
-  /** Лист-доска своего документа изменился (правка, Лео, чужая правка) — обновить её рамки в тексте. */
+  /** Доска / макет / презентация своего документа изменились (правка, Лео, чужая правка) — обновить рамки. */
   function refreshBoardEmbedsForSheet(sheet) {
     if (!sheet || !boardEmbeds.size) return;
     var sid = String(sheet.id);
@@ -32470,16 +32632,29 @@
     });
   }
 
-  /** «/» в пустой строке: «Новая доска», «Лео, нарисуй схему». insert(attrs) ставит блок туда, где был «/». */
+  var EMBED_SLASH_CREATE = {
+    new: { kind: "board", title: "Доска" },
+    "new-design": { kind: "design", title: "Макет" },
+    "new-web": { kind: "web", title: "Презентация" },
+    leo: { kind: "board", title: "Схема" },
+  };
+
+  /** «/» в пустой строке: новая доска / макет / презентация, «Лео, нарисуй схему». insert(attrs) ставит блок туда, где был «/». */
   async function boardFromSlash(action, insert) {
     var nid = String(noteSheetsNoteId() || "");
     if (!nid) {
       showNoteToast("Сначала сохраните документ");
       return;
     }
-    var sheet = await createNoteSheet({ kind: "board", title: action === "leo" ? "Схема" : "Доска", noOpen: true });
+    var spec = EMBED_SLASH_CREATE[action] || EMBED_SLASH_CREATE.new;
+    var sheet = await createNoteSheet({ kind: spec.kind, title: spec.title, noOpen: true });
     if (!sheet) return;
-    insert({ noteId: String(noteSheetsNoteId() || nid), sheetId: String(sheet.id), title: String(sheet.title || "") });
+    insert({
+      noteId: String(noteSheetsNoteId() || nid),
+      sheetId: String(sheet.id),
+      title: String(sheet.title || ""),
+      kind: embedKindOf(sheet) || spec.kind,
+    });
     if (action === "leo") {
       // Лео рисует в открытую доску: открываем её, а в чат кладём просьбу — отправляет человек.
       await switchLeftSheet(sheet.id);
@@ -32504,29 +32679,45 @@
     openBoardEmbedOriginal(noteSheetsNoteId(), sheet.id);
   }
 
-  /** «+» → «Доска»: доски этого документа и (по запросу) других. */
-  function searchBoardRefItems(query, done) {
+  /** «+» → «Доска» / «Макет» / «Презентация» (kind board | design | deck; embed — все три):
+   * листы этого документа и (по запросу) других. */
+  function searchBoardRefItems(query, done, kind) {
     var q = String(query || "").trim().toLowerCase();
     var current = String(noteSheetsNoteId() || "");
+    var mixed = kind === "embed";
+    function fits(s) {
+      var k = embedKindOf(s);
+      if (!k || isTempSheetId(s.id)) return false;
+      if (mixed) return true;
+      return kind === "deck" ? k === "web" : k === kind;
+    }
+    function row(s, noteId, where) {
+      var k = embedKindOf(s);
+      return {
+        boardEmbed: true,
+        embedKind: k,
+        noteId: noteId,
+        sheetId: String(s.id),
+        label: String(s.title || EMBED_KIND_RU[k]),
+        hint: mixed ? EMBED_KIND_RU[k] + " · " + where : where,
+      };
+    }
     var own = noteSheetState.sheets
       .filter(function (s) {
-        return s && isBoardSheet(s) && !isTempSheetId(s.id) && (!q || String(s.title || "").toLowerCase().indexOf(q) >= 0);
+        return s && fits(s) && (!q || String(s.title || "").toLowerCase().indexOf(q) >= 0);
       })
       .map(function (s) {
-        return { boardEmbed: true, noteId: current, sheetId: String(s.id), label: String(s.title || "Доска"), hint: "этот документ" };
+        return row(s, current, "этот документ");
       });
-    if (!q) {
-      done(own);
-      return;
-    }
     done(own);
+    if (!q) return;
     var notes = ((notesDataCache && notesDataCache.local_notes) || [])
       .filter(function (n) {
         var id = String((n && n.id) || "");
         return id && id !== current && id.indexOf("tmp_") !== 0;
       })
       .slice(0, 40);
-    // Названия досок без загрузки листов не знаем — ищем по названию документа, листы грузим у первых совпавших.
+    // Названия листов без загрузки не знаем — ищем по названию документа, листы грузим у первых совпавших.
     var hit = notes
       .filter(function (n) {
         return noteRefDisplayTitle(n).toLowerCase().indexOf(q) >= 0;
@@ -32544,34 +32735,28 @@
       })
     ).then(function (rows) {
       var more = [];
-      rows.forEach(function (row) {
-        row.sheets.forEach(function (s) {
-          if (!s || !isBoardSheet(s)) return;
-          more.push({
-            boardEmbed: true,
-            noteId: String(row.note.id),
-            sheetId: String(s.id),
-            label: String(s.title || "Доска"),
-            hint: noteRefDisplayTitle(row.note),
-          });
+      rows.forEach(function (r) {
+        r.sheets.forEach(function (s) {
+          if (s && fits(s)) more.push(row(s, String(r.note.id), noteRefDisplayTitle(r.note)));
         });
       });
       done(own.concat(more).slice(0, 20));
     });
   }
 
-  /** Меню «⋯» доски: «Вставить в текст» — в конец основного листа. */
+  /** Меню «⋯» доски, макета, презентации: «Вставить в текст» — в конец основного листа. */
   async function insertBoardIntoText(sheet) {
     var nid = String(noteSheetsNoteId() || "");
-    if (!sheet || !nid) return;
+    var k = embedKindOf(sheet);
+    if (!sheet || !nid || !k) return;
     if (!isPrimarySheetId(noteSheetState.leftId)) await switchLeftSheet(NOTE_SHEET_MAIN);
     var ed = getLeftNoteRichEditor();
     if (!ed || typeof ed.insertBoardEmbed !== "function") {
       showNoteToast("Редактор ещё не готов — попробуйте ещё раз");
       return;
     }
-    ed.insertBoardEmbed({ noteId: nid, sheetId: String(sheet.id), title: String(sheet.title || "") }, { atEnd: true });
-    showNoteToast("Доска вставлена в конец текста");
+    ed.insertBoardEmbed({ noteId: nid, sheetId: String(sheet.id), title: String(sheet.title || ""), kind: k }, { atEnd: true });
+    showNoteToast(EMBED_KIND_RU[k] + " — в конце текста");
   }
 
   function boardSheetOptions(sheet) {
@@ -34925,8 +35110,8 @@
       searchNoteLikeRefItems(query, finish);
       return;
     }
-    if (kind === "board") {
-      searchBoardRefItems(query, finish);
+    if (kind === "board" || kind === "design" || kind === "deck" || kind === "embed") {
+      searchBoardRefItems(query, finish, kind);
       return;
     }
     if (kind === "task") {
@@ -41967,7 +42152,7 @@
   function upsertNoteSheet(item) {
     if (!item) return;
     var id = String(item.id);
-    if (isBoardSheet(item)) refreshBoardEmbedsForSheet(item);
+    if (isBoardSheet(item) || isWebSheet(item)) refreshBoardEmbedsForSheet(item);
     for (var i = 0; i < noteSheetState.sheets.length; i++) {
       if (String(noteSheetState.sheets[i].id) === id) {
         noteSheetState.sheets[i] = item;
@@ -43105,7 +43290,7 @@
       var live = document.querySelector('#note-editor-sheets .note-sheet-chip[data-sheet-id="' + String(sheet.id) + '"]') || chip;
       startNoteSheetRename(live, sheet);
     });
-    if (isBoardSheet(sheet) && !isTempSheetId(sheet.id)) {
+    if (embedKindOf(sheet) && !isTempSheetId(sheet.id)) {
       item("Вставить в текст", function () {
         insertBoardIntoText(sheet);
       });

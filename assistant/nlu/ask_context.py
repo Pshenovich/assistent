@@ -187,7 +187,7 @@ def pack_attached_notes(
                 continue
             title = str(row.get("title") or "Заметка").strip() or "Заметка"
             body = str(row.get("body") or row.get("description") or "")
-            if "data-leo-board" in body:
+            if "data-leo-board" in body or "data-leo-deck" in body:
                 from assistant.lib.board_doc import expand_board_embeds
                 from assistant.stores import note_sheets
 

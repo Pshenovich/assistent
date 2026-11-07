@@ -325,9 +325,9 @@ def list_share_boards(
 
 
 def share_board_embeds(note: dict[str, Any], body_html: str) -> dict[str, Any]:
-    """Доски-встройки в тексте публичной ссылки: {"noteId:sheetId": {title, board}}.
+    """Доски, макеты, презентации в тексте публичной ссылки: {"noteId:sheetId": {title, board} | {title, html}}.
 
-    Только доски этого же документа: у публичной ссылки нет зрителя, чужие документы не раскрываем.
+    Только листы этого же документа: у публичной ссылки нет зрителя, чужие документы не раскрываем.
     """
     from assistant.lib import board_doc
 
@@ -337,12 +337,17 @@ def share_board_embeds(note: dict[str, Any], body_html: str) -> dict[str, Any]:
         if ref_note != nid:
             continue
         sh = get_extra_sheet(nid, ref_sheet)
-        if not sh or _normalize_kind(sh.get("kind")) != SHEET_KIND_BOARD:
-            continue
-        out[f"{ref_note}:{ref_sheet}"] = {
-            "title": str(sh.get("title") or "").strip() or "Доска",
-            "board": board_doc.parse_board(sh.get("body") or ""),
-        }
+        kind = _normalize_kind(sh.get("kind")) if sh else ""
+        if kind == SHEET_KIND_BOARD:
+            out[f"{ref_note}:{ref_sheet}"] = {
+                "title": str(sh.get("title") or "").strip() or "Доска",
+                "board": board_doc.parse_board(sh.get("body") or ""),
+            }
+        elif kind == SHEET_KIND_WEB and str(sh.get("body") or "").strip():
+            out[f"{ref_note}:{ref_sheet}"] = {
+                "title": str(sh.get("title") or "").strip() or "Презентация",
+                "html": str(sh.get("body") or ""),
+            }
     return out
 
 
@@ -426,9 +431,10 @@ def board_embed_resolver(note_id: int, viewer_user_id: Optional[int] = None):
             if not notes_store.get_readable_note(int(viewer_user_id), int(nid)):
                 return None
         sh = get_extra_sheet(int(nid), int(sid))
-        if not sh or str(sh.get("kind") or "") != "board":
+        kind = _normalize_kind(sh.get("kind")) if sh else ""
+        if kind not in (SHEET_KIND_BOARD, SHEET_KIND_WEB):
             return None
-        return (str(sh.get("title") or "Доска"), sh.get("body") or "")
+        return (str(sh.get("title") or ""), sh.get("body") or "", "web" if kind == SHEET_KIND_WEB else "board")
 
     return _resolve
 

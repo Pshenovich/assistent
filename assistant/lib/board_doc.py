@@ -736,47 +736,85 @@ def board_text_html(body: Any) -> str:
     return "".join(f"<p>{html.escape(line)}</p>" for line in text.split("\n") if line.strip())
 
 
-# ---- Доска в тексте документа ----
-# Узел редактора leoBoardEmbed: <div data-leo-board="noteId:sheetId" data-height=".." data-title="..">Доска «…»</div>.
-# Сама доска — отдельный лист; в местах, которые читают текст листа (экспорт, MCP, контекст Лео), рамку
-# заменяем текстом доски.
+# ---- Доска, макет, презентация в тексте документа ----
+# Узел редактора leoBoardEmbed: <div data-leo-board="noteId:sheetId" data-height=".." data-title="..">Доска «…»</div>
+# (макет — то же с data-kind="design"), презентация — <div data-leo-deck="noteId:sheetId">Презентация «…»</div>.
+# Сам лист — отдельный; в местах, которые читают текст листа (экспорт, MCP, контекст Лео), рамку
+# заменяем его текстом.
 
 BOARD_EMBED_RE = re.compile(
-    r"<div\b[^>]*\bdata-leo-board=\"(\d{1,18}):(\d{1,18})\"[^>]*>.*?</div>",
+    r"<div\b[^>]*\bdata-leo-(board|deck)=\"(\d{1,18}):(\d{1,18})\"[^>]*>.*?</div>",
     re.S | re.I,
 )
+_DECK_SLIDE_RE = re.compile(r"<(?:section|div)\b[^>]*\bclass=\"[^\"]*\bslide\b[^\"]*\"", re.I)
+
+
+def deck_text_html(html_doc: Any) -> str:
+    """Текст презентации по слайдам — «Слайд N: …» абзацами (скрипты и стили выкинуты)."""
+    raw = re.sub(r"<(script|style|template)\b.*?</\1>", " ", str(html_doc or ""), flags=re.S | re.I)
+    body = re.search(r"<body\b[^>]*>(.*)</body>", raw, re.S | re.I)
+    raw = body.group(1) if body else raw
+    starts = [m.start() for m in _DECK_SLIDE_RE.finditer(raw)]
+    chunks = [raw[a:b] for a, b in zip(starts, starts[1:] + [len(raw)])] if starts else [raw]
+
+    def _text(chunk: str) -> str:
+        t = re.sub(r"<br\s*/?>|</(p|div|h\d|li|section|span)>", " ", chunk, flags=re.I)
+        t = html.unescape(re.sub(r"<[^>]+>", " ", t))
+        return re.sub(r"\s+", " ", t).strip()
+
+    out = []
+    for n, chunk in enumerate(chunks, 1):
+        t = _text(chunk)
+        if t:
+            out.append(f"<p>{html.escape(('Слайд ' + str(n) + ': ') if starts else '')}{html.escape(t[:2000])}</p>")
+    return "".join(out[:60])
+
+
+def _board_is_design(body: Any) -> bool:
+    try:
+        return str((json.loads(body) if isinstance(body, str) else body or {}).get("mode") or "") == "design"
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def board_embed_refs(html_text: Any) -> list[tuple[int, int]]:
     """(note_id, sheet_id) всех досок-встроек в HTML листа, по порядку, без повторов."""
     out: list[tuple[int, int]] = []
     for m in BOARD_EMBED_RE.finditer(str(html_text or "")):
-        ref = (int(m.group(1)), int(m.group(2)))
+        ref = (int(m.group(2)), int(m.group(3)))
         if ref not in out:
             out.append(ref)
     return out
 
 
 def expand_board_embeds(html_text: Any, resolve: Any) -> str:
-    """Рамки досок → заголовок «Доска «…»» и текст доски абзацами.
+    """Рамки досок, макетов, презентаций → заголовок «Доска «…»» и текст листа абзацами.
 
-    resolve(note_id, sheet_id) → (title, board_body) или None (нет доступа / удалена) — тогда остаётся подпись.
+    resolve(note_id, sheet_id) → (title, body, kind) или None (нет доступа / удалён) — тогда остаётся подпись.
+    kind — "board" или "web"; тип листа должен совпасть с рамкой.
     """
     raw = str(html_text or "")
-    if "data-leo-board" not in raw:
+    if "data-leo-board" not in raw and "data-leo-deck" not in raw:
         return raw
 
     def _one(m: re.Match) -> str:
+        want = "web" if m.group(1).lower() == "deck" else "board"
         try:
-            got = resolve(int(m.group(1)), int(m.group(2)))
-        except Exception:  # noqa: BLE001 — одна битая доска не ломает весь текст
+            got = resolve(int(m.group(2)), int(m.group(3)))
+        except Exception:  # noqa: BLE001 — один битый лист не ломает весь текст
+            got = None
+        if got and (got[2] if len(got) > 2 else "board") != want:
             got = None
         if not got:
-            label = re.sub(r"<[^>]+>", "", m.group(0)).strip() or "Доска"
+            label = re.sub(r"<[^>]+>", "", m.group(0)).strip() or ("Презентация" if want == "web" else "Доска")
             return f"<p>[{html.escape(html.unescape(label))}]</p>"
-        title, body = got
-        head = f"<p><strong>Доска «{html.escape(str(title or 'Доска'))}»</strong></p>"
-        return head + (board_text_html(body) or "<p>(доска пуста)</p>")
+        title, body = got[0], got[1]
+        if want == "web":
+            kind_ru, text = "Презентация", deck_text_html(body)
+        else:
+            kind_ru, text = ("Макет" if _board_is_design(body) else "Доска"), board_text_html(body)
+        head = f"<p><strong>{kind_ru} «{html.escape(str(title or kind_ru))}»</strong></p>"
+        return head + (text or "<p>(пусто)</p>")
 
     return BOARD_EMBED_RE.sub(_one, raw)
 

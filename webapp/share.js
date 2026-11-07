@@ -130,6 +130,19 @@
   // Доски, вставленные в текст (div[data-leo-board]): та же доска, только просмотр, колесо листает страницу.
   function mountShareBoardEmbeds(bodyEl, data) {
     var embeds = (data && data.board_embeds) || {};
+    // Презентации: тот же показ, что у листа-презентации ниже (iframe-песочница, свои кнопки слайдов).
+    bodyEl.querySelectorAll("div[data-leo-deck]").forEach(function (el) {
+      var got = embeds[String(el.getAttribute("data-leo-deck") || "")];
+      if (!got || !got.html) return;
+      el.textContent = "";
+      el.classList.add("share-deck-embed");
+      var frame = document.createElement("iframe");
+      frame.className = "share-deck-embed-frame";
+      frame.setAttribute("sandbox", "allow-scripts allow-modals");
+      frame.setAttribute("title", String(got.title || "Презентация"));
+      frame.srcdoc = withDeckPrint(String(got.html));
+      el.appendChild(frame);
+    });
     if (!window.LeoBoard) return;
     bodyEl.querySelectorAll("div[data-leo-board]").forEach(function (el) {
       var ref = String(el.getAttribute("data-leo-board") || "");
