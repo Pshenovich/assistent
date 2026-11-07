@@ -468,7 +468,13 @@ def _note_doc_sections(note: dict[str, Any]) -> list[tuple[str, str]]:
 
             body = board_text_html(s.get("body") or "")
         else:
-            body = tnotes._as_html(str(s.get("body") or s.get("description") or ""))
+            from assistant.lib.board_doc import expand_board_embeds
+
+            raw = str(s.get("body") or s.get("description") or "")
+            if "data-leo-board" in raw and note.get("id"):
+                # Доска в тексте — её текстом; доски других документов без зрителя не раскрываем.
+                raw = expand_board_embeds(raw, note_sheets.board_embed_resolver(int(note["id"])))
+            body = tnotes._as_html(raw)
         if not _html_to_plain(body).strip():
             continue
         out.append((str(s.get("title") or "").strip(), body))

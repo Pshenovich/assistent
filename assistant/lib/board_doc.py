@@ -736,6 +736,51 @@ def board_text_html(body: Any) -> str:
     return "".join(f"<p>{html.escape(line)}</p>" for line in text.split("\n") if line.strip())
 
 
+# ---- Доска в тексте документа ----
+# Узел редактора leoBoardEmbed: <div data-leo-board="noteId:sheetId" data-height=".." data-title="..">Доска «…»</div>.
+# Сама доска — отдельный лист; в местах, которые читают текст листа (экспорт, MCP, контекст Лео), рамку
+# заменяем текстом доски.
+
+BOARD_EMBED_RE = re.compile(
+    r"<div\b[^>]*\bdata-leo-board=\"(\d{1,18}):(\d{1,18})\"[^>]*>.*?</div>",
+    re.S | re.I,
+)
+
+
+def board_embed_refs(html_text: Any) -> list[tuple[int, int]]:
+    """(note_id, sheet_id) всех досок-встроек в HTML листа, по порядку, без повторов."""
+    out: list[tuple[int, int]] = []
+    for m in BOARD_EMBED_RE.finditer(str(html_text or "")):
+        ref = (int(m.group(1)), int(m.group(2)))
+        if ref not in out:
+            out.append(ref)
+    return out
+
+
+def expand_board_embeds(html_text: Any, resolve: Any) -> str:
+    """Рамки досок → заголовок «Доска «…»» и текст доски абзацами.
+
+    resolve(note_id, sheet_id) → (title, board_body) или None (нет доступа / удалена) — тогда остаётся подпись.
+    """
+    raw = str(html_text or "")
+    if "data-leo-board" not in raw:
+        return raw
+
+    def _one(m: re.Match) -> str:
+        try:
+            got = resolve(int(m.group(1)), int(m.group(2)))
+        except Exception:  # noqa: BLE001 — одна битая доска не ломает весь текст
+            got = None
+        if not got:
+            label = re.sub(r"<[^>]+>", "", m.group(0)).strip() or "Доска"
+            return f"<p>[{html.escape(html.unescape(label))}]</p>"
+        title, body = got
+        head = f"<p><strong>Доска «{html.escape(str(title or 'Доска'))}»</strong></p>"
+        return head + (board_text_html(body) or "<p>(доска пуста)</p>")
+
+    return BOARD_EMBED_RE.sub(_one, raw)
+
+
 # ---- SVG (публичная страница, PDF) ----
 
 # Цвета хранятся ключами палитры (клиент красит их под тему); здесь — светлый вариант.

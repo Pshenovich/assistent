@@ -3406,6 +3406,7 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             "body": sanitize_rich_html(body[:120000]),
             "canvases": canvases,
             "boards": boards,
+            "board_embeds": note_sheets_store.share_board_embeds(note, body[:120000]),
             "updated_at": note.get("updated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,

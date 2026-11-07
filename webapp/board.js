@@ -200,6 +200,7 @@
     plus: '<path d="M10 4v12M4 10h12"/>',
     minus: '<path d="M4 10h12"/>',
     fit: '<path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4"/>',
+    external: '<path d="M11 3h6v6M17 3l-8 8"/><path d="M15 12v4a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1h4"/>',
     grid: '<path d="M3 7.5h14M3 12.5h14M7.5 3v14M12.5 3v14"/>',
     map: '<rect x="3" y="4" width="14" height="12" rx="1.5"/><rect x="9" y="9" width="5" height="4"/>',
     download: '<path d="M10 3v10M6 9l4 4 4-4M4 16h12"/>',
@@ -819,9 +820,12 @@
   function create(opts) {
     var o = opts || {};
     var host = o.host;
-    var readOnly = !!o.readOnly;
+    // embed — доска в тексте документа: только просмотр, колесо без ⌘ прокручивает страницу,
+    // свой вид не запоминается (он у оригинала).
+    var embed = !!o.embed;
+    var readOnly = embed || !!o.readOnly;
     var sheetId = String(o.sheetId || "");
-    var viewKey = sheetId ? "leo-board-view:" + sheetId : "";
+    var viewKey = sheetId && !embed ? "leo-board-view:" + sheetId : "";
 
     // ---- состояние ----
     var els = new Map();
@@ -840,7 +844,7 @@
     var editing = null; // {id, node}
     var spaceDown = false;
     var showGrid = true;
-    var showMap = (host.getBoundingClientRect().width || window.innerWidth) > 640;
+    var showMap = !embed && (host.getBoundingClientRect().width || window.innerWidth) > 640;
     var guides = [];
     var snapTarget = null; // {el, side}
     var marquee = null;
@@ -891,7 +895,7 @@
 
     // ---- DOM ----
     var root = document.createElement("div");
-    root.className = "leo-board" + (readOnly ? " is-readonly" : "");
+    root.className = "leo-board" + (readOnly ? " is-readonly" : "") + (embed ? " is-embed" : "");
     root.innerHTML =
       '<div class="lb-stage" tabindex="0" aria-label="Доска">' +
       '<div class="lb-world"></div>' +
@@ -3881,7 +3885,10 @@
         '<button type="button" class="lb-btn lb-pct" data-act="zoom-100" title="Масштаб 100%">' + pct + "</button>" +
         '<button type="button" class="lb-btn" data-act="zoom-in" title="Приблизить (+)">' + icon("plus") + "</button>" +
         '<button type="button" class="lb-btn" data-act="fit" title="Показать всё (⇧1)">' + icon("fit") + "</button>" +
-        '<button type="button" class="lb-btn lb-map-btn' + (showMap ? " is-on" : "") + '" data-act="map" title="Мини-карта">' + icon("map") + "</button>" +
+        (embed ? "" : '<button type="button" class="lb-btn lb-map-btn' + (showMap ? " is-on" : "") + '" data-act="map" title="Мини-карта">' + icon("map") + "</button>") +
+        (o.onOpenOriginal
+          ? '<span class="lb-sep"></span><button type="button" class="lb-btn lb-open-btn" data-act="open" title="Открыть доску для правки">' + icon("external") + "<span>Открыть оригинал</span></button>"
+          : "") +
         (readOnly
           ? ""
           : '<button type="button" class="lb-btn' + (showGrid ? " is-on" : "") + '" data-act="grid" title="Сетка и привязка">' + icon("grid") + "</button>" +
@@ -3899,6 +3906,10 @@
       if (!b || b.disabled) return;
       var act = b.getAttribute("data-act");
       if (/^zoom|^fit$/.test(act)) autoFit = false;
+      if (act === "open") {
+        if (o.onOpenOriginal) o.onOpenOriginal();
+        return;
+      }
       if (act === "chat") {
         if (editing) finishEdit();
         if (o.onOpenChat) o.onOpenChat();
@@ -8742,6 +8753,9 @@
 
     // ---- колесо и клавиши ----
     function onWheel(e) {
+      // В тексте документа колесо прокручивает страницу; доску двигает только горизонтальный свайп,
+      // масштаб — щипок или ⌘/Ctrl + колесо.
+      if (embed && !(e.ctrlKey || e.metaKey) && Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
       e.preventDefault();
       autoFit = false;
       var r = stageRect();

@@ -409,13 +409,16 @@ def _read(src: KbSource, note_id: int) -> dict[str, Any]:
         raise ValueError("Документ не найден")
     meta = org.get(note_id) or {}
     owner = note_members.get_profile(n.get("owner_user_id")) if n.get("owner_user_id") else None
-    parts = [html_to_text(str(n.get("body") or ""))]
+    from assistant.lib.board_doc import expand_board_embeds
+
+    embeds = note_sheets.board_embed_resolver(note_id, src.user_id)
+    parts = [html_to_text(expand_board_embeds(str(n.get("body") or ""), embeds))]
     for sh in note_sheets.list_extra_sheets(note_id):
         kind = str(sh.get("kind") or "doc")
         if kind == "web":
             continue
         raw = str(sh.get("body") or "")
-        text = board_plain_text(raw) if kind == "board" else html_to_text(raw)
+        text = board_plain_text(raw) if kind == "board" else html_to_text(expand_board_embeds(raw, embeds))
         if text.strip():
             parts.append(f"## Лист «{sh.get('title') or 'Лист'}»\n\n{text.strip()}")
     return {

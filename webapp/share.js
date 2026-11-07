@@ -127,6 +127,25 @@
     return '<pre class="transcript">' + escapeHtml(raw || "—") + "</pre>";
   }
 
+  // Доски, вставленные в текст (div[data-leo-board]): та же доска, только просмотр, колесо листает страницу.
+  function mountShareBoardEmbeds(bodyEl, data) {
+    var embeds = (data && data.board_embeds) || {};
+    if (!window.LeoBoard) return;
+    bodyEl.querySelectorAll("div[data-leo-board]").forEach(function (el) {
+      var ref = String(el.getAttribute("data-leo-board") || "");
+      var got = embeds[ref];
+      if (!got || !got.board) return;
+      var h = parseInt(el.getAttribute("data-height"), 10);
+      el.textContent = "";
+      el.classList.add("share-board-embed");
+      el.style.height = Math.max(160, Math.min(1200, isFinite(h) ? h : 320)) + "px";
+      var board = window.LeoBoard.create({ host: el, json: JSON.stringify(got.board), embed: true, readOnly: true, title: got.title });
+      requestAnimationFrame(function () {
+        board.fitAll();
+      });
+    });
+  }
+
   function renderShareCanvases(data) {
     var host = document.getElementById("share-canvases");
     if (!host) return;
@@ -493,6 +512,7 @@
         if (String(data.kind || "") !== "chat") buildShareToc(bodyEl);
       }
       renderShareCanvases(data);
+      if (bodyEl) mountShareBoardEmbeds(bodyEl, data);
       if (doc) doc.classList.remove("hidden");
       var pendingAuth = parseTgAuthResultFromHash();
       var ready = Promise.resolve(data);

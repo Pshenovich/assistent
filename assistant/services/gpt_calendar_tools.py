@@ -1597,6 +1597,11 @@ def _material_digest(ctx: GptCalendarContext, note_id: int, *, full: bool) -> di
         text = summary or (tnotes.transcript_html(note) if full else "")
     else:
         text = str(note.get("body") or "")
+        if "data-leo-board" in text:
+            from assistant.lib.board_doc import expand_board_embeds
+            from assistant.stores import note_sheets
+
+            text = expand_board_embeds(text, note_sheets.board_embed_resolver(note_id, ctx.uid))
     from assistant.services.focus_items import marks_to_text
 
     text = marks_to_text(text)

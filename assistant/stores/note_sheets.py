@@ -324,6 +324,28 @@ def list_share_boards(
     return out
 
 
+def share_board_embeds(note: dict[str, Any], body_html: str) -> dict[str, Any]:
+    """Доски-встройки в тексте публичной ссылки: {"noteId:sheetId": {title, board}}.
+
+    Только доски этого же документа: у публичной ссылки нет зрителя, чужие документы не раскрываем.
+    """
+    from assistant.lib import board_doc
+
+    nid = int(note.get("id") or 0)
+    out: dict[str, Any] = {}
+    for ref_note, ref_sheet in board_doc.board_embed_refs(body_html)[:20]:
+        if ref_note != nid:
+            continue
+        sh = get_extra_sheet(nid, ref_sheet)
+        if not sh or _normalize_kind(sh.get("kind")) != SHEET_KIND_BOARD:
+            continue
+        out[f"{ref_note}:{ref_sheet}"] = {
+            "title": str(sh.get("title") or "").strip() or "Доска",
+            "board": board_doc.parse_board(sh.get("body") or ""),
+        }
+    return out
+
+
 def copy_shared_selection(
     src_note: dict[str, Any],
     sheet_ids: list[str] | None,
@@ -387,6 +409,28 @@ def get_extra_sheet(note_id: int, sheet_id: int) -> Optional[dict[str, Any]]:
         )
         row = cur.fetchone()
     return _row_to_dict(row) if row else None
+
+
+def board_embed_resolver(note_id: int, viewer_user_id: Optional[int] = None):
+    """resolve(note_id, sheet_id) для board_doc.expand_board_embeds.
+
+    Доска того же документа видна всем, кто видит документ. Доска другого документа — только если
+    viewer_user_id его читает; без зрителя (фоновые задачи) — не раскрываем.
+    """
+    home = int(note_id)
+
+    def _resolve(nid: int, sid: int):
+        if int(nid) != home:
+            if viewer_user_id is None:
+                return None
+            if not notes_store.get_readable_note(int(viewer_user_id), int(nid)):
+                return None
+        sh = get_extra_sheet(int(nid), int(sid))
+        if not sh or str(sh.get("kind") or "") != "board":
+            return None
+        return (str(sh.get("title") or "Доска"), sh.get("body") or "")
+
+    return _resolve
 
 
 def extra_count(note_id: int) -> int:

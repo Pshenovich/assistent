@@ -24670,3 +24670,105 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 #note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-web-back:hover {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
+
+/* Доска в тексте документа (узел leoBoardEmbed): рамка только для просмотра, сама доска — webapp/board.js (embed). */
+.note-board-embed {
+  position: relative;
+  margin: 0.75em 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.note-board-embed.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.note-board-embed-host {
+  position: absolute;
+  inset: 0;
+}
+
+.note-board-embed-host > .leo-board {
+  position: absolute;
+  inset: 0;
+}
+
+.note-board-embed-tag {
+  position: absolute;
+  z-index: 6;
+  left: 8px;
+  top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 260px);
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font: 500 12px/1.4 var(--font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.note-board-embed-tag svg {
+  flex-shrink: 0;
+}
+
+.note-board-embed-msg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  text-align: center;
+  font: 14px/1.4 var(--font);
+  color: var(--text-secondary);
+}
+
+.note-board-embed-msg button {
+  font: inherit;
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.note-board-embed-grip {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  bottom: 2px;
+  width: 44px;
+  height: 6px;
+  margin-left: -22px;
+  border-radius: 3px;
+  background: var(--border-strong);
+  cursor: ns-resize;
+  opacity: 0;
+  transition: opacity 0.15s;
+  touch-action: none;
+}
+
+.note-board-embed:hover .note-board-embed-grip,
+.note-board-embed.is-resizing .note-board-embed-grip {
+  opacity: 1;
+}
+
+.ProseMirror:not([contenteditable="true"]) .note-board-embed-grip {
+  display: none;
+}

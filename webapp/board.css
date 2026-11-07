@@ -2501,3 +2501,27 @@ html:has(.leo-board) body {
   padding: 32px 16px;
   text-align: center;
 }
+
+/* Доска в тексте документа (LeoBoard.create({embed: true})): без мини-карты, вертикальная прокрутка страницы пальцем. */
+.leo-board.is-embed .lb-stage {
+  touch-action: pan-y;
+}
+
+.leo-board.is-embed .lb-zoom {
+  right: 8px;
+  top: 8px;
+}
+
+.leo-board.is-embed .lb-open-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  padding: 0 10px 0 8px;
+  white-space: nowrap;
+}
+
+.leo-board.is-embed .lb-open-btn svg {
+  width: 16px;
+  height: 16px;
+}
