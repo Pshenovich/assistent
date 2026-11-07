@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Восстановление Leo из S3 в пустой каталог (сервер погиб / репетиция).
 
-  restore_from_s3.py <каталог> [--prefix ИМЯ_СЕРВЕРА] [--stamp STAMP] [--no-litestream]
+  restore_from_s3.py <каталог> [--prefix ИМЯ_СЕРВЕРА] [--stamp STAMP] [--no-litestream] [--from timeweb]
 
 1. Последняя ночная копия (или --stamp) из <prefix>/daily/: базы *.gz и state.tar.gz
    (токены OAuth, .env, data/users …) → в <каталог>.
@@ -9,7 +9,9 @@
    потеря данных — секунды, а не с прошлой ночи.
 3. quick_check каждой базы и число строк по таблицам (сверить со старым сервером).
 
-Ключи — S3_BACKUP_* из /opt/assistant/.env или окружения. --prefix по умолчанию — имя этого сервера,
+--from timeweb — ночная копия из второго хранилища (Timeweb), если Selectel недоступен; Litestream
+всё равно пробуется из Selectel (он пишет только туда), при ошибке остаются базы ночной копии.
+Ключи — S3_BACKUP_* / TIMEWEB_S3_* из /opt/assistant/.env или окружения. --prefix по умолчанию — имя этого сервера,
 поэтому на НОВОЙ машине его нужно указать (имя погибшего сервера: см. backup_s3.py list).
 Ничего не пишет в /opt/assistant: восстановили в каталог → проверили → остановили сервисы → скопировали.
 """
@@ -30,7 +32,7 @@ import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from backup_s3 import S3, _env, fetch  # noqa: E402
+from backup_s3 import S3, TARGETS, _env, fetch  # noqa: E402
 
 
 def litestream_dbs(s3: S3, host: str) -> list[str]:
@@ -87,20 +89,22 @@ def main() -> int:
     ap.add_argument("--prefix")
     ap.add_argument("--stamp", default="latest")
     ap.add_argument("--no-litestream", action="store_true")
+    ap.add_argument("--from", dest="source", choices=TARGETS, default="selectel")
     a = ap.parse_args()
     env = _env()
     if a.prefix:
         env["S3_BACKUP_PREFIX"] = a.prefix
         os.environ["S3_BACKUP_PREFIX"] = a.prefix
-    s3 = S3(env)
-    if not s3.configured:
-        raise SystemExit("нет ключей S3_BACKUP_ACCESS_KEY/S3_BACKUP_SECRET_KEY")
+    src = S3(env, a.source)
+    if not src.configured:
+        raise SystemExit(f"нет ключей хранилища {a.source} (S3_BACKUP_* / TIMEWEB_S3_*)")
+    s3 = S3(env)  # Litestream — только Selectel
     target = Path(a.target).resolve()
     target.mkdir(parents=True, exist_ok=True)
 
-    print(f"==> Ночная копия {s3.prefix}/daily/{a.stamp}")
+    print(f"==> Ночная копия {src.name}:{src.bucket}/{src.prefix}/daily/{a.stamp}")
     with tempfile.TemporaryDirectory() as tmp:
-        run = fetch(a.stamp, Path(tmp), "daily")
+        run = fetch(a.stamp, Path(tmp), "daily", src)
         state = run / "state.tar.gz"
         if state.is_file():
             with tarfile.open(state) as tar:
@@ -120,10 +124,16 @@ def main() -> int:
         print(f"  баз из ночной копии: {len(list(run.glob('*.sqlite.gz')))}")
 
     if not a.no_litestream:
-        if not shutil.which("litestream"):
+        if not s3.configured:
+            print("==> Litestream: нет ключей S3_BACKUP_* — базы на момент ночной копии")
+        elif not shutil.which("litestream"):
             print("==> Litestream не установлен — базы на момент ночной копии")
         else:
-            rels = litestream_dbs(s3, s3.prefix)
+            try:
+                rels = litestream_dbs(s3, s3.prefix)
+            except RuntimeError as e:  # Selectel недоступен — остаёмся на ночной копии
+                print(f"==> Litestream недоступен ({e}) — базы на момент ночной копии")
+                rels = []
             print(f"==> Litestream: {len(rels)} баз в litestream/{s3.prefix}/")
             for rel in rels:
                 out = target / rel

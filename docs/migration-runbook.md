@@ -6,6 +6,8 @@
 Новый: **Selectel `161.104.35.44`** (`NEW` ниже), проект Orbita, СПб, 4 vCPU / 16 ГБ / 80 ГБ SSD, Ubuntu 26.04
 (Python 3.12 ставит `provision_server.sh` через uv — системный 3.14). Вход: `ssh -i ~/.ssh/leo_server root@NEW`.
 Бэкапы — S3 Selectel, бакет `orbita-backups` (ru-7, Москва, приватный), ключи `S3_BACKUP_*` в локальном `.env`.
+Второе хранилище (другой провайдер) — S3 Timeweb, бакет `orbita-s3` (`s3.twcstorage.ru`, ru-1), ключи `TIMEWEB_S3_*`
+и `TIMEWEB_SE_URL`: туда же уходит каждая ночная копия; Litestream — только Selectel.
 Оба домена переезжают сразу: `assistent.networ.ru` и `getorbita.me` (+ `www`). DNS обоих — в панели Beget.
 
 **Главное правило:** бот Telegram в каждый момент работает только в одном месте. Если запустить два бота с одним токеном, Telegram отвечает ошибкой 409, и сообщения теряются. Поэтому порядок такой: остановить старый → скопировать данные → запустить новый.
@@ -137,10 +139,11 @@
 | Что | Где | Сколько хранится |
 |---|---|---|
 | Litestream — каждая запись в базы, задержка ~1 с | `orbita-backups/litestream/<сервер>/<база>` | 72 часа, снимок раз в 6 ч |
-| Ночная копия 03:30: все базы + `state.tar.gz` (токены OAuth, `.env`, `data/users`, json-файлы) | `orbita-backups/<сервер>/daily/<время>/` и `/root/leo-backups/daily` | 30 ночей в S3, 14 на диске |
+| Ночная копия 03:30: все базы + `state.tar.gz` (токены OAuth, `.env`, `data/users`, json-файлы) | `orbita-backups/<сервер>/daily/<время>/`, Timeweb `orbita-s3/<сервер>/daily/<время>/` и `/root/leo-backups/daily` | 30 ночей в каждом S3, 14 на диске |
 | Перед каждой выкаткой | `/root/leo-backups/predeploy` (только диск) | 10 |
 
-`<сервер>` — имя машины (`hostname`), на новом — `orbita`. Список копий: `python3 scripts/backup_s3.py list`.
+`<сервер>` — имя машины (`hostname`), на новом — `orbita`. Список копий: `python3 scripts/backup_s3.py list` (оба хранилища). Если Selectel недоступен —
+`restore_from_s3.py <каталог> --prefix orbita --from timeweb`.
 
 ## Восстановление из S3 (если умер сервер) — ~1 час
 
