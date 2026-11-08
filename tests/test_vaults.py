@@ -333,5 +333,86 @@ class VaultsTests(unittest.TestCase):
         self.assertEqual(vaults.watch(), [])
 
 
+class DeviceUnlockTests(unittest.TestCase):
+    """Браузеры без PRF (Arc): обёртку ключа сейфов отдаём только после проверенного касания."""
+
+    def setUp(self) -> None:
+        import base64
+        import hashlib
+        import json
+
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmp.name, "reg.json")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        self.b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+        self.key = ec.generate_private_key(ec.SECP256R1())
+        spki = self.key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+        vaults.setup(OWNER, '{"kty":"EC"}', "cHJpdg", [
+            {"kind": "device", "credential_id": "ZGV2", "salt": "c2FsdA", "wrapped_umk": "c2VjcmV0", "label": "Mac",
+             "public_key": self.b64(spki), "alg": -7, "rp_id": "getorbita.me"},
+            {"kind": "recovery", "salt": "c2FsdDI", "wrapped_umk": "d3JhcDI"},
+        ])
+        self.dev = next(u for u in vaults.my_keys(OWNER)["unlockers"] if u["kind"] == "device")
+
+        def sign(challenge: str, *, origin: str = "https://getorbita.me", rp: str = "getorbita.me",
+                 flags: int = 0x05, count: int = 0, key=None) -> tuple[str, str, str]:
+            cdj = json.dumps({"type": "webauthn.get", "challenge": challenge, "origin": origin}).encode()
+            auth = hashlib.sha256(rp.encode()).digest() + bytes([flags]) + count.to_bytes(4, "big")
+            sig = (key or self.key).sign(auth + hashlib.sha256(cdj).digest(), ec.ECDSA(hashes.SHA256()))
+            return self.b64(cdj), self.b64(auth), self.b64(sig)
+
+        self.sign = sign
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+        notes_store._CONN = None  # type: ignore[attr-defined]
+
+    def test_wrap_hidden_until_touch_verified(self) -> None:
+        self.assertEqual(self.dev["wrapped_umk"], "")
+        ch = vaults.device_challenge(OWNER, self.dev["id"])["challenge"]
+        out = vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch))
+        self.assertEqual(out["wrapped_umk"], "c2VjcmV0")
+        # вызов одноразовый
+        with self.assertRaises(OrgError):
+            vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch))
+
+    def test_bad_touch_rejected(self) -> None:
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        cases = [
+            {"key": ec.generate_private_key(ec.SECP256R1())},  # чужой ключ
+            {"flags": 0x01},  # без проверки пользователя (Touch ID / пароль)
+            {"origin": "https://evil.example"},
+            {"rp": "evil.example"},
+        ]
+        for kw in cases:
+            ch = vaults.device_challenge(OWNER, self.dev["id"])["challenge"]
+            with self.assertRaises(OrgError, msg=str(kw)):
+                vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch, **kw))
+        with self.assertRaises(OrgError):  # подпись под другой вызов
+            vaults.device_challenge(OWNER, self.dev["id"])
+            vaults.unlock_device(OWNER, self.dev["id"], *self.sign("c3RhbGU"))
+        with self.assertRaises(OrgError):  # чужой человек
+            vaults.device_challenge(BACK, self.dev["id"])
+
+    def test_counter_must_grow_and_device_counts_as_last(self) -> None:
+        ch = vaults.device_challenge(OWNER, self.dev["id"])["challenge"]
+        vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch, count=5))
+        ch = vaults.device_challenge(OWNER, self.dev["id"])["challenge"]
+        with self.assertRaises(OrgError):
+            vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch, count=5))
+        with self.assertRaises(OrgError):
+            vaults.remove_unlocker(OWNER, self.dev["id"])
+
+    def test_device_needs_valid_public_key(self) -> None:
+        with self.assertRaises(OrgError):
+            vaults.add_unlocker(OWNER, {"kind": "device", "credential_id": "eA", "salt": "cw", "wrapped_umk": "dw",
+                                        "public_key": "bm9wZQ", "alg": -7, "rp_id": "getorbita.me"})
+
+
 if __name__ == "__main__":
     unittest.main()

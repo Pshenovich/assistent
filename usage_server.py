@@ -8620,6 +8620,28 @@ class _VaultUnlocker(BaseModel):
     salt: str
     wrapped_umk: str
     label: str = ""
+    public_key: str = ""  # kind=device: SPKI passkey (response.getPublicKey())
+    alg: int = 0
+
+
+class _VaultDeviceUnlock(BaseModel):
+    client_data_json: str
+    authenticator_data: str
+    signature: str
+
+
+def _vault_rp_id(request: Request) -> str:
+    """Сайт, к которому привязан passkey: из заголовка Origin (его ставит браузер), иначе из адреса запроса."""
+    from urllib.parse import urlparse
+
+    host = urlparse(request.headers.get("origin") or "").hostname or request.url.hostname or ""
+    return host.lower()
+
+
+def _vault_unlocker_in(u: "_VaultUnlocker", request: Request) -> dict[str, Any]:
+    d = u.model_dump()
+    d["rp_id"] = _vault_rp_id(request) if d.get("kind") == "device" else ""
+    return d
 
 
 class _VaultSetup(BaseModel):
@@ -8707,21 +8729,22 @@ async def miniapp_vaults(principal: _MiniappPrincipal = Depends(require_miniapp_
 
 
 @miniapp_router.post("/vaults/keys")
-async def miniapp_vaults_setup(body: _VaultSetup, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+async def miniapp_vaults_setup(body: _VaultSetup, request: Request, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    await _org_call(vaults.setup, uid, body.public_key, body.enc_private, [u.model_dump() for u in body.unlockers], reset=body.reset)
+    await _org_call(vaults.setup, uid, body.public_key, body.enc_private,
+                    [_vault_unlocker_in(u, request) for u in body.unlockers], reset=body.reset)
     _track(uid, "vault.setup", reset=body.reset)
     return await _org_call(_vaults_state, uid)
 
 
 @miniapp_router.post("/vaults/keys/unlockers")
-async def miniapp_vaults_unlocker_add(body: _VaultUnlocker, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+async def miniapp_vaults_unlocker_add(body: _VaultUnlocker, request: Request, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    keys = await _org_call(vaults.add_unlocker, uid, body.model_dump())
+    keys = await _org_call(vaults.add_unlocker, uid, _vault_unlocker_in(body, request))
     _track(uid, "vault.unlocker_add", kind=body.kind)
     return {"ok": True, "keys": keys}
 
@@ -8731,6 +8754,24 @@ async def miniapp_vaults_unlocker_remove(unlocker_id: int, principal: _MiniappPr
     from assistant.stores import vaults
 
     return {"ok": True, "keys": await _org_call(vaults.remove_unlocker, int(principal.telegram_user_id), unlocker_id)}
+
+
+@miniapp_router.post("/vaults/keys/unlockers/{unlocker_id}/challenge")
+async def miniapp_vaults_device_challenge(unlocker_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, **await _org_call(vaults.device_challenge, int(principal.telegram_user_id), unlocker_id)}
+
+
+@miniapp_router.post("/vaults/keys/unlockers/{unlocker_id}/unlock")
+async def miniapp_vaults_device_unlock(unlocker_id: int, body: _VaultDeviceUnlock, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    """Касание на устройстве без PRF проверено → обёртка ключа сейфов (открыть её может только этот браузер)."""
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    out = await _org_call(vaults.unlock_device, uid, unlocker_id, body.client_data_json, body.authenticator_data, body.signature)
+    _track(uid, "vault.unlock_device")
+    return {"ok": True, **out}
 
 
 @miniapp_router.post("/vaults/keys/unlockers/{unlocker_id}/used")

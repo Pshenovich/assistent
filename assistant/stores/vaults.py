@@ -95,6 +95,13 @@ def _conn() -> sqlite3.Connection:
     _add_column(conn, "vaults", "key_version", "INTEGER NOT NULL DEFAULT 1")
     _add_column(conn, "vaults", "needs_rotation", "INTEGER NOT NULL DEFAULT 0")
     _add_column(conn, "vault_departures", "notified", "INTEGER NOT NULL DEFAULT 0")
+    # kind=device (браузеры без PRF): открытый ключ passkey, алгоритм, rp_id и счётчик — для проверки касания
+    _add_column(conn, "vault_unlockers", "public_key", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "vault_unlockers", "alg", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "vault_unlockers", "rp_id", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "vault_unlockers", "sign_count", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "vault_unlockers", "challenge", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "vault_unlockers", "challenge_at", "TEXT NOT NULL DEFAULT ''")
     conn.commit()
     _SCHEMA_CONN = conn
     return conn
@@ -159,22 +166,48 @@ def my_keys(user_id: int | str) -> dict[str, Any]:
 
 
 def _unlocker_out(r: sqlite3.Row) -> dict[str, Any]:
+    # У kind=device обёртку не отдаём: только после проверенного касания (unlock_device)
     return {
         "id": int(r["id"]), "kind": r["kind"], "credential_id": r["credential_id"], "salt": r["salt"],
-        "wrapped_umk": r["wrapped_umk"], "label": r["label"], "created_at": r["created_at"],
-        "last_used_at": r["last_used_at"],
+        "wrapped_umk": "" if r["kind"] == "device" else r["wrapped_umk"], "label": r["label"],
+        "created_at": r["created_at"], "last_used_at": r["last_used_at"],
     }
 
 
-def _check_unlocker(u: dict[str, Any]) -> tuple[str, str, str, str, str]:
+DEVICE_KINDS = ("passkey", "device")
+CHALLENGE_TTL = 180  # секунд на касание
+
+
+def _check_unlocker(u: dict[str, Any]) -> tuple[str, str, str, str, str, str, int, str]:
+    """(kind, credential_id, salt, wrapped_umk, label, public_key, alg, rp_id)."""
     kind = str(u.get("kind") or "")
-    if kind not in ("passkey", "recovery"):
+    if kind not in ("passkey", "recovery", "device"):
         raise OrgError("Неизвестный способ входа", 400)
-    cred = str(u.get("credential_id") or "") if kind == "passkey" else ""
-    if kind == "passkey":
+    cred = str(u.get("credential_id") or "") if kind in DEVICE_KINDS else ""
+    if kind in DEVICE_KINDS:
         _blob(cred, "credential_id", 1024)
+    pub, alg, rp_id = "", 0, ""
+    if kind == "device":
+        from assistant.lib import webauthn_verify as wa
+
+        pub = _blob(u.get("public_key"), "public_key", 2048)
+        try:
+            alg = int(u.get("alg") or 0)
+            wa.check_public_key(pub, alg)
+        except (ValueError, TypeError) as e:
+            raise OrgError("Ключ устройства не подходит", 400) from e
+        rp_id = str(u.get("rp_id") or "").strip().lower()
+        if not rp_id or len(rp_id) > 253:
+            raise OrgError("Нет адреса сайта для ключа устройства", 400)
     label = " ".join(str(u.get("label") or "").split())[:60]
-    return kind, cred, _blob(u.get("salt"), "salt", 256), _blob(u.get("wrapped_umk"), "wrapped_umk"), label
+    return (kind, cred, _blob(u.get("salt"), "salt", 256), _blob(u.get("wrapped_umk"), "wrapped_umk"), label,
+            pub, alg, rp_id)
+
+
+_INSERT_UNLOCKER = (
+    "INSERT INTO vault_unlockers (user_id, kind, credential_id, salt, wrapped_umk, label, created_at, public_key, alg, rp_id) "
+    "VALUES (?,?,?,?,?,?,?,?,?,?)"
+)
 
 
 def setup(user_id: int | str, public_key: str, enc_private: str, unlockers: list[dict[str, Any]], *,
@@ -207,12 +240,8 @@ def setup(user_id: int | str, public_key: str, enc_private: str, unlockers: list
             "INSERT INTO vault_user_keys (user_id, public_key, enc_private, created_at, updated_at) VALUES (?,?,?,?,?)",
             (uid, pub, priv, now, now),
         )
-        for kind, cred, salt, wrapped, label in rows:
-            conn.execute(
-                "INSERT INTO vault_unlockers (user_id, kind, credential_id, salt, wrapped_umk, label, created_at) "
-                "VALUES (?,?,?,?,?,?,?)",
-                (uid, kind, cred, salt, wrapped, label, now),
-            )
+        for kind, cred, salt, wrapped, label, pub, alg, rp_id in rows:
+            conn.execute(_INSERT_UNLOCKER, (uid, kind, cred, salt, wrapped, label, now, pub, alg, rp_id))
         conn.commit()
     return my_keys(uid)
 
@@ -220,7 +249,7 @@ def setup(user_id: int | str, public_key: str, enc_private: str, unlockers: list
 def add_unlocker(user_id: int | str, unlocker: dict[str, Any]) -> dict[str, Any]:
     """Ещё одно устройство (passkey) или новый аварийный код — ту же UMK обернули по-другому."""
     uid = _uid(user_id)
-    kind, cred, salt, wrapped, label = _check_unlocker(unlocker)
+    kind, cred, salt, wrapped, label, pub, alg, rp_id = _check_unlocker(unlocker)
     with _LOCK:
         conn = _conn()
         if not conn.execute("SELECT 1 FROM vault_user_keys WHERE user_id = ?", (uid,)).fetchone():
@@ -230,11 +259,7 @@ def add_unlocker(user_id: int | str, unlocker: dict[str, Any]) -> dict[str, Any]
             raise OrgError("Слишком много способов входа — удалите старые", 400)
         if kind == "recovery":  # аварийный код один: новый заменяет старый
             conn.execute("DELETE FROM vault_unlockers WHERE user_id = ? AND kind = 'recovery'", (uid,))
-        conn.execute(
-            "INSERT INTO vault_unlockers (user_id, kind, credential_id, salt, wrapped_umk, label, created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
-            (uid, kind, cred, salt, wrapped, label, _now()),
-        )
+        conn.execute(_INSERT_UNLOCKER, (uid, kind, cred, salt, wrapped, label, _now(), pub, alg, rp_id))
         conn.commit()
     return my_keys(uid)
 
@@ -251,7 +276,7 @@ def remove_unlocker(user_id: int | str, unlocker_id: int) -> dict[str, Any]:
         if row["kind"] == "recovery":
             raise OrgError("Аварийный код можно только заменить новым", 400)
         left = conn.execute(
-            "SELECT COUNT(*) FROM vault_unlockers WHERE user_id = ? AND kind = 'passkey' AND id != ?",
+            "SELECT COUNT(*) FROM vault_unlockers WHERE user_id = ? AND kind IN ('passkey','device') AND id != ?",
             (uid, int(unlocker_id)),
         ).fetchone()[0]
         if not left:
@@ -259,6 +284,73 @@ def remove_unlocker(user_id: int | str, unlocker_id: int) -> dict[str, Any]:
         conn.execute("DELETE FROM vault_unlockers WHERE id = ?", (int(unlocker_id),))
         conn.commit()
     return my_keys(uid)
+
+
+def _device_row(conn: sqlite3.Connection, uid: str, unlocker_id: int) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM vault_unlockers WHERE id = ? AND user_id = ? AND kind = 'device'", (int(unlocker_id), uid)
+    ).fetchone()
+    if not row:
+        raise OrgError("Способ входа не найден", 404)
+    return row
+
+
+def device_challenge(user_id: int | str, unlocker_id: int) -> dict[str, Any]:
+    """Одноразовый вызов для касания на устройстве без PRF. Новый вызов заменяет прежний."""
+    import secrets
+
+    from assistant.lib.webauthn_verify import b64u_encode
+
+    uid = _uid(user_id)
+    ch = b64u_encode(secrets.token_bytes(32))
+    with _LOCK:
+        conn = _conn()
+        row = _device_row(conn, uid, unlocker_id)
+        conn.execute("UPDATE vault_unlockers SET challenge = ?, challenge_at = ? WHERE id = ?", (ch, _now(), int(row["id"])))
+        conn.commit()
+    return {"challenge": ch, "credential_id": row["credential_id"], "rp_id": row["rp_id"]}
+
+
+def unlock_device(user_id: int | str, unlocker_id: int, client_data_json: str, authenticator_data: str,
+                  signature: str) -> dict[str, Any]:
+    """Проверить касание (подпись passkey с проверкой пользователя) и отдать обёртку ключа сейфов.
+
+    Обёртку открывает только ключ, который лежит в IndexedDB этого браузера, — сервер его не видит.
+    """
+    from datetime import datetime, timezone
+
+    from assistant.lib import webauthn_verify as wa
+
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        row = _device_row(conn, uid, unlocker_id)
+        ch, at = row["challenge"], row["challenge_at"]
+        # вызов одноразовый: стираем сразу, даже если подпись не сойдётся
+        conn.execute("UPDATE vault_unlockers SET challenge = '', challenge_at = '' WHERE id = ?", (int(row["id"]),))
+        conn.commit()
+        if not ch or not at:
+            raise OrgError("Касание устарело — попробуйте ещё раз", 400)
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(at.replace("Z", "+00:00"))).total_seconds()
+        except ValueError:
+            age = CHALLENGE_TTL + 1
+        if age > CHALLENGE_TTL:
+            raise OrgError("Касание устарело — попробуйте ещё раз", 400)
+        try:
+            count = wa.verify_assertion(
+                public_key=row["public_key"], alg=int(row["alg"]), rp_id=row["rp_id"], challenge=ch,
+                client_data_json=client_data_json, authenticator_data=authenticator_data, signature=signature,
+                prev_sign_count=int(row["sign_count"] or 0),
+            )
+        except wa.WebAuthnError as e:
+            print(f"[vaults] device unlock rejected uid={uid} unlocker={int(row['id'])} reason={e}")
+            raise OrgError("Касание не прошло проверку — попробуйте ещё раз", 400) from e
+        conn.execute(
+            "UPDATE vault_unlockers SET sign_count = ?, last_used_at = ? WHERE id = ?", (count, _now(), int(row["id"]))
+        )
+        conn.commit()
+    return {"wrapped_umk": row["wrapped_umk"], "salt": row["salt"]}
 
 
 def touch_unlocker(user_id: int | str, unlocker_id: int) -> None:

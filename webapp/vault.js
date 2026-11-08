@@ -357,7 +357,11 @@
       },
     });
     var ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
-    if (!ext.prf || ext.prf.enabled === false) throw new Error("prf");
+    var dev = deviceFallback(cred);
+    if (!ext.prf || ext.prf.enabled === false) {
+      if (dev) return dev; // Arc и др.: PRF нет — ключ устройства + проверка касания на сервере
+      throw new Error("prf");
+    }
     var out = ext.prf.results && ext.prf.results.first;
     if (!out) {
       // Chrome отдаёт PRF только при входе — спрашиваем ключ ещё раз
@@ -374,8 +378,97 @@
       var e2 = a.getClientExtensionResults ? a.getClientExtensionResults() : {};
       out = e2.prf && e2.prf.results && e2.prf.results.first;
     }
-    if (!out) throw new Error("prf");
+    if (!out) {
+      if (dev) return dev;
+      throw new Error("prf");
+    }
     return { credentialId: CR.b64u(cred.rawId), salt: salt, prf: new Uint8Array(out) };
+  }
+
+  // Открытый ключ passkey (SPKI) — серверу, чтобы проверять касание. Нет getPublicKey — старый браузер.
+  function deviceFallback(cred) {
+    var r = cred && cred.response;
+    if (!r || typeof r.getPublicKey !== "function") return null;
+    var spki = r.getPublicKey();
+    var alg = typeof r.getPublicKeyAlgorithm === "function" ? r.getPublicKeyAlgorithm() : -7;
+    if (!spki || (alg !== -7 && alg !== -257)) return null;
+    return { device: true, credentialId: CR.b64u(cred.rawId), publicKey: CR.b64u(spki), alg: alg };
+  }
+
+  // Способ входа для сервера из только что заведённого passkey: PRF — как раньше, иначе ключ устройства.
+  async function unlockerFor(pk, umk) {
+    if (!pk.device) {
+      return {
+        kind: "passkey", credential_id: pk.credentialId, salt: pk.salt, label: deviceLabel(),
+        wrapped_umk: await CR.wrapUmkPrf(umk, pk.prf, pk.salt),
+      };
+    }
+    var dk = await CR.newDeviceKey();
+    await devKeys.put(pk.credentialId, dk);
+    return {
+      kind: "device", credential_id: pk.credentialId, salt: CR.newPrfSalt(), label: deviceLabel() + " · этот браузер",
+      wrapped_umk: await CR.wrapUmkDevice(umk, dk), public_key: pk.publicKey, alg: pk.alg,
+    };
+  }
+
+  // Ключи устройства в IndexedDB: { credential_id → CryptoKey (неизвлекаемый) }.
+  var devKeys = (function () {
+    var DB = "orbita-vault", STORE = "device-keys";
+    function db() {
+      return new Promise(function (ok, fail) {
+        if (!window.indexedDB) return fail(new Error("idb"));
+        var r = indexedDB.open(DB, 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore(STORE); };
+        r.onsuccess = function () { ok(r.result); };
+        r.onerror = function () { fail(r.error || new Error("idb")); };
+      });
+    }
+    function tx(mode, fn) {
+      return db().then(function (d) {
+        return new Promise(function (ok, fail) {
+          var t = d.transaction(STORE, mode);
+          var req = fn(t.objectStore(STORE));
+          t.oncomplete = function () { d.close(); ok(req && req.result); };
+          t.onerror = t.onabort = function () { d.close(); fail(t.error || new Error("idb")); };
+        });
+      });
+    }
+    return {
+      put: function (id, key) { return tx("readwrite", function (s) { return s.put(key, id); }); },
+      get: function (id) { return tx("readonly", function (s) { return s.get(id); }).catch(function () { return null; }); },
+      del: function (id) { return tx("readwrite", function (s) { return s.delete(id); }).catch(function () {}); },
+    };
+  })();
+
+  // Вход по ключу устройства: сервер выдаёт вызов → касание → сервер проверяет подпись и отдаёт обёртку.
+  async function deviceUnlockHere() {
+    var devs = ((st.keys && st.keys.unlockers) || []).filter(function (u) { return u.kind === "device"; });
+    for (var i = 0; i < devs.length; i++) {
+      var dk = await devKeys.get(devs[i].credential_id);
+      if (!dk) continue;
+      var u = devs[i];
+      var ch = await api("/keys/unlockers/" + u.id + "/challenge", json("POST", {}));
+      var a = await navigator.credentials.get({
+        publicKey: {
+          challenge: CR.unb64u(ch.challenge),
+          rpId: location.hostname,
+          allowCredentials: [{ type: "public-key", id: CR.unb64u(u.credential_id) }],
+          userVerification: "required",
+          timeout: 120000,
+        },
+      });
+      var r = await api("/keys/unlockers/" + u.id + "/unlock", json("POST", {
+        client_data_json: CR.b64u(a.response.clientDataJSON),
+        authenticator_data: CR.b64u(a.response.authenticatorData),
+        signature: CR.b64u(a.response.signature),
+      }));
+      try {
+        return await CR.unwrapUmkDevice(r.wrapped_umk, dk);
+      } catch (_) {
+        throw new Error("unwrap");
+      }
+    }
+    return null;
   }
 
   async function passkeyGet() {
@@ -416,9 +509,10 @@
   function passkeyError(e) {
     var m = String((e && e.message) || "");
     if (e && e.name === "NotAllowedError") return "Отменено. Попробуйте ещё раз — или войдите кодом с аварийного листа.";
-    if (m === "prf") return "Это устройство или браузер не умеет открывать сейфы по " + BIO + " (нужен Safari 18 и новее — macOS 15, iOS 18 — или свежий Chrome; в Arc не работает). Используйте код с аварийного листа.";
-    if (m === "nopasskey") return "Для сейфов ещё нет ни одного устройства с " + BIO + " — войдите кодом с аварийного листа.";
+    if (m === "prf") return "Это устройство или браузер не умеет открывать сейфы по " + BIO + " (нужен Safari 18 и новее — macOS 15, iOS 18 — или свежий Chrome, Arc, Edge). Используйте код с аварийного листа.";
+    if (m === "nopasskey") return "В этом браузере " + BIO + " для сейфов ещё не добавлен — войдите кодом с аварийного листа, потом добавьте " + BIO + ".";
     if (m === "unwrap") return BIO + " прошёл, но ключ сейфов не подошёл. Войдите кодом с аварийного листа и добавьте " + BIO + " заново.";
+    if (m.indexOf("Касание") === 0) return m + ". Или войдите кодом с аварийного листа."; // сервер не принял подпись
     if (m === "relogin") return "Войдите кодом с аварийного листа ещё раз — потом добавьте " + BIO + ".";
     // название ошибки браузера — чтобы по скриншоту понять причину (секретов в нём нет)
     return BIO + " не сработал (" + ((e && e.name) || "ошибка") + (m && m.length < 80 ? ": " + m : "") + "). Попробуйте ещё раз или войдите кодом с аварийного листа.";
@@ -436,11 +530,7 @@
       var note = "";
       if (passkeysSupported()) {
         try {
-          var pk = await passkeyCreate();
-          passkey = {
-            kind: "passkey", credential_id: pk.credentialId, salt: pk.salt, label: deviceLabel(),
-            wrapped_umk: await CR.wrapUmkPrf(id.umk, pk.prf, pk.salt),
-          };
+          passkey = await unlockerFor(await passkeyCreate(), id.umk);
         } catch (e) {
           note = (e && e.name === "NotAllowedError" ? "" + BIO + " не настроен" : passkeyError(e).split(".")[0]) +
             ". Пока сейфы будут открываться кодом с этого листа — " + BIO + " можно добавить при следующем входе.";
@@ -492,15 +582,17 @@
     st.busy = true;
     paint();
     try {
-      var r = await passkeyGet();
-      var umk;
-      try {
-        umk = await CR.unwrapUmkPrf(r.unlocker.wrapped_umk, r.prf, r.unlocker.salt);
-      } catch (_) {
-        throw new Error("unwrap");
+      var umk = await deviceUnlockHere();
+      if (!umk) {
+        var r = await passkeyGet();
+        try {
+          umk = await CR.unwrapUmkPrf(r.unlocker.wrapped_umk, r.prf, r.unlocker.salt);
+        } catch (_) {
+          throw new Error("unwrap");
+        }
+        api("/keys/unlockers/" + r.unlocker.id + "/used", json("POST", {})).catch(function () {});
       }
       await openWithUmk(umk);
-      api("/keys/unlockers/" + r.unlocker.id + "/used", json("POST", {})).catch(function () {});
       st.view = "list";
       await runAfter();
     } catch (e) {
@@ -544,10 +636,7 @@
       if (!st._codeUmk) throw new Error("relogin");
       var pk = await passkeyCreate();
       var umk = st._codeUmk.slice(); // код держим до успеха: отмена или сбой — можно попробовать ещё раз
-      var r = await api("/keys/unlockers", json("POST", {
-        kind: "passkey", credential_id: pk.credentialId, salt: pk.salt, label: deviceLabel(),
-        wrapped_umk: await CR.wrapUmkPrf(umk, pk.prf, pk.salt),
-      }));
+      var r = await api("/keys/unlockers", json("POST", await unlockerFor(pk, umk)));
       umk.fill(0);
       st._codeUmk.fill(0);
       st._codeUmk = null;
@@ -1079,7 +1168,7 @@
   }
 
   function lockedHtml(v) {
-    var hasPk = ((st.keys && st.keys.unlockers) || []).some(function (u) { return u.kind === "passkey"; });
+    var hasPk = ((st.keys && st.keys.unlockers) || []).some(function (u) { return u.kind === "passkey" || u.kind === "device"; });
     return bar(crumbs(v)) + '<div class="kb-page vlt-page vlt-center">' +
       '<div class="vlt-big">' + IC.face + '</div><h1 class="screen-title kb-title">' + (v ? "Сейф «" + esc(v.name) + "» закрыт" : "Сейфы закрыты") + "</h1>" +
       '<p class="muted lead">Подтвердите, что это вы. Сейфы закрываются сами через 15 минут без действий.</p>' +

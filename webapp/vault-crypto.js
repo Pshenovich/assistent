@@ -194,8 +194,21 @@
     }
   }
 
+  // Браузеры без PRF (Arc): ключ устройства — AES, неизвлекаемый, живёт в IndexedDB этого браузера.
+  // Им обёрнута UMK; обёртку сервер отдаёт только после проверенного касания (Touch ID / пароль устройства).
+  function newDeviceKey() {
+    return S.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  }
+  async function wrapUmkDevice(umk, deviceKey) {
+    return seal(deviceKey, umk, "orbita-vault:umk:device");
+  }
+  async function unwrapUmkDevice(wrapped, deviceKey) {
+    return open(deviceKey, wrapped, "orbita-vault:umk:device");
+  }
+
   var api = {
     b64u: b64u, unb64u: unb64u, rand: rand,
+    newDeviceKey: newDeviceKey, wrapUmkDevice: wrapUmkDevice, unwrapUmkDevice: unwrapUmkDevice,
     newIdentity: newIdentity, openPrivate: openPrivate,
     newPrfSalt: newPrfSalt, wrapUmkPrf: wrapUmkPrf, unwrapUmkPrf: unwrapUmkPrf,
     newRecoveryCode: newRecoveryCode, normalizeRecovery: normalizeRecovery, recoveryLooksValid: recoveryLooksValid,
