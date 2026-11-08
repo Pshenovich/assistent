@@ -398,3 +398,21 @@ button.kb-row:hover { background: var(--overlay-1); }
   .kb-chev svg { transition: none; }
   html.kb-desk #kb-tree { transition: none; }
 }
+
+/* «Доступ: …» в строке сведений документа и окно «Кто видит документ» */
+.kb-meta-acc { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; margin: -2px 0; border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--text-secondary); font: inherit; font-size: 0.8125rem; cursor: pointer; }
+.kb-meta-acc:hover, .kb-meta-acc:focus-visible { color: var(--text); background: var(--overlay-3); outline: none; }
+.kb-meta-acc svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.kb-acc-pop { width: 340px; max-width: calc(100vw - 16px); padding: 6px; }
+.kb-acc-head { padding: 8px 10px 2px; font-size: 0.875rem; font-weight: 600; color: var(--text); }
+.kb-acc-how { padding: 2px 10px 6px; font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4; }
+.kb-acc-list { display: flex; flex-direction: column; max-height: 320px; overflow-y: auto; }
+.kb-acc-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; }
+.kb-acc-av { width: 26px; height: 26px; border-radius: 50%; flex: none; display: inline-grid; place-items: center; background: var(--accent-muted); color: var(--accent); font-size: 0.625rem; font-weight: 700; }
+.kb-acc-av.is-group { border-radius: 8px; background: var(--overlay-3); color: var(--text-secondary); }
+.kb-acc-av svg { width: 14px; height: 14px; }
+.kb-acc-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.kb-acc-name { font-size: 0.875rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-acc-sub { font-size: 0.75rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-acc-role { font-size: 0.75rem; color: var(--text-secondary); flex: none; }
+.kb-acc-edit { display: block; width: 100%; margin-top: 4px; border-top: 1px solid var(--border); border-radius: 0 0 8px 8px; color: var(--accent); }

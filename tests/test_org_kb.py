@@ -402,3 +402,13 @@ class OrgKbDeletedNoteTests(OrgKbTests):
         with org_kb._LOCK:
             left = org_kb._conn().execute("SELECT 1 FROM org_kb_nodes WHERE id = ?", (node,)).fetchone()
         self.assertIsNone(left)
+
+
+class OrgKbDocAclTests(OrgKbTests):
+    def test_doc_carries_its_own_effective_access(self) -> None:
+        node = next(n for n in org_kb.tree(self.org, OWNER) if n["id"] == self.doc)
+        sec = next(n for n in org_kb.tree(self.org, OWNER) if n["id"] == self.sec)
+        self.assertEqual(node["acl"], sec["acl"])  # без своих прав — как у раздела
+        org_kb.set_access(OWNER, self.org, self.doc, f"u:{MANAGER}", "editor")
+        node = next(n for n in org_kb.tree(self.org, OWNER) if n["id"] == self.doc)
+        self.assertIn({"principal": f"u:{MANAGER}", "role": "editor"}, node["acl"])

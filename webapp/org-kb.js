@@ -1205,7 +1205,7 @@
     _: {
       state: state, ICO: ICO, esc: esc, api: api, json: json, toast: toast, errText: errText, atLeast: atLeast,
       plural: plural, count: count, ago: ago, initials: initials, kbOf: kbOf, orgOf: orgOf, nodeOf: nodeOf,
-      childrenOf: childrenOf, docsUnder: docsUnder, principalName: principalName, accessLine: accessLine,
+      childrenOf: childrenOf, docsUnder: docsUnder, principalName: principalName, principalSub: principalSub, accessLine: accessLine,
       crumbs: crumbs, load: load, refreshOrg: refreshOrg, newRoot: newRoot, newSub: newSub, newDoc: newDoc,
       addMyDoc: addMyDoc, openAccess: openAccess, renameSection: renameSection, removeSection: removeSection,
       removeDoc: removeDoc, moveSection: moveSection, placeNote: placeNote, nodeForNote: nodeForNote, editableSections: editableSections,

@@ -260,10 +260,12 @@ def tree(org_id: int, actor_id: int | str) -> list[dict[str, Any]]:
             "inherit": bool(row["inherit"]),
             "position": float(row["position"]),  # для перетаскивания в дереве: новое место — между соседями
         }
-        if row["kind"] == "section" and nid not in path_only:
+        if nid not in path_only:
             # кому открыт — для подписи «ОКК · Чат-боты»; владельцы-люди не в счёт
             eff = _effective_acl(nodes, acl, nid)
             item["access"] = sorted(p for p, r in eff.items() if not (p.startswith("u:") and r == "owner"))
+            # «Кто видит» в документе и разделе: все записи с ролями (руководство и автор — сверху, на клиенте)
+            item["acl"] = [{"principal": p, "role": r} for p, r in sorted(eff.items())]
         if row["kind"] == "doc":
             item.update({
                 "note_id": int(row["note_id"]),

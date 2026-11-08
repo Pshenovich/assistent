@@ -8375,7 +8375,8 @@ def _org_kb_state(uid: int, org_id: int) -> dict[str, Any]:
     from assistant.stores import org_groups, org_kb, orgs_store
 
     members = [
-        {"user_id": m["user_id"], "name": m["name"], "guest": m["guest"]}
+        # admin: владелец/админ организации видит и правит всю базу — показываем в «Кто видит документ»
+        {"user_id": m["user_id"], "name": m["name"], "guest": m["guest"], "admin": m["role"] in ("owner", "admin")}
         for m in orgs_store.list_members(org_id) if m["status"] == "active"
     ]
     return {

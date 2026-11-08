@@ -538,6 +538,72 @@
     }, 0);
   }
 
+  // Подпись кнопки — те же, что в окне, без автора и руководства: «Продажи, Игорь Петров и ещё 2»
+  function accessLabel(kb, n) {
+    var author = n.owner_user_id ? "u:" + n.owner_user_id : "";
+    var admins = {};
+    (kb.members || []).forEach(function (m) { if (m.admin) admins["u:" + m.user_id] = 1; });
+    var names = (n.acl || []).filter(function (a) { return a.principal !== author && !admins[a.principal]; })
+      .sort(function (a, b) { return (a.principal.indexOf("u:") === 0) - (b.principal.indexOf("u:") === 0); })
+      .map(function (a) { return K().principalName(kb, a.principal); });
+    if (!names.length) return "только автор и руководство";
+    return names.length > 3 ? names.slice(0, 2).join(", ") + " и ещё " + (names.length - 2) : names.join(", ");
+  }
+
+  // «Кто видит документ»: автор, руководство, отделы/команды/люди с ролями; владелец — «Изменить доступ».
+  function openAccessPop(anchor, kb, n, onEdit) {
+    closeMenu();
+    var roleName = {};
+    (kb.roles || []).forEach(function (r) { roleName[r.id] = r.label; });
+    var rank = { owner: 4, editor: 3, commenter: 2, reader: 1 };
+    var author = n.owner_user_id ? String(n.owner_user_id) : "";
+    var admins = (kb.members || []).filter(function (m) { return m.admin && String(m.user_id) !== author; });
+    var rows = [];
+    function row(name, sub, role, av) {
+      rows.push('<div class="kb-acc-row"><span class="kb-acc-av' + (av ? "" : " is-group") + '" aria-hidden="true">' +
+        (av ? esc(K().initials(name)) : K().ICO.folder) + '</span><span class="kb-acc-who"><span class="kb-acc-name">' + esc(name) + "</span>" +
+        (sub ? '<span class="kb-acc-sub">' + esc(sub) + "</span>" : "") + '</span><span class="kb-acc-role">' + esc(role) + "</span></div>");
+    }
+    if (n.kind === "doc" && author) row(K().principalName(kb, "u:" + author), "автор документа", roleName.owner || "Владелец", true);
+    if (admins.length) {
+      row(admins.length === 1 ? admins[0].name : admins.slice(0, 2).map(function (m) { return m.name; }).join(", ") + (admins.length > 2 ? " и ещё " + (admins.length - 2) : ""),
+        "руководство — вся база", roleName.owner || "Владелец", admins.length === 1);
+    }
+    (n.acl || []).slice().sort(function (a, b) { return (rank[b.role] || 0) - (rank[a.role] || 0); }).forEach(function (a) {
+      if (a.principal === "u:" + author) return;
+      if (a.principal.indexOf("u:") === 0 && admins.some(function (m) { return "u:" + m.user_id === a.principal; })) return;
+      var person = a.principal.indexOf("u:") === 0;
+      row(K().principalName(kb, a.principal), person ? "" : K().principalSub(kb, a.principal), roleName[a.role] || a.role, person);
+    });
+    var parent = n.parent_id != null ? K().nodeOf(kb, n.parent_id) : null;
+    var how = n.inherit === false
+      ? "Доступ ограничен: права раздела на этот " + (n.kind === "doc" ? "документ" : "раздел") + " не действуют."
+      : parent && !parent.restricted ? "Права взяты из раздела «" + parent.title + "»" + ((n.acl || []).length > (parent.acl || []).length ? " и дополнены." : ".") : "";
+    var m = document.createElement("div");
+    m.id = "kb-menu";
+    m.className = "kb-menu kb-acc-pop";
+    m.setAttribute("role", "dialog");
+    m.setAttribute("aria-label", "Кто видит документ");
+    m.innerHTML = '<div class="kb-acc-head">Кто видит ' + (n.kind === "doc" ? "документ" : "раздел") + "</div>" +
+      (how ? '<div class="kb-acc-how">' + esc(how) + "</div>" : "") +
+      '<div class="kb-acc-list">' + (rows.join("") || '<div class="kb-acc-how">Только владельцы</div>') + "</div>" +
+      (n.my_role === "owner" ? '<button type="button" class="kb-menu-item kb-acc-edit" data-acc-edit>Изменить доступ</button>' : "");
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    var left = Math.min(window.innerWidth - m.offsetWidth - 8, r.left);
+    var top = r.bottom + 6;
+    if (top + m.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - m.offsetHeight - 6);
+    m.style.left = Math.max(8, left) + "px";
+    m.style.top = top + "px";
+    m.addEventListener("click", function (e) {
+      if (e.target.closest("[data-acc-edit]")) { closeMenu(); onEdit(); }
+    });
+    setTimeout(function () {
+      document.addEventListener("pointerdown", menuOutside, true);
+      document.addEventListener("keydown", menuKey, true);
+    }, 0);
+  }
+
   // ---------- перетаскивание ----------
 
   function inSubtree(kb, rootId, id) {
@@ -1053,7 +1119,10 @@
     if (owner) parts.push('<span class="kb-meta-who"><span class="kb-meta-av" aria-hidden="true">' + esc(K().initials(owner)) + "</span>" + esc(owner) + "</span>");
     if (n.updated_at || note.updated_at) parts.push("<span>изменён " + esc(K().ago(note.updated_at || n.updated_at)) + "</span>");
     if (!stale) parts.push(statusHtml({ no_expiry: info.no_expiry, verified_at: info.verified_at }));
-    if (parent && !parent.restricted) parts.push("<span>открыт: " + esc(K().accessLine(kb, parent)) + "</span>");
+    if (n.access) {
+      parts.push('<button type="button" class="kb-meta-acc" data-kb-acc aria-haspopup="dialog" title="Кто видит документ">' +
+        (n.inherit === false ? K().ICO.lock : K().ICO.eye) + "<span>Доступ: " + esc(accessLabel(kb, n)) + "</span></button>");
+    }
     if (role === "reader") parts.push("<span>только чтение</span>");
     else if (role === "commenter") parts.push("<span>можно комментировать</span>");
     var acts = "";
@@ -1061,7 +1130,7 @@
       acts += note._kbRequested ? '<span class="kb-meta-done">Запрос отправлен</span>' : '<button type="button" class="pf-link" data-kb-banner="request">Попросить править</button>';
     }
     if (role === "owner") {
-      acts += '<button type="button" class="pf-link" data-kb-banner="move">Переместить</button><button type="button" class="pf-link" data-kb-banner="access">Доступ</button>';
+      acts += '<button type="button" class="pf-link" data-kb-banner="move">Переместить</button>';
     }
     var html = '<div class="kb-meta-line">' + parts.join('<span class="kb-meta-dot" aria-hidden="true">·</span>') +
       (acts ? '<span class="kb-meta-acts">' + acts + "</span>" : "") + "</div>";
@@ -1091,6 +1160,12 @@
     var repaint = function () { meta.innerHTML = metaHtml(note, K().nodeForNote(note.id) || hit); };
     repaint();
     meta.addEventListener("click", function (e) {
+      var acc = e.target.closest("[data-kb-acc]");
+      if (acc) {
+        var cur = K().nodeForNote(note.id) || hit;
+        openAccessPop(acc, cur.kb, cur.node, function () { K().bannerAction("access", note, repaint); });
+        return;
+      }
       var b = e.target.closest("[data-kb-banner]");
       if (b) K().bannerAction(b.getAttribute("data-kb-banner"), note, repaint);
     });
