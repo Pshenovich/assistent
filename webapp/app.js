@@ -27426,7 +27426,8 @@
   function renderPostedSide() {
     var side = document.getElementById("posted-tasks-side");
     if (!side) return;
-    if (!isDesktopLayout()) {
+    // В Канбане правой панели нет: не выбираем «первую задачу» и не грузим её.
+    if (!isDesktopLayout() || postedKanbanOn()) {
       side.innerHTML = "";
       postedCardHosts.side = null;
       return;

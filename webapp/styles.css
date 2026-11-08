@@ -16340,14 +16340,17 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 @media (min-width: 960px) {
   #actual-posted-tasks.actual-subscreen.pt-is-kanban { max-width: 1480px; }
   .pt-kjump { display: none; }
+  /* Колонки широкие, не сжимаются под экран — лента листается вбок (тачпадом, Shift+колесо или полосой снизу). */
   .pt-kanban {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 12px;
     margin: 0;
-    padding: 0;
-    overflow: visible;
+    padding: 0 0 12px;
+    scroll-snap-type: none;
+    scrollbar-width: thin;
   }
+  .pt-kanban::-webkit-scrollbar { display: block; height: 8px; }
+  .pt-kanban::-webkit-scrollbar-thumb { border-radius: 4px; background: var(--border-strong); }
+  .pt-kcol { flex: 0 0 380px; }
 }
 
 /* Чип «у других» в шапке: сколько поручений ждут вас */
