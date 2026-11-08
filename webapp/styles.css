@@ -15594,7 +15594,8 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 }
 #actual-posted-tasks.actual-subscreen,
 #actual-my-tasks.actual-subscreen,
-.pt-sheet-overlay {
+.pt-sheet-overlay,
+.pt-kghost {
   margin: 0;
   --pt-late: #ff6b5e;
   --pt-q: #f0b44c;
@@ -16268,6 +16269,85 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   /* Поручение, открытое не с экрана «Поручения» (календарь, Фокус), — окно по центру. */
   .pt-sheet-overlay { align-items: center; background: rgba(0, 0, 0, 0.55); }
   .pt-sheet { height: min(820px, calc(100vh - 64px)); border-radius: 16px; background: var(--bg); overflow: hidden; box-shadow: var(--shadow-md); }
+}
+
+/* «Поставленные» — вид Канбан. Кнопка в шапке; список и правая панель в обычном виде не меняются. */
+.pt-bar-actions { gap: 8px; }
+.pt-bar-actions .pt-btn.pt-view-btn { background: var(--surface); color: var(--text); }
+.pt-is-kanban .pt-side { display: none; }
+.pt-is-kanban .pt-layout { display: block; }
+.pt-kjump {
+  display: flex;
+  gap: 6px;
+  margin: 12px calc(-1 * var(--page-x, 16px)) 0;
+  padding: 0 var(--page-x, 16px) 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.pt-kjump::-webkit-scrollbar { display: none; }
+.pt-kjump .pt-btn { flex: none; min-height: 30px; padding: 0 11px; font-size: 0.8rem; color: var(--text-secondary); }
+.pt-kjump .pt-btn.is-on { border-color: var(--accent-border); background: var(--accent-subtle); color: var(--text); }
+.pt-kanban {
+  display: flex;
+  gap: 10px;
+  margin: 0 calc(-1 * var(--page-x, 16px));
+  padding: 0 var(--page-x, 16px) 8px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding: 0 var(--page-x, 16px);
+  scrollbar-width: none;
+}
+.pt-kanban::-webkit-scrollbar { display: none; }
+.pt-kcol { flex: 0 0 86%; min-width: 0; scroll-snap-align: start; transition: opacity 0.12s ease; }
+.pt-kcol-head { margin-top: 14px; }
+.pt-kcol-rows { min-height: 64px; transition: border-color 0.12s ease, background-color 0.12s ease; }
+.pt-kcol-empty { margin: 0; padding: 22px 0; }
+.pt-kanban .pt-row {
+  flex-wrap: wrap;
+  align-items: flex-start;
+  min-height: 0;
+  padding: 12px;
+  column-gap: 10px;
+  row-gap: 8px;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.pt-kanban .pt-row-title { font-size: 0.92rem; }
+.pt-kanban .pt-row-line { font-size: 0.78rem; }
+.pt-kanban .pt-row-acts { width: 100%; padding-left: 0; flex-wrap: wrap; gap: 6px; }
+.pt-kanban .pt-row:not([class*="pt-row--"]) .pt-row-acts { display: none; }
+.pt-kanban .pt-row-acts .pt-btn { min-height: 30px; max-width: 100%; padding: 4px 10px; font-size: 0.8rem; white-space: normal; text-align: center; }
+.pt-kcol-more.pt-btn { min-height: 0; margin: 10px 2px 0; padding: 0; border: 0; background: none; color: var(--accent); font-size: 0.82rem; }
+.pt-kanban.is-dragging { scroll-snap-type: none; }
+.pt-kcol.is-blocked { opacity: 0.45; }
+.pt-kcol.is-target .pt-kcol-rows { border-style: dashed; border-color: var(--accent-border); }
+.pt-kcol.is-over .pt-kcol-rows { border-color: var(--accent); background: var(--accent-subtle); }
+.pt-row.is-dragging { opacity: 0.35; }
+.pt-kghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 400;
+  pointer-events: none;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+  will-change: transform;
+}
+.pt-kghost .pt-row-acts { display: none; }
+@media (min-width: 960px) {
+  #actual-posted-tasks.actual-subscreen.pt-is-kanban { max-width: 1480px; }
+  .pt-kjump { display: none; }
+  .pt-kanban {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
 }
 
 /* Чип «у других» в шапке: сколько поручений ждут вас */

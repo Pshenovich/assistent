@@ -26637,8 +26637,10 @@
           : "";
       }
       renderPostedTeam(all);
-      renderPostedCurrentList(listEl);
+      if (postedKanbanOn()) renderPostedKanban(listEl);
+      else renderPostedCurrentList(listEl);
     }
+    syncPostedViewUi();
     renderPostedSide();
   }
 
@@ -26898,6 +26900,320 @@
     }
   }
 
+  // ——— Вид «Канбан»: те же поручения колонками. Обычный список не меняется, вид включается кнопкой в шапке. ———
+  var POSTED_VIEW_KEY = "orbita.postedView";
+  var postedView = (function () {
+    try {
+      return localStorage.getItem(POSTED_VIEW_KEY) === "kanban" ? "kanban" : "list";
+    } catch (_) {
+      return "list";
+    }
+  })();
+  var POSTED_KANBAN_COLS = [
+    ["backlog", "Бэклог"],
+    ["waiting", "Ждёт ответа"],
+    ["work", "В работе"],
+    ["done", "Выполнено"],
+    ["accepted", "Принято"],
+  ];
+  var POSTED_KANBAN_ACCEPTED_DAYS = 14;
+  var POSTED_ICON_KANBAN =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="11" rx="1.5"/><rect x="17" y="4" width="4" height="7" rx="1.5"/></svg>';
+  var POSTED_ICON_LIST =
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>';
+
+  function postedKanbanOn() {
+    return postedView === "kanban" && postedTasksTab !== "archive";
+  }
+
+  function setPostedView(view) {
+    postedView = view === "kanban" ? "kanban" : "list";
+    try {
+      localStorage.setItem(POSTED_VIEW_KEY, postedView);
+    } catch (_) {}
+    postedSelectedId = "";
+    postedCardHosts.side = null;
+    if (postedView === "kanban" && !postedArchiveLoaded) loadPostedArchive();
+    renderPostedScreen();
+  }
+
+  // Кнопка в шапке показывает, куда переключит: из списка — «Канбан», из Канбана — «Список».
+  function syncPostedViewUi() {
+    var sub = document.getElementById("actual-posted-tasks");
+    if (sub) sub.classList.toggle("pt-is-kanban", postedKanbanOn());
+    var toKanban = postedView !== "kanban";
+    var label = toKanban ? "Канбан" : "Список";
+    document.querySelectorAll("[data-posted-view-toggle]").forEach(function (b) {
+      setHidden(b, postedTasksTab === "archive");
+      var icon = toKanban ? POSTED_ICON_KANBAN : POSTED_ICON_LIST;
+      var compact = b.id === "posted-tasks-view-bar";
+      var html = icon + (compact ? "" : "<span>" + label + "</span>");
+      if (b.getAttribute("data-view") !== label) {
+        b.innerHTML = html;
+        b.setAttribute("data-view", label);
+      }
+      b.title = toKanban ? "Вид Канбан" : "Вид списком";
+      b.setAttribute("aria-label", b.title);
+    });
+  }
+
+  // Колонка поручения. «Ждёт ответа» — ждёт постановщика: вопрос исполнителя или «Не моё».
+  function postedKanbanColumn(task) {
+    if (postedTaskIsArchived(task)) return postedTaskOutcome(task) === "accepted" ? "accepted" : "";
+    if (postedTaskIsDone(task)) return "done";
+    var st = postedAssigneeState(task);
+    if (st.triage === "declined" || st.status === "question") return "waiting";
+    if (st.status === "in_progress" || st.triage === "accepted") return "work";
+    return "backlog";
+  }
+
+  function postedAcceptedRecent() {
+    var since = Date.now() - POSTED_KANBAN_ACCEPTED_DAYS * DAY_MS;
+    return postedArchiveItems
+      .filter(function (t) {
+        if (postedKanbanColumn(t) !== "accepted") return false;
+        if (postedPerson && postedAssigneeKey(t) !== postedPerson) return false;
+        var at = new Date(t.accepted_at || (t.event && t.event.accepted_at) || t.updated_at || "").getTime();
+        return isNaN(at) || at >= since;
+      })
+      .sort(function (a, b) {
+        return String(b.accepted_at || b.updated_at || "").localeCompare(String(a.accepted_at || a.updated_at || ""));
+      });
+  }
+
+  // Что постановщик может сделать перетаскиванием; остальные переходы делает исполнитель.
+  function postedKanbanMove(task, from, to) {
+    if (from === "done" && to === "accepted") {
+      return function () {
+        acceptPostedTask(task.id);
+      };
+    }
+    if (from === "done" && to === "work") {
+      return function () {
+        openPostedCard(task.id, { focus: "return" });
+      };
+    }
+    if (from === "waiting" && to === "backlog" && postedAssigneeState(task).triage === "declined") {
+      return function () {
+        insistPostedTask(task);
+      };
+    }
+    return null;
+  }
+
+  function renderPostedKanban(listEl) {
+    listEl.innerHTML = "";
+    var all = lastPostedTasksItems.filter(function (t) {
+      return !postedTaskIsArchived(t);
+    });
+    var accepted = postedAcceptedRecent();
+    if (!all.length && !accepted.length) {
+      renderPostedCurrentList(listEl); // пустой экран — как в списке
+      return;
+    }
+    renderPostedEmpty("");
+    var groups = {};
+    POSTED_KANBAN_COLS.forEach(function (c) {
+      groups[c[0]] = [];
+    });
+    postedVisibleCurrent().forEach(function (t) {
+      var k = postedKanbanColumn(t);
+      if (groups[k]) groups[k].push(t);
+    });
+    groups.waiting.sort(function (a, b) {
+      var d = (POSTED_ATTN_ORDER[postedAttention(a)] || 0) - (POSTED_ATTN_ORDER[postedAttention(b)] || 0);
+      return d || postedTaskDueMs(a) - postedTaskDueMs(b);
+    });
+    ["backlog", "work", "done"].forEach(function (k) {
+      groups[k] = sortByDue(groups[k]);
+    });
+    groups.accepted = accepted;
+
+    var board = document.createElement("div");
+    board.className = "pt-kanban";
+    // Телефон: колонки листаются вбок — сверху быстрые переходы к колонке.
+    var jump = document.createElement("div");
+    jump.className = "pt-kjump";
+    POSTED_KANBAN_COLS.forEach(function (c) {
+      var col = document.createElement("section");
+      col.className = "pt-kcol";
+      col.setAttribute("data-col", c[0]);
+      col.setAttribute("aria-label", c[1]);
+      var head = postedSection(c[1], groups[c[0]].length, groups[c[0]].length > 0 && c[0] === "waiting");
+      head.classList.add("pt-kcol-head");
+      col.appendChild(head);
+      var box = document.createElement("div");
+      box.className = "pt-rows pt-kcol-rows";
+      groups[c[0]].forEach(function (t) {
+        var row = c[0] === "accepted" ? renderPostedArchiveRow(t) : renderPostedRow(t, { attention: true });
+        row.setAttribute("data-task-id", String(t.id));
+        if (c[0] !== "accepted") postedKanbanDraggable(row, t, c[0], board);
+        box.appendChild(row);
+      });
+      if (!groups[c[0]].length) {
+        var empty = document.createElement("p");
+        empty.className = "pt-muted-note pt-kcol-empty";
+        empty.textContent = "Пусто";
+        box.appendChild(empty);
+      }
+      col.appendChild(box);
+      if (c[0] === "accepted") {
+        var more = postedBtn("Все принятые", "pt-btn--link pt-kcol-more", function () {
+          setPostedTasksTab("archive");
+        });
+        col.appendChild(more);
+      }
+      board.appendChild(col);
+      var j = postedBtn(c[1] + " · " + groups[c[0]].length, "", function () {
+        board.scrollTo({ left: col.offsetLeft - board.firstChild.offsetLeft, behavior: "smooth" });
+      });
+      j.setAttribute("data-col", c[0]);
+      jump.appendChild(j);
+    });
+    listEl.appendChild(jump);
+    listEl.appendChild(board);
+    function syncJump() {
+      var x = board.scrollLeft + 8;
+      var cur = "";
+      var first = board.firstChild;
+      board.querySelectorAll(".pt-kcol").forEach(function (col) {
+        if (col.offsetLeft - first.offsetLeft <= x) cur = col.getAttribute("data-col");
+      });
+      // Докрутили до конца — последняя колонка дальше не уедет, но она и есть текущая.
+      if (board.scrollWidth > board.clientWidth && board.scrollLeft >= board.scrollWidth - board.clientWidth - 4) {
+        cur = board.lastChild.getAttribute("data-col");
+      }
+      jump.querySelectorAll(".pt-btn").forEach(function (b) {
+        b.classList.toggle("is-on", b.getAttribute("data-col") === cur);
+      });
+    }
+    board.addEventListener("scroll", syncJump, { passive: true });
+    syncJump();
+  }
+
+  // Перетаскивание карточки: мышью — сразу, пальцем — после долгого нажатия (иначе это прокрутка).
+  var postedDrag = null;
+  function postedKanbanDraggable(row, task, from, board) {
+    row.addEventListener("pointerdown", function (e) {
+      if (postedDrag || e.button > 0 || e.target.closest("button")) return;
+      var touch = e.pointerType !== "mouse";
+      var d = { row: row, task: task, from: from, board: board, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, id: e.pointerId, on: false, timer: 0 };
+      postedDrag = d;
+      if (touch) d.timer = setTimeout(function () { postedKanbanDragStart(d); }, 380);
+      document.addEventListener("pointermove", postedKanbanDragMove, true);
+      document.addEventListener("pointerup", postedKanbanDragEnd, true);
+      document.addEventListener("pointercancel", postedKanbanDragEnd, true);
+    });
+  }
+
+  function postedKanbanDragStart(d) {
+    if (postedDrag !== d || d.on) return;
+    d.on = true;
+    clearTimeout(d.timer);
+    var r = d.row.getBoundingClientRect();
+    d.dx = d.x - r.left;
+    d.dy = d.y - r.top;
+    var ghost = d.row.cloneNode(true);
+    ghost.classList.add("pt-kghost");
+    ghost.style.width = r.width + "px";
+    document.body.appendChild(ghost);
+    d.ghost = ghost;
+    d.row.classList.add("is-dragging");
+    d.board.classList.add("is-dragging");
+    d.board.querySelectorAll(".pt-kcol").forEach(function (col) {
+      var to = col.getAttribute("data-col");
+      if (to !== d.from) col.classList.add(postedKanbanMove(d.task, d.from, to) ? "is-target" : "is-blocked");
+    });
+    document.addEventListener("touchmove", postedKanbanNoScroll, { passive: false });
+    postedHaptic();
+    postedKanbanDragPaint(d);
+  }
+
+  function postedKanbanNoScroll(e) {
+    if (postedDrag && postedDrag.on) e.preventDefault();
+  }
+
+  function postedKanbanColAt(d) {
+    if (d.ghost) d.ghost.style.visibility = "hidden";
+    var el = document.elementFromPoint(d.x, d.y);
+    if (d.ghost) d.ghost.style.visibility = "";
+    var col = el && el.closest ? el.closest(".pt-kcol") : null;
+    return col && d.board.contains(col) ? col : null;
+  }
+
+  function postedKanbanDragPaint(d) {
+    d.ghost.style.transform = "translate(" + (d.x - d.dx) + "px," + (d.y - d.dy) + "px)";
+    var over = postedKanbanColAt(d);
+    d.board.querySelectorAll(".pt-kcol").forEach(function (col) {
+      col.classList.toggle("is-over", col === over && col.classList.contains("is-target"));
+    });
+    // У края ленты (телефон) — подкручиваем к соседней колонке.
+    var br = d.board.getBoundingClientRect();
+    if (d.board.scrollWidth > d.board.clientWidth) {
+      if (d.x < br.left + 36) d.board.scrollLeft -= 14;
+      else if (d.x > br.right - 36) d.board.scrollLeft += 14;
+    }
+  }
+
+  function postedKanbanDragMove(e) {
+    var d = postedDrag;
+    if (!d || e.pointerId !== d.id) return;
+    d.x = e.clientX;
+    d.y = e.clientY;
+    var moved = Math.abs(d.x - d.x0) + Math.abs(d.y - d.y0);
+    if (!d.on) {
+      if (e.pointerType === "mouse") {
+        if (moved > 6) postedKanbanDragStart(d);
+      } else if (moved > 10) {
+        postedKanbanDragCleanup(); // палец поехал раньше долгого нажатия — это прокрутка
+      }
+      return;
+    }
+    e.preventDefault();
+    postedKanbanDragPaint(d);
+  }
+
+  function postedKanbanDragEnd(e) {
+    var d = postedDrag;
+    if (!d || (e && e.pointerId !== d.id)) return;
+    if (!d.on) {
+      postedKanbanDragCleanup();
+      return;
+    }
+    var col = e && e.type === "pointerup" ? postedKanbanColAt(d) : null;
+    var to = col ? col.getAttribute("data-col") : "";
+    // Отпустили — щелчок по карточке после перетаскивания не открывает её.
+    function swallow(ev) {
+      ev.stopPropagation();
+      ev.preventDefault();
+    }
+    d.row.addEventListener("click", swallow, true);
+    setTimeout(function () {
+      d.row.removeEventListener("click", swallow, true);
+    }, 60);
+    postedKanbanDragCleanup();
+    if (!to || to === d.from) return;
+    var act = postedKanbanMove(d.task, d.from, to);
+    if (act) act();
+    else showNoteToast("Эту колонку меняет исполнитель");
+  }
+
+  function postedKanbanDragCleanup() {
+    var d = postedDrag;
+    postedDrag = null;
+    document.removeEventListener("pointermove", postedKanbanDragMove, true);
+    document.removeEventListener("pointerup", postedKanbanDragEnd, true);
+    document.removeEventListener("pointercancel", postedKanbanDragEnd, true);
+    document.removeEventListener("touchmove", postedKanbanNoScroll, { passive: false });
+    if (!d) return;
+    clearTimeout(d.timer);
+    if (d.ghost) d.ghost.remove();
+    d.row.classList.remove("is-dragging");
+    d.board.classList.remove("is-dragging");
+    d.board.querySelectorAll(".pt-kcol").forEach(function (col) {
+      col.classList.remove("is-target", "is-blocked", "is-over");
+    });
+  }
 
   // Карточка поручения в списке: фото, название в две строки, «кто · состояние · срок», справа — действия.
   function renderPostedRow(task, opts) {
@@ -27066,39 +27382,44 @@
         box.className = "pt-rows";
         listEl.appendChild(box);
       }
-      var row = document.createElement("div");
-      row.className = "pt-row" + (String(t.id) === postedSelectedId ? " is-selected" : "");
-      row.setAttribute("role", "button");
-      row.tabIndex = 0;
-      row.appendChild(postedAvatar(postedAssigneeUid(t), postedTaskAssigneeLabel(t), "s"));
-      var main = document.createElement("div");
-      main.className = "pt-row-main";
-      var tt = document.createElement("p");
-      tt.className = "pt-row-title";
-      tt.textContent = String(t.title || "Задача");
-      main.appendChild(tt);
-      var m = postedArchiveMeta(t);
-      var line = document.createElement("p");
-      line.className = "pt-row-line";
-      line.textContent = postedFirstName(postedTaskAssigneeLabel(t)) + " · " + m.text;
-      if (m.extra) {
-        var span = document.createElement("span");
-        span.className = m.cls;
-        span.textContent = m.extra;
-        line.appendChild(span);
-      }
-      main.appendChild(line);
-      row.appendChild(main);
-      var chev = document.createElement("span");
-      chev.className = "pt-chev";
-      chev.setAttribute("aria-hidden", "true");
-      chev.textContent = "›";
-      row.appendChild(chev);
-      row.addEventListener("click", function () {
-        openPostedCard(t.id);
-      });
-      box.appendChild(row);
+      box.appendChild(renderPostedArchiveRow(t));
     });
+  }
+
+  // Строка принятой/отменённой задачи: фото, название, «кто · принято когда · в срок».
+  function renderPostedArchiveRow(t) {
+    var row = document.createElement("div");
+    row.className = "pt-row" + (String(t.id) === postedSelectedId ? " is-selected" : "");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.appendChild(postedAvatar(postedAssigneeUid(t), postedTaskAssigneeLabel(t), "s"));
+    var main = document.createElement("div");
+    main.className = "pt-row-main";
+    var tt = document.createElement("p");
+    tt.className = "pt-row-title";
+    tt.textContent = String(t.title || "Задача");
+    main.appendChild(tt);
+    var m = postedArchiveMeta(t);
+    var line = document.createElement("p");
+    line.className = "pt-row-line";
+    line.textContent = postedFirstName(postedTaskAssigneeLabel(t)) + " · " + m.text;
+    if (m.extra) {
+      var span = document.createElement("span");
+      span.className = m.cls;
+      span.textContent = m.extra;
+      line.appendChild(span);
+    }
+    main.appendChild(line);
+    row.appendChild(main);
+    var chev = document.createElement("span");
+    chev.className = "pt-chev";
+    chev.setAttribute("aria-hidden", "true");
+    chev.textContent = "›";
+    row.appendChild(chev);
+    row.addEventListener("click", function () {
+      openPostedCard(t.id);
+    });
+    return row;
   }
 
   // Десктоп: справа всегда открыто поручение (по умолчанию — первое в списке).
@@ -27232,7 +27553,8 @@
   function openPostedCard(taskId, opts) {
     opts = opts || {};
     var id = String(taskId);
-    if (isPostedTasksOpen() && isDesktopLayout()) {
+    // В Канбане правой панели нет — задача открывается окном.
+    if (isPostedTasksOpen() && isDesktopLayout() && !postedKanbanOn()) {
       postedSelectedId = id;
       postedCardHosts.side = null;
       postedSideOpts = opts;
@@ -59056,6 +59378,11 @@
     if (postedNew) postedNew.addEventListener("click", openNewPostedTask);
     var postedNewBar = document.getElementById("posted-tasks-new-bar");
     if (postedNewBar) postedNewBar.addEventListener("click", openNewPostedTask);
+    document.querySelectorAll("[data-posted-view-toggle]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        setPostedView(postedView === "kanban" ? "list" : "kanban");
+      });
+    });
     var postedSearch = document.getElementById("posted-tasks-search");
     if (postedSearch) {
       postedSearch.addEventListener("input", function () {
