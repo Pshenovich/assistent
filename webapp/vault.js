@@ -109,6 +109,13 @@
     var tg = window.Telegram && window.Telegram.WebApp;
     return !!(tg && tg.initData);
   }
+  // Как называется вход по биометрии на этом устройстве (iPad притворяется Mac — отличаем по касаниям)
+  var BIO = (function () {
+    var ua = navigator.userAgent || "";
+    if (/Macintosh|Mac OS X/.test(ua) && !/iPhone|iPad/.test(ua) && !(navigator.maxTouchPoints > 1)) return "Touch ID";
+    if (/Windows/.test(ua)) return "Windows Hello";
+    return "Face ID";
+  })();
   function passkeysSupported() {
     return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create);
   }
@@ -327,9 +334,12 @@
   function passkeyError(e) {
     var m = String((e && e.message) || "");
     if (e && e.name === "NotAllowedError") return "Отменено. Попробуйте ещё раз — или войдите кодом с аварийного листа.";
-    if (m === "prf") return "Это устройство или браузер не умеет открывать сейфы по Face ID (нужны iOS/macOS 18+, свежий Chrome). Используйте код с аварийного листа.";
-    if (m === "nopasskey") return "Для сейфов ещё нет ни одного устройства с Face ID — войдите кодом с аварийного листа.";
-    return "Face ID не сработал. Попробуйте ещё раз или войдите кодом с аварийного листа.";
+    if (m === "prf") return "Это устройство или браузер не умеет открывать сейфы по " + BIO + " (нужны iOS/macOS 18+, свежий Chrome). Используйте код с аварийного листа.";
+    if (m === "nopasskey") return "Для сейфов ещё нет ни одного устройства с " + BIO + " — войдите кодом с аварийного листа.";
+    if (m === "unwrap") return BIO + " прошёл, но ключ сейфов не подошёл. Войдите кодом с аварийного листа и добавьте " + BIO + " заново.";
+    if (m === "relogin") return "Войдите кодом с аварийного листа ещё раз — потом добавьте " + BIO + ".";
+    // название ошибки браузера — чтобы по скриншоту понять причину (секретов в нём нет)
+    return BIO + " не сработал (" + ((e && e.name) || "ошибка") + (m && m.length < 80 ? ": " + m : "") + "). Попробуйте ещё раз или войдите кодом с аварийного листа.";
   }
 
   // ---------- действия: включение ----------
@@ -350,11 +360,11 @@
             wrapped_umk: await CR.wrapUmkPrf(id.umk, pk.prf, pk.salt),
           };
         } catch (e) {
-          note = (e && e.name === "NotAllowedError" ? "Face ID не настроен" : passkeyError(e).split(".")[0]) +
-            ". Пока сейфы будут открываться кодом с этого листа — Face ID можно добавить при следующем входе.";
+          note = (e && e.name === "NotAllowedError" ? "" + BIO + " не настроен" : passkeyError(e).split(".")[0]) +
+            ". Пока сейфы будут открываться кодом с этого листа — " + BIO + " можно добавить при следующем входе.";
         }
       } else {
-        note = "Этот браузер не умеет Face ID для сейфов — открывать их можно кодом с аварийного листа.";
+        note = "Этот браузер не умеет " + BIO + " для сейфов — открывать их можно кодом с аварийного листа.";
       }
       var code = CR.newRecoveryCode();
       var rec = await CR.wrapUmkRecovery(id.umk, code);
@@ -401,7 +411,12 @@
     paint();
     try {
       var r = await passkeyGet();
-      var umk = await CR.unwrapUmkPrf(r.unlocker.wrapped_umk, r.prf, r.unlocker.salt);
+      var umk;
+      try {
+        umk = await CR.unwrapUmkPrf(r.unlocker.wrapped_umk, r.prf, r.unlocker.salt);
+      } catch (_) {
+        throw new Error("unwrap");
+      }
       await openWithUmk(umk);
       api("/keys/unlockers/" + r.unlocker.id + "/used", json("POST", {})).catch(function () {});
       st.view = "list";
@@ -417,7 +432,7 @@
   async function unlockCode(code) {
     if (st.busy) return;
     var u = ((st.keys && st.keys.unlockers) || []).filter(function (x) { return x.kind === "recovery"; })[0];
-    if (!u) return toast("Аварийного кода нет — войдите по Face ID");
+    if (!u) return toast("Аварийного кода нет — войдите по " + BIO + "");
     if (!CR.recoveryLooksValid(code)) return toast("Код — 24 знака: латинские буквы и цифры, как на листе");
     st.busy = true;
     paint();
@@ -444,31 +459,24 @@
     st.busy = true;
     paint();
     try {
-      var umk = await reUmk();
+      if (!st._codeUmk) throw new Error("relogin");
       var pk = await passkeyCreate();
+      var umk = st._codeUmk.slice(); // код держим до успеха: отмена или сбой — можно попробовать ещё раз
       var r = await api("/keys/unlockers", json("POST", {
         kind: "passkey", credential_id: pk.credentialId, salt: pk.salt, label: deviceLabel(),
         wrapped_umk: await CR.wrapUmkPrf(umk, pk.prf, pk.salt),
       }));
       umk.fill(0);
+      st._codeUmk.fill(0);
+      st._codeUmk = null;
       applyState(r);
-      toast("Готово — здесь сейфы открываются по Face ID");
+      toast("Готово — здесь сейфы открываются по " + BIO + "");
       st.view = "list";
     } catch (e) {
       toast(passkeyError(e));
     }
     st.busy = false;
     refresh();
-  }
-
-  // UMK после входа не храним. Для новой обёртки — достаём её ещё раз из того, чем вошли (код держим до конца шага).
-  async function reUmk() {
-    if (st._codeUmk) {
-      var u = st._codeUmk;
-      st._codeUmk = null;
-      return u;
-    }
-    throw new Error("Войдите кодом ещё раз");
   }
 
   async function runAfter() {
@@ -867,7 +875,7 @@
     if (!st.enabled) return bar([["Сейфы"]]) + '<div class="kb-page vlt-page vlt-center"><p class="muted lead">Сейфы пока недоступны.</p></div>';
     if (inTelegram()) {
       return bar([["Сейфы"]]) + '<div class="kb-page vlt-page vlt-center"><div class="vlt-big">' + IC.lock + '</div><h1 class="screen-title kb-title">Сейфы — в браузере</h1>' +
-        '<p class="muted lead">В Telegram сейфы не открываются: Face ID и шифрование работают только в браузере и приложении Орбиты.</p>' +
+        '<p class="muted lead">В Telegram сейфы не открываются: Face ID, Touch ID и шифрование работают только в браузере и приложении Орбиты.</p>' +
         btn("Открыть Орбиту в браузере", 'data-v="open-browser"', "kb-btn--primary vlt-btn-lg") + "</div>";
     }
     var v = vaultOf(st.vaultId);
@@ -905,7 +913,7 @@
     return bar([["Сейфы"], ["Аварийный лист"]]) + '<div class="kb-page vlt-page vlt-center">' +
       '<div class="vlt-big">' + IC.paper + '</div><h1 class="screen-title kb-title">Сохраните аварийный лист</h1>' +
       (s.note ? '<div class="kb-banner kb-banner--stale vlt-left"><span>' + esc(s.note) + "</span></div>" : "") +
-      '<p class="muted lead">' + (s.passkey ? "Face ID для сейфов настроен. " : "") + "Этот код откроет сейфы, если под рукой не будет ваших устройств. Больше мы его не покажем.</p>" +
+      '<p class="muted lead">' + (s.passkey ? "" + BIO + " для сейфов настроен. " : "") + "Этот код откроет сейфы, если под рукой не будет ваших устройств. Больше мы его не покажем.</p>" +
       '<div class="vlt-paper" id="vlt-print"><span class="vlt-label">Код восстановления сейфов Орбиты</span><div class="vlt-code">' + esc(s.code || "") + "</div>" +
       '<span class="vlt-label">Храните на бумаге, вне компьютера. Не фотографируйте и не пересылайте.</span></div>' +
       '<div class="vlt-actions">' + btn("Распечатать", 'data-v="print"', "", IC.paper) + btn("Скопировать", 'data-v="copy-code"', "kb-btn--ghost", IC.copy) + "</div>" +
@@ -921,8 +929,8 @@
       '<div class="vlt-big">' + IC.face + '</div><h1 class="screen-title kb-title">' + (v ? "Сейф «" + esc(v.name) + "» закрыт" : "Сейфы закрыты") + "</h1>" +
       '<p class="muted lead">Подтвердите, что это вы. Сейфы закрываются сами через 15 минут без действий.</p>' +
       (hasPk && passkeysSupported()
-        ? '<div class="vlt-actions"><button type="button" class="kb-btn kb-btn--primary vlt-btn-lg" data-v="unlock"' + busyAttr() + ">" + IC.face + "<span>" + (st.busy ? "Подождите…" : "Открыть по Face ID") + "</span></button></div>" +
-          '<button type="button" class="pf-link" data-v="device">Другое устройство или нет Face ID</button>'
+        ? '<div class="vlt-actions"><button type="button" class="kb-btn kb-btn--primary vlt-btn-lg" data-v="unlock"' + busyAttr() + ">" + IC.face + "<span>" + (st.busy ? "Подождите…" : "Открыть по " + BIO + "") + "</span></button></div>" +
+          '<button type="button" class="pf-link" data-v="device">Другое устройство или нет ' + BIO + '</button>'
         : codeFormHtml() + '<p class="pf-hint vlt-reset"><button type="button" class="pf-link" data-v="reset">Потеряли аварийный лист?</button></p>') +
       "</div>";
   }
@@ -936,9 +944,9 @@
   function deviceHtml(v) {
     return bar(crumbs(v).concat([["Другое устройство"]])) + '<div class="kb-page vlt-page vlt-center">' +
       '<div class="vlt-big">' + IC.phone + '</div><h1 class="screen-title kb-title">Открыть на этом устройстве</h1>' +
-      '<p class="muted lead">Если это iPhone, iPad или Mac на том же Apple ID — Face ID уже работает: ключ пришёл через iCloud. ' +
-      "Иначе войдите один раз кодом с аварийного листа и добавьте Face ID этого устройства.</p>" +
-      '<div class="vlt-actions">' + btn("Попробовать Face ID", 'data-v="unlock"', "", IC.face) + "</div>" +
+      '<p class="muted lead">Если это iPhone, iPad или Mac на том же Apple ID — Face ID и Touch ID уже работают: ключ пришёл через iCloud. ' +
+      "Иначе войдите один раз кодом с аварийного листа и добавьте " + BIO + " этого устройства.</p>" +
+      '<div class="vlt-actions">' + btn("Попробовать " + BIO + "", 'data-v="unlock"', "", IC.face) + "</div>" +
       codeFormHtml() +
       '<p class="pf-hint vlt-reset"><button type="button" class="pf-link" data-v="reset">Потеряли и устройства, и аварийный лист?</button></p></div>';
   }
@@ -953,10 +961,10 @@
 
   function addDeviceHtml() {
     return bar([["Сейфы"], ["Это устройство"]]) + '<div class="kb-page vlt-page vlt-center">' +
-      '<div class="vlt-big">' + IC.face + '</div><h1 class="screen-title kb-title">Открывать здесь по Face ID?</h1>' +
+      '<div class="vlt-big">' + IC.face + '</div><h1 class="screen-title kb-title">Открывать здесь по ' + BIO + '?</h1>' +
       '<p class="muted lead">Тогда в следующий раз код с листа не понадобится.</p>' +
       '<div class="vlt-actions">' + btn("Не сейчас", 'data-v="skip-device"', "kb-btn--ghost") +
-      '<button type="button" class="kb-btn kb-btn--primary vlt-btn-lg" data-v="add-device"' + busyAttr() + ">" + IC.face + "<span>Добавить Face ID</span></button></div></div>";
+      '<button type="button" class="kb-btn kb-btn--primary vlt-btn-lg" data-v="add-device"' + busyAttr() + ">" + IC.face + "<span>Добавить " + BIO + "</span></button></div></div>";
   }
 
   function listHtml(v) {
