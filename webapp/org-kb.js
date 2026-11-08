@@ -676,6 +676,21 @@
     }
   }
 
+  // Убрать документ из базы: сам документ остаётся у автора в «Документах».
+  async function removeDoc(orgId, id) {
+    var msg = "Убрать документ из базы знаний? Сам документ останется у автора в «Документах».";
+    var ok = app().confirm ? await app().confirm(msg) : window.confirm(msg);
+    if (!ok) return false;
+    try {
+      await refreshOrg(orgId, await api("/" + orgId + "/kb/nodes/" + id, { method: "DELETE" }));
+      toast("Убрано из базы знаний");
+      return true;
+    } catch (e) {
+      toast(errText(e));
+      return false;
+    }
+  }
+
   // Кнопка «+» вкладки: есть разделы, куда можно добавлять, — спросить куда; иначе — как раньше.
   function editableSections() {
     var out = [];
@@ -1193,7 +1208,7 @@
       childrenOf: childrenOf, docsUnder: docsUnder, principalName: principalName, accessLine: accessLine,
       crumbs: crumbs, load: load, refreshOrg: refreshOrg, newRoot: newRoot, newSub: newSub, newDoc: newDoc,
       addMyDoc: addMyDoc, openAccess: openAccess, renameSection: renameSection, removeSection: removeSection,
-      moveSection: moveSection, placeNote: placeNote, nodeForNote: nodeForNote, editableSections: editableSections,
+      removeDoc: removeDoc, moveSection: moveSection, placeNote: placeNote, nodeForNote: nodeForNote, editableSections: editableSections,
       openCreateChooser: openCreateChooser, openNoteAny: openNoteAny, bannerAction: bannerAction,
     },
   };

@@ -1047,6 +1047,12 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
         except Exception as e:
             print(f"[notes] delete members failed note={note_id} err={e!r}")
         try:
+            from assistant.stores import org_kb
+
+            org_kb.forget_notes([int(note_id)])
+        except Exception as e:
+            print(f"[notes] delete org kb place failed note={note_id} err={e!r}")
+        try:
             from assistant.stores import teams_store
 
             teams_store.delete_all_for_note(uid, int(note_id))

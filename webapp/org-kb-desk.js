@@ -461,6 +461,7 @@
       if (role === "owner") {
         items.push({ label: "Доступ", run: function () { K().openAccess(r.orgId, n.id); } });
         items.push({ label: "Переместить…", run: function () { K().placeNote(n.note_id); } });
+        items.push({ label: "Убрать из базы", danger: true, run: function () { removeDocHere(r.orgId, n); } });
       }
       return items;
     }
@@ -472,6 +473,16 @@
       items.push({ label: "Убрать раздел", danger: true, run: function () { removeSectionHere(r.orgId, n.id); } });
     }
     return items;
+  }
+
+  async function removeDocHere(orgId, n) {
+    var open = app() && app().currentNoteId ? app().currentNoteId() : "";
+    if (!(await K().removeDoc(orgId, n.id))) return;
+    if (open && String(open) === String(n.note_id) && app().closeNote) {
+      await app().closeNote();
+      if (n.parent_id != null) showSection(orgId, n.parent_id);
+      else goHome();
+    }
   }
 
   async function removeSectionHere(orgId, id) {

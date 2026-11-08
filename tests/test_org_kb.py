@@ -381,3 +381,24 @@ class OrgKbReorderTests(OrgKbTests):
         self.assertEqual(after, [node, self.doc])
         with self.assertRaises(OrgError):
             org_kb.reorder(MANAGER, self.org, self.doc, 0)  # читатель порядок не меняет
+
+
+class OrgKbDeletedNoteTests(OrgKbTests):
+    def test_deleting_note_removes_its_place(self) -> None:
+        other = notes_store.create_note(OWNER, "", "")["id"]
+        node = org_kb.add_doc(OWNER, self.org, self.sec, other)["id"]
+        self.assertIn(node, [n["id"] for n in org_kb.tree(self.org, OWNER)])
+        self.assertTrue(notes_store.delete_note(OWNER, other))
+        self.assertNotIn(node, [n["id"] for n in org_kb.tree(self.org, OWNER)])
+
+    def test_tree_cleans_place_left_from_before(self) -> None:
+        other = notes_store.create_note(OWNER, "", "")["id"]
+        node = org_kb.add_doc(OWNER, self.org, self.sec, other)["id"]
+        with mock.patch.object(org_kb, "forget_notes", lambda ids: 0):
+            notes_store.delete_note(OWNER, other)  # как было до правки: место осталось
+        ids = [n["id"] for n in org_kb.tree(self.org, OWNER)]
+        self.assertNotIn(node, ids)
+        self.assertIn(self.doc, ids)
+        with org_kb._LOCK:
+            left = org_kb._conn().execute("SELECT 1 FROM org_kb_nodes WHERE id = ?", (node,)).fetchone()
+        self.assertIsNone(left)

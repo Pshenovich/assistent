@@ -229,6 +229,11 @@ def tree(org_id: int, actor_id: int | str) -> list[dict[str, Any]]:
     viewer, nodes, acl = _load(org_id, actor_id)
     doc_ids = [int(r["note_id"]) for r in nodes.values() if r["kind"] == "doc"]
     notes = {nid: notes_store.get_note_by_id(nid) or {} for nid in doc_ids}
+    gone = {nid for nid in doc_ids if not notes[nid]}
+    if gone:
+        # документ удалили раньше, чем удаление стало убирать место в базе, — прибрать сейчас
+        forget_notes(gone)
+        nodes = {k: r for k, r in nodes.items() if not (r["kind"] == "doc" and int(r["note_id"] or 0) in gone)}
     now = datetime.now(timezone.utc)
     roles: dict[int, str] = {}
     for nid, row in nodes.items():
@@ -427,6 +432,29 @@ def remove(actor_id: int | str, org_id: int, node_id: int) -> None:
         conn.commit()
     if row["kind"] == "doc":
         _reindex(org_id)
+
+
+def forget_notes(note_ids: list[int] | set[int]) -> int:
+    """Документ удалён из «Документов» — убрать его место в базе знаний (иначе в дереве «Без названия»)."""
+    ids = sorted({int(i) for i in note_ids if i})
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    with _LOCK:
+        conn = _conn()
+        rows = conn.execute(
+            f"SELECT id, org_id FROM org_kb_nodes WHERE kind = 'doc' AND note_id IN ({marks})", ids
+        ).fetchall()
+        if not rows:
+            return 0
+        node_ids = [int(r["id"]) for r in rows]
+        nmarks = ",".join("?" * len(node_ids))
+        conn.execute(f"DELETE FROM org_kb_acl WHERE node_id IN ({nmarks})", node_ids)
+        conn.execute(f"DELETE FROM org_kb_nodes WHERE id IN ({nmarks})", node_ids)
+        conn.commit()
+    for org_id in {int(r["org_id"]) for r in rows}:
+        _reindex(org_id)
+    return len(rows)
 
 
 def _valid_principal(org_id: int, principal: str) -> str:
