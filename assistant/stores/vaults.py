@@ -90,6 +90,11 @@ def _conn() -> sqlite3.Connection:
             status TEXT NOT NULL, created_at TEXT NOT NULL, decided_by TEXT, decided_at TEXT, role TEXT,
             notified INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_vault_requests_vault ON vault_requests(vault_id, status);
+        CREATE TABLE IF NOT EXISTS vault_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, public_key TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, sealed TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL, decided_at TEXT, notified INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_vault_links_user ON vault_links(user_id, status);
         """
     )
     _add_column(conn, "vaults", "key_version", "INTEGER NOT NULL DEFAULT 1")
@@ -351,6 +356,127 @@ def unlock_device(user_id: int | str, unlocker_id: int, client_data_json: str, a
         )
         conn.commit()
     return {"wrapped_umk": row["wrapped_umk"], "salt": row["salt"]}
+
+
+# ---------- подтвердить новое устройство с другого (своего) ----------
+# Новое устройство без ключей присылает одноразовый открытый ключ; устройство с ключами после касания
+# запечатывает ему UMK. Сервер видит только запечатанное; код из открытого ключа люди сверяют глазами.
+
+LINK_TTL = 600  # 10 минут на подтверждение
+LINKS_PER_HOUR = 6
+
+
+def _age_s(at: str) -> float:
+    from datetime import datetime, timezone
+
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(str(at).replace("Z", "+00:00"))).total_seconds()
+    except ValueError:
+        return 1e9
+
+
+def link_start(user_id: int | str, public_key: str, label: str = "") -> dict[str, Any]:
+    uid = _uid(user_id)
+    pub = _blob(public_key, "public_key")
+    label = " ".join(str(label or "").split())[:60]
+    with _LOCK:
+        conn = _conn()
+        if not conn.execute("SELECT 1 FROM vault_user_keys WHERE user_id = ?", (uid,)).fetchone():
+            raise OrgError("Сначала включите сейфы", 400)
+        recent = [r["created_at"] for r in conn.execute(
+            "SELECT created_at FROM vault_links WHERE user_id = ? ORDER BY id DESC LIMIT ?", (uid, LINKS_PER_HOUR))]
+        if len(recent) >= LINKS_PER_HOUR and _age_s(recent[-1]) < 3600:
+            raise OrgError("Слишком много запросов — попробуйте через час или войдите кодом с аварийного листа", 400)
+        # одновременно ждёт один запрос: новый заменяет прежний
+        conn.execute("UPDATE vault_links SET status = 'cancelled', sealed = '' WHERE user_id = ? AND status = 'pending'", (uid,))
+        cur = conn.execute(
+            "INSERT INTO vault_links (user_id, public_key, label, status, created_at) VALUES (?,?,?,'pending',?)",
+            (uid, pub, label, _now()),
+        )
+        conn.commit()
+        return {"id": int(cur.lastrowid), "ttl": LINK_TTL}
+
+
+def _link(conn: sqlite3.Connection, uid: str, link_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM vault_links WHERE id = ? AND user_id = ?", (int(link_id), uid)).fetchone()
+    if not row:
+        raise OrgError("Запрос не найден", 404)
+    return row
+
+
+def _link_status(row: sqlite3.Row) -> str:
+    if row["status"] == "pending" and _age_s(row["created_at"]) > LINK_TTL:
+        return "expired"
+    return str(row["status"])
+
+
+def link_status(user_id: int | str, link_id: int) -> dict[str, Any]:
+    """Новое устройство спрашивает, что с запросом. Запечатанное отдаётся один раз."""
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        row = _link(conn, uid, link_id)
+        status = _link_status(row)
+        if status == "approved":
+            conn.execute("UPDATE vault_links SET status = 'used', sealed = '' WHERE id = ?", (int(row["id"]),))
+            conn.commit()
+            return {"status": "approved", "sealed": row["sealed"]}
+    return {"status": status}
+
+
+def links_pending(user_id: int | str) -> list[dict[str, Any]]:
+    uid = _uid(user_id)
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT * FROM vault_links WHERE user_id = ? AND status = 'pending' ORDER BY id DESC", (uid,)
+        ).fetchall()
+    return [
+        {"id": int(r["id"]), "public_key": r["public_key"], "label": r["label"], "created_at": r["created_at"]}
+        for r in rows if _link_status(r) == "pending"
+    ]
+
+
+def link_decide(user_id: int | str, link_id: int, sealed: Optional[str]) -> None:
+    """Устройство с ключами разрешило (sealed — UMK, запечатанная одноразовому ключу) или отклонило (None)."""
+    uid = _uid(user_id)
+    blob = _blob(sealed, "sealed") if sealed else ""
+    with _LOCK:
+        conn = _conn()
+        row = _link(conn, uid, link_id)
+        if _link_status(row) != "pending":
+            raise OrgError("Запрос уже не ждёт ответа — попросите новый на том устройстве", 400)
+        conn.execute(
+            "UPDATE vault_links SET status = ?, sealed = ?, decided_at = ? WHERE id = ?",
+            ("approved" if blob else "rejected", blob, _now(), int(row["id"])),
+        )
+        conn.commit()
+
+
+def link_cancel(user_id: int | str, link_id: int) -> None:
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        _link(conn, uid, link_id)
+        conn.execute(
+            "UPDATE vault_links SET status = 'cancelled', sealed = '' WHERE id = ? AND status IN ('pending','approved')",
+            (int(link_id),),
+        )
+        conn.commit()
+
+
+def link_events() -> list[dict[str, Any]]:
+    """Новые запросы устройств — уведомить самого человека (один раз)."""
+    with _LOCK:
+        conn = _conn()
+        rows = conn.execute("SELECT * FROM vault_links WHERE status = 'pending' AND notified = 0").fetchall()
+        out = []
+        for r in rows:
+            conn.execute("UPDATE vault_links SET notified = 1 WHERE id = ?", (int(r["id"]),))
+            if _link_status(r) == "pending":
+                out.append({"kind": "device_link", "vault_id": 0, "vault_name": "", "to": [r["user_id"]],
+                            "who_name": r["label"] or "Новое устройство"})
+        conn.commit()
+    return out
 
 
 def touch_unlocker(user_id: int | str, unlocker_id: int) -> None:
@@ -1206,4 +1332,4 @@ def watch() -> list[dict[str, Any]]:
     for ev in events:
         ev["who_name"] = names.get(ev["who"], "")
         ev["by_name"] = names.get(ev.get("by") or "", "")
-    return events
+    return events + link_events()

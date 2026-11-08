@@ -52,6 +52,16 @@ const out = {};
   out.redirected = await V.openEnvelope(envDima, dimaPriv, me.publicKey).then(() => false, () => true);
   out.encPrivateNotPlain = !me.encPrivate.includes("PRIVATE");
 
+  // подтвердить новое устройство: UMK запечатана одноразовому ключу; код совпадает только для того же ключа
+  const link = await V.newLinkKey();
+  const sealedUmk = await V.sealUmkForLink(me.umk, link.publicKey);
+  out.linkOk = Buffer.from(await V.openUmkFromLink(sealedUmk, link.privateKey, link.publicKey)).equals(Buffer.from(me.umk));
+  const other = await V.newLinkKey();
+  out.linkWrongKey = await V.openUmkFromLink(sealedUmk, other.privateKey, other.publicKey).then(() => false, () => true);
+  out.linkNotEnvelope = await V.openEnvelope(sealedUmk, link.privateKey, link.publicKey).then(() => false, () => true);
+  const c1 = await V.linkCode(link.publicKey), c2 = await V.linkCode(link.publicKey), c3 = await V.linkCode(other.publicKey);
+  out.linkCode = /^[0-9]{3} [0-9]{3}$/.test(c1) && c1 === c2 && c1 !== c3;
+
   const pw = V.generatePassword(20);
   out.pw = pw.length === 20 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /[0-9]/.test(pw);
   console.log(JSON.stringify(out));

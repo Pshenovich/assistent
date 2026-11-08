@@ -26,7 +26,7 @@
     events: {}, // vaultId → журнал сейфа (аварийный доступ)
     items: {}, // vaultId → [{id, data, updated_at, updated_by_name}]
     lastActive: 0,
-    view: "list", // list | record | edit | setup | code | locked | device | add-device
+    view: "list", // list | record | edit | setup | code | locked | device | link | add-device
     vaultId: null,
     itemId: null,
     draft: null, // правка записи
@@ -36,6 +36,9 @@
     busy: false,
     mobile: null, // экран на телефоне
     after: null, // что сделать после открытия (например, создать сейф)
+    links: [], // новые устройства просят ключ — показать «Разрешить» на этом
+    linkCodes: {}, // id запроса → код для сверки
+    link: null, // это устройство ждёт подтверждения: {id, key, code, status}
   };
 
   var TYPES = {
@@ -163,6 +166,7 @@
         st.keys = r.keys || null;
         st.vaults = r.vaults || [];
         st.ownerKeys = r.org_owner_keys || {};
+        setLinks(r.links);
         st.loaded = true;
         if (unlocked()) await afterOpen();
         openFromLink(location.href);
@@ -179,11 +183,13 @@
   // Ссылка из уведомления: ...?vault=ID — открыть этот сейф (один раз на ссылку).
   var linkSeen = "";
   function openFromLink(href) {
-    var id = 0;
+    var id = 0, raw = "";
     try {
-      id = Number(new URL(href, location.href).searchParams.get("vault") || 0);
+      raw = new URL(href, location.href).searchParams.get("vault") || "";
+      id = Number(raw) || 0;
     } catch (_) {}
-    if (!id || linkSeen === href || !vaultOf(id)) return;
+    var toLinks = raw === "link"; // «новое устройство просит открыть сейфы» — экран сейфов
+    if ((!id && !toLinks) || linkSeen === href || (id && !vaultOf(id))) return;
     linkSeen = href;
     try {
       var u = new URL(location.href);
@@ -191,7 +197,7 @@
       history.replaceState(null, "", u.pathname + u.search + u.hash);
     } catch (_) {}
     if (app().setTab) app().setTab("knowledge");
-    setTimeout(function () { show(id); }, 50);
+    setTimeout(function () { show(toLinks ? (st.vaultId || null) : id); }, 50);
   }
   if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
     navigator.serviceWorker.addEventListener("message", function (ev) {
@@ -206,6 +212,16 @@
     if (r && r.keys) st.keys = r.keys;
     if (r && r.vaults) st.vaults = r.vaults;
     if (r && r.org_owner_keys) st.ownerKeys = r.org_owner_keys;
+    if (r && r.links) setLinks(r.links);
+  }
+
+  // Запросы новых устройств: код для сверки считаем из открытого ключа, который пришёл с сервера.
+  function setLinks(list) {
+    st.links = list || [];
+    st.links.forEach(function (l) {
+      if (st.linkCodes[l.id]) return;
+      CR.linkCode(l.public_key).then(function (c) { st.linkCodes[l.id] = c; refresh(); }, function () {});
+    });
   }
 
   function refresh() {
@@ -236,6 +252,16 @@
     if (!silent) toast("Сейфы закрыты");
     refresh();
   }
+
+  // Пока экран сейфов открыт — раз в 20 с узнаём, не просит ли новое устройство ключ.
+  setInterval(function () {
+    if (!st.loaded || !st.keys || !st.keys.enabled || st.link || document.hidden || !document.querySelector(".vlt-page")) return;
+    api("").then(function (r) {
+      var before = st.links.map(function (l) { return l.id; }).join(",");
+      setLinks(r.links);
+      if (st.links.map(function (l) { return l.id; }).join(",") !== before) refresh();
+    }, function () {});
+  }, 20000);
 
   setInterval(function () {
     if (!unlocked()) return;
@@ -582,17 +608,7 @@
     st.busy = true;
     paint();
     try {
-      var umk = await deviceUnlockHere();
-      if (!umk) {
-        var r = await passkeyGet();
-        try {
-          umk = await CR.unwrapUmkPrf(r.unlocker.wrapped_umk, r.prf, r.unlocker.salt);
-        } catch (_) {
-          throw new Error("unwrap");
-        }
-        api("/keys/unlockers/" + r.unlocker.id + "/used", json("POST", {})).catch(function () {});
-      }
-      await openWithUmk(umk);
+      await openWithUmk(await umkByTouch());
       st.view = "list";
       await runAfter();
     } catch (e) {
@@ -601,6 +617,156 @@
     }
     st.busy = false;
     refresh();
+  }
+
+  // UMK по касанию: сначала ключ этого браузера (Arc и др.), потом passkey с PRF.
+  async function umkByTouch() {
+    var umk = await deviceUnlockHere();
+    if (umk) return umk;
+    var r = await passkeyGet();
+    try {
+      umk = await CR.unwrapUmkPrf(r.unlocker.wrapped_umk, r.prf, r.unlocker.salt);
+    } catch (_) {
+      throw new Error("unwrap");
+    }
+    api("/keys/unlockers/" + r.unlocker.id + "/used", json("POST", {})).catch(function () {});
+    return umk;
+  }
+
+  // ---------- подтвердить новое устройство с другого ----------
+
+  function browserName() {
+    var ua = navigator.userAgent || "";
+    if (/Edg\//.test(ua)) return "Edge";
+    if (/Firefox\//.test(ua)) return "Firefox";
+    if (/Chrome\//.test(ua)) return "Chrome";
+    if (/Safari\//.test(ua)) return "Safari";
+    return "";
+  }
+
+  // Новое устройство: одноразовый ключ → сервер → ждём, пока другое устройство разрешит.
+  async function linkStart() {
+    if (st.busy) return;
+    st.busy = true;
+    paint();
+    try {
+      var key = await CR.newLinkKey();
+      var label = deviceLabel() + (browserName() ? " · " + browserName() : "");
+      var r = await api("/keys/link", json("POST", { public_key: key.publicKey, label: label }));
+      st.link = { id: r.id, key: key, code: await CR.linkCode(key.publicKey), status: "pending", until: Date.now() + (r.ttl || 600) * 1000 };
+      st.view = "link";
+      linkPoll();
+    } catch (e) {
+      toast(errText(e));
+    }
+    st.busy = false;
+    refresh();
+  }
+
+  function linkPoll() {
+    var l = st.link;
+    if (!l || st.view !== "link") return;
+    setTimeout(async function () {
+      if (st.link !== l || st.view !== "link") return;
+      try {
+        var r = await api("/keys/link/" + l.id);
+        if (r.status === "approved" && r.sealed) return linkFinish(l, r.sealed);
+        if (r.status !== "pending") {
+          l.status = r.status;
+          refresh();
+          return;
+        }
+      } catch (_) {}
+      if (Date.now() > l.until) {
+        l.status = "expired";
+        refresh();
+        return;
+      }
+      linkPoll();
+    }, 2000);
+  }
+
+  async function linkFinish(l, sealed) {
+    try {
+      var umk = await CR.openUmkFromLink(sealed, l.key.privateKey, l.key.publicKey);
+      st._codeUmk = umk.slice(); // как после входа кодом: можно сразу добавить Touch ID этого устройства
+      st.link = null;
+      await openWithUmk(umk);
+      st.view = passkeysSupported() ? "add-device" : "list";
+      toast("Сейфы открыты на этом устройстве");
+      await runAfter();
+    } catch (e) {
+      l.status = "broken";
+    }
+    refresh();
+  }
+
+  function linkCancel() {
+    var l = st.link;
+    st.link = null;
+    st.view = "device";
+    if (l && l.status === "pending") api("/keys/link/" + l.id + "/cancel", json("POST", {})).catch(function () {});
+    refresh();
+  }
+
+  // Устройство с ключами: касание → UMK запечатываем одноразовому ключу нового устройства.
+  async function linkDecide(id, ok) {
+    if (st.busy) return;
+    var l = st.links.filter(function (x) { return x.id === id; })[0];
+    if (!l) return;
+    st.busy = true;
+    paint();
+    try {
+      var body = { sealed: "" };
+      if (ok) {
+        var umk = await umkByTouch();
+        try {
+          body.sealed = await CR.sealUmkForLink(umk, l.public_key);
+        } finally {
+          umk.fill(0);
+        }
+      }
+      applyState(await api("/keys/link/" + id + "/decide", json("POST", body)));
+      toast(ok ? "Готово — на том устройстве сейфы откроются сами" : "Отклонено");
+    } catch (e) {
+      toast(e && (e.name === "NotAllowedError" || e.message === "prf" || e.message === "nopasskey" || e.message === "unwrap") ? passkeyError(e) : errText(e));
+    }
+    st.busy = false;
+    refresh();
+  }
+
+  function linksHtml() {
+    if (!st.links.length || !st.keys || !st.keys.enabled) return "";
+    var hasTouch = ((st.keys && st.keys.unlockers) || []).some(function (u) { return u.kind === "passkey" || u.kind === "device"; });
+    return '<div class="vlt-deps vlt-links">' + st.links.map(function (l) {
+      var code = st.linkCodes[l.id] || "…";
+      return '<div class="vlt-link-req"><div class="vlt-link-head">' + IC.phone + "<span><b>" + esc(l.label || "Новое устройство") + "</b> просит открыть ваши сейфы · " + esc(when(l.created_at)) + "</span></div>" +
+        '<p class="vlt-link-code-row">Код на том устройстве должен быть <span class="vlt-link-code">' + esc(code) + "</span></p>" +
+        '<p class="pf-hint">Разрешайте, только если это устройство сейчас у вас в руках и код совпадает. Если не узнаёте запрос — отклоните.</p>' +
+        '<span class="vlt-req-acts">' +
+        (hasTouch && passkeysSupported()
+          ? btn("Разрешить по " + BIO, 'data-v="link-ok" data-id="' + l.id + '"' + busyAttr(), "kb-btn--primary", IC.face)
+          : '<span class="pf-hint">Разрешить можно с устройства, где сейфы открываются по ' + BIO + ".</span>") +
+        btn("Отклонить", 'data-v="link-no" data-id="' + l.id + '"' + busyAttr(), "kb-btn--ghost") + "</span></div>";
+    }).join("") + "</div>";
+  }
+
+  function linkHtml() {
+    var l = st.link || { status: "expired", code: "" };
+    var body;
+    if (l.status === "pending") {
+      body = '<p class="muted lead">Откройте Орбиту на устройстве, где сейфы уже открываются (например, на маке), — там появится запрос. Сверьте код и нажмите «Разрешить».</p>' +
+        '<div class="vlt-paper"><span class="vlt-label">Код этого устройства</span><div class="vlt-code vlt-link-big">' + esc(l.code) + "</div>" +
+        '<span class="vlt-label">Ждём ответа — запрос действует 10 минут.</span></div>' +
+        '<div class="vlt-actions">' + btn("Отменить", 'data-v="link-cancel"', "kb-btn--ghost") + "</div>";
+    } else {
+      var msg = { rejected: "Запрос отклонили на другом устройстве.", cancelled: "Запрос заменён новым или отменён.", broken: "Ключ не подошёл — попросите ещё раз." }[l.status] ||
+        "Время вышло — попросите ещё раз.";
+      body = '<p class="muted lead">' + esc(msg) + "</p>" +
+        '<div class="vlt-actions">' + btn("Попросить ещё раз", 'data-v="link-start"' + busyAttr(), "kb-btn--primary") + btn("Назад", 'data-v="link-cancel"', "kb-btn--ghost") + "</div>";
+    }
+    return bar([["Сейфы"], ["Подтвердить с другого устройства"]]) + '<div class="kb-page vlt-page vlt-center">' +
+      '<div class="vlt-big">' + IC.phone + '</div><h1 class="screen-title kb-title">Подтвердите с другого устройства</h1>' + body + "</div>";
   }
 
   async function unlockCode(code) {
@@ -1049,7 +1215,7 @@
     if (!st.keys || !st.keys.enabled) {
       if (st.view !== "code") st.view = "setup";
     } else if (!unlocked()) {
-      if (st.view !== "device") st.view = "locked";
+      if (st.view !== "device" && st.view !== "link") st.view = "locked";
     } else if (["setup", "code", "locked", "device"].indexOf(st.view) >= 0 || !v) {
       st.view = "list";
     }
@@ -1126,12 +1292,16 @@
     // экран всегда соответствует состоянию ключей: не включены → включить, закрыты → открыть
     if (!st.keys || !st.keys.enabled) {
       if (st.view !== "code") st.view = "setup";
-    } else if (!unlocked() && ["locked", "device", "code"].indexOf(st.view) < 0) {
+    } else if (!unlocked() && ["locked", "device", "code", "link"].indexOf(st.view) < 0) {
       st.view = "locked";
     }
+    if (st.view === "setup") return setupHtml();
+    if (st.view === "code") return codeHtml();
+    if (st.view === "link") return linkHtml();
+    return withLinks(viewHtml(v));
+  }
+  function viewHtml(v) {
     switch (st.view) {
-      case "setup": return setupHtml();
-      case "code": return codeHtml();
       case "locked": return lockedHtml(v);
       case "device": return deviceHtml(v);
       case "add-device": return addDeviceHtml();
@@ -1139,6 +1309,11 @@
       case "record": return recordHtml(v);
       default: return listHtml(v);
     }
+  }
+  // Запрос нового устройства — сверху на любом экране сейфов
+  function withLinks(html) {
+    var b = linksHtml();
+    return b ? html.replace(/(<div class="kb-page vlt-page[^"]*">)/, "$1" + b) : html;
   }
 
   function setupHtml() {
@@ -1176,7 +1351,8 @@
       (hasPk && passkeysSupported()
         ? '<div class="vlt-actions"><button type="button" class="kb-btn kb-btn--primary vlt-btn-lg" data-v="unlock"' + busyAttr() + ">" + IC.face + "<span>" + (st.busy ? "Подождите…" : "Открыть по " + BIO + "") + "</span></button></div>" +
           '<button type="button" class="pf-link" data-v="device">Другое устройство или нет ' + BIO + '</button>'
-        : codeFormHtml() + '<p class="pf-hint vlt-reset"><button type="button" class="pf-link" data-v="reset">Потеряли аварийный лист?</button></p>') +
+        : codeFormHtml() + '<p class="pf-hint"><button type="button" class="pf-link" data-v="link-start">Подтвердить с другого устройства</button></p>' +
+          '<p class="pf-hint vlt-reset"><button type="button" class="pf-link" data-v="reset">Потеряли аварийный лист?</button></p>') +
       "</div>";
   }
 
@@ -1190,8 +1366,9 @@
     return bar(crumbs(v).concat([["Другое устройство"]])) + '<div class="kb-page vlt-page vlt-center">' +
       '<div class="vlt-big">' + IC.phone + '</div><h1 class="screen-title kb-title">Открыть на этом устройстве</h1>' +
       '<p class="muted lead">Если это iPhone, iPad или Mac на том же Apple ID — Face ID и Touch ID уже работают: ключ пришёл через iCloud. ' +
-      "Иначе войдите один раз кодом с аварийного листа и добавьте " + BIO + " этого устройства.</p>" +
-      '<div class="vlt-actions">' + btn("Попробовать " + BIO + "", 'data-v="unlock"', "", IC.face) + "</div>" +
+      "Иначе подтвердите вход с устройства, где сейфы уже открываются, или войдите кодом с аварийного листа.</p>" +
+      '<div class="vlt-actions">' + btn("Подтвердить с другого устройства", 'data-v="link-start"' + busyAttr(), "kb-btn--primary", IC.phone) +
+      btn("Попробовать " + BIO + "", 'data-v="unlock"', "", IC.face) + "</div>" +
       codeFormHtml() +
       '<p class="pf-hint vlt-reset"><button type="button" class="pf-link" data-v="reset">Потеряли и устройства, и аварийный лист?</button></p></div>';
   }
@@ -1470,6 +1647,10 @@
       case "finish": finishSetup(); break;
       case "unlock": unlockPasskey(); break;
       case "device": st.view = "device"; paint(); break;
+      case "link-start": linkStart(); break;
+      case "link-cancel": linkCancel(); break;
+      case "link-ok": linkDecide(Number(b.getAttribute("data-id")), true); break;
+      case "link-no": linkDecide(Number(b.getAttribute("data-id")), false); break;
       case "reset": resetKeys(); break;
       case "add-device": addThisDevice(); break;
       case "skip-device":

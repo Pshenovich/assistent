@@ -8624,6 +8624,15 @@ class _VaultUnlocker(BaseModel):
     alg: int = 0
 
 
+class _VaultLinkStart(BaseModel):
+    public_key: str
+    label: str = ""
+
+
+class _VaultLinkDecide(BaseModel):
+    sealed: str = ""  # пусто — отклонить
+
+
 class _VaultDeviceUnlock(BaseModel):
     client_data_json: str
     authenticator_data: str
@@ -8718,7 +8727,7 @@ def _vaults_state(uid: int) -> dict[str, Any]:
     from assistant.stores import vaults
 
     return {"ok": True, "enabled": True, "keys": vaults.my_keys(uid), "vaults": vaults.list_for(uid),
-            "org_owner_keys": vaults.owner_keys_for(uid)}
+            "org_owner_keys": vaults.owner_keys_for(uid), "links": vaults.links_pending(uid)}
 
 
 @miniapp_router.get("/vaults")
@@ -8772,6 +8781,43 @@ async def miniapp_vaults_device_unlock(unlocker_id: int, body: _VaultDeviceUnloc
     out = await _org_call(vaults.unlock_device, uid, unlocker_id, body.client_data_json, body.authenticator_data, body.signature)
     _track(uid, "vault.unlock_device")
     return {"ok": True, **out}
+
+
+@miniapp_router.post("/vaults/keys/link")
+async def miniapp_vaults_link_start(body: _VaultLinkStart, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    """Новое устройство просит ключ у другого своего устройства (одноразовый открытый ключ)."""
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    out = await _org_call(vaults.link_start, uid, body.public_key, body.label)
+    _track(uid, "vault.link_start")
+    asyncio.get_running_loop().run_in_executor(None, _vault_notify_now)
+    return {"ok": True, **out}
+
+
+@miniapp_router.get("/vaults/keys/link/{link_id}")
+async def miniapp_vaults_link_status(link_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, **await _org_call(vaults.link_status, int(principal.telegram_user_id), link_id)}
+
+
+@miniapp_router.post("/vaults/keys/link/{link_id}/decide")
+async def miniapp_vaults_link_decide(link_id: int, body: _VaultLinkDecide, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(vaults.link_decide, uid, link_id, body.sealed or None)
+    _track(uid, "vault.link_decide", approved=bool(body.sealed))
+    return await _org_call(_vaults_state, uid)
+
+
+@miniapp_router.post("/vaults/keys/link/{link_id}/cancel")
+async def miniapp_vaults_link_cancel(link_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    await _org_call(vaults.link_cancel, int(principal.telegram_user_id), link_id)
+    return {"ok": True}
 
 
 @miniapp_router.post("/vaults/keys/unlockers/{unlocker_id}/used")

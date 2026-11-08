@@ -150,22 +150,49 @@
     return hkdf(new Uint8Array(shared), salt, "orbita-vault:envelope");
   }
 
-  async function sealEnvelope(vk, recipientPublicJwk) {
+  async function sealEnvelope(vk, recipientPublicJwk, aad) {
     var rj = typeof recipientPublicJwk === "string" ? JSON.parse(recipientPublicJwk) : recipientPublicJwk;
     var eph = await S.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
     var epk = await S.exportKey("jwk", eph.publicKey);
     var shared = await S.deriveBits({ name: "ECDH", public: await importPublic(rj) }, eph.privateKey, 256);
     var key = await envKey(shared, epk, rj);
-    var sealed = JSON.parse(await seal(key, vk, "orbita-vault:vk"));
+    var sealed = JSON.parse(await seal(key, vk, aad || "orbita-vault:vk"));
     return JSON.stringify({ v: V, epk: { kty: "EC", crv: "P-256", x: epk.x, y: epk.y }, iv: sealed.iv, ct: sealed.ct });
   }
 
-  async function openEnvelope(envelope, privateKey, myPublicJwk) {
+  async function openEnvelope(envelope, privateKey, myPublicJwk, aad) {
     var e = typeof envelope === "string" ? JSON.parse(envelope) : envelope;
     var me = typeof myPublicJwk === "string" ? JSON.parse(myPublicJwk) : myPublicJwk;
     var shared = await S.deriveBits({ name: "ECDH", public: await importPublic(e.epk) }, privateKey, 256);
     var key = await envKey(shared, e.epk, me);
-    return open(key, e, "orbita-vault:vk");
+    return open(key, e, aad || "orbita-vault:vk");
+  }
+
+  // ---------- подтвердить новое устройство с другого ----------
+  // Новое устройство создаёт одноразовую пару ECDH и показывает код из её открытого ключа.
+  // Устройство с ключами показывает код из ключа, который пришёл через сервер: совпали — сервер ключ не подменил.
+  // UMK запечатывается этому ключу (как конверт, но с другим AAD).
+  async function newLinkKey() {
+    var pair = await S.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    var pub = await S.exportKey("jwk", pair.publicKey);
+    // закрытый ключ — заново неизвлекаемым
+    var pkcs8 = await S.exportKey("pkcs8", pair.privateKey);
+    var priv = await S.importKey("pkcs8", pkcs8, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+    return { publicKey: JSON.stringify({ kty: pub.kty, crv: pub.crv, x: pub.x, y: pub.y }), privateKey: priv };
+  }
+  async function linkCode(publicJwk) {
+    var j = typeof publicJwk === "string" ? JSON.parse(publicJwk) : publicJwk;
+    var h = new Uint8Array(await S.digest("SHA-256", enc.encode("orbita-vault:link|" + j.x + "|" + j.y)));
+    var n = ((h[0] << 24) | (h[1] << 16) | (h[2] << 8) | h[3]) >>> 0;
+    var c = String(n % 1000000);
+    while (c.length < 6) c = "0" + c;
+    return c.slice(0, 3) + " " + c.slice(3);
+  }
+  async function sealUmkForLink(umk, linkPublicJwk) {
+    return sealEnvelope(umk, linkPublicJwk, "orbita-vault:umk:link");
+  }
+  async function openUmkFromLink(sealed, linkPrivate, linkPublicJwk) {
+    return openEnvelope(sealed, linkPrivate, linkPublicJwk, "orbita-vault:umk:link");
   }
 
   // ---------- записи ----------
@@ -208,6 +235,7 @@
 
   var api = {
     b64u: b64u, unb64u: unb64u, rand: rand,
+    newLinkKey: newLinkKey, linkCode: linkCode, sealUmkForLink: sealUmkForLink, openUmkFromLink: openUmkFromLink,
     newDeviceKey: newDeviceKey, wrapUmkDevice: wrapUmkDevice, unwrapUmkDevice: unwrapUmkDevice,
     newIdentity: newIdentity, openPrivate: openPrivate,
     newPrfSalt: newPrfSalt, wrapUmkPrf: wrapUmkPrf, unwrapUmkPrf: unwrapUmkPrf,

@@ -14,7 +14,8 @@ def vault_url(vault_id: int) -> str:
     from assistant.lib.webapp_public import webapp_entry_url
 
     base = webapp_entry_url()
-    return f"{base}{'&' if '?' in base else '?'}vault={int(vault_id)}"
+    target = int(vault_id) or "link"  # 0 — экран сейфов (подтвердить новое устройство)
+    return f"{base}{'&' if '?' in base else '?'}vault={target}"
 
 
 ROLE_WORD = {"viewer": "смотреть", "editor": "смотреть и править", "owner": "владеть сейфом"}
@@ -32,6 +33,13 @@ def message(ev: dict[str, Any]) -> tuple[str, str, str]:
             f"{who} больше нет в сейфе «{name}». Ключ сейфа сменится сам, а пароли, которые он(а) мог(ла) видеть, "
             "лучше сменить — список в сейфе.",
             f"Смените пароли в сейфе «{name}»",
+        )
+    if kind == "device_link":
+        return (
+            "Новое устройство просит открыть сейфы",
+            f"{who} просит открыть ваши сейфы. Разрешайте, только если это устройство сейчас у вас в руках "
+            "и код на нём совпадает с кодом в Орбите.",
+            "Новое устройство просит открыть сейфы",
         )
     if kind == "access_request":
         return (

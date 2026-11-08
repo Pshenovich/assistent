@@ -333,6 +333,61 @@ class VaultsTests(unittest.TestCase):
         self.assertEqual(vaults.watch(), [])
 
 
+class DeviceLinkTests(unittest.TestCase):
+    """Подтвердить новое устройство с другого своего: сервер передаёт только запечатанное, один раз."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmp.name, "reg.json")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        enable(OWNER)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+        notes_store._CONN = None  # type: ignore[attr-defined]
+
+    def test_approve_once_and_notify_once(self) -> None:
+        link = vaults.link_start(OWNER, '{"kty":"EC","x":"new"}', "iPhone")
+        self.assertEqual([x["id"] for x in vaults.links_pending(OWNER)], [link["id"]])
+        self.assertEqual(vaults.links_pending(BACK), [])
+        evs = [e for e in vaults.watch() if e["kind"] == "device_link"]
+        self.assertEqual([e["to"] for e in evs], [[str(OWNER)]])
+        self.assertEqual([e for e in vaults.watch() if e["kind"] == "device_link"], [])
+        self.assertEqual(vaults.link_status(OWNER, link["id"]), {"status": "pending"})
+        with self.assertRaises(OrgError):  # чужой запрос не решить и не прочитать
+            vaults.link_decide(BACK, link["id"], "c2VhbGVk")
+        with self.assertRaises(OrgError):
+            vaults.link_status(BACK, link["id"])
+        vaults.link_decide(OWNER, link["id"], "c2VhbGVk")
+        self.assertEqual(vaults.links_pending(OWNER), [])
+        self.assertEqual(vaults.link_status(OWNER, link["id"]), {"status": "approved", "sealed": "c2VhbGVk"})
+        self.assertEqual(vaults.link_status(OWNER, link["id"]), {"status": "used"})
+        with self.assertRaises(OrgError):
+            vaults.link_decide(OWNER, link["id"], "c2VhbGVk")
+
+    def test_reject_replace_expire_and_limits(self) -> None:
+        with self.assertRaises(OrgError):  # без включённых сейфов
+            vaults.link_start(BACK, '{"kty":"EC"}')
+        a = vaults.link_start(OWNER, '{"kty":"EC","x":"a"}')
+        b = vaults.link_start(OWNER, '{"kty":"EC","x":"b"}')
+        self.assertEqual(vaults.link_status(OWNER, a["id"])["status"], "cancelled")
+        vaults.link_decide(OWNER, b["id"], None)
+        self.assertEqual(vaults.link_status(OWNER, b["id"]), {"status": "rejected"})
+        c = vaults.link_start(OWNER, '{"kty":"EC","x":"c"}')
+        conn = vaults._conn()
+        conn.execute("UPDATE vault_links SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?", (c["id"],))
+        conn.commit()
+        self.assertEqual(vaults.link_status(OWNER, c["id"]), {"status": "expired"})
+        self.assertEqual(vaults.links_pending(OWNER), [])
+        with self.assertRaises(OrgError):
+            vaults.link_decide(OWNER, c["id"], "c2VhbGVk")
+        for _ in range(3):
+            vaults.link_start(OWNER, '{"kty":"EC"}')
+        with self.assertRaises(OrgError):  # не больше 6 в час
+            vaults.link_start(OWNER, '{"kty":"EC"}')
+
+
 class DeviceUnlockTests(unittest.TestCase):
     """Браузеры без PRF (Arc): обёртку ключа сейфов отдаём только после проверенного касания."""
 
