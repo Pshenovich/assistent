@@ -343,6 +343,7 @@
     renderRoot();
     renderSection();
     compactMineEmpty();
+    if (window.LeoOrgKbDesk) window.LeoOrgKbDesk.render();
   }
 
   // Есть организация — пустые «Мои документы» не должны выглядеть как пустая база знаний.
@@ -354,7 +355,7 @@
     empty.classList.toggle("kb-mine-empty", has);
     [
       [".empty-state-title", "Личных документов нет"],
-      [".empty-state-text", "Их видите только вы, а Лео отвечает и по ним. Общие документы — в разделах выше."],
+      [".empty-state-text", "Их видите только вы, а Лео отвечает и по ним. Общие документы — в разделах базы."],
       ["[data-empty-action]", "Мой документ"],
     ].forEach(function (pair) {
       var el = empty.querySelector(pair[0]);
@@ -365,6 +366,11 @@
   }
 
   function openSection(orgId, id) {
+    var desk = window.LeoOrgKbDesk;
+    if (desk && desk.isOn()) {
+      desk.showSection(orgId, id);
+      return;
+    }
     state.sectionOrg = orgId;
     state.sectionId = id;
     renderSection();
@@ -585,10 +591,16 @@
     try {
       var d = await api("/" + orgId + "/kb/docs", json("POST", { section_id: sectionId, title: "Новый документ" }));
       await refreshOrg(orgId, d);
-      if (d.created && app().openNote) app().openNote(d.created.note_id);
+      if (d.created) openNoteAny(d.created.note_id);
     } catch (e) {
       toast(errText(e));
     }
+  }
+
+  // Открыть документ; если открыт другой — сначала сохранить и закрыть его (дерево на компьютере).
+  function openNoteAny(noteId) {
+    if (app().openNoteSwitch) return app().openNoteSwitch(noteId);
+    if (app().openNote) app().openNote(noteId);
   }
 
   async function addMyDoc(orgId, sectionId) {
@@ -811,7 +823,7 @@
     var id = Number(b.getAttribute("data-id"));
     if (kind === "open") return openSection(orgId, id);
     if (kind === "doc") {
-      if (app().openNote) app().openNote(b.getAttribute("data-note"));
+      openNoteAny(b.getAttribute("data-note"));
       return;
     }
     if (kind === "back") {
@@ -876,47 +888,56 @@
     var ro = !!(note && note.can_edit === false);
     document.documentElement.classList.toggle("kb-note-readonly", ro);
     document.documentElement.classList.toggle("kb-note-reader", ro && !note.can_comment);
+    // На компьютере с деревом слева путь и сведения рисует org-kb-desk.js (строка под названием).
+    var desk = window.LeoOrgKbDesk;
+    if (desk && desk.isOn() && page && desk.decorateNote(note, page)) return;
     if (!note || !note.org_kb || !page) return;
     var box = document.createElement("div");
     box.className = "kb-doc-banner";
     box.innerHTML = bannerHtml(note);
     page.insertBefore(box, page.firstChild);
-    box.addEventListener("click", async function (ev) {
+    box.addEventListener("click", function (ev) {
       var b = ev.target.closest("[data-kb-banner]");
       if (!b) return;
-      var kind = b.getAttribute("data-kb-banner");
-      if (kind === "verify") {
-        try {
-          await app().apiFetch("/notes/local/" + note.id + "/verify", json("POST", {}));
-          note.org_kb.stale = false;
-          note.org_kb.verified_at = new Date().toISOString();
-          box.innerHTML = bannerHtml(note);
-          toast("Отмечено: всё актуально");
-          refreshOrg(note.org_kb.org_id).catch(function () {});
-        } catch (err) {
-          toast(errText(err));
-        }
-      } else if (kind === "request") {
-        try {
-          var r = await app().apiFetch("/notes/local/" + note.id + "/request-edit", json("POST", {}));
-          note._kbRequested = true;
-          box.innerHTML = bannerHtml(note);
-          toast(r && r.already ? "Запрос уже отправлен — ждём ответа автора" : "Запрос отправлен автору документа");
-        } catch (err) {
-          toast(errText(err));
-        }
-      } else if (kind === "move") {
-        placeNote(note.id, function (org, sec) {
-          note.org_kb.section_title = sec.title;
-          box.innerHTML = bannerHtml(note);
-        });
-      } else if (kind === "access") {
-        if (!kbOf(note.org_kb.org_id)) await load();
-        openAccess(note.org_kb.org_id, note.org_kb.node_id);
-      }
+      bannerAction(b.getAttribute("data-kb-banner"), note, function () { box.innerHTML = bannerHtml(note); });
     });
     if (!orgOf(note.org_kb.org_id)) {
       load().then(function () { box.innerHTML = bannerHtml(note); }).catch(function () {});
+    }
+  }
+
+  // Действия полоски документа: «Всё актуально», «Попросить править», «Переместить», «Доступ».
+  // repaint() — перерисовать полоску (или строку сведений на компьютере) после изменения.
+  async function bannerAction(kind, note, repaint) {
+    if (kind === "verify") {
+      try {
+        await app().apiFetch("/notes/local/" + note.id + "/verify", json("POST", {}));
+        note.org_kb.stale = false;
+        note.org_kb.verified_at = new Date().toISOString();
+        repaint();
+        toast("Отмечено: всё актуально");
+        refreshOrg(note.org_kb.org_id).catch(function () {});
+      } catch (err) {
+        toast(errText(err));
+      }
+    } else if (kind === "request") {
+      try {
+        var r = await app().apiFetch("/notes/local/" + note.id + "/request-edit", json("POST", {}));
+        note._kbRequested = true;
+        repaint();
+        toast(r && r.already ? "Запрос уже отправлен — ждём ответа автора" : "Запрос отправлен автору документа");
+      } catch (err) {
+        toast(errText(err));
+      }
+    } else if (kind === "move") {
+      placeNote(note.id, function (org, sec) {
+        note.org_kb.section_title = sec.title;
+        note.org_kb.section_id = sec.id;
+        repaint();
+      });
+    } else if (kind === "access") {
+      if (!kbOf(note.org_kb.org_id)) await load();
+      openAccess(note.org_kb.org_id, note.org_kb.node_id);
     }
   }
 
@@ -1165,6 +1186,16 @@
       return !!nodeForNote(noteId);
     },
     place: placeNote,
+    // для org-kb-desk.js (вид с деревом на компьютере): данные и действия этого модуля
+    _: {
+      state: state, ICO: ICO, esc: esc, api: api, json: json, toast: toast, errText: errText, atLeast: atLeast,
+      plural: plural, count: count, ago: ago, initials: initials, kbOf: kbOf, orgOf: orgOf, nodeOf: nodeOf,
+      childrenOf: childrenOf, docsUnder: docsUnder, principalName: principalName, accessLine: accessLine,
+      crumbs: crumbs, load: load, refreshOrg: refreshOrg, newRoot: newRoot, newSub: newSub, newDoc: newDoc,
+      addMyDoc: addMyDoc, openAccess: openAccess, renameSection: renameSection, removeSection: removeSection,
+      moveSection: moveSection, placeNote: placeNote, nodeForNote: nodeForNote, editableSections: editableSections,
+      openCreateChooser: openCreateChooser, openNoteAny: openNoteAny, bannerAction: bannerAction,
+    },
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();

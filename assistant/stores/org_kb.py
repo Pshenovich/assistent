@@ -253,6 +253,7 @@ def tree(org_id: int, actor_id: int | str) -> list[dict[str, Any]]:
             "my_role": roles[nid],
             "restricted": nid in path_only,
             "inherit": bool(row["inherit"]),
+            "position": float(row["position"]),  # для перетаскивания в дереве: новое место — между соседями
         }
         if row["kind"] == "section" and nid not in path_only:
             # кому открыт — для подписи «ОКК · Чат-боты»; владельцы-люди не в счёт
@@ -398,6 +399,17 @@ def move(actor_id: int | str, org_id: int, node_id: int, parent_id: int, *, posi
             "WHERE id = ?",
             (int(parent_id), pos, row["parent_id"] is not None, int(node_id)),
         )
+        conn.commit()
+
+
+def reorder(actor_id: int | str, org_id: int, node_id: int, position: float) -> None:
+    """Новое место среди соседей (тот же родитель): владелец узла; права не меняются."""
+    viewer, nodes, acl = _load(org_id, actor_id)
+    _node(nodes, node_id)
+    _require_role(viewer, nodes, acl, int(node_id), "owner", "Порядок меняет владелец раздела или документа")
+    with _LOCK:
+        conn = _conn()
+        conn.execute("UPDATE org_kb_nodes SET position = ? WHERE id = ?", (float(position), int(node_id)))
         conn.commit()
 
 

@@ -323,3 +323,61 @@ class OrgKbNoDoubleIndexTests(OrgKbTests):
         doc = [(s["key"], s["kind"], s["ref"].get("org_id"))
                for s in sm.doc_sources(notes_store.get_note_by_id(self.note), org_id=sm._org_of_note(self.note))]
         self.assertEqual(doc, [(f"kb:{self.note}", "knowledge", self.org)])  # один раздел на документ, вид — база знаний
+
+
+class OrgKbSearchAndBacklinksTests(OrgKbTests):
+    def setUp(self) -> None:
+        super().setUp()
+        from assistant.lib import embed_client
+
+        self._embed = mock.patch.object(embed_client, "enabled", lambda: False)  # только поиск по словам
+        self._embed.start()
+
+    def tearDown(self) -> None:
+        self._embed.stop()
+        super().tearDown()
+
+    def test_search_by_text_respects_access_and_snippet_around_hit(self) -> None:
+        from assistant.lib import kb_mcp
+
+        body = "<p>" + "Вступление про отдел. " * 20 + "Чтобы перезапустить контейнер, зайдите на сервер.</p>"
+        notes_store.update_note(BACK, self.note, body=body, actor_user_id=BACK)
+        hits = kb_mcp.search_for_app(MANAGER, "контейнер")
+        self.assertEqual([h["note_id"] for h in hits], [self.note])
+        self.assertIn("контейнер", hits[0]["snippet"])
+        self.assertTrue(hits[0]["snippet"].startswith("…"))  # фрагмент из середины, а не начало документа
+        self.assertIn("Инструкции ОКК", hits[0]["where"])
+        self.assertEqual(kb_mcp.search_for_app(FRONT, "контейнер"), [])  # раздел ему не открыт
+        self.assertEqual(kb_mcp.search_for_app(MANAGER, "  "), [])
+        notes_store.update_note(BACK, self.note, body='<p>См. <a href="https://getorbita.me/webapp/?note=1">контейнер</a></p>', actor_user_id=BACK)
+        self.assertNotIn("https://", kb_mcp.search_for_app(MANAGER, "контейнер")[0]["snippet"])
+
+    def test_backlinks_only_readable_docs_with_link(self) -> None:
+        from assistant.lib import kb_mcp
+
+        link = f'<p>См. <a href="https://getorbita.me/webapp/?note={self.note}">инструкцию</a></p>'
+        ref = notes_store.create_note(BACK, "Дежурства", link)["id"]
+        org_kb.add_doc(BACK, self.org, self.sec, ref)
+        near = notes_store.create_note(BACK, "Похожий номер", f'<a href="?note={self.note}0">другой</a>')["id"]
+        org_kb.add_doc(BACK, self.org, self.sec, near)
+        secret_sec = org_kb.create_section(OWNER, self.org, "Руководство")["id"]
+        secret = notes_store.create_note(OWNER, "Закрытый", link)["id"]
+        org_kb.add_doc(OWNER, self.org, secret_sec, secret)
+
+        self.assertEqual([b["note_id"] for b in kb_mcp.backlinks(MANAGER, self.note)], [ref])
+        self.assertEqual({b["note_id"] for b in kb_mcp.backlinks(OWNER, self.note)}, {ref, secret})
+        self.assertEqual(kb_mcp.backlinks(FRONT, self.note), [])
+
+
+class OrgKbReorderTests(OrgKbTests):
+    def test_reorder_needs_owner_and_keeps_parent(self) -> None:
+        other = notes_store.create_note(OWNER, "Второй", "")["id"]
+        node = org_kb.add_doc(OWNER, self.org, self.sec, other)["id"]
+        before = [n["id"] for n in org_kb.tree(self.org, OWNER) if n["parent_id"] == self.sec]
+        self.assertEqual(before, [self.doc, node])
+        first = next(n for n in org_kb.tree(self.org, OWNER) if n["id"] == self.doc)["position"]
+        org_kb.reorder(OWNER, self.org, node, first - 1)
+        after = [n["id"] for n in org_kb.tree(self.org, OWNER) if n["parent_id"] == self.sec]
+        self.assertEqual(after, [node, self.doc])
+        with self.assertRaises(OrgError):
+            org_kb.reorder(MANAGER, self.org, self.doc, 0)  # читатель порядок не меняет

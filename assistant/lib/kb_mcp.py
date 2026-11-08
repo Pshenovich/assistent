@@ -254,6 +254,73 @@ def _search(src: KbSource, query: str, limit: int) -> list[dict[str, Any]]:
     return out
 
 
+def _snippet_around(text: str, query: str, width: int = 220) -> str:
+    """Кусок текста вокруг первого слова запроса (а не начало документа) — для строки результата."""
+    flat = re.sub(r"\s+", " ", text or "").strip()
+    if len(flat) <= width:
+        return flat
+    low = flat.lower()
+    at = -1
+    for w in sorted(re.findall(r"\w{3,}", (query or "").lower()), key=len, reverse=True):
+        stem = w[: max(4, len(w) - 2)]  # «регламента» найдёт «регламент»
+        at = low.find(stem)
+        if at >= 0:
+            break
+    if at < 0:
+        return flat[:width].rstrip() + "…"
+    start = max(0, at - width // 3)
+    if start:
+        sp = flat.find(" ", start)
+        start = sp + 1 if 0 <= sp < at else start
+    piece = flat[start:start + width].rstrip()
+    return ("…" if start else "") + piece + ("…" if start + width < len(flat) else "")
+
+
+def search_for_app(uid: int, query: str, limit: int = 12) -> list[dict[str, Any]]:
+    """Поиск во вкладке «База знаний»: то же, что MCP search, но с фрагментом вокруг найденного."""
+    from assistant.stores import notes as notes_store
+
+    query = str(query or "").strip()[:200]
+    if not query:
+        return []
+    out = []
+    for hit in _search(KbSource(user_id=int(uid)), query, max(1, min(int(limit), 30))):
+        n = notes_store.get_note_by_id(int(hit["id"])) or {}
+        text = html_to_text(str(n.get("body") or ""))
+        text = re.sub(r"\s*\(https?://[^)\s]+\)", "", text)  # выгрузка в текст пишет адрес ссылки в скобках
+        out.append({
+            "note_id": int(hit["id"]),
+            "title": hit["title"],
+            "where": hit["where"],
+            "stale": hit["stale"],
+            "snippet": _snippet_around(text, query) or hit["snippet"][:220],
+        })
+    return out
+
+
+def backlinks(uid: int, note_id: int) -> list[dict[str, Any]]:
+    """Документы базы знаний, открытые человеку, где есть ссылка на этот (…?note=N) — «Ссылаются сюда»."""
+    from assistant.stores import notes as notes_store
+
+    org, personal = _allowed(int(uid))
+    pat = re.compile(r"[?&;]note=" + str(int(note_id)) + r"(?!\d)")
+    out = []
+    for nid in list(org) + list(personal):
+        if nid == int(note_id):
+            continue
+        n = notes_store.get_note_by_id(nid)
+        if not n or not pat.search(str(n.get("body") or "")):
+            continue
+        meta = org.get(nid) or {}
+        out.append({
+            "note_id": nid,
+            "title": str(n.get("title") or meta.get("title") or "Без названия"),
+            "where": f"{meta['org']} › {meta['section']}" if meta else "Мои документы",
+        })
+    out.sort(key=lambda x: x["title"].lower())
+    return out[:30]
+
+
 def _sections(uid: int) -> list[dict[str, Any]]:
     """Разделы, открытые человеку: id (для create_doc / create_section), путь, можно ли писать."""
     from assistant.stores import org_kb, orgs_store

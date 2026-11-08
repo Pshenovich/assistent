@@ -45473,6 +45473,7 @@
       isDesktopLayout() &&
       isNoteEditorModalOpen() &&
       !document.documentElement.classList.contains("notes-split") &&
+      !document.documentElement.classList.contains("kb-desk") && // база знаний с деревом: документу нужна ширина
       wrap &&
       wrap._shareKind &&
       wrap._shareId &&
@@ -60205,6 +60206,25 @@
     openNote: function (noteId) {
       // body_preview_only: не загрузился — тост, а не пустой документ, который сохранится поверх
       openLocalNoteDetail({ id: String(noteId), body_preview_only: true }, { isLocal: true });
+    },
+    // Для дерева базы знаний на компьютере: открыть другой документ на месте открытого
+    // (сначала сохранить и закрыть текущий, как в «Документах» со списком слева).
+    openNoteSwitch: async function (noteId) {
+      var id = String(noteId || "");
+      if (!id) return false;
+      if (isNoteEditorModalOpen()) {
+        if (currentOpenNoteId() === id) return true;
+        var ok = await handleNoteEditorModalClose({ skipPrompt: true });
+        if (!ok) return false;
+      }
+      openLocalNoteDetail({ id: id, body_preview_only: true }, { isLocal: true });
+      return true;
+    },
+    closeNote: function () {
+      return handleNoteEditorModalClose({ skipPrompt: true });
+    },
+    currentNoteId: function () {
+      return isNoteEditorModalOpen() ? currentOpenNoteId() : "";
     },
     newKnowledgeNote: function () {
       openNewKnowledgeNote();

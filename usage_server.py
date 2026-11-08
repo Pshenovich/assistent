@@ -8424,6 +8424,28 @@ def _org_kb_add_doc(uid: int, org_id: int, body: "_MiniappKbDoc") -> dict[str, A
         raise
 
 
+@miniapp_router.get("/kb/search")
+async def miniapp_kb_search(
+    q: str = "", limit: int = 12, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Поиск по названию и тексту документов базы знаний (организации по правам + «Мои документы»)."""
+    from assistant.lib import kb_mcp
+
+    uid = int(principal.telegram_user_id)
+    items = await asyncio.to_thread(kb_mcp.search_for_app, uid, q, limit)
+    if q.strip():
+        _track(uid, "kb.search", found=len(items))
+    return {"ok": True, "items": items}
+
+
+@miniapp_router.get("/kb/backlinks/{note_id}")
+async def miniapp_kb_backlinks(note_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Ссылаются сюда»: документы базы знаний со ссылкой на этот."""
+    from assistant.lib import kb_mcp
+
+    return {"ok": True, "items": await asyncio.to_thread(kb_mcp.backlinks, int(principal.telegram_user_id), note_id)}
+
+
 @miniapp_router.get("/orgs/{org_id}/kb/my-docs")
 async def miniapp_org_kb_my_docs(org_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     from assistant.stores import org_kb
@@ -8452,6 +8474,8 @@ async def miniapp_org_kb_node_update(
         await _org_call(org_kb.rename_section, uid, org_id, node_id, body.title)
     if body.parent_id is not None:
         await _org_call(org_kb.move, uid, org_id, node_id, body.parent_id, position=body.position)
+    elif body.position is not None:
+        await _org_call(org_kb.reorder, uid, org_id, node_id, body.position)
     return await _org_call(_org_kb_state, uid, org_id)
 
 
