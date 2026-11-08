@@ -14,7 +14,8 @@
 
   var desk = {
     on: false,
-    view: "home", // home | section | mine
+    view: "home", // home | section | mine | vault
+    vaultId: null, // открытый сейф (vault.js)
     orgId: null,
     sectionId: null,
     noteId: "", // открытый документ (подсветка в дереве)
@@ -277,7 +278,8 @@
     if (!tops.length) {
       body = '<p class="kb-tree-hint">' + (kb.can_create_root ? "Разделов пока нет — нажмите «+»." : "Вам ещё не открыли ни одного раздела.") + "</p>";
     }
-    return '<div class="kb-org" role="group" aria-label="' + esc(o.org.name) + '">' + head + body + "</div>";
+    var vlt = window.LeoVault ? window.LeoVault.treeHtml(o.org.id, desk.view === "vault" ? desk.vaultId : null) : "";
+    return '<div class="kb-org" role="group" aria-label="' + esc(o.org.name) + '">' + head + body + vlt + "</div>";
   }
 
   function renderTree() {
@@ -307,6 +309,7 @@
         (desk.treeQ ? '<button type="button" class="kb-tree-fulltext" data-d="fulltext">' + IC.search + "<span>Искать «" + esc(desk.treeQ) + "» в тексте</span></button>" : "") +
       "</div>" +
       '<div class="kb-tree-foot">' +
+        (window.LeoVault ? window.LeoVault.footHtml(desk.view === "vault" ? desk.vaultId : null) : "") +
         '<button type="button" class="kb-foot-row' + (mineCur ? " is-current" : "") + '" data-d="mine">' + IC.mine + "<span>Мои документы</span></button>" +
         '<button type="button" class="kb-foot-row" data-d="sources">' + IC.link + "<span>Источники</span>" + (srcCount ? '<span class="kb-foot-val">' + esc(srcCount) + "</span>" : "") + "</button>" +
         '<button type="button" class="kb-foot-row" data-d="ai">' + IC.spark + "<span>Доступ для ИИ</span></button>" +
@@ -334,6 +337,7 @@
   }
 
   function onTreeClick(e) {
+    if (window.LeoVault && e.target.closest("[data-v]")) return window.LeoVault.onClick(e);
     var b = e.target.closest("[data-d]");
     var row = e.target.closest(".kb-node[data-id]");
     var act = b && b.getAttribute("data-d");
@@ -762,6 +766,15 @@
     scrollPageTop();
   }
 
+  async function showVault(id) {
+    if (!(await closeDocIfOpen())) return;
+    desk.view = "vault";
+    desk.vaultId = id;
+    desk.noteId = "";
+    sync();
+    scrollPageTop();
+  }
+
   function openDoc(orgId, node) {
     if (!node || !node.note_id) return;
     desk.noteId = String(node.note_id);
@@ -865,6 +878,7 @@
           cards += '<button type="button" class="kb-card kb-card--add" data-p="new-root" data-org="' + o.org.id + '"><span class="kb-card-top">' + K().ICO.plus + "<b>Новый раздел</b></span></button>";
         }
         html += cards ? '<div class="kb-cards">' + cards + "</div>" : '<p class="pf-hint">Коллеги ещё не открыли вам ни одного раздела.</p>';
+        if (window.LeoVault) html += window.LeoVault.homeHtml(o.org.id, o.org.name, all.length > 1);
       });
       var stale = docs.filter(function (it) { return it.node.stale && !it.node.no_expiry && K().atLeast(it.node.my_role, "editor"); });
       if (stale.length) {
@@ -998,6 +1012,10 @@
       el.innerHTML = barHtml('<button type="button" data-p="home">База знаний</button><span class="kb-path-sep">›</span><span class="kb-path-cur">Мои документы</span>', "");
       return;
     }
+    if (desk.view === "vault" && window.LeoVault) {
+      window.LeoVault.render(el);
+      return;
+    }
     var input = el.querySelector("#kb-desk-q");
     var hadFocus = input && document.activeElement === input;
     var caret = hadFocus ? input.selectionStart : null;
@@ -1012,6 +1030,7 @@
   }
 
   function onPageClick(e) {
+    if (window.LeoVault && e.target.closest("[data-v]")) return window.LeoVault.onClick(e);
     var b = e.target.closest("[data-p]");
     if (!b) return;
     var p = b.getAttribute("data-p");
@@ -1356,6 +1375,16 @@
     },
     showSection: showSection,
     decorateNote: decorateNote,
+    // сейфы (vault.js): страница сейфа справа от дерева
+    showVault: showVault,
+    inVault: function () {
+      return desk.on && desk.view === "vault";
+    },
+    goHome: goHome,
+    openMenu: openMenu,
+    treeHidden: function () {
+      return desk.hidden;
+    },
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

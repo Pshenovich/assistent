@@ -305,3 +305,40 @@ def test_kb_mcp_write_token(env, monkeypatch, tmp_path):
     assert call(rw["token"], "update_doc", {"id": locked, "markdown": "взлом"}).get("isError")
     assert call(rw["token"], "create_doc", {"section_id": closed, "title": "x", "markdown": "y"}).get("isError")
     assert call(rw["token"], "create_section", {"title": "Своё", "org_id": oid}).get("isError")
+
+
+def test_vaults_api_flag_and_flow(env, monkeypatch):
+    """Сейфы: выключены флагом — пусто и 404; включены — ключи, сейф, запись, конверт коллеге."""
+    c, owner, guest = env["c"], env["owner"], env["guest"]
+    monkeypatch.delenv("VAULTS_ENABLED", raising=False)
+    r = c.get("/api/miniapp/vaults", headers=_headers(owner))
+    assert r.json() == {"ok": True, "enabled": False, "keys": None, "vaults": []}
+    assert c.get("/api/miniapp/vaults/1/items", headers=_headers(owner)).status_code == 404
+
+    monkeypatch.setenv("VAULTS_ENABLED", "1")
+    org = c.post("/api/miniapp/orgs", headers=_headers(owner), json={"name": "Сейфы", "domain": env["domain"]}).json()["org"]
+    c.post(f"/api/miniapp/orgs/{org['id']}/join", headers=_headers(guest))
+    c.post(f"/api/miniapp/orgs/{org['id']}/approve", headers=_headers(owner), json={"user_id": guest})
+    unl = [{"kind": "recovery", "salt": "c2FsdA", "wrapped_umk": '{"v":1,"iv":"aXY","ct":"Y3Q"}'}]
+    for uid in (owner, guest):
+        r = c.post("/api/miniapp/vaults/keys", headers=_headers(uid),
+                   json={"public_key": f'{{"kty":"EC","x":"{uid}"}}', "enc_private": '{"v":1,"iv":"aXY","ct":"cHI"}', "unlockers": unl})
+        assert r.status_code == 200, r.text
+    r = c.post("/api/miniapp/vaults", headers=_headers(owner), json={"org_id": org["id"], "name": "Серверы", "envelope": '{"v":1}'})
+    assert r.status_code == 200, r.text
+    vid = r.json()["created"]["id"]
+    # «всем» — нельзя (400, не 403)
+    assert c.put(f"/api/miniapp/vaults/{vid}/access", headers=_headers(owner), json={"principal": "all", "role": "viewer"}).status_code == 400
+    r = c.put(f"/api/miniapp/vaults/{vid}/access", headers=_headers(owner), json={"principal": f"u:{guest}", "role": "viewer"})
+    assert [p["user_id"] for p in r.json()["vault"]["pending"]] == [str(guest)]
+    r = c.post(f"/api/miniapp/vaults/{vid}/envelopes", headers=_headers(owner), json={"envelopes": [{"user_id": str(guest), "envelope": '{"v":1,"g":1}'}]})
+    assert r.json()["put"] == 1
+    r = c.post(f"/api/miniapp/vaults/{vid}/items", headers=_headers(owner), json={"blob": '{"v":1,"iv":"aXY","ct":"c2VjcmV0"}'})
+    iid = r.json()["id"]
+    got = c.get(f"/api/miniapp/vaults/{vid}/items", headers=_headers(guest)).json()["items"]
+    assert [i["id"] for i in got] == [iid]
+    # смотрящий не правит
+    assert c.post(f"/api/miniapp/vaults/{vid}/items", headers=_headers(guest), json={"blob": '{"v":1}'}).status_code == 400
+    assert c.post(f"/api/miniapp/vaults/{vid}/items/{iid}/log", headers=_headers(guest), json={"action": "copy"}).status_code == 200
+    mine = c.get("/api/miniapp/vaults", headers=_headers(guest)).json()
+    assert mine["vaults"][0]["envelope"] == '{"v":1,"g":1}'

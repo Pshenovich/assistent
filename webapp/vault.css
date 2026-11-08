@@ -1,0 +1,112 @@
+/* Сейфы (vault.js): блок в дереве и на главной базы знаний, страницы сейфа и записи, экран на телефоне.
+   Собрано из компонентов базы знаний (kb-*) и Профиля (pf-*); здесь только своё. Цвета — только токены темы. */
+
+.vlt-tree { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+.vlt-tree-lock { width: 18px; height: 18px; display: grid; place-items: center; flex: none; color: var(--text-secondary); }
+.vlt-tree-lock svg { width: 14px; height: 14px; }
+.vlt-tree svg, .kb-foot-row svg, .vlt-page svg, .vlt-list-block svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+.vlt-title-ico {
+  display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; margin-right: 10px; vertical-align: -5px;
+  background: var(--accent-muted); color: var(--accent);
+}
+.vlt-title-ico svg { width: 18px; height: 18px; }
+.vlt-timer { display: inline-flex; align-items: center; gap: 5px; font-size: 0.75rem; color: var(--text-secondary); margin-right: 2px; white-space: nowrap; }
+.vlt-timer svg { width: 13px; height: 13px; }
+
+.vlt-table .kb-row { grid-template-columns: 20px minmax(0, 1fr) minmax(0, 170px) minmax(0, 130px) 76px; }
+.vlt-mono { font-family: var(--font-mono); font-size: 0.8125rem; }
+.vlt-row-act { display: flex; justify-content: flex-end; gap: 2px; }
+.vlt-ibtn {
+  appearance: none; border: 0; background: none; padding: 0; min-height: 0; flex: none;
+  width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--text-secondary); cursor: pointer;
+}
+.vlt-ibtn:hover { background: var(--overlay-2); color: var(--accent); }
+.vlt-ibtn svg { width: 17px; height: 17px; }
+.vlt-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 18px 16px; }
+.vlt-empty b { color: var(--text); font-size: 0.9375rem; }
+.vlt-empty span { color: var(--text-secondary); font-size: 0.8125rem; }
+.vlt-empty .kb-btn { margin-top: 6px; }
+
+.vlt-record { max-width: 760px; }
+.vlt-fields { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; margin: 6px 0 22px; }
+.vlt-field { display: block; padding: 10px 10px 10px 14px; border-top: 1px solid var(--border); }
+.vlt-field:first-child { border-top: 0; }
+.vlt-label { display: block; font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 3px; }
+.vlt-val { display: flex; align-items: center; gap: 8px; font: 0.9375rem/1.45 var(--font-mono); color: var(--text); }
+.vlt-val-body { flex: 1; min-width: 0; word-break: break-all; white-space: pre-wrap; }
+.vlt-val--text .vlt-val-body { font-family: var(--font); font-size: 0.875rem; word-break: normal; overflow-wrap: anywhere; }
+.vlt-val a { color: var(--accent); text-decoration: none; }
+.vlt-acts { display: flex; gap: 2px; flex: none; align-self: flex-start; }
+.vlt-logline { cursor: default; }
+.vlt-danger { color: var(--danger-text); }
+
+.vlt-center { max-width: 560px; margin: 0 auto; text-align: center; padding-top: 32px; }
+.vlt-center .lead { margin-bottom: 22px; }
+.vlt-left { text-align: left; justify-content: flex-start; }
+.vlt-big { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; margin: 0 auto 16px; background: var(--accent-muted); color: var(--accent); }
+.vlt-big svg { width: 32px; height: 32px; stroke-width: 1.8; }
+.vlt-steps { text-align: left; display: grid; gap: 12px; margin: 0 0 22px; }
+.vlt-step { display: flex; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.vlt-step > span {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-muted); color: var(--accent); font-size: 0.75rem; font-weight: 600;
+}
+.vlt-step b { font-size: 0.9375rem; color: var(--text); }
+.vlt-step p { margin: 2px 0 0; font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.45; }
+.vlt-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.vlt-btn-lg { height: 40px; padding: 0 20px; font-size: 0.9375rem; }
+.vlt-btn-lg svg { width: 18px; height: 18px; }
+.kb-btn:disabled { opacity: 0.55; cursor: default; }
+.vlt-paper { border: 1px dashed var(--border-strong); border-radius: 12px; padding: 16px; margin: 4px 0 14px; background: var(--surface); }
+.vlt-code { font: 600 1.0625rem/1.6 var(--font-mono); letter-spacing: 0.05em; color: var(--text); margin: 4px 0; user-select: all; word-break: break-all; }
+.vlt-check { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 14px; font-size: 0.875rem; color: var(--text); cursor: pointer; }
+.vlt-check input { width: 18px; height: 18px; accent-color: var(--accent); }
+.vlt-codeform { display: flex; gap: 8px; margin: 14px 0 6px; }
+.vlt-code-input { flex: 1; min-width: 0; font-family: var(--font-mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.vlt-pill {
+  font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; white-space: nowrap;
+  background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning-text);
+}
+
+.vlt-form { display: grid; gap: 12px; }
+.vlt-input { display: block; }
+.vlt-input .pf-input { width: 100%; box-sizing: border-box; }
+.vlt-input textarea.pf-input { resize: vertical; min-height: 64px; font: inherit; }
+.vlt-pw { display: flex; gap: 8px; }
+.vlt-pw .pf-input { flex: 1; min-width: 0; }
+.vlt-types { display: flex; flex-wrap: wrap; gap: 8px; }
+.vlt-type {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); font-size: 0.8125rem; cursor: pointer;
+}
+.vlt-type svg { width: 15px; height: 15px; }
+.vlt-type.is-on { border-color: var(--accent-border); background: var(--accent-subtle); color: var(--accent); }
+
+/* Телефон: экран сейфа поверх вкладки */
+.vlt-mobile { position: fixed; inset: 0; z-index: 300; background: var(--bg); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.vlt-mobile-body { padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px calc(env(safe-area-inset-bottom, 0px) + 24px); }
+.vlt-mobile .kb-bar { display: flex; align-items: center; gap: 8px; min-height: 44px; flex-wrap: wrap; }
+.vlt-mobile .kb-bar-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.vlt-back { display: inline-flex; align-items: center; gap: 2px; color: var(--accent); font-size: 0.9375rem; background: none; border: 0; padding: 6px 0; cursor: pointer; }
+.vlt-back svg { width: 20px; height: 20px; }
+.vlt-mobile .vlt-timer span { display: none; }
+@media (max-width: 720px) {
+  .vlt-table .kb-row { grid-template-columns: 20px minmax(0, 1fr) 76px; }
+  .vlt-table .kb-row > .kb-row-c:nth-child(3), .vlt-table .kb-row > .kb-row-c:nth-child(4),
+  .vlt-table .kb-row--head > span:nth-child(3), .vlt-table .kb-row--head > span:nth-child(4) { display: none; }
+  .vlt-center { padding-top: 12px; }
+}
+.vlt-actions.vlt-left { justify-content: flex-start; }
+.vlt-form .pf-input, .vlt-codeform .pf-input {
+  height: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text);
+  font-size: 0.9375rem; outline: none;
+}
+.vlt-form textarea.pf-input { height: auto; padding: 9px 12px; line-height: 1.45; }
+.vlt-form .pf-input:focus, .vlt-codeform .pf-input:focus { border-color: var(--accent); }
+.vlt-form .vlt-mono.pf-input { font-family: var(--font-mono); font-size: 0.875rem; }
+.vlt-pw .kb-btn { height: 40px; }
+.vlt-logline, .vlt-page .kb-line { grid-template-columns: 20px minmax(0, 1fr) 0 auto; }
+.vlt-mobile svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.vlt-mobile .kb-btn svg { width: 15px; height: 15px; }
+.vlt-mobile .vlt-ibtn svg { width: 17px; height: 17px; }

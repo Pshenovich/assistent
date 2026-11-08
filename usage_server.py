@@ -8610,6 +8610,220 @@ async def miniapp_ai_token_revoke(token_id: int, principal: _MiniappPrincipal = 
     return {"ok": True, "items": await run_in_threadpool(ai_tokens.list_for, uid), **_ai_token_setup()}
 
 
+# ---------- Сейфы: сервер хранит и отдаёт только шифр (см. assistant/stores/vaults.py) ----------
+# Правило 17: содержимое сейфов не уходит в Лео, поиск, аналитику и логи. В _track — только факт действия.
+
+
+class _VaultUnlocker(BaseModel):
+    kind: str
+    credential_id: str = ""
+    salt: str
+    wrapped_umk: str
+    label: str = ""
+
+
+class _VaultSetup(BaseModel):
+    public_key: str
+    enc_private: str
+    unlockers: list[_VaultUnlocker]
+    reset: bool = False
+
+
+class _VaultCreate(BaseModel):
+    org_id: Optional[int] = None
+    name: str
+    envelope: str
+    access: list[dict[str, str]] = []
+
+
+class _VaultRename(BaseModel):
+    name: str
+
+
+class _VaultAccess(BaseModel):
+    principal: str
+    role: str = ""
+
+
+class _VaultEnvelope(BaseModel):
+    user_id: str
+    envelope: str
+
+
+class _VaultEnvelopes(BaseModel):
+    envelopes: list[_VaultEnvelope]
+
+
+class _VaultItem(BaseModel):
+    blob: str
+
+
+class _VaultLog(BaseModel):
+    action: str
+
+
+def _vaults_enabled() -> bool:
+    """Сейфы включаются флагом: до внешнего аудита — по решению владельца (VAULTS_ENABLED=1)."""
+    return os.environ.get("VAULTS_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+async def _require_vault_user(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> _MiniappPrincipal:
+    if not _vaults_enabled():
+        raise HTTPException(status_code=404, detail="Сейфы пока недоступны")
+    return principal
+
+
+def _vaults_state(uid: int) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, "enabled": True, "keys": vaults.my_keys(uid), "vaults": vaults.list_for(uid)}
+
+
+@miniapp_router.get("/vaults")
+async def miniapp_vaults(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    if not _vaults_enabled():
+        return {"ok": True, "enabled": False, "keys": None, "vaults": []}
+    return await _org_call(_vaults_state, int(principal.telegram_user_id))
+
+
+@miniapp_router.post("/vaults/keys")
+async def miniapp_vaults_setup(body: _VaultSetup, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(vaults.setup, uid, body.public_key, body.enc_private, [u.model_dump() for u in body.unlockers], reset=body.reset)
+    _track(uid, "vault.setup", reset=body.reset)
+    return await _org_call(_vaults_state, uid)
+
+
+@miniapp_router.post("/vaults/keys/unlockers")
+async def miniapp_vaults_unlocker_add(body: _VaultUnlocker, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    keys = await _org_call(vaults.add_unlocker, uid, body.model_dump())
+    _track(uid, "vault.unlocker_add", kind=body.kind)
+    return {"ok": True, "keys": keys}
+
+
+@miniapp_router.delete("/vaults/keys/unlockers/{unlocker_id}")
+async def miniapp_vaults_unlocker_remove(unlocker_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, "keys": await _org_call(vaults.remove_unlocker, int(principal.telegram_user_id), unlocker_id)}
+
+
+@miniapp_router.post("/vaults/keys/unlockers/{unlocker_id}/used")
+async def miniapp_vaults_unlocker_used(unlocker_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    await _org_call(vaults.touch_unlocker, int(principal.telegram_user_id), unlocker_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/vaults")
+async def miniapp_vault_create(body: _VaultCreate, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    created = await _org_call(vaults.create, uid, body.org_id, body.name, body.envelope, body.access)
+    _track(uid, "vault.create", personal=body.org_id is None)
+    return {**(await _org_call(_vaults_state, uid)), "created": created}
+
+
+@miniapp_router.patch("/vaults/{vault_id}")
+async def miniapp_vault_rename(vault_id: int, body: _VaultRename, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(vaults.rename, uid, vault_id, body.name)
+    return await _org_call(_vaults_state, uid)
+
+
+@miniapp_router.delete("/vaults/{vault_id}")
+async def miniapp_vault_delete(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(vaults.delete, uid, vault_id)
+    _track(uid, "vault.delete")
+    return await _org_call(_vaults_state, uid)
+
+
+@miniapp_router.get("/vaults/{vault_id}/access")
+async def miniapp_vault_access(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, **(await _org_call(vaults.access, vault_id, int(principal.telegram_user_id)))}
+
+
+@miniapp_router.put("/vaults/{vault_id}/access")
+async def miniapp_vault_access_set(vault_id: int, body: _VaultAccess, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    acc = await _org_call(vaults.set_access, uid, vault_id, body.principal, body.role)
+    _track(uid, "vault.access", open=bool(body.role))
+    # сразу с «ждут конверт»: браузер владельца тут же кладёт ключ новым участникам
+    return {"ok": True, **acc, "vault": await _org_call(vaults.get, vault_id, uid)}
+
+
+@miniapp_router.post("/vaults/{vault_id}/envelopes")
+async def miniapp_vault_envelopes(vault_id: int, body: _VaultEnvelopes, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    res = await _org_call(vaults.put_envelopes, uid, vault_id, [e.model_dump() for e in body.envelopes])
+    return {"ok": True, **res, "vault": await _org_call(vaults.get, vault_id, uid)}
+
+
+@miniapp_router.get("/vaults/{vault_id}/items")
+async def miniapp_vault_items(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, "items": await _org_call(vaults.items, vault_id, int(principal.telegram_user_id))}
+
+
+@miniapp_router.post("/vaults/{vault_id}/items")
+async def miniapp_vault_item_add(vault_id: int, body: _VaultItem, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    res = await _org_call(vaults.add_item, uid, vault_id, body.blob)
+    _track(uid, "vault.item_add")
+    return {"ok": True, **res}
+
+
+@miniapp_router.put("/vaults/{vault_id}/items/{item_id}")
+async def miniapp_vault_item_update(vault_id: int, item_id: int, body: _VaultItem, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, **(await _org_call(vaults.update_item, int(principal.telegram_user_id), vault_id, item_id, body.blob))}
+
+
+@miniapp_router.delete("/vaults/{vault_id}/items/{item_id}")
+async def miniapp_vault_item_delete(vault_id: int, item_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    await _org_call(vaults.delete_item, int(principal.telegram_user_id), vault_id, item_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/vaults/{vault_id}/items/{item_id}/log")
+async def miniapp_vault_item_log_add(vault_id: int, item_id: int, body: _VaultLog, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    await _org_call(vaults.log, int(principal.telegram_user_id), vault_id, item_id, body.action)
+    return {"ok": True}
+
+
+@miniapp_router.get("/vaults/{vault_id}/items/{item_id}/log")
+async def miniapp_vault_item_log(vault_id: int, item_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, "items": await _org_call(vaults.item_log, int(principal.telegram_user_id), vault_id, item_id)}
+
+
 @miniapp_router.post("/notes/local/{note_id}/request-edit")
 async def miniapp_note_request_edit(
     note_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)

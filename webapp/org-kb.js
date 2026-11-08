@@ -262,7 +262,7 @@
         '<button type="button" class="pf-link" data-kb="org-open">Профиль → Организация</button></p>';
       return;
     }
-    root.innerHTML = state.query ? searchHtml() : state.orgs.map(orgGroupHtml).join("");
+    root.innerHTML = state.query ? searchHtml() : state.orgs.map(orgGroupHtml).join("") + (window.LeoVault ? window.LeoVault.listBlockHtml() : "");
   }
 
   // ---------- раздел ----------
@@ -831,6 +831,8 @@
   }
 
   function onClick(e) {
+    // сейфы в списке на телефоне (на компьютере их клики ловит org-kb-desk.js)
+    if (window.LeoVault && e.target.closest("#org-kb-root [data-v]")) return window.LeoVault.onClick(e);
     var b = e.target.closest("[data-kb]");
     if (!b) return;
     var kind = b.getAttribute("data-kb");
@@ -1201,6 +1203,9 @@
       return !!nodeForNote(noteId);
     },
     place: placeNote,
+    renderVaults: function () {
+      renderRoot();
+    },
     // для org-kb-desk.js (вид с деревом на компьютере): данные и действия этого модуля
     _: {
       state: state, ICO: ICO, esc: esc, api: api, json: json, toast: toast, errText: errText, atLeast: atLeast,
@@ -1209,7 +1214,7 @@
       crumbs: crumbs, load: load, refreshOrg: refreshOrg, newRoot: newRoot, newSub: newSub, newDoc: newDoc,
       addMyDoc: addMyDoc, openAccess: openAccess, renameSection: renameSection, removeSection: removeSection,
       removeDoc: removeDoc, moveSection: moveSection, placeNote: placeNote, nodeForNote: nodeForNote, editableSections: editableSections,
-      openCreateChooser: openCreateChooser, openNoteAny: openNoteAny, bannerAction: bannerAction,
+      openCreateChooser: openCreateChooser, openNoteAny: openNoteAny, bannerAction: bannerAction, sheet: sheet,
     },
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);

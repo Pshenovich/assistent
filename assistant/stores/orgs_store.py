@@ -553,6 +553,10 @@ def delete_org(user_id: int | str, org_id: int) -> None:
             # документы остаются у авторов, уходит только дерево и права базы знаний
             conn.execute("DELETE FROM org_kb_acl WHERE node_id IN (SELECT id FROM org_kb_nodes WHERE org_id = ?)", (int(org_id),))
             conn.execute("DELETE FROM org_kb_nodes WHERE org_id = ?", (int(org_id),))
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vaults'").fetchone():
+            from assistant.stores import vaults
+
+            vaults.delete_org(int(org_id))  # без участников сейфы организации никто не откроет
         for table in ("org_members", "org_domains", "org_invites", "org_settings", "org_dismissed", "org_groups"):
             conn.execute(f"DELETE FROM {table} WHERE org_id = ?", (int(org_id),))
         conn.execute("DELETE FROM orgs WHERE id = ?", (int(org_id),))
