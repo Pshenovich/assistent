@@ -191,7 +191,7 @@
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
   // Запись встречи на транскрибацию — = TRANSCRIPTION_UPLOAD_MAX_MB на сервере (файл идёт через диск).
   const TRANSCRIPTION_UPLOAD_MAX_MB = 500;
-  const NOTE_EDITOR_ASSET_V = "20261107-embed3kinds"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261108-taskmark"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
   // Доска и макет (kind=board): скрипты грузятся при первом открытии, а не с каждой страницей.
@@ -10184,13 +10184,19 @@
       return;
     }
     upsertChatThreadCache(tgLeoState.thread);
-    document.documentElement.classList.add("actual-assistant-open");
+    // Отдельный чат «Лео · Telegram», не ассистент «Актуального»: без меню чатов «Актуального»,
+    // подсказок Фокуса и без сброса чата «Актуального» при закрытии — иначе история бота
+    // выглядела как переписка с Лео на «Актуальном».
+    if (document.documentElement.classList.contains("actual-assistant-open") && isNoteDiscussionOpen()) {
+      closeNoteDiscussion();
+    }
     try {
+      setTab("notes");
+      setNotesSubTab("chats");
       await openChatThread(tgLeoState.thread);
     } catch (e) {
       showNoteToast((e && e.message) || "Не удалось открыть историю");
     }
-    if (!isNoteDiscussionOpen()) document.documentElement.classList.remove("actual-assistant-open");
   }
 
   async function loadProfile() {
@@ -12437,10 +12443,22 @@
     var publicKey = String((keyRes && keyRes.public_key) || "").trim();
     if (!publicKey) throw new Error("Web Push не настроен на сервере");
     var reg = await ensurePushServiceWorker();
-    var sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(publicKey),
-    });
+    var appKey = urlBase64ToUint8Array(publicKey);
+    // Подписка уже есть: под тем же ключом — просто перепосылаем серверу (после переезда
+    // база подписок могла опустеть); под другим ключом subscribe() падает — сначала снимаем.
+    var sub = await reg.pushManager.getSubscription();
+    if (sub && !samePushKey(sub, appKey)) {
+      try {
+        await sub.unsubscribe();
+      } catch (_) {}
+      sub = null;
+    }
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: appKey,
+      });
+    }
     var json = sub.toJSON ? sub.toJSON() : {};
     var keys = json.keys || {};
     await apiFetch("/push/subscribe", {
@@ -12451,6 +12469,19 @@
         user_agent: navigator.userAgent || "",
       }),
     });
+  }
+
+  function samePushKey(sub, appKey) {
+    try {
+      var cur = sub && sub.options && sub.options.applicationServerKey;
+      if (!cur) return true; // браузер не сообщает ключ — считаем, что тот же
+      var a = new Uint8Array(cur);
+      if (a.length !== appKey.length) return false;
+      for (var i = 0; i < a.length; i++) if (a[i] !== appKey[i]) return false;
+      return true;
+    } catch (_) {
+      return true;
+    }
   }
 
   async function unsubscribeWebPush() {
@@ -12477,7 +12508,11 @@
     try {
       if (Notification.permission !== "granted") return;
       await subscribeWebPush();
-    } catch (_) {}
+    } catch (e) {
+      try {
+        console.warn("[push] sync failed", e && e.message ? e.message : e);
+      } catch (_) {}
+    }
   }
 
   function applyDiscussionNotifyTelegramUi(enabled) {
@@ -40498,7 +40533,8 @@
         '<span class="pf-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg></span>' +
         '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title"></span><span class="pf-row-sub"></span></span>' +
         '<span class="pf-row-val"></span><span class="pf-chev" aria-hidden="true">›</span></span>';
-      row.querySelector(".pf-row-title").textContent = agent.title || agent.id;
+      row.querySelector(".pf-row-title").textContent =
+        agent.kind === "gpt" ? noteAskModeLabel("gpt") || "Лео" : agent.title || agent.id;
       var sub = row.querySelector(".pf-row-sub");
       var hint = agent.builtin ? AGENT_KIND_HINT[agent.kind] || "" : "";
       if (hint) sub.textContent = hint;
@@ -40520,6 +40556,15 @@
     if (webField) webField.classList.toggle("hidden", kind !== "gpt" && kind !== "custom" && kind !== "new");
     if (tempField) tempField.classList.toggle("hidden", kind === "paie");
     if (roundsField) roundsField.classList.toggle("hidden", kind !== "paie");
+    // Лео — голос Орбиты: промпт, правила, креативность и поиск не настраиваются, только модель.
+    var promptGroup = document.getElementById("agents-prompt-group");
+    var lockedNote = document.getElementById("agents-locked-note");
+    if (promptGroup) promptGroup.classList.toggle("hidden", kind === "gpt");
+    if (lockedNote) lockedNote.classList.toggle("hidden", kind !== "gpt");
+    if (kind === "gpt") {
+      if (tempField) tempField.classList.add("hidden");
+      if (webField) webField.classList.add("hidden");
+    }
   }
 
   function openAgentForm(agent) {
@@ -40530,7 +40575,9 @@
     var kind = isNew ? "new" : agent.kind;
     document.getElementById("modal-title").textContent = isNew
       ? "Новый агент"
-      : agent.title || "Агент";
+      : kind === "gpt"
+        ? noteAskModeLabel("gpt") || "Лео"
+        : agent.title || "Агент";
     document.getElementById("modal-kind").value = "agent";
     document.getElementById("modal-reminder-id").value = "";
     document.getElementById("modal-event-id").value = "";
@@ -40542,7 +40589,8 @@
       '<label class="pf-field"><span class="pf-field-label">Название</span>' +
       '<input id="agents-f-title" type="text" class="pf-input" maxlength="60" placeholder="Например, «Редактор постов»" autocomplete="off" /></label>' +
       "</div>" +
-      '<div class="pf-group"><p class="pf-group-title">Промпт</p><div class="pf-list">' +
+      '<p class="pf-hint hidden" id="agents-locked-note">Характер и правила Лео задаёт Орбита. Здесь можно выбрать модель, на которой он отвечает.</p>' +
+      '<div class="pf-group" id="agents-prompt-group"><p class="pf-group-title">Промпт</p><div class="pf-list">' +
       '<label class="pf-field"><textarea id="agents-f-prompt" class="pf-input agents-textarea" rows="8" maxlength="12000" placeholder="Кто этот агент и как он работает"></textarea></label>' +
       '<label class="pf-field"><span class="pf-field-label">Правила</span>' +
       '<textarea id="agents-f-rules" class="pf-input agents-textarea agents-textarea--rules" rows="3" maxlength="4000" placeholder="Ограничения и тон"></textarea></label>' +
@@ -40615,6 +40663,7 @@
     });
     if (resetBtn) {
       resetBtn.classList.toggle("hidden", isNew || !agent.builtin);
+      if (kind === "gpt") resetBtn.textContent = "Вернуть модель по умолчанию";
       resetBtn.addEventListener("click", function () {
         resetAgentForm();
       });
@@ -40647,6 +40696,23 @@
     var webEl = document.getElementById("agents-f-web");
     var roundsEl = document.getElementById("agents-f-rounds");
     var id = idEl && idEl.value;
+    var lockedAgent = id ? findUserAgent(id) : null;
+    if (lockedAgent && lockedAgent.kind === "gpt") {
+      try {
+        profileAgentsMsg("", "");
+        await apiFetch("/agents/" + encodeURIComponent(id), {
+          method: "PATCH",
+          body: JSON.stringify({ model: modelEl ? modelEl.value : "" }),
+        });
+        await loadUserAgents();
+        renderProfileAgentsList();
+        closeAgentForm();
+        profileAgentsMsg("Сохранено", "");
+      } catch (e) {
+        profileAgentsMsg("", (e && e.message) || String(e));
+      }
+      return;
+    }
     var body = {
       prompt: promptEl ? promptEl.value : "",
       rules: rulesEl ? rulesEl.value : "",
@@ -59988,6 +60054,9 @@
         persistBrowserSessionFromCurrentAuth();
         // Трекеры заранее: переключатель «Орбита / Битрикс24» и «Дубль в …» нужны сразу при открытии задачи.
         loadTrackers();
+        // Пуши: разрешение уже выдано — подписка этого устройства должна быть на сервере
+        // (раньше она обновлялась, только если открыть Профиль → Уведомления).
+        setTimeout(syncWebPushSubscriptionIfNeeded, 3000);
         // Новичку — интро, команда и тур; пришёл по ссылке — онбординг в следующий запуск.
         // onboarding.js грузится после app.js: если ещё не готов — он заберёт /me сам.
         var obOpts = { deepLink: locationHasDeepLink() };

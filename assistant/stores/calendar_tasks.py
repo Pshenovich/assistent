@@ -1162,13 +1162,45 @@ def list_tasks_for_note(
         return [_row_to_dict(r) for r in cur.fetchall()]
 
 
+def _norm_emails(emails: Any) -> set[str]:
+    return {str(e or "").strip().lower() for e in (emails or []) if str(e or "").strip()}
+
+
+def is_external_delegation(task: dict[str, Any], self_emails: Any = None) -> bool:
+    """Поручил человеку без аккаунта в Орбите: исполнитель по id — сам постановщик (или пусто),
+    но в задаче чужая почта. Это не «моя» задача, а поставленная — её место в «Поставленных»."""
+    owner = str(task.get("owner_user_id") or "")
+    assignee = str(task.get("assignee_user_id") or "")
+    email = str(task.get("assignee_email") or "").strip().lower()
+    return assignee in ("", owner) and bool(email) and email not in _norm_emails(self_emails)
+
+
+def _external_posted(uid: str, *, include_done: bool, archived_flag: int | None, self_emails: Any) -> list[dict[str, Any]]:
+    with _LOCK:
+        cur = _conn().execute(
+            """
+            SELECT * FROM calendar_tasks
+            WHERE owner_user_id = ?
+              AND (assignee_user_id = '' OR assignee_user_id = owner_user_id)
+              AND IFNULL(assignee_email, '') != ''
+              AND (? = 1 OR done = 0)
+              AND (? IS NULL OR IFNULL(owner_archived, 0) = ?)
+              AND """ + NOT_INLINE_SQL + """
+            """,
+            (uid, 1 if include_done else 0, archived_flag, archived_flag),
+        )
+        rows = [_row_to_dict(r) for r in cur.fetchall()]
+    return [t for t in rows if is_external_delegation(t, self_emails)]
+
+
 def list_posted_tasks(
     owner_user_id: int | str,
     *,
     include_done: bool = False,
     archived: bool | None = False,
+    self_emails: Any = None,
 ) -> list[dict[str, Any]]:
-    """Задачи, которые владелец поставил другим (не себе).
+    """Задачи, которые владелец поставил другим (не себе), в том числе людям без аккаунта.
 
     archived=False — текущие (не в архиве постановщика);
     archived=True — только архив;
@@ -1190,10 +1222,14 @@ def list_posted_tasks(
             """,
             (uid, 1 if include_done else 0, archived_flag, archived_flag),
         )
-        return [_row_to_dict(r) for r in cur.fetchall()]
+        out = [_row_to_dict(r) for r in cur.fetchall()]
+    ext = _external_posted(uid, include_done=include_done, archived_flag=archived_flag, self_emails=self_emails)
+    if ext:
+        out = sorted(out + ext, key=lambda t: (str(t.get("start_at") or ""), int(t.get("id") or 0)))
+    return out
 
 
-def count_active_posted_tasks(owner_user_id: int | str) -> int:
+def count_active_posted_tasks(owner_user_id: int | str, self_emails: Any = None) -> int:
     """Активные (не done) неархивные делегированные задачи — для счётчика «Поставлено»."""
     uid = _uid(owner_user_id)
     with _LOCK:
@@ -1210,7 +1246,8 @@ def count_active_posted_tasks(owner_user_id: int | str) -> int:
             (uid,),
         )
         row = cur.fetchone()
-        return int(row["n"] if row else 0)
+        n = int(row["n"] if row else 0)
+    return n + len(_external_posted(uid, include_done=False, archived_flag=0, self_emails=self_emails))
 
 
 def list_involved_tasks(user_id: int | str, *, limit: int = 2000) -> list[dict[str, Any]]:
@@ -1236,8 +1273,11 @@ def list_my_tasks(
     done: bool = False,
     now: datetime | None = None,
     limit: int = 500,
+    self_emails: Any = None,
 ) -> list[dict[str, Any]]:
     """Экран «Задачи»: свои (поставил себе) и поставленные мне, которые я взял.
+
+    Поручённое человеку без аккаунта (в задаче чужая почта) — не моё, оно в «Поставленных».
 
     Входящие (ещё не разобранные), «не моё» и отменённые постановщиком — не здесь.
     done=False — открытые; повторяющаяся задача — ближайшим вхождением с сегодняшнего дня.
@@ -1264,7 +1304,7 @@ def list_my_tasks(
             """,
             (uid, uid, *TRIAGE_HIDDEN, 1 if done else 0, lim),
         ).fetchall()
-    out = [_row_to_dict(r) for r in rows]
+    out = [t for t in (_row_to_dict(r) for r in rows) if not is_external_delegation(t, self_emails)]
     if done:
         return out
     now_dt = now or datetime.now(timezone.utc)

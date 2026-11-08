@@ -1572,10 +1572,17 @@ function repairOrphanTaskText(root) {
     taskUl.querySelectorAll(":scope > li").forEach(function (li) {
       // Чип задачи и значок Фокуса («неактуально», чип поставленной задачи) — не текст:
       // пересборка строки текстом превращала значок в слова и теряла чип.
-      if (li.querySelector(".note-task-chip, [data-leo-task-id], .note-focus-mark")) return;
-      const text = extractTaskText(li);
       const checked =
         li.hasAttribute("checked") || li.getAttribute("data-checked") === "true";
+      if (li.querySelector(".note-task-chip, [data-leo-task-id], .note-focus-mark")) {
+        // Содержимое не трогаем, но состояние галочки TipTap берёт только из data-checked
+        // (атрибут checked парсер пункта перекрывает) — без него строка со значком
+        // после переоткрытия теряла отметку «выполнено».
+        li.setAttribute("data-type", "taskItem");
+        li.setAttribute("data-checked", checked ? "true" : "false");
+        return;
+      }
+      const text = extractTaskText(li);
       if (text) {
         setTaskItemContent(li, text, checked);
         return;
@@ -6269,7 +6276,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261107-embed3kinds",
+  assetVersion: "20261108-taskmark",
   Y: Y,
   mount: mount,
   mountTable: mountTable,

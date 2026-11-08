@@ -6282,6 +6282,24 @@ async def miniapp_set_absences(
     return {"absences": items}
 
 
+def _self_task_emails(uid: int) -> list[str]:
+    """Почты самого человека: задача «исполнитель — я» с такой почтой — своя, не поручение."""
+    out: list[str] = []
+    try:
+        from assistant.stores import accounts
+
+        out.append(str(accounts.email_of(uid) or ""))
+    except Exception:
+        pass
+    try:
+        from assistant.stores import user_prefs
+
+        out.append(str(user_prefs.load_prefs(uid).get("google_account_email") or ""))  # без похода в Google
+    except Exception:
+        pass
+    return [e for e in out if e]
+
+
 @miniapp_router.get("/calendar/tasks/posted")
 async def miniapp_calendar_tasks_posted(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
@@ -6299,6 +6317,7 @@ async def miniapp_calendar_tasks_posted(
             uid,
             include_done=True,
             archived=want_archived,
+            self_emails=_self_task_emails(uid),
         )
     )
     items = [_task_api(r, tz=tz, viewer_id=uid) for r in rows]
@@ -6325,7 +6344,7 @@ async def miniapp_calendar_tasks_posted(
 
     await run_in_threadpool(_links)
     active_count = await run_in_threadpool(
-        calendar_tasks_store.count_active_posted_tasks, uid
+        calendar_tasks_store.count_active_posted_tasks, uid, _self_task_emails(uid)
     )
     return {"ok": True, "items": items, "count": active_count, "archived": want_archived}
 
@@ -6345,7 +6364,9 @@ async def miniapp_calendar_tasks_mine(
     tz = _tz_for(uid)
 
     def _run() -> dict[str, Any]:
-        rows = calendar_tasks_store.list_my_tasks(uid, done=bool(done), now=datetime.now(tz), limit=300 if done else 500)
+        rows = calendar_tasks_store.list_my_tasks(
+            uid, done=bool(done), now=datetime.now(tz), limit=300 if done else 500, self_emails=_self_task_emails(uid)
+        )
         names: dict[str, str] = {}
         titles: dict[str, str] = {}
         items = []
@@ -7844,13 +7865,29 @@ def _org_credits_detail(org_id: int, members: list[dict[str, Any]], *, manage: b
     if not manage:
         return out
     overage = credits_store.overage_by_member(org_id, today, today)
+    month_from = today[:8] + "01"
+    over_month = credits_store.overage_by_member(org_id, month_from, today)
+    member_ids = [str(m.get("user_id") or "") for m in members if m.get("user_id")]
+    spent_month = credits_store.spend_by_users(member_ids, month_from, today)
     ai = {}
-    for m in members:
-        mid = str(m.get("user_id") or "")
-        if not mid:
-            continue
+    for mid in member_ids:
         st = credits_store.member_settings(org_id, mid)
-        ai[mid] = {**st, "spent_today": credits_store.spent_today(mid), "over_today": overage.get(mid, 0.0)}
+        ai[mid] = {
+            **st,
+            "spent_today": credits_store.spent_today(mid),
+            "over_today": overage.get(mid, 0.0),
+            "spent_month": round(spent_month.get(mid, 0.0), 2),
+            "over_month": round(over_month.get(mid, 0.0), 2),
+        }
+    total_month = sum(spent_month.values())
+    out["credits"]["usage"] = {
+        "month_from": month_from,
+        "today": today,
+        "spent_today": round(sum(a["spent_today"] for a in ai.values()), 2),
+        "spent_month": round(total_month, 2),
+        "spent_month_rub": credits_store.credits_to_rub(total_month),
+        "over_month": round(sum(over_month.values()), 2),
+    }
     try:
         models = list_gpt_picker_models().get("models") or []
     except Exception as e:

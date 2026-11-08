@@ -365,6 +365,46 @@ def match_snippet(text: str, snippets: Iterable[dict[str, Any]]) -> str | None:
     return None
 
 
+def _trigger_pattern(trigger: str) -> re.Pattern[str] | None:
+    words = _snippet_key(trigger).split()
+    if not words:
+        return None
+    parts = [re.escape(w).replace("е", "[её]") for w in words]
+    return re.compile(r"(?<!\w)" + r"[\W_]+".join(parts) + r"(?!\w)", re.IGNORECASE)
+
+
+_SNIP_MARK = "\ue000%d\ue001"
+_SNIP_MARK_RE = re.compile("\ue000(\\d+)\ue001")
+
+
+def insert_snippets(text: str, snippets: Iterable[dict[str, Any]]) -> tuple[str, list[str]]:
+    """Триггер внутри фразы («пришли на адрес офиса») → метка на месте триггера.
+
+    Текст сниппета ставим в самом конце (restore_snippets): числа и словарь его не трогают."""
+    bodies: list[str] = []
+    out = text
+    # длинные триггеры раньше: «адрес офиса в москве» важнее «адрес офиса»
+    items = sorted((s or {} for s in snippets or []), key=lambda s: -len(str(s.get("trigger") or "")))
+    for s in items:
+        body = str(s.get("text", "") or "")
+        pat = _trigger_pattern(str(s.get("trigger", "") or ""))
+        if not pat or not body.strip():
+            continue
+
+        def repl(_m: re.Match[str], body: str = body) -> str:
+            bodies.append(body)
+            return _SNIP_MARK % (len(bodies) - 1)
+
+        out = pat.sub(repl, out)
+    return out, bodies
+
+
+def restore_snippets(text: str, bodies: list[str]) -> str:
+    if not bodies:
+        return text
+    return _SNIP_MARK_RE.sub(lambda m: bodies[int(m.group(1))], text)
+
+
 # ----------------------------------------------------------------- общий конвейер
 
 
@@ -376,11 +416,13 @@ def postprocess(
     dictionary: Iterable[dict[str, Any]] | None = None,
     snippets: Iterable[dict[str, Any]] | None = None,
 ) -> str:
-    """Порядок: паразиты → сниппет (вся фраза) → числа → словарь."""
+    """Порядок: паразиты → сниппет (вся фраза или триггер внутри) → числа → словарь."""
     t = str(text or "").strip()
     if not t:
         return t
+    bodies: list[str] = []
     if snippets:
+        snippets = list(snippets)
         hit = match_snippet(t, snippets)
         if hit is None and cleanup:
             hit = match_snippet(remove_fillers(t), snippets)
@@ -388,8 +430,10 @@ def postprocess(
             return hit
     if cleanup:
         t = remove_fillers(t)
+    if snippets:
+        t, bodies = insert_snippets(t, snippets)
     if numbers:
         t = numbers_to_digits(t)
     if dictionary:
         t = apply_dictionary(t, dictionary)
-    return t
+    return restore_snippets(t, bodies)

@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import re
+
 import json
 import threading
 import time
@@ -97,6 +99,19 @@ def update_settings(user_id: int, patch: dict[str, Any]) -> dict[str, Any]:
 
 # Куда ушёл текст — от этого зависит, что применять.
 # dictation: диктовка в мини-приложении — всё; command: голосовое в бот — без сниппетов;
+_SPEAKER_LABEL_RE = re.compile(r"^\s*Спикер\s*\d+\s*:\s*", re.M)
+
+
+def flatten_dictation(text: str) -> str:
+    """Диктовка приходит кусками через перенос строки (и с «Спикер 1:», если голосов несколько).
+
+    Склеиваем в одну строку: иначе «двадцать\nпять тысяч» не станет числом, паразит в начале
+    куска не уберётся, а фраза-сниппет не совпадёт. Пустая строка (абзац) остаётся."""
+    t = _SPEAKER_LABEL_RE.sub("", str(text or ""))
+    paras = [" ".join(p.split()) for p in re.split(r"\n\s*\n", t)]
+    return "\n\n".join(p for p in paras if p)
+
+
 # transcript: файлы и встречи — только словарь (запись должна остаться дословной).
 def process_text(user_id: int, text: str, *, mode: str = "dictation") -> str:
     from assistant.lib.voice_postprocess import postprocess
@@ -109,6 +124,8 @@ def process_text(user_id: int, text: str, *, mode: str = "dictation") -> str:
         print(f"[voice_prefs] settings_failed uid={user_id} err={e!r}")
         return str(text or "").strip()
     verbatim = mode == "transcript"
+    if not verbatim:
+        text = flatten_dictation(text)
     return postprocess(
         text,
         cleanup=s["cleanup"] and not verbatim,

@@ -390,7 +390,34 @@
       ? '<p class="pf-hint">У каждого участника дневной лимит (по умолчанию ' + fmtNum(c.default_daily_limit) +
         " кр). Сверх лимита Лео продолжает работать, кредиты списываются со счёта организации. Лимит и модели — в строке участника.</p>"
       : "";
-    return group("Кредиты ИИ", "credits", "<div>" + wallet + hint + "</div>");
+    return group("Кредиты ИИ", "credits", "<div>" + wallet + usageHtml(d) + hint + "</div>");
+  }
+
+  var MONTHS_IN = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
+
+  // Расход сотрудников: итог за месяц и список «кто сколько потратил» (видит руководитель).
+  function usageHtml(d) {
+    var c = d.credits;
+    var u = c && c.can_manage && c.usage;
+    if (!u) return "";
+    var month = MONTHS_IN[Number(String(u.month_from).slice(5, 7)) - 1] || "этом месяце";
+    var names = {};
+    (d.members || []).forEach(function (m) { if (m.user_id) names[String(m.user_id)] = memberName(d, m); });
+    var rows = Object.keys(c.members || {}).map(function (uid) {
+      var a = c.members[uid];
+      return { uid: uid, name: names[uid] || uid, month: Number(a.spent_month) || 0, today: Number(a.spent_today) || 0, over: Number(a.over_month) || 0 };
+    }).filter(function (r) { return r.month > 0 || r.today > 0; });
+    rows.sort(function (a, b) { return b.month - a.month; });
+    var head = staticRow("Потрачено в " + month, "≈ " + fmtNum(u.spent_month_rub) + " ₽ · сегодня " + fmtNum(u.spent_today) + " кр" +
+        (u.over_month > 0 ? " · со счёта организации " + fmtNum(u.over_month) + " кр" : ""),
+      '<span class="pf-row-val">' + fmtNum(u.spent_month) + " кр</span>");
+    var list = rows.length
+      ? rows.map(function (r) {
+          return staticRow(r.name, "сегодня " + fmtNum(r.today) + " кр" + (r.over > 0 ? " · сверх лимита за месяц " + fmtNum(r.over) : ""),
+            '<span class="pf-row-val">' + fmtNum(r.month) + " кр</span>");
+        }).join("")
+      : '<p class="pf-hint">В этом месяце сотрудники ещё не тратили кредиты.</p>';
+    return '<div class="pf-list org-usage">' + head + list + "</div>";
   }
 
   function memberAi(d, m) {
@@ -481,7 +508,7 @@
     parts.push(ROLE_LABEL[m.role] || "");
     if (m.guest) parts.push("гость");
     parts.push(planLabel(d, m.plan));
-    if (ai) parts.push("лимит " + fmtNum(ai.daily_limit) + " кр");
+    if (ai) parts.push("лимит " + fmtNum(ai.daily_limit) + " кр" + (ai.spent_month != null ? " · за месяц " + fmtNum(ai.spent_month) : ""));
     return parts.filter(Boolean).join(" · ");
   }
 

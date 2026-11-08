@@ -205,6 +205,24 @@ def spent_today(user_id: str | int, day: str | None = None) -> float:
     return float(row["credits"]) if row else 0.0
 
 
+def spend_by_users(user_ids: list[str | int], day_from: str, day_to: str) -> dict[str, float]:
+    """Весь расход людей за дни [day_from; day_to] (в пределах лимита и сверх него)."""
+    ids = [str(u) for u in user_ids if str(u or "")]
+    if not ids:
+        return {}
+    out: dict[str, float] = {}
+    with _lock:
+        for i in range(0, len(ids), 500):
+            part = ids[i : i + 500]
+            rows = _conn().execute(
+                "SELECT user_id, SUM(credits) AS c FROM user_day_spend WHERE user_id IN (%s) "
+                "AND day >= ? AND day <= ? GROUP BY user_id" % ",".join("?" * len(part)),
+                (*part, day_from, day_to),
+            ).fetchall()
+            out.update({str(r["user_id"]): float(r["c"] or 0) for r in rows})
+    return out
+
+
 # ── настройки участника организации ─────────────────────────────────────────
 
 def member_settings(org_id: str | int, user_id: str | int) -> dict[str, Any]:

@@ -145,9 +145,16 @@ def _send_telegram(user_id: int, text: str) -> None:
     send_message(int(user_id), text)
 
 
+_VAPID_WARNED = False
+
+
 def send_web_push(user_id: int | str, payload: dict[str, Any]) -> int:
     """Отправить Web Push на все подписки пользователя. Возвращает число успешных."""
+    global _VAPID_WARNED
     if not vapid_configured():
+        if not _VAPID_WARNED:
+            _VAPID_WARNED = True
+            print("[discuss_notify] web push off: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY не заданы в .env")
         return 0
     from assistant.stores import push_subscriptions
 
@@ -179,14 +186,26 @@ def send_web_push(user_id: int | str, payload: dict[str, Any]) -> int:
                 data=data,
                 vapid_private_key=private,
                 vapid_claims=claims,
+                # Без ttl pywebpush шлёт TTL 0: Apple/FCM доставляют «сейчас или никогда»,
+                # спящий iPhone уведомление теряет. Сутки и высокая срочность.
+                ttl=int(payload.get("ttl") or 86400),
+                headers={"Urgency": "high"},
             )
             sent += 1
         except Exception as e:
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            if status in (404, 410):
+            resp = getattr(e, "response", None)
+            status = getattr(resp, "status_code", None)
+            body = ""
+            try:
+                body = str(getattr(resp, "text", "") or "")[:200]
+            except Exception:
+                pass
+            if status in (404, 410) or (status == 403 and "VapidPkHashMismatch" in body):
+                # подписка мертва или создана под другим ключом VAPID — клиент подпишется заново
                 push_subscriptions.delete(row["endpoint"])
+                print(f"[discuss_notify] webpush_drop uid={user_id} status={status} body={body!r}")
             else:
-                print(f"[discuss_notify] webpush_fail uid={user_id} err={e!r}")
+                print(f"[discuss_notify] webpush_fail uid={user_id} status={status} body={body!r} err={e!r}")
     return sent
 
 

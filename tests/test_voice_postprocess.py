@@ -112,3 +112,18 @@ def test_history_respects_toggle():
     assert [x["text"] for x in voice_prefs.list_history(uid)] == ["первая"]
     voice_prefs.clear_history(uid)
     assert voice_prefs.list_history(uid) == []
+
+
+def test_snippet_trigger_inside_phrase_and_untouched_body():
+    from assistant.lib.voice_postprocess import postprocess
+
+    sn = [{"trigger": "адрес офиса", "text": "ул. Тверская, 5 (офис двадцать)"}]
+    out = postprocess("Пришли на адрес офиса две коробки", snippets=sn)
+    assert out == "Пришли на ул. Тверская, 5 (офис двадцать) 2 коробки"
+
+
+def test_flatten_dictation_joins_chunks_and_drops_speakers():
+    from assistant.stores.voice_prefs import flatten_dictation
+
+    assert flatten_dictation("Спикер 1:\nдвадцать\nпять тысяч") == "двадцать пять тысяч"
+    assert flatten_dictation("первый абзац\n\nвторой") == "первый абзац\n\nвторой"

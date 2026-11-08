@@ -47,6 +47,7 @@ async def meeting_reminder_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             cal_id = str(ev.get("calendar_id") or "")
             ev_id = str(ev.get("event_id") or "")
             start_iso = str(ev.get("start_iso") or "")
+            tg_ok = push_n = 0
             try:
                 text, kb = mr.format_reminder_message(
                     ev, user_id=user_id, minutes_before=mins
@@ -58,28 +59,26 @@ async def meeting_reminder_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                     disable_web_page_preview=True,
                     reply_markup=kb,
                 )
-                # PWA Web Push — клик по системному уведомлению открывает установленное приложение.
-                try:
-                    from assistant.services.discussion_notify import send_web_push
-
-                    payload = mr.web_push_payload_for_event(
-                        ev, user_id=user_id, minutes_before=mins
-                    )
-                    n = await asyncio.to_thread(send_web_push, user_id, payload)
-                    if n:
-                        print(
-                            f"[meeting_reminder] webpush uid={user_id} ev={ev_id} n={n}"
-                        )
-                except Exception as pe:
-                    print(
-                        f"[meeting_reminder] webpush uid={user_id} ev={ev_id} err={pe!r}"
-                    )
-                sent_store.mark_sent(user_id, cal_id, ev_id, start_iso)
-                print(
-                    f"[meeting_reminder] sent uid={user_id} cal={cal_id} ev={ev_id}"
-                )
+                tg_ok = 1
             except Exception as e:
                 print(f"[meeting_reminder] send uid={user_id} ev={ev_id} err={e!r}")
+            # PWA Web Push — отдельно от Telegram: нет привязки бота или упало зеркало —
+            # в приложение напоминание всё равно приходит.
+            try:
+                from assistant.services.discussion_notify import send_web_push
+
+                payload = mr.web_push_payload_for_event(
+                    ev, user_id=user_id, minutes_before=mins
+                )
+                payload.setdefault("ttl", 900)  # после начала встречи напоминание не нужно
+                push_n = await asyncio.to_thread(send_web_push, user_id, payload)
+                if push_n:
+                    print(f"[meeting_reminder] webpush uid={user_id} ev={ev_id} n={push_n}")
+            except Exception as pe:
+                print(f"[meeting_reminder] webpush uid={user_id} ev={ev_id} err={pe!r}")
+            if tg_ok or push_n:
+                sent_store.mark_sent(user_id, cal_id, ev_id, start_iso)
+                print(f"[meeting_reminder] sent uid={user_id} cal={cal_id} ev={ev_id} tg={tg_ok} push={push_n}")
 
     users = await asyncio.to_thread(mr.iter_calendar_user_ids)
     await fanout.for_each_user(users, one, label="meeting_reminder")

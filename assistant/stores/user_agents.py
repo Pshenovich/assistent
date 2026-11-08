@@ -264,8 +264,28 @@ def _row_overlay(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+# Лео (gpt) — голос бренда: промпт, правила, креативность и поиск задаёт Орбита,
+# человек выбирает только модель. Сохранённое раньше в этих полях не читаем.
+LEO_LOCKED_KIND = "gpt"
+
+
+def _lock_leo(base: dict[str, Any]) -> dict[str, Any]:
+    base["prompt"] = ""  # заводской промпт клиенту не отдаём, запуск берёт builtin_prompt
+    base["prompt_default"] = ""
+    base["rules"] = ""
+    base["locked"] = True
+    base["editable"] = ["model"]
+    return base
+
+
 def _merge_builtin(kind: str, overlay: dict[str, Any] | None) -> dict[str, Any]:
     base = factory_agent(kind)
+    if kind == LEO_LOCKED_KIND:
+        base = _lock_leo(base)
+        model = str((overlay or {}).get("model") or "").strip()
+        if model:
+            base["model"] = model
+        return base
     if not overlay:
         return base
     prompt = str(overlay.get("prompt") or "").strip()
@@ -450,6 +470,11 @@ def patch_agent(user_id: int, agent_id: str, fields: dict[str, Any]) -> dict[str
     if not current:
         raise AgentNotFound("Агент не найден")
     kind = str(current["kind"])
+    if kind == LEO_LOCKED_KIND:
+        locked = sorted(k for k in fields if k != "model")
+        if locked:
+            print(f"[user_agents] leo locked fields ignored uid={user_id} fields={locked}")
+        fields = {k: v for k, v in fields.items() if k == "model"}
     title = current["title"]
     if current.get("can_rename") and "title" in fields:
         title = _clip(str(fields.get("title") or "").strip(), MAX_TITLE)
@@ -584,7 +609,7 @@ def reset_agent(user_id: int, agent_id: str) -> dict[str, Any]:
             (uid, aid),
         )
         conn.commit()
-    return factory_agent(aid)
+    return _merge_builtin(aid, None)
 
 
 def runtime_config(user_id: int, agent_id: str | None) -> dict[str, Any]:

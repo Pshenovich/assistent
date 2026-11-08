@@ -320,3 +320,23 @@ def test_task_discussion_goes_to_leo_memory(tasks_db, monkeypatch):
         text = srcs[0]["text"]
         assert "Дима" in text and "какой берём" in text and "коробки по 40 ₽" in text
         assert srcs[0]["ref"]["url"].endswith(f"task={row['id']}")
+
+
+def test_task_for_person_without_account_goes_to_posted(tasks_db):
+    """Поручил человеку без аккаунта: задача не в «Задачах», а в «Поставленных»."""
+    store = tasks_db
+    tz = ZoneInfo("Europe/Moscow")
+    start = datetime(2026, 11, 9, 10, 0, tzinfo=tz)
+    mine = store.create_task(11, title="Своё", start_at=start, tz=tz)
+    to_self_mail = store.create_task(
+        11, title="Себе по почте", start_at=start, tz=tz, assignee_email="Me@x.ru", assignee_name="Я"
+    )
+    ext = store.create_task(
+        11, title="Ивану", start_at=start, tz=tz, assignee_email="ivan@x.ru", assignee_name="Иван"
+    )
+    assert ext["assignee_user_id"] == "11"
+    my_ids = {t["id"] for t in store.list_my_tasks(11, self_emails=["me@x.ru"])}
+    assert my_ids == {mine["id"], to_self_mail["id"]}
+    posted = store.list_posted_tasks(11, include_done=True, self_emails=["me@x.ru"])
+    assert [t["id"] for t in posted] == [ext["id"]]
+    assert store.count_active_posted_tasks(11, ["me@x.ru"]) == 1

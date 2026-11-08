@@ -88,3 +88,18 @@ def test_two_processes_lose_nothing(tmp_path):
     assert [p.exitcode for p in ps] == [0, 0]
     assert cs.balance("user", 3) == pytest.approx(2300)
     assert cs.spent_today(3) == pytest.approx(200)
+
+
+def test_spend_by_users_sums_period(tmp_path, monkeypatch):
+    from assistant.stores import credits_store as cs
+
+    monkeypatch.setenv("CREDITS_DB_PATH", str(tmp_path / "c.sqlite"))
+    conn = cs._conn()
+    conn.executemany(
+        "INSERT INTO user_day_spend(user_id, day, credits) VALUES (?, ?, ?)",
+        [("1", "2026-11-01", 10), ("1", "2026-11-08", 5), ("1", "2026-10-31", 99), ("2", "2026-11-03", 7)],
+    )
+    conn.commit()
+    got = cs.spend_by_users(["1", "2", "3"], "2026-11-01", "2026-11-08")
+    assert got == {"1": 15.0, "2": 7.0}
+    assert cs.spend_by_users([], "2026-11-01", "2026-11-08") == {}

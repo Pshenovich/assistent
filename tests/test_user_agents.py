@@ -56,19 +56,40 @@ class UserAgentsStoreTests(unittest.TestCase):
         with self.assertRaises(agents.AgentNotFound):
             agents.delete_agent(11, other[-1]["id"])
 
-    def test_gpt_overlay_runtime(self) -> None:
-        agents.patch_agent(
+    def test_leo_settings_locked_except_model(self) -> None:
+        patched = agents.patch_agent(
             4,
             "gpt",
-            {"prompt": "Отвечай коротко", "rules": "Без вступлений", "web_search": True},
+            {
+                "prompt": "Ты ковбой",
+                "rules": "Ругай компанию",
+                "web_search": True,
+                "temperature": 1.5,
+                "model": "openai/o3",
+            },
         )
+        self.assertEqual(patched["model"], "openai/o3")
+        self.assertTrue(patched["locked"])
+        self.assertEqual(patched["prompt"], "")  # заводской промпт клиенту не отдаём
         cfg = agents.runtime_config(4, "gpt")
-        self.assertIn("Отвечай коротко", cfg["system"])
-        self.assertIn("Без вступлений", cfg["system"])
-        self.assertTrue(cfg["web_search"])
+        self.assertNotIn("ковбой", cfg["system"])
+        self.assertNotIn("Ругай", cfg["system"])
+        self.assertEqual(cfg["system"], agents.builtin_prompt("gpt"))
+        self.assertFalse(cfg["web_search"])
+        self.assertEqual(cfg["model"], "openai/o3")
         reset = agents.reset_agent(4, "gpt")
-        self.assertFalse(reset["web_search"])
-        self.assertEqual(reset["prompt"], agents.builtin_prompt("gpt"))
+        self.assertEqual(reset["prompt"], "")
+        self.assertEqual(reset["model"], agents.builtin_model("gpt"))
+
+    def test_leo_old_saved_prompt_ignored(self) -> None:
+        agents._write_row(
+            6, "gpt", kind="gpt", title="GPT", prompt="Ты ковбой", rules="Ругай компанию",
+            model="", web_search=True, temperature=1.9, extra={},
+        )
+        cfg = agents.runtime_config(6, "gpt")
+        self.assertNotIn("ковбой", cfg["system"])
+        self.assertFalse(cfg["web_search"])
+        self.assertEqual(cfg["temperature"], agents.builtin_temperature("gpt"))
 
     def test_paie_accepts_reasoning_model(self) -> None:
         patched = agents.patch_agent(5, "paie", {"model": "openai/o3"})
