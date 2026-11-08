@@ -17,7 +17,10 @@
 
 Содержимое сейфов никогда не попадает в Лео, поиск, эмбеддинги, аналитику, логи и MCP (правило 17).
 Права — «кому → роль» как в базе знаний, но без ``all``: открыть сейф всем в организации нельзя.
-Админы организации сейфов автоматически не видят. Личный сейф (``org_id IS NULL``) — только владельцу.
+Владельцы организации — всегда владельцы всех её сейфов (решение владельца 2026-11-08): конверт им кладётся
+при создании сейфа и раздаётся, как всем участникам. Админы организации сейфов автоматически не видят.
+Остальные участники (не гости) видят названия сейфов организации и могут запросить доступ (``vault_requests``).
+Личный сейф (``org_id IS NULL``) — только владельцу.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ BLOB_MAX = 64 * 1024  # шифр одной записи
 KEY_MAX = 8 * 1024  # открытый ключ, конверт, обёртка UMK
 UNLOCKERS_MAX = 10
 LOG_ACTIONS = ("reveal", "copy")
+VAULT_TABLES = ("vault_items", "vault_envelopes", "vault_acl", "vault_log", "vault_departures", "vault_requests")
 _B64 = re.compile(r"^[A-Za-z0-9_\-+/=]+$")
 
 _SCHEMA_CONN: Optional[sqlite3.Connection] = None
@@ -81,11 +85,25 @@ def _conn() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS vault_departures (
             vault_id INTEGER NOT NULL, user_id TEXT NOT NULL, at TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (vault_id, user_id));
+        CREATE TABLE IF NOT EXISTS vault_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, vault_id INTEGER NOT NULL, user_id TEXT NOT NULL,
+            status TEXT NOT NULL, created_at TEXT NOT NULL, decided_by TEXT, decided_at TEXT, role TEXT,
+            notified INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_vault_requests_vault ON vault_requests(vault_id, status);
         """
     )
+    _add_column(conn, "vaults", "key_version", "INTEGER NOT NULL DEFAULT 1")
+    _add_column(conn, "vaults", "needs_rotation", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "vault_departures", "notified", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()
     _SCHEMA_CONN = conn
     return conn
+
+
+def _add_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:
+    cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
 def _uid(user_id: int | str) -> str:
@@ -295,12 +313,28 @@ def _principals(org_id: Optional[int], user_id: int | str) -> set[str]:
     return org_groups.principals(int(org_id), user_id)
 
 
+def _org_owner_ids(org_id: Optional[int]) -> set[str]:
+    """Владельцы организации. Берёт замок сам."""
+    if org_id is None:
+        return set()
+    with _LOCK:
+        return _org_owners(_conn(), org_id)
+
+
+def _role_for(v: sqlite3.Row, acl: dict[str, str], user_id: int | str) -> str:
+    """Роль в сейфе: владелец организации — всегда «owner», остальные — по правам сейфа. Без замка."""
+    uid = _uid(user_id)
+    if v["org_id"] is not None and uid in _org_owner_ids(v["org_id"]):
+        return "owner"
+    return _role_from(acl, _principals(v["org_id"], uid))
+
+
 def role_in(vault_id: int, user_id: int | str) -> str:
     with _LOCK:
         conn = _conn()
         v = _vault(conn, vault_id)
         acl = _acl(conn, vault_id)
-    return _role_from(acl, _principals(v["org_id"], user_id))
+    return _role_for(v, acl, user_id)
 
 
 def _require(vault_id: int, user_id: int | str, need: str) -> tuple[sqlite3.Row, str]:
@@ -308,7 +342,7 @@ def _require(vault_id: int, user_id: int | str, need: str) -> tuple[sqlite3.Row,
         conn = _conn()
         v = _vault(conn, vault_id)
         acl = _acl(conn, vault_id)
-    role = _role_from(acl, _principals(v["org_id"], user_id))
+    role = _role_for(v, acl, user_id)
     if not role:
         raise OrgError("Сейф не найден", 404)
     if ROLE_RANK[role] < ROLE_RANK[need]:
@@ -317,8 +351,8 @@ def _require(vault_id: int, user_id: int | str, need: str) -> tuple[sqlite3.Row,
 
 
 def _members(org_id: Optional[int], acl: dict[str, str]) -> set[str]:
-    """Кому сейф открыт по правам — конкретные люди. Без замка."""
-    out: set[str] = set()
+    """Кому сейф открыт — конкретные люди: по правам сейфа и владельцы организации. Без замка."""
+    out: set[str] = set(_org_owner_ids(org_id))
     for p in acl:
         if p.startswith("u:"):
             uid = p[2:]
@@ -355,11 +389,21 @@ def _sync_envelopes(vault_id: int) -> tuple[set[str], set[str]]:
                 conn.execute("DELETE FROM vault_envelopes WHERE vault_id = ? AND user_id = ?", (int(vault_id), uid))
                 conn.execute(
                     "INSERT INTO vault_departures (vault_id, user_id, at) VALUES (?,?,?) "
-                    "ON CONFLICT(vault_id, user_id) DO UPDATE SET at = excluded.at, dismissed = 0",
+                    "ON CONFLICT(vault_id, user_id) DO UPDATE SET at = excluded.at, dismissed = 0, notified = 0",
                     (int(vault_id), uid, now),
                 )
-            conn.commit()
+            # ушедший мог сохранить ключ сейфа — браузер участника сменит его (rotate)
+            conn.execute("UPDATE vaults SET needs_rotation = 1 WHERE id = ?", (int(vault_id),))
+        conn.commit()
     return members, have - gone
+
+
+def _org_owners(conn: sqlite3.Connection, org_id: Optional[int]) -> set[str]:
+    if org_id is None:
+        return set()
+    return {str(r["user_id"]) for r in conn.execute(
+        "SELECT user_id FROM org_members WHERE org_id = ? AND role = 'owner' AND status = 'active'", (int(org_id),)
+    )}
 
 
 # ---------- сейфы ----------
@@ -370,9 +414,15 @@ def _org_ids(user_id: int | str) -> list[int]:
 
 
 def list_for(user_id: int | str) -> list[dict[str, Any]]:
-    """Сейфы, открытые человеку: личный и организаций. С его конвертом и списком «ждут конверт»."""
+    """Сейфы человека: личный и организаций — с его конвертом и списком «ждут конверт».
+
+    Сейфы организации, куда его не добавили, тоже видны (без содержимого) — чтобы запросить доступ.
+    Гостям организации чужие сейфы не показываются.
+    """
     uid = _uid(user_id)
-    org_ids = _org_ids(uid)
+    orgs = orgs_store.orgs_for_user(uid)
+    org_ids = [int(o["id"]) for o in orgs]
+    owned = {int(o["id"]) for o in orgs if o.get("my_role") == "owner"}
     with _LOCK:
         conn = _conn()
         marks = ",".join("?" * len(org_ids)) or "NULL"
@@ -380,19 +430,52 @@ def list_for(user_id: int | str) -> list[dict[str, Any]]:
             f"SELECT * FROM vaults WHERE org_id IN ({marks}) OR (org_id IS NULL AND created_by = ?) ORDER BY name COLLATE NOCASE, id",
             (*org_ids, uid),
         ).fetchall()
+        guest_in = {int(r["org_id"]) for r in conn.execute(
+            f"SELECT org_id FROM org_members WHERE user_id = ? AND guest = 1 AND org_id IN ({marks})", (uid, *org_ids)
+        )} if org_ids else set()
     principals_by_org: dict[Any, set[str]] = {}
     out: list[dict[str, Any]] = []
     for v in rows:
         key = v["org_id"]
-        if key not in principals_by_org:
-            principals_by_org[key] = _principals(key, uid)
-        with _LOCK:
-            acl = _acl(_conn(), v["id"])
-        role = _role_from(acl, principals_by_org[key])
-        if not role:
-            continue
-        out.append(_vault_out(v, role, uid))
+        if key is not None and int(key) in owned:
+            role = "owner"
+        else:
+            if key not in principals_by_org:
+                principals_by_org[key] = _principals(key, uid)
+            with _LOCK:
+                acl = _acl(_conn(), v["id"])
+            role = _role_from(acl, principals_by_org[key])
+        if role:
+            out.append(_vault_out(v, role, uid))
+        elif key is not None and int(key) not in guest_in:
+            out.append(_foreign_out(v, uid))
     return out
+
+
+def _names(uids: Iterable[str]) -> dict[str, str]:
+    from assistant.stores import note_members
+
+    return {u: note_members.profile_display_name(note_members.get_profile(u), fallback="Участник") for u in uids}
+
+
+def _foreign_out(v: sqlite3.Row, uid: str) -> dict[str, Any]:
+    """Сейф организации, куда человека не добавили: название и запрос доступа, без содержимого."""
+    vid = int(v["id"])
+    with _LOCK:
+        conn = _conn()
+        acl = _acl(conn, vid)
+        r = conn.execute(
+            "SELECT * FROM vault_requests WHERE vault_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1", (vid, uid)
+        ).fetchone()
+    req = None
+    if r and r["status"] in ("pending", "rejected"):
+        req = {"status": r["status"], "created_at": r["created_at"], "decided_at": r["decided_at"],
+               "decided_by_name": _names([str(r["decided_by"])]).get(str(r["decided_by"]), "") if r["decided_by"] else ""}
+    return {
+        "id": vid, "org_id": v["org_id"], "personal": False, "name": v["name"], "role": "", "foreign": True,
+        "envelope": None, "items": None, "pending": [], "departed": 0, "departures": [], "requests": [],
+        "access": _access_line(v["org_id"], acl), "key_version": int(v["key_version"]), "request": req,
+    }
 
 
 def _vault_out(v: sqlite3.Row, role: str, uid: str) -> dict[str, Any]:
@@ -400,30 +483,52 @@ def _vault_out(v: sqlite3.Row, role: str, uid: str) -> dict[str, Any]:
     members, have = _sync_envelopes(vid)
     with _LOCK:
         conn = _conn()
+        v = _vault(conn, vid)  # после _sync_envelopes мог появиться флаг смены ключа
         mine = conn.execute(
             "SELECT envelope FROM vault_envelopes WHERE vault_id = ? AND user_id = ?", (vid, uid)
         ).fetchone()
         count = conn.execute("SELECT COUNT(*) FROM vault_items WHERE vault_id = ?", (vid,)).fetchone()[0]
-        keys = _public_keys(conn, members - have)
+        owners = _org_owners(conn, v["org_id"])
+        keys = _public_keys(conn, members)
         acl = _acl(conn, vid)
-        departed = conn.execute(
-            "SELECT COUNT(*) FROM vault_departures WHERE vault_id = ? AND dismissed = 0", (vid,)
-        ).fetchone()[0]
+        deps = conn.execute(
+            "SELECT user_id, at FROM vault_departures WHERE vault_id = ? AND dismissed = 0 ORDER BY at", (vid,)
+        ).fetchall() if role in ("editor", "owner") else []
+        if deps and not conn.execute(
+            "SELECT 1 FROM vault_items WHERE vault_id = ? AND updated_at < ? LIMIT 1", (vid, deps[-1]["at"])
+        ).fetchone():
+            # всё, что ушедший мог видеть, уже сменили (или записей не было) — список больше не нужен
+            conn.execute("UPDATE vault_departures SET dismissed = 1 WHERE vault_id = ? AND dismissed = 0", (vid,))
+            conn.commit()
+            deps = []
+        reqs = conn.execute(
+            "SELECT user_id, created_at FROM vault_requests WHERE vault_id = ? AND status = 'pending' ORDER BY id", (vid,)
+        ).fetchall() if role == "owner" else []
+    editor = role in ("editor", "owner")
     pending = [{"user_id": u, "public_key": keys[u]} for u in sorted(members - have) if u in keys]
+    rotate = bool(v["needs_rotation"]) and editor and bool(mine)
+    names = _names([str(d["user_id"]) for d in deps] + [str(r["user_id"]) for r in reqs])
     return {
         "id": vid,
         "org_id": v["org_id"],
         "personal": v["org_id"] is None,
         "name": v["name"],
         "role": role,
+        "org_owner": uid in owners,  # владелец организации: владелец сейфа всегда, снять нельзя
         "items": int(count),
         "envelope": mine["envelope"] if mine else None,
+        "key_version": int(v["key_version"]),
         "members": len(members),
         "holders": len(have),  # у скольких есть ключ: 0 — сейф уже никто не откроет
         # ключ нужен тем, у кого он есть: только они могут положить конверт
         "pending": pending if mine else [],
         "waiting_setup": len([u for u in members - have if u not in keys]),
-        "departed": int(departed) if role in ("editor", "owner") else 0,
+        "departed": len(deps),
+        "departures": [{"user_id": str(d["user_id"]), "name": names[str(d["user_id"])], "at": d["at"]} for d in deps],
+        # сменить ключ: всем участникам с ключами — новые конверты
+        "rotate": rotate,
+        "rotate_keys": [{"user_id": u, "public_key": keys[u]} for u in sorted(members) if u in keys] if rotate else [],
+        "requests": [{"user_id": str(r["user_id"]), "name": names[str(r["user_id"])], "at": r["created_at"]} for r in reqs],
         "access": _access_line(v["org_id"], acl),
     }
 
@@ -452,8 +557,14 @@ def _access_line(org_id: Optional[int], acl: dict[str, str]) -> str:
 
 
 def create(user_id: int | str, org_id: Optional[int], name: str, envelope: str,
-           access: Optional[list[dict[str, str]]] = None) -> dict[str, Any]:
-    """Новый сейф. Создатель — владелец; ``envelope`` — ключ сейфа, запечатанный его открытым ключом."""
+           access: Optional[list[dict[str, str]]] = None,
+           owner_envelopes: Optional[list[dict[str, str]]] = None) -> dict[str, Any]:
+    """Новый сейф. Создатель — владелец; ``envelope`` — ключ сейфа, запечатанный его открытым ключом.
+
+    Сейф организации сразу получает конверты владельцев организации (``owner_envelopes``) — они владельцы
+    всех её сейфов. Иначе, если создатель уйдёт, не открыв сейф ещё раз, ключ остался бы только у него.
+    Пока ни один владелец организации не включил сейфы, сейф в ней создать нельзя.
+    """
     uid = _uid(user_id)
     title = _clean_name(name)
     env = _blob(envelope, "envelope")
@@ -470,6 +581,20 @@ def create(user_id: int | str, org_id: Optional[int], name: str, envelope: str,
             "SELECT 1 FROM vaults WHERE org_id IS NULL AND created_by = ?", (uid,)
         ).fetchone():
             raise OrgError("Личный сейф уже есть", 400)
+        esc: dict[str, str] = {}
+        if org_id is not None:
+            owner_keys = _public_keys(conn, _org_owners(conn, org_id))
+            if not owner_keys:
+                raise OrgError(
+                    "Сначала владелец организации должен включить сейфы — иначе при уходе сотрудника "
+                    "сейф будет некому открыть", 400,
+                )
+            for e in owner_envelopes or []:
+                target = _uid(e.get("user_id") or 0)
+                if target in owner_keys and target != uid:
+                    esc[target] = _blob(e.get("envelope"), "envelope")
+            if not (set(owner_keys) - {uid}) <= set(esc):
+                raise OrgError("Не хватает ключа для владельца организации — обновите страницу", 400)
         now = _now()
         cur = conn.execute(
             "INSERT INTO vaults (org_id, name, created_by, created_at) VALUES (?,?,?,?)",
@@ -484,8 +609,26 @@ def create(user_id: int | str, org_id: Optional[int], name: str, envelope: str,
             "INSERT INTO vault_envelopes (vault_id, user_id, envelope, created_by, created_at) VALUES (?,?,?,?,?)",
             (vid, uid, env, uid, now),
         )
+        for target, e in esc.items():
+            conn.execute(
+                "INSERT INTO vault_envelopes (vault_id, user_id, envelope, created_by, created_at) VALUES (?,?,?,?,?)",
+                (vid, target, e, uid, now),
+            )
         conn.commit()
     return get(vid, uid)
+
+
+def owner_keys_for(user_id: int | str) -> dict[str, list[dict[str, str]]]:
+    """Открытые ключи владельцев каждой организации человека — чтобы при создании сейфа сразу
+    положить им конверт. Пусто у организации — её владельцы ещё не включили сейфы."""
+    org_ids = _org_ids(user_id)
+    out: dict[str, list[dict[str, str]]] = {}
+    with _LOCK:
+        conn = _conn()
+        for oid in org_ids:
+            keys = _public_keys(conn, _org_owners(conn, oid))
+            out[str(oid)] = [{"user_id": u, "public_key": k} for u, k in sorted(keys.items())]
+    return out
 
 
 def get(vault_id: int, user_id: int | str) -> dict[str, Any]:
@@ -506,7 +649,7 @@ def delete(user_id: int | str, vault_id: int) -> None:
     _require(vault_id, user_id, "owner")
     with _LOCK:
         conn = _conn()
-        for table in ("vault_items", "vault_envelopes", "vault_acl", "vault_log", "vault_departures"):
+        for table in VAULT_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE vault_id = ?", (int(vault_id),))
         conn.execute("DELETE FROM vaults WHERE id = ?", (int(vault_id),))
         conn.commit()
@@ -517,7 +660,7 @@ def delete_org(org_id: int) -> None:
     conn = _conn()
     ids = [int(r["id"]) for r in conn.execute("SELECT id FROM vaults WHERE org_id = ?", (int(org_id),))]
     for vid in ids:
-        for table in ("vault_items", "vault_envelopes", "vault_acl", "vault_log", "vault_departures"):
+        for table in VAULT_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE vault_id = ?", (vid,))
     conn.execute("DELETE FROM vaults WHERE org_id = ?", (int(org_id),))
 
@@ -558,6 +701,7 @@ def access(vault_id: int, user_id: int | str) -> dict[str, Any]:
         keys = _public_keys(conn, members)
     from assistant.stores import note_members
 
+    owners = _org_owner_ids(v["org_id"])
     people = []
     for u in sorted(members):
         prof = note_members.get_profile(u)
@@ -565,6 +709,7 @@ def access(vault_id: int, user_id: int | str) -> dict[str, Any]:
             "user_id": u,
             "name": note_members.profile_display_name(prof, fallback=u),
             "state": "ok" if u in have else ("pending" if u in keys else "no_keys"),
+            "org_owner": u in owners,  # владелец организации — владелец всех её сейфов
         })
     return {
         "vault_id": int(vault_id),
@@ -579,6 +724,7 @@ def set_access(user_id: int | str, vault_id: int, principal: str, role: str) -> 
     """Открыть (``role``) или закрыть (``role=''``) сейф. Последнего владельца убрать нельзя."""
     v, _ = _require(vault_id, user_id, "owner")
     p = _check_principal(v["org_id"], principal)
+    org_owners = _org_owner_ids(v["org_id"])  # владельцы организации — владельцы сейфа всегда
     with _LOCK:
         conn = _conn()
         acl = _acl(conn, vault_id)
@@ -586,7 +732,7 @@ def set_access(user_id: int | str, vault_id: int, principal: str, role: str) -> 
             acl[p] = _check_role(role)
         else:
             acl.pop(p, None)
-        if "owner" not in acl.values():
+        if "owner" not in acl.values() and not org_owners:
             raise OrgError("У сейфа должен остаться владелец", 400)
         if role:
             conn.execute("INSERT OR REPLACE INTO vault_acl (vault_id, principal, role) VALUES (?,?,?)",
@@ -597,7 +743,17 @@ def set_access(user_id: int | str, vault_id: int, principal: str, role: str) -> 
     return access(vault_id, user_id)
 
 
-def put_envelopes(user_id: int | str, vault_id: int, envelopes: list[dict[str, str]]) -> dict[str, Any]:
+def _check_version(conn: sqlite3.Connection, vault_id: int, key_version: Optional[int]) -> None:
+    """Браузер шифрует ключом сейфа версии ``key_version``; если ключ уже сменили — пусть откроет заново."""
+    if key_version is None:
+        return
+    v = _vault(conn, vault_id)
+    if int(v["key_version"]) != int(key_version):
+        raise OrgError("Ключ сейфа только что сменился — откройте сейф заново", 400)
+
+
+def put_envelopes(user_id: int | str, vault_id: int, envelopes: list[dict[str, str]],
+                  key_version: Optional[int] = None) -> dict[str, Any]:
     """Положить конверты тем, кто ждёт. Класть может только тот, у кого конверт уже есть."""
     uid = _uid(user_id)
     _require(vault_id, uid, "viewer")
@@ -606,6 +762,7 @@ def put_envelopes(user_id: int | str, vault_id: int, envelopes: list[dict[str, s
         raise OrgError("Сначала откройте сейф у себя", 400)
     with _LOCK:
         conn = _conn()
+        _check_version(conn, vault_id, key_version)
         keys = _public_keys(conn, members - have)
         now = _now()
         put = 0
@@ -647,13 +804,14 @@ def items(vault_id: int, user_id: int | str) -> list[dict[str, Any]]:
     } for r in rows]
 
 
-def add_item(user_id: int | str, vault_id: int, blob: str) -> dict[str, Any]:
+def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional[int] = None) -> dict[str, Any]:
     _require(vault_id, user_id, "editor")
     uid = _uid(user_id)
     data = _blob(blob, "blob", BLOB_MAX)
     now = _now()
     with _LOCK:
         conn = _conn()
+        _check_version(conn, vault_id, key_version)
         cur = conn.execute(
             "INSERT INTO vault_items (vault_id, blob, created_by, created_at, updated_by, updated_at) VALUES (?,?,?,?,?,?)",
             (int(vault_id), data, uid, now, uid, now),
@@ -672,12 +830,14 @@ def _item(conn: sqlite3.Connection, vault_id: int, item_id: int) -> sqlite3.Row:
     return row
 
 
-def update_item(user_id: int | str, vault_id: int, item_id: int, blob: str) -> dict[str, Any]:
+def update_item(user_id: int | str, vault_id: int, item_id: int, blob: str,
+                key_version: Optional[int] = None) -> dict[str, Any]:
     _require(vault_id, user_id, "editor")
     data = _blob(blob, "blob", BLOB_MAX)
     now = _now()
     with _LOCK:
         conn = _conn()
+        _check_version(conn, vault_id, key_version)
         _item(conn, vault_id, item_id)
         conn.execute(
             "UPDATE vault_items SET blob = ?, updated_by = ?, updated_at = ? WHERE id = ?",
@@ -739,3 +899,219 @@ def item_log(user_id: int | str, vault_id: int, item_id: int, limit: int = 30) -
     })
     out.sort(key=lambda x: x["at"], reverse=True)
     return out[:limit]
+
+
+# ---------- смена ключа сейфа ----------
+
+
+def rotate(user_id: int | str, vault_id: int, key_version: int, items_in: list[dict[str, Any]],
+           envelopes: list[dict[str, str]]) -> dict[str, Any]:
+    """Новый ключ сейфа: все записи перешифрованы, конверты — заново. Делает браузер участника.
+
+    Нужно после ухода человека: старый ключ мог остаться у него. Записи меняются целиком и разом;
+    дата «изменена» не трогается — смена ключа не значит, что сменили пароль.
+    """
+    uid = _uid(user_id)
+    v, _ = _require(vault_id, uid, "editor")
+    members, have = _sync_envelopes(vault_id)
+    if uid not in have:
+        raise OrgError("Сначала откройте сейф у себя", 400)
+    blobs: dict[int, str] = {}
+    for it in items_in or []:
+        blobs[int(it.get("id") or 0)] = _blob(it.get("blob"), "blob", BLOB_MAX)
+    with _LOCK:
+        conn = _conn()
+        _check_version(conn, vault_id, key_version)
+        ids = {int(r["id"]) for r in conn.execute("SELECT id FROM vault_items WHERE vault_id = ?", (int(vault_id),))}
+        if ids != set(blobs):
+            raise OrgError("Записи в сейфе только что изменились — попробуйте ещё раз", 400)
+        keys = _public_keys(conn, members)
+        envs: dict[str, str] = {}
+        for e in envelopes or []:
+            target = _uid(e.get("user_id") or 0)
+            if target in keys:
+                envs[target] = _blob(e.get("envelope"), "envelope")
+        if uid not in envs or not (have & set(keys)) <= set(envs):
+            raise OrgError("Не хватает ключей для участников — попробуйте ещё раз", 400)
+        now = _now()
+        for iid, blob in blobs.items():
+            conn.execute("UPDATE vault_items SET blob = ? WHERE id = ?", (blob, iid))
+        conn.execute("DELETE FROM vault_envelopes WHERE vault_id = ?", (int(vault_id),))
+        for target, env in envs.items():
+            conn.execute(
+                "INSERT INTO vault_envelopes (vault_id, user_id, envelope, created_by, created_at) VALUES (?,?,?,?,?)",
+                (int(vault_id), target, env, uid, now),
+            )
+        conn.execute(
+            "UPDATE vaults SET key_version = key_version + 1, needs_rotation = 0 WHERE id = ?", (int(vault_id),)
+        )
+        conn.commit()
+    return get(vault_id, uid)
+
+
+def dismiss_departures(user_id: int | str, vault_id: int) -> dict[str, Any]:
+    """«Всё сменили» — убрать список «смените пароли»."""
+    _require(vault_id, user_id, "editor")
+    with _LOCK:
+        conn = _conn()
+        conn.execute("UPDATE vault_departures SET dismissed = 1 WHERE vault_id = ?", (int(vault_id),))
+        conn.commit()
+    return get(vault_id, user_id)
+
+
+# ---------- запрос доступа ----------
+
+
+def _vault_log_event(conn: sqlite3.Connection, vault_id: int, user_id: str, action: str) -> None:
+    conn.execute(
+        "INSERT INTO vault_log (vault_id, item_id, user_id, action, at) VALUES (?,?,?,?,?)",
+        (int(vault_id), None, user_id, action, _now()),
+    )
+
+
+def request_access(user_id: int | str, vault_id: int) -> None:
+    """Участник организации просит доступ к сейфу — владельцы сейфа получат уведомление."""
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        v = _vault(conn, vault_id)
+        acl = _acl(conn, vault_id)
+    if v["org_id"] is None:
+        raise OrgError("Сейф не найден", 404)
+    if _role_for(v, acl, uid):
+        raise OrgError("Этот сейф вам уже открыт", 400)
+    with _LOCK:
+        conn = _conn()
+        m = conn.execute(
+            "SELECT guest FROM org_members WHERE org_id = ? AND user_id = ? AND status = 'active'", (int(v["org_id"]), uid)
+        ).fetchone()
+        if not m or m["guest"]:
+            raise OrgError("Сейф не найден", 404)
+        if conn.execute(
+            "SELECT 1 FROM vault_requests WHERE vault_id = ? AND user_id = ? AND status = 'pending'", (int(vault_id), uid)
+        ).fetchone():
+            raise OrgError("Запрос уже отправлен", 400)
+        conn.execute(
+            "INSERT INTO vault_requests (vault_id, user_id, status, created_at) VALUES (?,?,?,?)",
+            (int(vault_id), uid, "pending", _now()),
+        )
+        _vault_log_event(conn, vault_id, uid, "access_request")
+        conn.commit()
+
+
+def cancel_request(user_id: int | str, vault_id: int) -> None:
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "UPDATE vault_requests SET status = 'cancelled', decided_by = ?, decided_at = ?, notified = 2 "
+            "WHERE vault_id = ? AND user_id = ? AND status = 'pending'",
+            (uid, _now(), int(vault_id), uid),
+        )
+        conn.commit()
+
+
+def decide_request(user_id: int | str, vault_id: int, target: int | str, role: str) -> dict[str, Any]:
+    """Владелец сейфа отвечает на запрос: ``role`` — открыть с этой ролью, пусто — отклонить."""
+    uid, who = _uid(user_id), _uid(target)
+    v, _ = _require(vault_id, uid, "owner")
+    with _LOCK:
+        conn = _conn()
+        r = conn.execute(
+            "SELECT id FROM vault_requests WHERE vault_id = ? AND user_id = ? AND status = 'pending'", (int(vault_id), who)
+        ).fetchone()
+    if not r:
+        raise OrgError("Запроса уже нет", 400)
+    if role:
+        set_access(uid, vault_id, f"u:{who}", _check_role(role))
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "UPDATE vault_requests SET status = ?, decided_by = ?, decided_at = ?, role = ? WHERE id = ?",
+            ("approved" if role else "rejected", uid, _now(), role or None, int(r["id"])),
+        )
+        _vault_log_event(conn, vault_id, uid, "access_grant" if role else "access_reject")
+        conn.commit()
+    return get(vault_id, uid)
+
+
+def vault_events(vault_id: int, user_id: int | str, limit: int = 20) -> list[dict[str, Any]]:
+    """События сейфа целиком (запросы доступа) — для участников."""
+    _require(vault_id, user_id, "viewer")
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT user_id, action, at FROM vault_log WHERE vault_id = ? AND item_id IS NULL ORDER BY at DESC, id DESC LIMIT ?",
+            (int(vault_id), int(limit)),
+        ).fetchall()
+    names = _names({str(r["user_id"]) for r in rows})
+    return [{"user_id": str(r["user_id"]), "name": names[str(r["user_id"])], "action": r["action"], "at": r["at"]} for r in rows]
+
+
+# ---------- фоновая проверка: уходы и запросы доступа → уведомления ----------
+
+
+def watch() -> list[dict[str, Any]]:
+    """Раз в несколько минут (assistant/bot/vault_watch_job.py): заметить уходы и вернуть, кого о чём
+    уведомить — уходы, новые запросы доступа, ответы на них. В уведомлении только название сейфа и имена,
+    содержимое сейфа сюда не попадает. Каждое событие возвращается один раз."""
+    with _LOCK:
+        ids = [int(r["id"]) for r in _conn().execute("SELECT id FROM vaults WHERE org_id IS NOT NULL")]
+    for vid in ids:
+        try:
+            _sync_envelopes(vid)
+        except OrgError:
+            continue
+    events: list[dict[str, Any]] = []
+    with _LOCK:
+        conn = _conn()
+        vaults_by_id = {int(r["id"]): r for r in conn.execute("SELECT * FROM vaults WHERE org_id IS NOT NULL")}
+        deps = conn.execute("SELECT * FROM vault_departures WHERE notified = 0 AND dismissed = 0").fetchall()
+        reqs = conn.execute(
+            "SELECT * FROM vault_requests WHERE (status = 'pending' AND notified = 0) "
+            "OR (status IN ('approved', 'rejected') AND notified < 2)"
+        ).fetchall()
+    acl_cache: dict[int, dict[str, str]] = {}
+
+    def people(vid: int, roles: tuple[str, ...]) -> set[str]:
+        v = vaults_by_id[vid]
+        if vid not in acl_cache:
+            with _LOCK:
+                acl_cache[vid] = _acl(_conn(), vid)
+        return {u for u in _members(v["org_id"], acl_cache[vid]) if _role_for(v, acl_cache[vid], u) in roles}
+
+    for d in deps:
+        vid = int(d["vault_id"])
+        if vid in vaults_by_id:
+            events.append({
+                "kind": "departure", "vault_id": vid, "vault_name": vaults_by_id[vid]["name"],
+                "who": str(d["user_id"]), "to": sorted(people(vid, ("editor", "owner")) - {str(d["user_id"])}),
+            })
+    for r in reqs:
+        vid = int(r["vault_id"])
+        if vid not in vaults_by_id:
+            continue
+        who = str(r["user_id"])
+        if r["status"] == "pending":
+            kind, to = "access_request", people(vid, ("owner",)) - {who}
+        else:
+            kind, to = ("access_approved" if r["status"] == "approved" else "access_rejected"), {who}
+        events.append({
+            "kind": kind, "vault_id": vid, "vault_name": vaults_by_id[vid]["name"], "who": who,
+            "by": str(r["decided_by"] or ""), "role": r["role"] or "", "to": sorted(to),
+        })
+    with _LOCK:
+        conn = _conn()
+        for d in deps:
+            conn.execute(
+                "UPDATE vault_departures SET notified = 1 WHERE vault_id = ? AND user_id = ?", (d["vault_id"], d["user_id"])
+            )
+        for r in reqs:
+            conn.execute(
+                "UPDATE vault_requests SET notified = ? WHERE id = ?", (1 if r["status"] == "pending" else 2, int(r["id"]))
+            )
+        conn.commit()
+    names = _names({x for ev in events for x in (ev["who"], ev.get("by") or "") if x})
+    for ev in events:
+        ev["who_name"] = names.get(ev["who"], "")
+        ev["by_name"] = names.get(ev.get("by") or "", "")
+    return events

@@ -110,3 +110,30 @@
 .vlt-mobile svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .vlt-mobile .kb-btn svg { width: 15px; height: 15px; }
 .vlt-mobile .vlt-ibtn svg { width: 17px; height: 17px; }
+
+/* Этап 2: уход участника, запросы доступа, сейф без доступа */
+.vlt-foreign .kb-n-title { color: var(--text-secondary); }
+.vlt-reqs { padding: 4px 12px; border-color: var(--accent-border); background: var(--accent-subtle); }
+.vlt-req { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 0; border-top: 1px solid var(--border); }
+.vlt-req:first-child { border-top: 0; }
+.vlt-req-text { flex: 1 1 200px; font-size: 0.875rem; color: var(--text-secondary); }
+.vlt-req-text b { color: var(--text); }
+.vlt-req-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.vlt-center .vlt-reqs { text-align: left; margin: 0 0 18px; }
+.vlt-deps {
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border)); border-radius: 12px; padding: 12px 12px 4px;
+  margin: 4px 0 20px; background: color-mix(in srgb, var(--warning) 7%, var(--surface));
+}
+.vlt-deps-head { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 6px; }
+.vlt-deps-head > svg { width: 18px; height: 18px; flex: none; color: var(--warning-text); margin-top: 2px; }
+.vlt-deps-head b { font-size: 0.9375rem; color: var(--text); }
+.vlt-deps-head p { margin: 3px 0 0; font-size: 0.8125rem; line-height: 1.45; color: var(--text-secondary); }
+.vlt-deps .kb-line { align-items: center; }
+.vlt-deps .vlt-actions { margin: 6px 0 8px; }
+/* Узкое окно с деревом слева: таблице сейфа не хватает места — оставляем название и кнопки */
+@media (max-width: 1180px) {
+  .vlt-table .kb-row { grid-template-columns: 20px minmax(0, 1fr) 76px; }
+  .vlt-table .kb-row > .kb-row-c:nth-child(3), .vlt-table .kb-row > .kb-row-c:nth-child(4),
+  .vlt-table .kb-row--head > span:nth-child(3), .vlt-table .kb-row--head > span:nth-child(4) { display: none; }
+}
+.vlt-req-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: 1px; }

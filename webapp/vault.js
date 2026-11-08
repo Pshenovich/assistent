@@ -21,6 +21,9 @@
     vaults: [],
     priv: null, // CryptoKey — пока сейфы открыты
     vk: {}, // vaultId → Uint8Array
+    vkVer: {}, // vaultId → версия ключа, которым открыт сейф (после смены ключа — открыть заново)
+    rotating: {}, // vaultId → идёт смена ключа
+    events: {}, // vaultId → журнал сейфа (аварийный доступ)
     items: {}, // vaultId → [{id, data, updated_at, updated_by_name}]
     lastActive: 0,
     view: "list", // list | record | edit | setup | code | locked | device | add-device
@@ -64,6 +67,8 @@
     phone: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>',
     dice: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>',
     back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>',
+    alert: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17h.01"/></svg>',
+    key: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/></svg>',
   };
 
   // ---------- общие мелочи ----------
@@ -104,6 +109,12 @@
     var y = new Date(now.getTime() - 86400000);
     if (d.toDateString() === y.toDateString()) return "вчера " + hm;
     return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
+  }
+  function whenFull(iso) {
+    var t = Date.parse(iso || "");
+    if (!t) return "";
+    var d = new Date(t);
+    return d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" }) + " в " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   }
   function inTelegram() {
     var tg = window.Telegram && window.Telegram.WebApp;
@@ -151,8 +162,10 @@
         st.enabled = r.enabled !== false;
         st.keys = r.keys || null;
         st.vaults = r.vaults || [];
+        st.ownerKeys = r.org_owner_keys || {};
         st.loaded = true;
         if (unlocked()) await afterOpen();
+        openFromLink(location.href);
       } catch (e) {
         st.loaded = true;
         st.enabled = false;
@@ -163,9 +176,36 @@
     return st.loading;
   }
 
+  // Ссылка из уведомления: ...?vault=ID — открыть этот сейф (один раз на ссылку).
+  var linkSeen = "";
+  function openFromLink(href) {
+    var id = 0;
+    try {
+      id = Number(new URL(href, location.href).searchParams.get("vault") || 0);
+    } catch (_) {}
+    if (!id || linkSeen === href || !vaultOf(id)) return;
+    linkSeen = href;
+    try {
+      var u = new URL(location.href);
+      u.searchParams.delete("vault");
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) {}
+    if (app().setTab) app().setTab("knowledge");
+    setTimeout(function () { show(id); }, 50);
+  }
+  if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) {
+    navigator.serviceWorker.addEventListener("message", function (ev) {
+      var d = ev && ev.data;
+      if (d && d.type === "leo-open-url" && d.url && String(d.url).indexOf("vault=") >= 0) {
+        load(true).then(function () { openFromLink(d.url); });
+      }
+    });
+  }
+
   function applyState(r) {
     if (r && r.keys) st.keys = r.keys;
     if (r && r.vaults) st.vaults = r.vaults;
+    if (r && r.org_owner_keys) st.ownerKeys = r.org_owner_keys;
   }
 
   function refresh() {
@@ -186,6 +226,8 @@
     if (st._codeUmk) st._codeUmk.fill(0);
     st._codeUmk = null;
     st.vk = {};
+    st.vkVer = {};
+    st.events = {};
     st.items = {};
     st.reveal = {};
     st.log = {};
@@ -225,27 +267,67 @@
   async function afterOpen() {
     for (var i = 0; i < st.vaults.length; i++) {
       var v = st.vaults[i];
-      if (!v.envelope || st.vk[v.id]) continue;
+      if (!v.envelope) continue;
+      if (st.vk[v.id] && st.vkVer[v.id] === v.key_version) continue;
       try {
         st.vk[v.id] = await CR.openEnvelope(v.envelope, st.priv, st.keys.public_key);
+        st.vkVer[v.id] = v.key_version;
+        delete st.items[v.id]; // ключ мог смениться — записи расшифруем заново
       } catch (_) {
+        delete st.vk[v.id];
         v.broken = true; // конверт не открылся: ключи сменились (вход «с нуля») — ждём нового конверта
       }
     }
+    for (var k = 0; k < st.vaults.length; k++) if (st.vaults[k].rotate) await rotateVault(st.vaults[k]);
     for (var j = 0; j < st.vaults.length; j++) await distribute(st.vaults[j]);
   }
 
+  // Конверты тем, кто ждёт ключ (новые участники и владельцы организации).
   async function distribute(v) {
-    if (!v || !st.vk[v.id] || !v.pending || !v.pending.length) return;
+    if (!v || !st.vk[v.id]) return;
+    var vk = st.vk[v.id];
+    if (v.pending && v.pending.length) {
+      try {
+        var envs = [];
+        for (var i = 0; i < v.pending.length; i++) {
+          envs.push({ user_id: v.pending[i].user_id, envelope: await CR.sealEnvelope(vk, v.pending[i].public_key) });
+        }
+        var r = await api("/" + v.id + "/envelopes", json("POST", { envelopes: envs, key_version: st.vkVer[v.id] }));
+        if (r && r.vault) replaceVault(r.vault);
+        if (r && r.put) toast(count(r.put, "коллега получил", "коллеги получили", "коллег получили") + " доступ к сейфу «" + v.name + "»");
+      } catch (_) {}
+    }
+  }
+
+  // Новый ключ сейфа после ухода участника: старый мог остаться у него. Всё делает браузер:
+  // расшифровать записи старым ключом, зашифровать новым, разложить новые конверты. Сервер ключей не видит.
+  async function rotateVault(v) {
+    if (!v || !v.rotate || !st.vk[v.id] || st.rotating[v.id]) return;
+    st.rotating[v.id] = true;
     try {
-      var envs = [];
-      for (var i = 0; i < v.pending.length; i++) {
-        envs.push({ user_id: v.pending[i].user_id, envelope: await CR.sealEnvelope(st.vk[v.id], v.pending[i].public_key) });
+      var old = st.vk[v.id];
+      var list = (await api("/" + v.id + "/items")).items || [];
+      var nvk = CR.newVaultKey();
+      var items = [];
+      for (var i = 0; i < list.length; i++) {
+        // не расшифровалось — не трогаем сейф, чтобы ничего не потерять
+        var data = await CR.openItem(old, v.id, list[i].blob);
+        items.push({ id: list[i].id, blob: await CR.sealItem(nvk, v.id, data) });
       }
-      var r = await api("/" + v.id + "/envelopes", json("POST", { envelopes: envs }));
-      if (r && r.vault) replaceVault(r.vault);
-      if (r && r.put) toast(count(r.put, "коллега получил", "коллеги получили", "коллег получили") + " доступ к сейфу «" + v.name + "»");
-    } catch (_) {}
+      var envs = [];
+      for (var j = 0; j < v.rotate_keys.length; j++) {
+        envs.push({ user_id: v.rotate_keys[j].user_id, envelope: await CR.sealEnvelope(nvk, v.rotate_keys[j].public_key) });
+      }
+      var r = await api("/" + v.id + "/rotate", json("POST", { key_version: v.key_version, items: items, envelopes: envs }));
+      replaceVault(r.vault);
+      st.vk[v.id] = nvk;
+      st.vkVer[v.id] = r.vault.key_version;
+      delete st.items[v.id];
+      toast("Ключ сейфа «" + v.name + "» сменён — у ушедших его больше нет");
+    } catch (e) {
+      console.warn("[vault] rotate", v.id, e && e.name); // попробуем при следующем открытии
+    }
+    st.rotating[v.id] = false;
   }
 
   function replaceVault(nv) {
@@ -334,7 +416,7 @@
   function passkeyError(e) {
     var m = String((e && e.message) || "");
     if (e && e.name === "NotAllowedError") return "Отменено. Попробуйте ещё раз — или войдите кодом с аварийного листа.";
-    if (m === "prf") return "Это устройство или браузер не умеет открывать сейфы по " + BIO + " (нужны iOS/macOS 18+, свежий Chrome). Используйте код с аварийного листа.";
+    if (m === "prf") return "Это устройство или браузер не умеет открывать сейфы по " + BIO + " (нужен Safari 18 и новее — macOS 15, iOS 18 — или свежий Chrome; в Arc не работает). Используйте код с аварийного листа.";
     if (m === "nopasskey") return "Для сейфов ещё нет ни одного устройства с " + BIO + " — войдите кодом с аварийного листа.";
     if (m === "unwrap") return BIO + " прошёл, но ключ сейфов не подошёл. Войдите кодом с аварийного листа и добавьте " + BIO + " заново.";
     if (m === "relogin") return "Войдите кодом с аварийного листа ещё раз — потом добавьте " + BIO + ".";
@@ -502,9 +584,16 @@
     try {
       var vk = CR.newVaultKey();
       var env = await CR.sealEnvelope(vk, st.keys.public_key);
-      var r = await api("", json("POST", { org_id: personal ? null : orgId, name: String(name).trim(), envelope: env }));
+      // владельцы организации — владельцы всех её сейфов: конверт им сразу, чтобы сейф не потерялся, если создатель уйдёт
+      var ownerEnvs = [];
+      var owners = personal ? [] : (st.ownerKeys && st.ownerKeys[String(orgId)]) || [];
+      for (var i = 0; i < owners.length; i++) {
+        ownerEnvs.push({ user_id: owners[i].user_id, envelope: await CR.sealEnvelope(vk, owners[i].public_key) });
+      }
+      var r = await api("", json("POST", { org_id: personal ? null : orgId, name: String(name).trim(), envelope: env, owner_envelopes: ownerEnvs }));
       applyState(r);
       st.vk[r.created.id] = vk;
+      st.vkVer[r.created.id] = r.created.key_version;
       st.items[r.created.id] = [];
       show(r.created.id);
       if (!personal) openAccess(r.created.id);
@@ -550,9 +639,10 @@
         if (val != null && String(val) !== "") data[k] = typeof val === "string" ? val.trim() : val;
       });
       var blob = await CR.sealItem(st.vk[v.id], v.id, data);
+      var body = { blob: blob, key_version: st.vkVer[v.id] };
       var r = d.id
-        ? await api("/" + v.id + "/items/" + d.id, json("PUT", { blob: blob }))
-        : await api("/" + v.id + "/items", json("POST", { blob: blob }));
+        ? await api("/" + v.id + "/items/" + d.id, json("PUT", body))
+        : await api("/" + v.id + "/items", json("POST", body));
       var list = st.items[v.id] || [];
       var cur = itemOf(v.id, r.id);
       if (cur) {
@@ -568,8 +658,10 @@
       st.itemId = r.id;
       st.view = "record";
       toast("Сохранено");
+      if (v.departures && v.departures.length) load(true); // сменённый пароль уходит из списка «смените пароли»
     } catch (e) {
       toast(errText(e));
+      if (/сменился/.test(errText(e))) load(true); // ключ сменили — откроем заново, черновик остаётся
     }
     st.busy = false;
     refresh();
@@ -643,6 +735,67 @@
     paint();
   }
 
+  // ---------- уход участника и аварийный доступ ----------
+
+  async function dismissDepartures(vid) {
+    try {
+      replaceVault((await api("/" + vid + "/departures/dismiss", json("POST", {}))).vault);
+      refresh();
+    } catch (e) {
+      toast(errText(e));
+    }
+  }
+
+  async function requestAccess(vid) {
+    try {
+      applyState(await api("/" + vid + "/request", json("POST", {})));
+      toast("Запрос отправлен владельцам сейфа");
+      refresh();
+    } catch (e) {
+      toast(errText(e));
+    }
+  }
+
+  async function cancelRequest(vid) {
+    try {
+      applyState(await api("/" + vid + "/request/cancel", json("POST", {})));
+      toast("Запрос отменён");
+      refresh();
+    } catch (e) {
+      toast(errText(e));
+    }
+  }
+
+  // Владелец сейфа отвечает на запрос: роль — открыть, пусто — отклонить. Ключ новому участнику кладёт этот браузер.
+  async function decideRequest(vid, uid, role) {
+    try {
+      var r = await api("/" + vid + "/request/decide", json("POST", { user_id: uid, role: role }));
+      replaceVault(r.vault);
+      delete st.events[vid];
+      var v = vaultOf(vid);
+      if (role && v) {
+        await distribute(v);
+        toast(unlocked() ? "Доступ открыт" : "Доступ открыт — ключ получит, когда вы откроете сейфы");
+      } else {
+        toast("Запрос отклонён");
+      }
+      refresh();
+    } catch (e) {
+      toast(errText(e));
+    }
+  }
+
+  async function loadEvents(v) {
+    if (st.events[v.id]) return;
+    st.events[v.id] = "loading";
+    try {
+      st.events[v.id] = (await api("/" + v.id + "/events")).items || [];
+    } catch (_) {
+      st.events[v.id] = [];
+    }
+    paint();
+  }
+
   // ---------- доступ ----------
 
   function sheetFn() {
@@ -711,12 +864,13 @@
       }
       html += "</div>";
       html += '<p class="pf-hint">Смотрит — открывает и копирует. Правит — ещё добавляет и меняет записи. Владелец — ещё меняет доступ. ' +
-        "Открыть сейф всем в организации нельзя. Админы организации без доступа сейф не видят.</p></div>";
+        "Владельцы организации — владельцы всех её сейфов. Остальные видят название сейфа и могут запросить доступ. Открыть сейф всем сразу нельзя.</p></div>";
       if (data.people && data.people.length) {
         html += '<div class="pf-group"><p class="pf-group-title">Люди · ' + data.people.length + '</p><div class="pf-list">';
         data.people.forEach(function (p) {
           html += '<div class="pf-row pf-row--static"><span class="pf-avatar" aria-hidden="true">' + esc(K().initials(p.name)) + "</span>" +
-            '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(p.name) + "</span></span>" + stateLabel(p) + "</span></div>";
+            '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(p.name) + "</span>" +
+            (p.org_owner ? '<span class="pf-row-sub">владелец организации — владелец всех её сейфов</span>' : "") + "</span>" + stateLabel(p) + "</span></div>";
         });
         html += "</div>";
         var waiting = data.people.filter(function (p) { return p.state !== "ok"; }).length;
@@ -879,6 +1033,7 @@
         btn("Открыть Орбиту в браузере", 'data-v="open-browser"', "kb-btn--primary vlt-btn-lg") + "</div>";
     }
     var v = vaultOf(st.vaultId);
+    if (v && v.foreign && st.view !== "code") return foreignHtml(v); // сейф организации без доступа: можно запросить
     // экран всегда соответствует состоянию ключей: не включены → включить, закрыты → открыть
     if (!st.keys || !st.keys.enabled) {
       if (st.view !== "code") st.view = "setup";
@@ -928,6 +1083,7 @@
     return bar(crumbs(v)) + '<div class="kb-page vlt-page vlt-center">' +
       '<div class="vlt-big">' + IC.face + '</div><h1 class="screen-title kb-title">' + (v ? "Сейф «" + esc(v.name) + "» закрыт" : "Сейфы закрыты") + "</h1>" +
       '<p class="muted lead">Подтвердите, что это вы. Сейфы закрываются сами через 15 минут без действий.</p>' +
+      (v ? requestsHtml(v) : "") +
       (hasPk && passkeysSupported()
         ? '<div class="vlt-actions"><button type="button" class="kb-btn kb-btn--primary vlt-btn-lg" data-v="unlock"' + busyAttr() + ">" + IC.face + "<span>" + (st.busy ? "Подождите…" : "Открыть по " + BIO + "") + "</span></button></div>" +
           '<button type="button" class="pf-link" data-v="device">Другое устройство или нет ' + BIO + '</button>'
@@ -978,6 +1134,7 @@
     var html = bar(crumbs(v), actions) + '<div class="kb-page vlt-page">';
     html += '<h1 class="screen-title kb-title"><span class="vlt-title-ico">' + IC.lock + "</span>" + esc(v.name) + "</h1>";
     html += '<p class="muted lead lead-tight">' + (v.personal ? "Личный сейф — видите только вы" : "Открыт: " + esc(v.access) + " · вы — " + esc((ROLE_LABEL[v.role] || "").toLowerCase())) + "</p>";
+    html += requestsHtml(v);
     if (!st.vk[v.id]) {
       if (!v.holders || (v.holders === 1 && v.broken)) {
         html += '<div class="kb-banner kb-banner--stale">' + IC.lock + "<span>Ключа этого сейфа больше нет ни у кого из участников — записи открыть нельзя. " +
@@ -990,6 +1147,7 @@
       return html;
     }
     if (items === "loading" || !items) return html + '<p class="pf-hint">Расшифровываю…</p></div>';
+    html += departuresHtml(v, items);
     html += '<p class="kb-label">В сейфе · ' + items.length + "</p>";
     if (!items.length) {
       html += '<div class="kb-table"><div class="vlt-empty"><b>Пока пусто</b><span>Добавьте доступ к серверу, сайту или API-ключ.</span>' +
@@ -1010,7 +1168,81 @@
       if (canEdit(v)) html += '<div class="kb-table-add">' + btn("Запись", 'data-v="new"', "", IC.plus) + "</div>";
       html += "</div>";
     }
+    html += eventsHtml(v);
     html += '<p class="pf-hint">Значок копирует пароль, буфер очистится через 30 секунд. Лео, поиск и доступ для ИИ содержимое сейфов не видят.</p>';
+    return html + "</div>";
+  }
+
+  // Запросы доступа — владельцу сейфа (ответить можно и при закрытых сейфах; ключ положим при открытии).
+  function requestsHtml(v) {
+    var list = v.requests || [];
+    if (!list.length) return "";
+    return '<div class="vlt-deps vlt-reqs">' + list.map(function (r) {
+      return '<div class="vlt-req"><span class="pf-avatar" aria-hidden="true">' + esc(initials(r.name)) + "</span><span class=\"vlt-req-text\"><b>" + esc(r.name) +
+        "</b> просит доступ · " + esc(when(r.at)) + '</span><span class="vlt-req-acts">' +
+        btn("Смотрит", 'data-v="req-ok" data-u="' + esc(r.user_id) + '" data-r="viewer"', "") +
+        btn("Правит", 'data-v="req-ok" data-u="' + esc(r.user_id) + '" data-r="editor"', "") +
+        btn("Отклонить", 'data-v="req-no" data-u="' + esc(r.user_id) + '"', "kb-btn--ghost") + "</span></div>";
+    }).join("") + "</div>";
+  }
+  function initials(name) {
+    var k = K();
+    if (k && k.initials) return k.initials(name);
+    return String(name || "?").trim().slice(0, 1).toUpperCase();
+  }
+
+  // После ухода участника: что он мог видеть и ещё не сменили.
+  function departuresHtml(v, items) {
+    var deps = v.departures || [];
+    if (!deps.length || !canEdit(v)) return "";
+    var since = deps[deps.length - 1].at;
+    var stale = items.filter(function (it) { return String(it.updated_at || "") < since; });
+    if (!stale.length) return "";
+    var names = deps.map(function (d) { return d.name; }).join(", ");
+    var html = '<div class="vlt-deps"><div class="vlt-deps-head">' + IC.alert + "<div><b>Смените пароли: " + (deps.length > 1 ? "из сейфа ушли " : "из сейфа ушёл(ушла) ") + esc(names) + "</b>" +
+      "<p>" + (v.rotate ? "Ключ сейфа сменится, как только сейф откроет участник с правом правки." : "Ключ сейфа уже сменён — старым его не открыть.") +
+      " Но пароли, которые " + (deps.length > 1 ? "они видели" : "он(а) видел(а)") + ", остаются рабочими — смените их в самих сервисах и здесь.</p></div></div>";
+    html += '<div class="kb-lines">' + stale.map(function (it) {
+      return '<div class="kb-line vlt-logline"><span class="kb-line-ico">' + icoOf(it) + '</span><span class="kb-line-text"><b>' + esc(it.data.title || "Без названия") + "</b><span>" +
+        esc(typeOf(it).label) + "</span></span><span></span>" + btn("Сменить", 'data-v="edit" data-id="' + it.id + '"', "kb-btn--ghost") + "</div>";
+    }).join("") + "</div>";
+    html += '<div class="vlt-actions vlt-left">' + btn("Всё сменили — скрыть", 'data-v="dismiss-deps"', "kb-btn--ghost") + "</div></div>";
+    return html;
+  }
+
+  function eventsHtml(v) {
+    if (v.personal) return "";
+    if (!st.events[v.id]) loadEvents(v);
+    var ev = st.events[v.id];
+    if (!ev || ev === "loading" || !ev.length) return "";
+    var words = {
+      access_request: "запросил(а) доступ", access_grant: "открыл(а) доступ по запросу", access_reject: "отклонил(а) запрос доступа",
+    };
+    return '<p class="kb-label">Журнал сейфа</p><div class="kb-lines">' + ev.slice(0, 8).map(function (l) {
+      return '<div class="kb-line vlt-logline"><span class="kb-line-ico">' + IC.user + '</span><span class="kb-line-text"><b>' + esc(l.name || "Кто-то") + "</b><span>" +
+        esc(words[l.action] || l.action) + '</span></span><span></span><span class="kb-line-right">' + esc(when(l.at)) + "</span></div>";
+    }).join("") + "</div>";
+  }
+
+  // Сейф организации, куда человека не добавили: название и «Запросить доступ».
+  function foreignHtml(v) {
+    var r = v.request;
+    var html = bar(crumbs(v)) + '<div class="kb-page vlt-page vlt-center">' +
+      '<div class="vlt-big">' + IC.lock + '</div><h1 class="screen-title kb-title">Сейф «' + esc(v.name) + "»</h1>" +
+      '<p class="muted lead">У вас нет доступа к этому сейфу. Открыт: ' + esc(v.access) + ".</p>";
+    if (r && r.status === "pending") {
+      html += '<div class="kb-banner vlt-left">' + IC.clock + "<span>Запрос отправлен " + esc(when(r.created_at)) +
+        ". Владельцы сейфа получили уведомление — когда откроют доступ, мы напишем.</span></div>" +
+        '<div class="vlt-actions">' + btn("Отменить запрос", 'data-v="req-cancel"', "kb-btn--ghost") + "</div>";
+      return html + "</div>";
+    }
+    if (r && r.status === "rejected") {
+      html += '<div class="kb-banner kb-banner--stale vlt-left">' + IC.alert + "<span>Запрос отклонил(а) " + esc(r.decided_by_name || "владелец сейфа") + " " + esc(when(r.decided_at)) +
+        ". Если доступ нужен — напишите владельцу сейфа или запросите снова.</span></div>";
+    }
+    html += '<div class="vlt-actions">' + btn(r ? "Запросить снова" : "Запросить доступ", 'data-v="req"', "kb-btn--primary vlt-btn-lg", IC.key) + "</div>" +
+      '<p class="pf-hint">Владельцы сейфа получат уведомление в Telegram, пушем и на почту и решат, открыть ли вам сейф.' +
+      (!st.keys || !st.keys.enabled ? " Включите сейфы у себя заранее — без этого ключ сейфа вам не передать." : "") + "</p>";
     return html + "</div>";
   }
 
@@ -1194,6 +1426,11 @@
       case "delete": deleteItem(id); break;
       case "access": openAccess(st.vaultId); break;
       case "vault-more": vaultMenu(b); break;
+      case "dismiss-deps": dismissDepartures(st.vaultId); break;
+      case "req": requestAccess(st.vaultId); break;
+      case "req-cancel": cancelRequest(st.vaultId); break;
+      case "req-ok": decideRequest(st.vaultId, b.getAttribute("data-u"), b.getAttribute("data-r")); break;
+      case "req-no": decideRequest(st.vaultId, b.getAttribute("data-u"), ""); break;
       case "open-browser":
         if (app().openLink) app().openLink(location.origin + "/webapp/");
         break;
@@ -1264,9 +1501,9 @@
       '<button type="button" class="kb-n-btn" data-v="new-vault" data-org="' + orgId + '" aria-label="Новый сейф" title="Новый сейф">' + IC.plus + "</button></div>";
     html += list.map(function (v) {
       var cur = currentId === v.id;
-      return '<div class="kb-node vlt-node' + (cur ? " is-current" : "") + '" role="treeitem" tabindex="-1" style="--kb-depth:0" data-v="vault" data-id="' + v.id + '"' + (cur ? ' aria-current="page"' : "") + ">" +
+      return '<div class="kb-node vlt-node' + (cur ? " is-current" : "") + (v.foreign ? " vlt-foreign" : "") + '" role="treeitem" tabindex="-1" style="--kb-depth:0" data-v="vault" data-id="' + v.id + '"' + (cur ? ' aria-current="page"' : "") + ">" +
         '<span class="kb-chev kb-chev--none" aria-hidden="true"></span><span class="kb-n-ico" aria-hidden="true">' + IC.lock + "</span>" +
-        '<span class="kb-n-title">' + esc(v.name) + '</span><span class="kb-n-count">' + (v.envelope ? v.items : "·") + "</span></div>";
+        '<span class="kb-n-title">' + esc(v.name) + '</span><span class="kb-n-count">' + (v.foreign ? (v.request && v.request.status === "pending" ? "⏳" : "—") : v.envelope ? v.items : "·") + (v.requests && v.requests.length ? '<i class="vlt-req-dot" title="Просят доступ"></i>' : "") + "</span></div>";
     }).join("");
     return html + "</div>";
   }
@@ -1285,7 +1522,9 @@
     var html = '<p class="kb-label">Сейфы' + (many ? " · " + esc(orgName) : "") + '<span class="kb-label-note">пароли и ключи — шифруются на ваших устройствах, Лео их не видит</span></p><div class="kb-cards">';
     html += list.map(function (v) {
       return '<button type="button" class="kb-card" data-v="vault" data-id="' + v.id + '"><span class="kb-card-top"><span class="kb-card-ico" aria-hidden="true">' + IC.lock + "</span><b>" + esc(v.name) + "</b></span>" +
-        '<span class="kb-card-meta">' + esc(count(v.items, "запись", "записи", "записей")) + " · открыт: " + esc(v.access) + (v.envelope ? "" : " · ждёт ключ") + "</span></button>";
+        '<span class="kb-card-meta">' + (v.foreign ? "нет доступа · открыт: " + esc(v.access)
+          : esc(count(v.items, "запись", "записи", "записей")) + " · открыт: " + esc(v.access) + (v.envelope ? "" : " · ждёт ключ") +
+            (v.requests && v.requests.length ? " · " + esc(count(v.requests.length, "запрос", "запроса", "запросов")) + " доступа" : "")) + "</span></button>";
     }).join("");
     html += '<button type="button" class="kb-card kb-card--add" data-v="new-vault" data-org="' + orgId + '"><span class="kb-card-top">' + IC.plus + "<b>Новый сейф</b></span></button></div>";
     return html;
@@ -1297,7 +1536,7 @@
     var rows = st.vaults.map(function (v) {
       return '<button type="button" class="pf-row" data-v="vault" data-id="' + v.id + '"><span class="pf-ico kb-ico" aria-hidden="true">' + IC.lock + "</span>" +
         '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(v.name) + '</span><span class="pf-row-sub">' +
-        esc(count(v.items, "запись", "записи", "записей") + " · " + (v.personal ? "только вы" : v.access)) + '</span></span><span class="pf-chev" aria-hidden="true">›</span></span></button>';
+        esc(v.foreign ? "нет доступа · можно запросить" : count(v.items, "запись", "записи", "записей") + " · " + (v.personal ? "только вы" : v.access)) + '</span></span><span class="pf-chev" aria-hidden="true">›</span></span></button>';
     }).join("");
     var orgs = (K() && K().state && K().state.orgs) || [];
     var add = orgs.length ? '<button type="button" class="pf-row pf-add-row" data-v="new-vault" data-org="' + orgs[0].org.id + '"><span class="pf-ico pf-add-ico" aria-hidden="true">' + IC.plus + '</span><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Новый сейф</span></span></span></button>' : "";

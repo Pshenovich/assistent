@@ -87,8 +87,9 @@ class VaultsTests(unittest.TestCase):
     def test_team_members_see_vault_others_do_not(self) -> None:
         self.assertEqual(vaults.role_in(self.vault, BACK), "editor")
         self.assertEqual([v["id"] for v in vaults.list_for(BACK)], [self.vault])
-        self.assertEqual(vaults.list_for(MANAGER), [])  # отдел ОКК, но не команда
-        self.assertEqual(vaults.list_for(ADMIN), [])  # админ организации сейф автоматически не видит
+        # отдел ОКК, но не команда; админ организации — тоже: видят только название, чтобы запросить доступ
+        for uid in (MANAGER, ADMIN):
+            self.assertEqual([(v["id"], v["foreign"], v["envelope"]) for v in vaults.list_for(uid)], [(self.vault, True, None)])
         with self.assertRaises(OrgError):
             vaults.items(self.vault, ADMIN)
         with self.assertRaises(OrgError):
@@ -104,9 +105,14 @@ class VaultsTests(unittest.TestCase):
         with self.assertRaises(OrgError):
             vaults.set_access(BACK, self.vault, f"u:{MANAGER}", "viewer")
         with self.assertRaises(OrgError):
-            vaults.set_access(OWNER, self.vault, f"u:{OWNER}", "")
-        with self.assertRaises(OrgError):
             vaults.set_access(OWNER, self.vault, f"u:{OUTSIDER}", "viewer")
+        # владелец организации остаётся владельцем сейфа и без строки в доступе
+        vaults.set_access(OWNER, self.vault, f"u:{OWNER}", "")
+        self.assertEqual(vaults.role_in(self.vault, OWNER), "owner")
+        # в личном сейфе последнего владельца убрать нельзя
+        pv = vaults.create(BACK, None, "Личный", "cA")["id"]
+        with self.assertRaises(OrgError):
+            vaults.set_access(BACK, pv, f"u:{BACK}", "")
 
     def test_viewer_cannot_write(self) -> None:
         vaults.set_access(OWNER, self.vault, f"u:{MANAGER}", "viewer")
@@ -150,12 +156,25 @@ class VaultsTests(unittest.TestCase):
         self.assertEqual(vaults.put_envelopes(BACK2, self.vault, [{"user_id": str(BACK), "envelope": "ZXZpbA"}])["put"], 0)
         self.assertEqual(vaults.get(self.vault, BACK)["envelope"], "Z29vZA")
 
+    def _backdate_items(self) -> None:
+        with orgs_store._LOCK:
+            c = vaults._conn()
+            c.execute("UPDATE vault_items SET created_at = '2026-01-01T00:00:00+00:00', updated_at = '2026-01-01T00:00:00+00:00'")
+            c.commit()
+
     def test_leaving_team_drops_envelope_and_marks_departure(self) -> None:
         vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK), "envelope": "ZW52LWJhY2s"}])
+        iid = vaults.add_item(OWNER, self.vault, "Y3Q")["id"]
+        self._backdate_items()
         org_groups.remove_member(ADMIN, self.org, self.backend, BACK)
-        self.assertEqual(vaults.list_for(BACK), [])
+        self.assertTrue(all(v.get("foreign") for v in vaults.list_for(BACK)))
         v = vaults.get(self.vault, OWNER)
         self.assertEqual(v["departed"], 1)
+        self.assertEqual([d["user_id"] for d in v["departures"]], [str(BACK)])
+        self.assertTrue(v["rotate"])  # ушедший мог сохранить ключ — его надо сменить
+        # пароль сменили — список «смените пароли» пропал сам
+        vaults.update_item(OWNER, self.vault, iid, "bmV3")
+        self.assertEqual(vaults.get(self.vault, OWNER)["departed"], 0)
         with orgs_store._LOCK:
             n = vaults._conn().execute(
                 "SELECT COUNT(*) FROM vault_envelopes WHERE vault_id = ? AND user_id = ?", (self.vault, str(BACK))
@@ -201,6 +220,117 @@ class VaultsTests(unittest.TestCase):
 
     def test_list_shows_access_line(self) -> None:
         self.assertEqual(vaults.get(self.vault, OWNER)["access"], "ОКК · бэкенд, 1 чел.")
+
+    # --- смена ключа ---
+
+    def test_rotate_replaces_items_and_envelopes(self) -> None:
+        vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK), "envelope": "ZW52LWJhY2s"}])
+        iid = vaults.add_item(OWNER, self.vault, "b2xk")["id"]
+        org_groups.remove_member(ADMIN, self.org, self.backend, BACK)
+        v = vaults.get(self.vault, OWNER)
+        self.assertEqual([k["user_id"] for k in v["rotate_keys"]], [str(OWNER)])
+        kv = v["key_version"]
+        # не все записи — отказ
+        with self.assertRaises(OrgError):
+            vaults.rotate(OWNER, self.vault, kv, [], [{"user_id": str(OWNER), "envelope": "bmV3"}])
+        # без конверта себе — отказ
+        with self.assertRaises(OrgError):
+            vaults.rotate(OWNER, self.vault, kv, [{"id": iid, "blob": "bmV3"}], [])
+        out = vaults.rotate(OWNER, self.vault, kv, [{"id": iid, "blob": "bmV3"}],
+                            [{"user_id": str(OWNER), "envelope": "ZW52Mg"}, {"user_id": str(BACK), "envelope": "eA"}])
+        self.assertEqual(out["key_version"], kv + 1)
+        self.assertFalse(out["rotate"])
+        self.assertEqual(out["envelope"], "ZW52Mg")
+        self.assertEqual(vaults.items(self.vault, OWNER)[0]["blob"], "bmV3")
+        # старой версией ключа писать нельзя
+        with self.assertRaises(OrgError):
+            vaults.add_item(OWNER, self.vault, "eA", key_version=kv)
+        vaults.add_item(OWNER, self.vault, "eA", key_version=kv + 1)
+
+    # --- владелец организации и запросы доступа ---
+
+    def _staff_vault(self) -> int:
+        """Сейф сотрудника: владелец организации туда не добавлен — но конверт ему кладётся при создании."""
+        enable(BACK2)
+        vid = vaults.create(BACK, self.org, "Только бэкенд", "ZW52LWJhY2s",
+                            owner_envelopes=[{"user_id": str(OWNER), "envelope": "b3du"}])["id"]
+        vaults.set_access(BACK, vid, f"u:{BACK2}", "viewer")
+        return vid
+
+    def test_org_vault_needs_owner_envelope(self) -> None:
+        with self.assertRaises(OrgError):
+            vaults.create(BACK, self.org, "Без владельца", "ZW52")
+        org2 = orgs_store.create_org(BACK2, "Вторая")["id"]
+        orgs_store.add_member(BACK2, org2, f"u{BACK}@obuchat.me")
+        with self.assertRaises(OrgError):  # владелец второй организации ещё не включил сейфы
+            vaults.create(BACK, org2, "Рано", "ZW52")
+        self.assertEqual(vaults.owner_keys_for(BACK)[str(self.org)][0]["user_id"], str(OWNER))
+        self.assertEqual(vaults.owner_keys_for(BACK)[str(org2)], [])
+
+    def test_org_owner_is_owner_of_every_vault(self) -> None:
+        vid = self._staff_vault()
+        mine = vaults.get(vid, OWNER)
+        self.assertEqual(mine["role"], "owner")
+        self.assertTrue(mine["org_owner"])
+        self.assertEqual(mine["envelope"], "b3du")
+        vaults.set_access(OWNER, vid, f"u:{MANAGER}", "viewer")  # может менять доступ
+        people = {p["user_id"]: p["org_owner"] for p in vaults.access(vid, OWNER)["people"]}
+        self.assertTrue(people[str(OWNER)])
+        # админ организации — нет
+        self.assertEqual(vaults.role_in(vid, ADMIN), "")
+        # сотрудник уволился — сейф остаётся у владельца организации
+        orgs_store.remove_member(OWNER, self.org, next(
+            m["id"] for m in orgs_store.list_members(self.org) if m["user_id"] == str(BACK)))
+        self.assertEqual(vaults.get(vid, OWNER)["role"], "owner")
+        self.assertTrue(vaults.get(vid, OWNER)["rotate"])
+
+    def test_member_requests_access_owner_decides(self) -> None:
+        vid = self._staff_vault()
+        f = next(v for v in vaults.list_for(MANAGER) if v["id"] == vid)
+        self.assertTrue(f["foreign"])
+        self.assertIsNone(f["envelope"])
+        with self.assertRaises(OrgError):
+            vaults.items(vid, MANAGER)
+        vaults.request_access(MANAGER, vid)
+        with self.assertRaises(OrgError):
+            vaults.request_access(MANAGER, vid)  # уже ждёт
+        self.assertEqual(next(v for v in vaults.list_for(MANAGER) if v["id"] == vid)["request"]["status"], "pending")
+        ev = vaults.watch()
+        self.assertEqual([(e["kind"], e["to"]) for e in ev], [("access_request", [str(OWNER), str(BACK)])])
+        self.assertEqual([r["user_id"] for r in vaults.get(vid, BACK)["requests"]], [str(MANAGER)])
+        self.assertEqual(vaults.get(vid, BACK2)["requests"], [])  # смотрящий запросов не видит
+        with self.assertRaises(OrgError):
+            vaults.decide_request(BACK2, vid, MANAGER, "viewer")
+        out = vaults.decide_request(BACK, vid, MANAGER, "viewer")
+        self.assertIn(str(MANAGER), [p["user_id"] for p in out["pending"]])  # браузер BACK положит конверт
+        self.assertEqual(vaults.role_in(vid, MANAGER), "viewer")
+        ev = vaults.watch()
+        self.assertEqual([(e["kind"], e["to"], e["role"]) for e in ev], [("access_approved", [str(MANAGER)], "viewer")])
+
+    def test_request_rejected_and_guest_cannot_request(self) -> None:
+        vid = self._staff_vault()
+        vaults.request_access(MANAGER, vid)
+        vaults.decide_request(OWNER, vid, MANAGER, "")
+        f = next(v for v in vaults.list_for(MANAGER) if v["id"] == vid)
+        self.assertEqual(f["request"]["status"], "rejected")
+        self.assertEqual(vaults.role_in(vid, MANAGER), "")
+        # гость сейфов организации не видит и запросить не может
+        mid = next(m["id"] for m in orgs_store.list_members(self.org) if m["user_id"] == str(GUEST))
+        orgs_store.set_guest(OWNER, self.org, mid, True)
+        self.assertNotIn(vid, [v["id"] for v in vaults.list_for(GUEST)])
+        with self.assertRaises(OrgError):
+            vaults.request_access(GUEST, vid)
+
+    def test_departure_notifies_editors_once(self) -> None:
+        vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK), "envelope": "ZW52LWJhY2s"}])
+        enable(BACK2)
+        vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK2), "envelope": "Yg"}])
+        vaults.add_item(OWNER, self.vault, "Y3Q")
+        self._backdate_items()
+        org_groups.remove_member(ADMIN, self.org, self.backend, BACK)
+        ev = vaults.watch()
+        self.assertEqual([(e["kind"], e["who"], e["to"]) for e in ev], [("departure", str(BACK), [str(OWNER), str(BACK2)])])
+        self.assertEqual(vaults.watch(), [])
 
 
 if __name__ == "__main__":

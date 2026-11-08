@@ -8634,6 +8634,7 @@ class _VaultCreate(BaseModel):
     name: str
     envelope: str
     access: list[dict[str, str]] = []
+    owner_envelopes: list[dict[str, str]] = []
 
 
 class _VaultRename(BaseModel):
@@ -8652,10 +8653,28 @@ class _VaultEnvelope(BaseModel):
 
 class _VaultEnvelopes(BaseModel):
     envelopes: list[_VaultEnvelope]
+    key_version: Optional[int] = None
 
 
 class _VaultItem(BaseModel):
     blob: str
+    key_version: Optional[int] = None
+
+
+class _VaultRotateItem(BaseModel):
+    id: int
+    blob: str
+
+
+class _VaultRotate(BaseModel):
+    key_version: int
+    items: list[_VaultRotateItem]
+    envelopes: list[_VaultEnvelope]
+
+
+class _VaultDecide(BaseModel):
+    user_id: str
+    role: str = ""  # пусто — отклонить
 
 
 class _VaultLog(BaseModel):
@@ -8676,7 +8695,8 @@ async def _require_vault_user(principal: _MiniappPrincipal = Depends(require_min
 def _vaults_state(uid: int) -> dict[str, Any]:
     from assistant.stores import vaults
 
-    return {"ok": True, "enabled": True, "keys": vaults.my_keys(uid), "vaults": vaults.list_for(uid)}
+    return {"ok": True, "enabled": True, "keys": vaults.my_keys(uid), "vaults": vaults.list_for(uid),
+            "org_owner_keys": vaults.owner_keys_for(uid)}
 
 
 @miniapp_router.get("/vaults")
@@ -8726,7 +8746,7 @@ async def miniapp_vault_create(body: _VaultCreate, principal: _MiniappPrincipal 
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    created = await _org_call(vaults.create, uid, body.org_id, body.name, body.envelope, body.access)
+    created = await _org_call(vaults.create, uid, body.org_id, body.name, body.envelope, body.access, body.owner_envelopes)
     _track(uid, "vault.create", personal=body.org_id is None)
     return {**(await _org_call(_vaults_state, uid)), "created": created}
 
@@ -8773,8 +8793,82 @@ async def miniapp_vault_envelopes(vault_id: int, body: _VaultEnvelopes, principa
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    res = await _org_call(vaults.put_envelopes, uid, vault_id, [e.model_dump() for e in body.envelopes])
+    res = await _org_call(vaults.put_envelopes, uid, vault_id, [e.model_dump() for e in body.envelopes], body.key_version)
     return {"ok": True, **res, "vault": await _org_call(vaults.get, vault_id, uid)}
+
+
+@miniapp_router.post("/vaults/{vault_id}/rotate")
+async def miniapp_vault_rotate(vault_id: int, body: _VaultRotate, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    """Новый ключ сейфа после ухода участника: записи перешифрованы в браузере, конверты — заново."""
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    v = await _org_call(
+        vaults.rotate, uid, vault_id, body.key_version, [i.model_dump() for i in body.items],
+        [e.model_dump() for e in body.envelopes],
+    )
+    _track(uid, "vault.rotate")
+    return {"ok": True, "vault": v}
+
+
+@miniapp_router.post("/vaults/{vault_id}/departures/dismiss")
+async def miniapp_vault_departures_dismiss(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, "vault": await _org_call(vaults.dismiss_departures, int(principal.telegram_user_id), vault_id)}
+
+
+def _vault_notify_now() -> None:
+    """Разослать уведомления сразу (иначе — фоновая задача раз в 5 минут)."""
+    from assistant.services import vault_notify
+    from assistant.stores import vaults
+
+    try:
+        for ev in vaults.watch():
+            if ev.get("to"):
+                vault_notify.send_event(ev)
+    except Exception as e:
+        print(f"[vault_notify] now failed err={e!r}")
+
+
+@miniapp_router.post("/vaults/{vault_id}/request")
+async def miniapp_vault_request(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    """Участник организации просит доступ к сейфу; владельцам сейфа — уведомление."""
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(vaults.request_access, uid, vault_id)
+    _track(uid, "vault.request")
+    asyncio.get_running_loop().run_in_executor(None, _vault_notify_now)
+    return await _org_call(_vaults_state, uid)
+
+
+@miniapp_router.post("/vaults/{vault_id}/request/cancel")
+async def miniapp_vault_request_cancel(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    await _org_call(vaults.cancel_request, uid, vault_id)
+    return await _org_call(_vaults_state, uid)
+
+
+@miniapp_router.post("/vaults/{vault_id}/request/decide")
+async def miniapp_vault_request_decide(vault_id: int, body: _VaultDecide, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    """Владелец сейфа открывает доступ с ролью или отклоняет запрос; в ответе — «ждут конверт» для браузера."""
+    from assistant.stores import vaults
+
+    uid = int(principal.telegram_user_id)
+    v = await _org_call(vaults.decide_request, uid, vault_id, body.user_id, body.role)
+    _track(uid, "vault.request_decide", open=bool(body.role))
+    asyncio.get_running_loop().run_in_executor(None, _vault_notify_now)
+    return {"ok": True, "vault": v}
+
+
+@miniapp_router.get("/vaults/{vault_id}/events")
+async def miniapp_vault_events(vault_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    from assistant.stores import vaults
+
+    return {"ok": True, "items": await _org_call(vaults.vault_events, vault_id, int(principal.telegram_user_id))}
 
 
 @miniapp_router.get("/vaults/{vault_id}/items")
@@ -8789,7 +8883,7 @@ async def miniapp_vault_item_add(vault_id: int, body: _VaultItem, principal: _Mi
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    res = await _org_call(vaults.add_item, uid, vault_id, body.blob)
+    res = await _org_call(vaults.add_item, uid, vault_id, body.blob, body.key_version)
     _track(uid, "vault.item_add")
     return {"ok": True, **res}
 
@@ -8798,7 +8892,7 @@ async def miniapp_vault_item_add(vault_id: int, body: _VaultItem, principal: _Mi
 async def miniapp_vault_item_update(vault_id: int, item_id: int, body: _VaultItem, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
     from assistant.stores import vaults
 
-    return {"ok": True, **(await _org_call(vaults.update_item, int(principal.telegram_user_id), vault_id, item_id, body.blob))}
+    return {"ok": True, **(await _org_call(vaults.update_item, int(principal.telegram_user_id), vault_id, item_id, body.blob, body.key_version))}
 
 
 @miniapp_router.delete("/vaults/{vault_id}/items/{item_id}")
