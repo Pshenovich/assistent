@@ -154,6 +154,33 @@ class NoteMembersTests(unittest.TestCase):
             )
         self.assertIn("@missinguser", str(ctx.exception))
 
+    def test_resolve_email_account_without_bot(self) -> None:
+        # Вошёл по почте, бота не открывал: находим по почте и по нику из приглашения в организацию.
+        from assistant.stores import accounts, orgs_store
+
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmpdir.name, "reg-empty2.json")
+        acc = accounts.create_email_account("garya@obuchat.me")
+        uid = int(acc["user_id"])
+        by_mail, _ = note_members.resolve_contact_telegram_id(owner_user_id=1, email="Garya@obuchat.me")
+        self.assertEqual(by_mail, uid)
+        with self.assertRaises(ValueError):
+            note_members.resolve_contact_telegram_id(owner_user_id=1, telegram_username="garya_dzhidzhaev")
+        with orgs_store._LOCK:  # type: ignore[attr-defined]
+            orgs_store._insert_member(1, str(uid), key="garya@obuchat.me", tg_hint="garya_dzhidzhaev")  # type: ignore[attr-defined]
+            orgs_store._conn().commit()  # type: ignore[attr-defined]
+        by_nick, _ = note_members.resolve_contact_telegram_id(owner_user_id=1, telegram_username="@garya_dzhidzhaev")
+        self.assertEqual(by_nick, uid)
+        self.assertEqual((note_members.get_profile(uid) or {}).get("username"), "garya_dzhidzhaev")
+
+    def test_registry_tg_id_maps_to_email_account(self) -> None:
+        from assistant.stores import accounts, telegram_registry
+
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmpdir.name, "reg3.json")
+        telegram_registry.register_user(telegram_user_id=888, telegram_username="linked_user")
+        acc = accounts.create_email_account("linked@obuchat.me", tg_user_id=888)
+        uid, _ = note_members.resolve_contact_telegram_id(owner_user_id=1, telegram_username="linked_user")
+        self.assertEqual(uid, int(acc["user_id"]))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -680,6 +680,21 @@ def user_by_member_email(email: str) -> Optional[int]:
     return int(r[0]) if r else None
 
 
+def user_by_member_nick(nick: str) -> Optional[int]:
+    """Участник организации, которого добавили с этим @ником в Telegram (подсказкой к почте или ключом)
+    и который уже вошёл — хоть по почте, хоть ни разу не открыв бота."""
+    n = normalize_nick(nick)
+    if not n:
+        return None
+    with _LOCK:
+        r = _conn().execute(
+            "SELECT user_id FROM org_members WHERE (lower(tg_hint) = ? OR invited_key = ?) "
+            "AND user_id IS NOT NULL AND status = 'active' ORDER BY id LIMIT 1",
+            (n, "tg:" + n),
+        ).fetchone()
+    return int(r[0]) if r else None
+
+
 def member_email_of(user_id: int | str) -> Optional[str]:
     """Почта, под которой пользователя добавили в организацию (подсказка для формы почты)."""
     with _LOCK:

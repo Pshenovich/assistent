@@ -53298,7 +53298,7 @@
         '<div class="note-share-members-block">' +
         '<div id="note-share-members-list" class="note-share-members-list"></div>' +
         '<div class="note-share-member-add">' +
-        '<input id="note-share-member-input" type="text" class="field-input" placeholder="Добавить из контактов" autocomplete="off" />' +
+        '<input id="note-share-member-input" type="text" class="field-input" placeholder="Почта, @ник или имя из контактов" autocomplete="off" />' +
         '<div id="note-share-member-suggest" class="meeting-attendee-suggest hidden" role="listbox"></div>' +
         "</div>" +
         '<p id="note-share-members-hint" class="ns-hint">Участники видят документ у себя в списке и могут его редактировать.</p>' +
@@ -53719,6 +53719,16 @@
     });
   }
 
+  function shareMemberTypedContact(q) {
+    var v = String(q || "").trim().toLowerCase();
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return { _typed: true, name: v, email: v };
+    var nick = v.replace(/^@/, "");
+    if (v.charAt(0) === "@" && /^[a-z0-9_]{4,32}$/.test(nick)) {
+      return { _typed: true, name: "@" + nick, telegram_username: nick };
+    }
+    return null;
+  }
+
   function paintShareMemberSuggest() {
     var input = document.getElementById("note-share-member-input");
     var suggest = document.getElementById("note-share-member-suggest");
@@ -53732,6 +53742,14 @@
         .toLowerCase();
       return !q || hay.indexOf(q) >= 0;
     }).slice(0, 8);
+    // Почта или @ник, которых нет в контактах, — добавить как есть (почта — основной вход в Орбиту).
+    var typed = shareMemberTypedContact(q);
+    if (typed && !rows.some(function (c) {
+      return (typed.email && String(c.email || "").toLowerCase() === typed.email) ||
+        (typed.telegram_username && String(c.telegram_username || "").replace(/^@/, "").toLowerCase() === typed.telegram_username);
+    })) {
+      rows.unshift(typed);
+    }
     suggest.innerHTML = "";
     if (!rows.length) {
       suggest.classList.add("hidden");
@@ -53755,9 +53773,11 @@
       var meta = document.createElement("span");
       meta.className = "meeting-attendee-suggest-meta";
       var tg = String(c.telegram_username || "").trim();
-      meta.textContent = tg
-        ? "@" + tg.replace(/^@/, "")
-        : "Нужен Telegram в контакте";
+      meta.textContent = c._typed
+        ? "Добавить"
+        : tg
+          ? "@" + tg.replace(/^@/, "")
+          : String(c.email || "").trim() || "Нужна почта или Telegram в контакте";
       copy.appendChild(meta);
       btn.appendChild(copy);
       btn.addEventListener("click", function () {

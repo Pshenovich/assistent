@@ -513,8 +513,15 @@ def resolve_contact_telegram_id(
             if str(row.get("email") or "").strip().lower() == key:
                 contact = row
                 break
-        if not contact:
-            raise ValueError("Контакт не найден")
+        # Почта — основной ключ аккаунта: человек мог войти по ней и ни разу не открыть бота.
+        acc_uid = _account_by_email(key)
+        if acc_uid and not contact:
+            direct = direct or acc_uid
+        if not contact and not acc_uid:
+            raise ValueError(
+                f"Не нашёл в Орбите никого с почтой {key}. Пусть человек войдёт в Орбиту по этой почте — "
+                "после этого повторите добавление."
+            )
     if contact:
         try:
             direct = direct or int(contact.get("telegram_user_id") or 0)
@@ -528,11 +535,13 @@ def resolve_contact_telegram_id(
                 if cand:
                     telegram_username = cand
                     break
+    if direct <= 0 and contact and contact.get("email"):
+        direct = _account_by_email(str(contact.get("email"))) or 0
     uname = normalize_telegram_username(telegram_username or "")
     if direct <= 0 and uname:
         found = telegram_registry.lookup_user_id(uname)
         if found:
-            direct = int(found)
+            direct = _account_for_tg(int(found))
     if direct <= 0 and uname:
         profile_uid = _lookup_profile_by_username(uname)
         if profile_uid:
@@ -543,14 +552,22 @@ def resolve_contact_telegram_id(
 
             pending_uid = access.lookup_pending_user_id(uname)
             if pending_uid:
-                direct = int(pending_uid)
+                direct = _account_for_tg(int(pending_uid))
         except Exception as e:
             print(f"[note_members] pending lookup failed username={uname} err={e!r}")
+    if direct <= 0 and uname:
+        # Ник указали, когда добавляли человека в организацию, а сам он вошёл по почте.
+        try:
+            from assistant.stores import orgs_store
+
+            direct = orgs_store.user_by_member_nick(uname) or 0
+        except Exception as e:
+            print(f"[note_members] org nick lookup failed username={uname} err={e!r}")
     if direct <= 0:
         who = f"@{uname}" if uname else "контакта"
         raise ValueError(
-            f"Не удалось найти {who} в Orbita. Пусть человек откроет приложение Orbita "
-            "или напишет боту /start — после этого повторите добавление."
+            f"Не удалось найти {who} в Орбите. Добавьте человека по почте, под которой он входит, "
+            "или пусть он напишет боту /start — после этого повторите добавление."
         )
     if contact:
         upsert_profile(
@@ -561,6 +578,34 @@ def resolve_contact_telegram_id(
     elif uname:
         upsert_profile(direct, username=uname)
     return direct, contact or {}
+
+
+def _account_by_email(email: str) -> int | None:
+    """Аккаунт Орбиты по почте: вход по почте, затем почта, с которой добавили в организацию."""
+    try:
+        from assistant.stores import accounts
+
+        acc = accounts.get_by_email(email)
+        if acc:
+            return int(acc["user_id"])
+    except Exception:
+        pass
+    try:
+        from assistant.stores import orgs_store
+
+        return orgs_store.user_by_member_email(email)
+    except Exception:
+        return None
+
+
+def _account_for_tg(tg_id: int) -> int:
+    """Telegram id → аккаунт Орбиты (если Telegram привязан к почтовому аккаунту)."""
+    try:
+        from assistant.stores import accounts
+
+        return accounts.account_for_tg(int(tg_id))
+    except Exception:
+        return int(tg_id)
 
 
 def _lookup_profile_by_username(username: str) -> int | None:
