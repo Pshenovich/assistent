@@ -284,6 +284,19 @@ def test_person_view_hides_titles_of_other_setters(org_env) -> None:
     assert card["hidden_tasks"] == 1 and card["assignee"]["received"] == 2
 
 
+def test_people_name_falls_back_to_invite_nick_or_email(org_env) -> None:
+    from assistant.stores import orgs_store
+
+    # Профиль пуст (вошёл по почте, бота не открывал) — не «Участник», а то, с чем добавили.
+    org = org_env["org"]
+    pm.set_enabled(org, ORG_OWNER, True)
+    names = {p["user_id"]: p["name"] for p in pm.team_overview(org, ORG_OWNER)["people"]}
+    assert names[str(WORKER)] == f"u{WORKER}@obuchat.me"
+    members = [dict(m, tg="artyawn") if m["user_id"] == str(WORKER) else m for m in orgs_store.list_members(org)]
+    assert pm.member_name(org, WORKER, members) == "@artyawn"
+    assert pm.person_view(org, LEAD, WORKER)["name"] == f"u{WORKER}@obuchat.me"
+
+
 # ---------- этап 4: оценка, чаты, вклад, вывод Лео ----------
 
 

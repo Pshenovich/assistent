@@ -697,6 +697,9 @@ def team_overview(
     now = now or datetime.now(timezone.utc)
     today = now.date().isoformat()
     rows: list[dict[str, Any]] = []
+    from assistant.stores import orgs_store
+
+    members = orgs_store.list_members(int(org_id))
     tot = {"deadlines": 0, "on_time": 0, "accepted": 0, "first_time": 0, "late_open": 0, "stale": 0}
     for uid in ids:
         m = member_metrics(uid, days=days, now=now)
@@ -704,7 +707,7 @@ def team_overview(
         for k in tot:
             tot[k] += a[k]
         absence = user_prefs.absent_on(int(uid), today) if uid.isdigit() else None
-        name = note_members.profile_display_name(note_members.get_profile(uid), fallback="Участник")
+        name = member_name(org_id, uid, members)
         rows.append({
             "user_id": uid,
             "name": name,
@@ -758,8 +761,39 @@ def person_view(
     m["hidden_tasks"] = len(m["tasks"]) - len(own)
     m["tasks"] = own
     m["absences"] = [a for a in m["absences"] if a["to"] >= (now or datetime.now(timezone.utc)).date().isoformat()]
-    m["name"] = note_members.profile_display_name(note_members.get_profile(target), fallback="Участник")
+    m["name"] = member_name(org_id, target)
     return m
+
+
+def member_name(org_id: int, user_id: int | str, members: Optional[list[dict[str, Any]]] = None) -> str:
+    """Имя для «Людей»: из профиля; если профиль пуст (вошёл по почте, ещё не открыл бота) —
+    @ник или почта, с которыми его добавили в организацию, а не безликое «Участник»."""
+    from assistant.stores import note_members, orgs_store
+
+    none = "\x00"  # profile_display_name вместо пустого fallback отдаёт «Участник»
+    name = note_members.profile_display_name(note_members.get_profile(user_id), fallback=none)
+    if name != none:
+        return name
+    uid = str(user_id)
+    try:
+        for r in members if members is not None else orgs_store.list_members(int(org_id)):
+            if r.get("user_id") == uid:
+                if r.get("tg"):
+                    return "@" + str(r["tg"]).lstrip("@")
+                key = str(r.get("email") or r.get("invited_key") or "")
+                if key.startswith("tg:"):
+                    return "@" + key[3:]
+                if key:
+                    return key
+    except Exception:
+        pass
+    try:
+        email = orgs_store.member_email_of(uid)
+        if email:
+            return email
+    except Exception:
+        pass
+    return "Участник"
 
 
 # ---------- вывод Лео ----------
