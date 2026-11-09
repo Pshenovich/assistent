@@ -47819,9 +47819,20 @@
     clearDiscussionSelection();
   }
 
-  function showDiscussSelectionToolbar(draft) {
+  // Телефон: родное выделение не снимаем (ручки iOS должны тянуться), а панель — одна, внизу над
+  // полем ввода: не закрывает текст и не спорит с системным меню над выделением.
+  function discussSelectionDockTop(height) {
+    var form = document.getElementById("note-paie-reply-form");
+    var r = form && form.getBoundingClientRect ? form.getBoundingClientRect() : null;
+    var vv = window.visualViewport;
+    var bottom = vv ? vv.height + (vv.offsetTop || 0) : window.innerHeight;
+    var top = r && r.height && r.top > 0 && r.top < bottom ? r.top : bottom - 16;
+    return top - height - 10;
+  }
+
+  function showDiscussSelectionToolbar(draft, docked) {
     var rect = draft && draft.rect;
-    if (!rect) {
+    if (!rect && !docked) {
       hideDiscussClarify();
       return;
     }
@@ -47831,7 +47842,7 @@
       bar.id = "note-discuss-selection";
       bar.className = "note-discuss-selection";
       bar.innerHTML =
-        discussSelectionBtn("clarify", "clarify", "Уточнить") +
+        discussSelectionBtn("clarify", "clarify", "Ответить") +
         discussSelectionBtn("task", "task", "Задача") +
         discussSelectionBtn("copy", "copy", "Копировать") +
         discussSelectionBtn("into-note", "into-note", "В документ") +
@@ -47858,9 +47869,15 @@
     }
     bar._draft = draft;
     bar._fired = false;
+    bar.classList.toggle("is-docked", !!docked);
     var vw = window.innerWidth;
     var width = bar.offsetWidth || 128;
     var height = bar.offsetHeight || 32;
+    if (docked) {
+      bar.style.top = Math.round(discussSelectionDockTop(height)) + "px";
+      bar.style.left = Math.round(Math.max(8, (vw - width) / 2)) + "px";
+      return;
+    }
     var left = rect.left + rect.width / 2 - width / 2;
     var top = rect.top - height - 8;
     if (left < 8) left = 8;
@@ -47967,8 +47984,60 @@
         e.preventDefault();
       }
     }
+    var touchDown = false;
+    var lastTouchTs = 0;
+    var selTimer = null;
+    var touchFirst = false;
+    try {
+      touchFirst = !!(window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches);
+    } catch (_) {}
+    // Ручки выделения iOS тянутся без событий касания на странице — на сенсорном телефоне
+    // любое изменение выделения считаем «пальцевым».
+    function isTouchSelect(e) {
+      if (e && e.pointerType === "touch") return true;
+      if (e && e.pointerType === "mouse") return false;
+      return touchFirst || Date.now() - lastTouchTs < 1500;
+    }
+    document.addEventListener(
+      "touchstart",
+      function () {
+        touchDown = true;
+        lastTouchTs = Date.now();
+      },
+      { capture: true, passive: true }
+    );
+    function touchUp() {
+      touchDown = false;
+      lastTouchTs = Date.now();
+      if (isNoteDiscussionOpen()) scheduleTouchSelection();
+    }
+    document.addEventListener("touchend", touchUp, { capture: true, passive: true });
+    document.addEventListener("touchcancel", touchUp, { capture: true, passive: true });
+    // Телефон: панель — когда выделение закончено (палец отпущен, ручки не двигаются), одна и внизу.
+    function scheduleTouchSelection() {
+      clearTimeout(selTimer);
+      selTimer = setTimeout(function () {
+        selTimer = null;
+        if (touchDown && Date.now() - lastTouchTs < 5000) return; // палец ещё на экране — дождёмся touchend
+        var bar = document.getElementById("note-discuss-selection");
+        var draft = isNoteDiscussionOpen() ? discussionSelectionDraft() : null;
+        if (!draft) {
+          if (bar && bar.classList.contains("is-docked")) hideDiscussClarify();
+          return;
+        }
+        closeNoteAnswerMenu();
+        hideDiscussSelMarks();
+        showDiscussSelectionToolbar(draft, true);
+      }, 400);
+    }
+    document.addEventListener("selectionchange", function () {
+      if (!isTouchSelect()) return;
+      if (!isNoteDiscussionOpen()) return;
+      scheduleTouchSelection();
+    });
     function onSelect(e) {
       if (isDiscussSelectionUiTarget(e && e.target)) return;
+      if (isTouchSelect(e)) return; // телефон — через selectionchange, родное выделение не трогаем
       if (!isNoteDiscussionOpen()) {
         hideDiscussClarify();
         return;
@@ -47981,8 +48050,11 @@
       collapseNativeDiscussionSelection();
     }
     function onDismiss(e) {
-      if (!document.getElementById("note-discuss-selection")) return;
+      var bar = document.getElementById("note-discuss-selection");
+      if (!bar) return;
       if (isDiscussSelectionUiTarget(e && e.target)) return;
+      // Панель телефона уходит вместе с выделением (selectionchange), а не от касания ручки.
+      if (bar.classList.contains("is-docked") && isTouchSelect(e)) return;
       hideDiscussClarify();
     }
     // Выделение в бабле — своя подсветка (родное выделение снято, чтобы не было системного меню),
@@ -48006,7 +48078,8 @@
     document.addEventListener(
       "scroll",
       function () {
-        hideDiscussClarify();
+        var bar = document.getElementById("note-discuss-selection");
+        if (!(bar && bar.classList.contains("is-docked"))) hideDiscussClarify();
         closeNoteAnswerMenu();
       },
       true
@@ -49630,6 +49703,35 @@
     return item;
   }
 
+  // Палец на тексте пузыря (не на отступах): по точке касания есть текстовый узел.
+  function discussTouchOnText(target, x, y) {
+    if (!target || !target.closest || !target.closest(".note-discuss-bubble")) return false;
+    try {
+      var node = null;
+      if (document.caretRangeFromPoint) {
+        var r = document.caretRangeFromPoint(x, y);
+        node = r && r.startContainer;
+      } else if (document.caretPositionFromPoint) {
+        var p = document.caretPositionFromPoint(x, y);
+        node = p && p.offsetNode;
+      }
+      if (!node || node.nodeType !== 3 || !String(node.nodeValue || "").trim()) return false;
+      var el = node.parentElement;
+      if (!(el && el.closest && el.closest(".note-discuss-bubble"))) return false;
+      // caretRangeFromPoint отдаёт ближайший текст и для пустого места — проверяем, что палец на строке.
+      var nr = document.createRange();
+      nr.selectNodeContents(node);
+      var rects = nr.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var q = rects[i];
+        if (x >= q.left - 6 && x <= q.right + 6 && y >= q.top - 4 && y <= q.bottom + 4) return true;
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
   // Телефон: долгое нажатие на сообщение — шторка с действиями.
   function bindDiscussLongPress(item, more, menu) {
     var timer = null;
@@ -49642,9 +49744,15 @@
         if (e.target.closest && e.target.closest("a, button, input, textarea, select, label, .note-discuss-edits, .focus-chat")) return;
         sx = e.touches[0].clientX;
         sy = e.touches[0].clientY;
+        // Долгое нажатие на текст ответа — это выделение (iOS ставит ручки); шторку не открываем,
+        // действия даст панель выделения. На пустом месте сообщения — шторка, как раньше.
+        var onText = discussTouchOnText(e.target, sx, sy);
         clearTimeout(timer);
         timer = setTimeout(function () {
           timer = null;
+          if (onText) return;
+          var ws = window.getSelection && window.getSelection();
+          if (ws && !ws.isCollapsed && ws.anchorNode && item.contains(ws.anchorNode)) return;
           item._longPressed = true;
           try {
             if (navigator.vibrate) navigator.vibrate(10);

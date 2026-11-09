@@ -59,3 +59,34 @@ def test_telegram_keyboard_has_show_button():
     kb = leo_chat.action_keyboard([{"id": "a1", "kind": "guide", "status": "done", "title": "Доска", "link": "https://x/webapp/?b=1&guide=board"}])
     btn = kb.inline_keyboard[0][0]
     assert "Показать" in btn.text and btn.url.endswith("guide=board")
+
+
+def test_app_help_ignores_generic_ui_words():
+    # «телефонных» совпадало с «на телефоне ☰» у вида календаря → карточка не по теме.
+    ctx = g.GptCalendarContext(uid=next(_ids))
+    out = json.loads(leo_help.tool_app_help(ctx, {"query": "запись телефонных звонков"}))
+    assert out["found"] is False
+    assert ctx.actions == []
+    assert leo_help._match("как подключить Zoom")["id"] == "recordings"
+    assert leo_help._match("как посмотреть неделю?")["id"] == "calendar_view"
+
+
+def test_guide_card_dropped_when_answer_is_about_something_else():
+    uid = next(_ids)
+    ctx = g.GptCalendarContext(uid=uid)
+    leo_help.tool_app_help(ctx, {"feature": "calendar_view"})
+    leo_help.tool_app_help(ctx, {"feature": "recordings"})
+    answer = (
+        "Сторонние приложения не могут записывать телефонные звонки. Для встреч в Орбите есть "
+        "подключение Zoom и Телемоста: Профиль → «Zoom» или «Телемост»."
+    )
+    g.finalize_auto_cards(ctx, answer)
+    kept = [(g.get_action(a).get("payload") or {}).get("feature") for a in ctx.actions]
+    assert kept == ["recordings"]
+
+
+def test_guide_card_kept_for_matching_answer():
+    ctx = g.GptCalendarContext(uid=next(_ids))
+    leo_help.tool_app_help(ctx, {"feature": "calendar_view"})
+    g.finalize_auto_cards(ctx, "Нажмите ☰ слева от дней недели и выберите неделю или месяц.")
+    assert len(ctx.actions) == 1

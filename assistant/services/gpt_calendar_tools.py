@@ -1294,6 +1294,9 @@ def finalize_auto_cards(ctx: GptCalendarContext, answer: str) -> None:
     """Если модель посмотрела календарь/слоты, но не показала карточки — показать их самим."""
     text = str(answer or "")
     low = text.lower()
+    from assistant.onboarding import leo_help
+
+    leo_help.drop_unrelated_guides(ctx, text)
     if ctx.slot_offers and not ctx.slots_offered and not ctx.created_events:
         offer = ctx.slot_offers[-1]
         picked = _pick_slots(ctx, offer.get("starts") or [], text)

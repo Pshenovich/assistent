@@ -17204,6 +17204,9 @@ html.note-discussion-sheet-open #note-discussion-new-ctx.is-chats { visibility: 
 .note-discuss-selection-btn:hover,
 .note-discuss-selection-btn:active { background: var(--overlay-4); }
 .note-discuss-selection .note-discuss-menu-icon { color: currentColor; }
+/* Телефон: панель выделения внизу над полем ввода, кнопки под палец */
+.note-discuss-selection.is-docked { height: 46px; padding: 3px; gap: 4px; border-radius: 14px; }
+.note-discuss-selection.is-docked .note-discuss-selection-btn { width: 40px; height: 40px; border-radius: 10px; }
 
 /* 7. Меню «Обсуждение / листы / новый лист / открыть заметку»: иконки и воздух между группами */
 #note-pane-switch-menu { padding: 6px; min-width: 240px; }
