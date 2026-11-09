@@ -13949,7 +13949,14 @@ async def miniapp_knowledge_notes(
             n.setdefault("tags", [])
             n.setdefault("project", None)
             n.setdefault("hashtags", [])
-    return {"notes": [minify_note_for_list(n) for n in notes]}
+    # Документы баз знаний организаций (дерево разделов) — для выбора контекста в чате с Лео
+    try:
+        from assistant.stores import org_kb
+
+        org_docs = await run_in_threadpool(org_kb.context_docs, uid)
+    except Exception:
+        org_docs = []
+    return {"notes": [minify_note_for_list(n) for n in notes], "org_docs": org_docs}
 
 
 @miniapp_router.post("/notes/knowledge")

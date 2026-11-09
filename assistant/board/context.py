@@ -90,6 +90,19 @@ def attach_knowledge_note(
         want = {str(x).strip() for x in note_ids if str(x).strip()}
         if not want:
             return pack
+    if want:
+        # выбранные документы баз знаний организаций — только те, что человеку открыты
+        have = {str(n.get("id") or "") for n in notes}
+        try:
+            from assistant.stores import org_kb
+
+            for nid in sorted(want - have):
+                if nid.isdigit() and org_kb.role_for_note(user_id, int(nid)):
+                    extra = notes_store.get_note_by_id(int(nid))
+                    if extra:
+                        notes.append(extra)
+        except Exception:
+            pass
     kb_docs: list[dict[str, Any]] = []
     for note in notes:
         nid = str(note.get("id") or "")

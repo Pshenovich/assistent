@@ -800,6 +800,32 @@ def readable_notes(user_id: int | str) -> list[dict[str, Any]]:
     return out
 
 
+def context_docs(user_id: int | str) -> list[dict[str, Any]]:
+    """Документы баз знаний организаций, открытые человеку, — для выбора контекста в чате с Лео.
+
+    ``group`` — «Организация · Раздел», как в дереве; порядок — как в дереве.
+    """
+    out: list[dict[str, Any]] = []
+    for org in orgs_store.orgs_for_user(user_id):
+        oid = int(org["id"])
+        try:
+            nodes = tree(oid, user_id)
+        except OrgError:
+            continue
+        by_id = {int(n["id"]): n for n in nodes}
+        for n in nodes:
+            if n["kind"] != "doc" or n.get("restricted") or not n.get("my_role"):
+                continue
+            parts: list[str] = []
+            cur = n.get("parent_id")
+            while cur is not None and int(cur) in by_id:
+                parts.append(str(by_id[int(cur)]["title"]))
+                cur = by_id[int(cur)].get("parent_id")
+            group = " · ".join([str(org.get("name") or "Организация")] + list(reversed(parts)))
+            out.append({"id": str(n["note_id"]), "title": n["title"], "group": group, "updated_at": n.get("updated_at")})
+    return out
+
+
 def all_doc_note_ids() -> set[int]:
     """Все документы баз знаний организаций — их индексирует раздел организации, а не личный раздел автора."""
     with _LOCK:

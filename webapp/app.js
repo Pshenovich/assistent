@@ -13840,7 +13840,7 @@
     }
     try {
       var data = await apiFetch("/notes/knowledge", { method: "GET" });
-      knowledgeDataCache = { notes: (data && data.notes) || [] };
+      knowledgeDataCache = { notes: (data && data.notes) || [], org_docs: (data && data.org_docs) || [] };
       writeMiniappCache("knowledge", knowledgeDataCache);
       renderKnowledgePaneFromData(knowledgeDataCache);
     } catch (e) {
@@ -50265,7 +50265,8 @@
   }
 
   function ensureDiscussionKnowledgeNotes() {
-    if (knowledgeDataCache && Array.isArray(knowledgeDataCache.notes)) {
+    // org_docs нет в старом кэше — тогда перечитать, иначе документы баз знаний организаций не появятся
+    if (knowledgeDataCache && Array.isArray(knowledgeDataCache.notes) && Array.isArray(knowledgeDataCache.org_docs)) {
       return Promise.resolve(knowledgeDataCache.notes);
     }
     return Promise.resolve(loadKnowledgeNotes())
@@ -50284,9 +50285,28 @@
     );
   }
 
+  // Документы баз знаний организаций (дерево разделов), открытые человеку: {id, title, group}
+  function orgKnowledgeDocs() {
+    var seen = {};
+    knowledgeNotesList().forEach(function (n) {
+      if (n && n.id != null) seen[String(n.id)] = true;
+    });
+    return ((knowledgeDataCache && knowledgeDataCache.org_docs) || []).filter(function (d) {
+      return d && d.id != null && !seen[String(d.id)];
+    });
+  }
+
   function knowledgeNotesByProject() {
     var groups = [];
     var index = {};
+    orgKnowledgeDocs().forEach(function (d) {
+      var key = "org:" + String(d.group || "");
+      if (!index[key]) {
+        index[key] = { key: key, title: String(d.group || "База знаний"), notes: [] };
+        groups.push(index[key]);
+      }
+      index[key].notes.push(d);
+    });
     knowledgeNotesList().forEach(function (n) {
       var project = noteProjectOf(n);
       var key = project && project.id != null ? String(project.id) : "";
@@ -50476,7 +50496,7 @@
       });
     }
     appendContextMenuSection(list, "База знаний");
-    var notes = knowledgeNotesList();
+    var notes = knowledgeNotesList().concat(orgKnowledgeDocs());
     if (!notes.length) {
       var empty = document.createElement("p");
       empty.className = "note-paie-menu-empty";

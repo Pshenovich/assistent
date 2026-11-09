@@ -412,3 +412,21 @@ class OrgKbDocAclTests(OrgKbTests):
         org_kb.set_access(OWNER, self.org, self.doc, f"u:{MANAGER}", "editor")
         node = next(n for n in org_kb.tree(self.org, OWNER) if n["id"] == self.doc)
         self.assertIn({"principal": f"u:{MANAGER}", "role": "editor"}, node["acl"])
+
+
+class OrgKbChatContextTests(OrgKbTests):
+    """Чат с Лео в документе: документы баз знаний организаций выбираются как контекст — только открытые."""
+
+    def test_context_docs_by_rights(self) -> None:
+        docs = org_kb.context_docs(MANAGER)
+        self.assertEqual([(d["id"], d["group"]) for d in docs], [(str(self.note), "Обучат · Инструкции ОКК")])
+        self.assertEqual(org_kb.context_docs(FRONT), [])
+        self.assertEqual(org_kb.context_docs(OUTSIDER), [])
+
+    def test_leo_reads_selected_org_doc_only_with_access(self) -> None:
+        from assistant.board.context import attach_knowledge_note
+
+        pack = attach_knowledge_note(None, MANAGER, note_ids=[str(self.note)])
+        self.assertIn("шаги", " ".join(d["text"] for d in (pack or {}).get("_documents", [])))
+        self.assertIsNone(attach_knowledge_note(None, FRONT, note_ids=[str(self.note)]))
+        self.assertIsNone(attach_knowledge_note(None, OUTSIDER, note_ids=[str(self.note)]))
