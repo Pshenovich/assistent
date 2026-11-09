@@ -1,7 +1,10 @@
 """Состояние онбординга пользователя в user_prefs (ключ «onboarding»).
 
 {intro_done_at, team_step_done_at, tour_done_at, used: {feat: ts}, hint_shown: {feat: n}, snoozed: {feat: ts},
- screens_seen: {screen: ts}, reset_at}
+ screens_seen: {screen: ts}, reset_at, off_at}
+
+off_at — человек выключил онбординг (Профиль → «Как пользоваться Орбитой»): ни интро, ни тура,
+ни подсказок, ни знакомства с разделами. Список функций и «Показать» от Лео работают.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ from assistant.stores import user_prefs
 
 KEY = "onboarding"
 STEP_FLAGS = ("intro_done_at", "team_step_done_at", "tour_done_at")
-EVENT_KINDS = ("used", "hint_shown", "snooze", "screen_seen", "intro_done", "team_done", "tour_done")
+EVENT_KINDS = ("used", "hint_shown", "snooze", "screen_seen", "intro_done", "team_done", "tour_done", "off", "on")
 MAPS = ("used", "hint_shown", "snoozed", "screens_seen")
 
 
@@ -26,7 +29,7 @@ def _blank() -> dict[str, Any]:
 def _norm(raw: Any) -> dict[str, Any]:
     st = _blank()
     if isinstance(raw, dict):
-        for k in STEP_FLAGS + ("reset_at",):
+        for k in STEP_FLAGS + ("reset_at", "off_at"):
             if raw.get(k):
                 st[k] = raw[k]
         for k in MAPS:
@@ -77,6 +80,14 @@ def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
         raise ValueError("unknown kind")
     st = get_state(user_id)
     now = time.time()
+    if kind == "off":
+        if not st.get("off_at"):
+            _track(user_id, "onboarding.off")
+        st["off_at"] = st.get("off_at") or now
+        return _save(user_id, st)
+    if kind == "on":
+        st.pop("off_at", None)
+        return _save(user_id, st)
     if kind in ("intro_done", "team_done", "tour_done"):
         flag = {"intro_done": "intro_done_at", "team_done": "team_step_done_at", "tour_done": "tour_done_at"}[kind]
         if not st.get(flag):

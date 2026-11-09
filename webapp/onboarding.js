@@ -719,8 +719,12 @@
   var guiding = false; // идёт «Показать» — обычные подсказки молчат
   var quietUntil = 0; // сразу после тура — дать осмотреться, без новых подсказок
 
+  // Выключил онбординг в «Как пользоваться Орбитой» — ни подсказок, ни знакомства с разделами.
+  function isOff() {
+    return !!(state && state.off_at);
+  }
   function hintsEnabled() {
-    return !!(state && state.tour_done_at && !running && !guiding);
+    return !!(state && state.tour_done_at && !isOff() && !running && !guiding);
   }
   // Что-то открыто поверх (окно, меню, лист) — подсказки не показываем. Заметка и чат с Лео — не помеха:
   // это обычные экраны, подсказки показываются прямо в них.
@@ -1030,7 +1034,13 @@
       '<div class="pf-list"><div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text">' +
       '<span class="pf-row-title">Освоено ' + done + " из " + feats.length + "</span>" +
       '<span class="pf-row-sub">Спросите Лео «где…» или «как…» — он объяснит и покажет</span></span>' +
-      '<button type="button" class="pf-link" data-howto-tour>Пройти тур</button></span></div></div>';
+      '<button type="button" class="pf-link" data-howto-tour>Пройти тур</button></span></div>' +
+      '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text">' +
+      '<span class="pf-row-title">Подсказки Лео</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">Подсказки к функциям и знакомство с разделами</span></span>' +
+      '<button type="button" class="svc-toggle' + (isOff() ? "" : " svc-toggle--on") + '" data-howto-hints role="switch" aria-checked="' +
+      (isOff() ? "false" : "true") + '" aria-label="Подсказки Лео"><span class="svc-toggle-knob"></span></button>' +
+      "</span></div></div>";
     var sections = [];
     feats.forEach(function (f) {
       if (sections.indexOf(f.section) < 0) sections.push(f.section);
@@ -1075,17 +1085,30 @@
       root.addEventListener("click", function (e) {
         var b = e.target.closest("[data-howto-show]");
         if (b) return show(b.getAttribute("data-howto-show"));
+        var tg = e.target.closest("[data-howto-hints]");
+        if (tg) return toggleHints(tg);
         if (e.target.closest("[data-howto-tour]")) {
           state.tour_done_at = null;
-          start();
+          start(true); // тур по просьбе — и при выключенных подсказках
         }
       });
   }
 
+  async function toggleHints(btn) {
+    var on = isOff();
+    btn.classList.toggle("svc-toggle--on", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+    if (!on) closeHint();
+    await send(on ? "on" : "off");
+    if (app().toast) app().toast(on ? "Подсказки Лео включены" : "Подсказки Лео выключены. Включить — здесь же");
+    renderHowto();
+  }
+
   // ---------- запуск ----------
 
-  async function start() {
+  async function start(force) {
     if (running || !state) return;
+    if (isOff() && !force) return;
     running = true;
     try {
       var cat = await loadCatalog();
@@ -1121,6 +1144,7 @@
       return;
     }
     if (opts && opts.deepLink) return;
+    if (isOff()) return;
     if (!state.tour_done_at) start();
     else scheduleScan(2500);
   }
@@ -1141,6 +1165,7 @@
   /** Состояние пришло с другого устройства (prefs.changed). */
   function applyState(st) {
     if (st && typeof st === "object") state = st;
+    if (isOff()) closeHint();
   }
 
   // Профиль → «Пройти онбординг заново»: только тем, кому разрешён сброс.

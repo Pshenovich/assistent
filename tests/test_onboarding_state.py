@@ -119,6 +119,17 @@ def test_reset_clears_everything():
     assert ob.get_state(uid)["used"] == {}
 
 
+def test_off_and_on():
+    uid = next(_ids)
+    ob.apply_event(uid, "used", "board")
+    st = ob.apply_event(uid, "off")
+    assert st["off_at"] and "board" in st["used"]
+    assert ob.get_state(uid)["off_at"] == st["off_at"]
+    assert ob.apply_event(uid, "off")["off_at"] == st["off_at"]  # повторно — та же дата
+    assert "off_at" not in ob.apply_event(uid, "on")
+    assert "board" in ob.get_state(uid)["used"]
+
+
 def test_can_reset_only_listed_usernames(monkeypatch):
     monkeypatch.delenv("ONBOARDING_RESET_USERNAMES", raising=False)
     assert ob.can_reset("pshenovich") and ob.can_reset("@PShenovich")

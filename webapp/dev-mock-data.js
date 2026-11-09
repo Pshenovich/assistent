@@ -1169,6 +1169,8 @@
       if (b.kind === "hint_shown") mockOnboarding.hint_shown[b.feature] = (mockOnboarding.hint_shown[b.feature] || 0) + 1;
       if (b.kind === "snooze") mockOnboarding.snoozed[b.feature] = now;
       if (b.kind === "screen_seen") mockOnboarding.screens_seen[b.feature] = now;
+      if (b.kind === "off") mockOnboarding.off_at = mockOnboarding.off_at || now;
+      if (b.kind === "on") delete mockOnboarding.off_at;
       return { ok: true, onboarding: JSON.parse(JSON.stringify(mockOnboarding)) };
     }
     // Лео-гид: «где доска?» → ответ и карточка «Показать» (как app_help на сервере).
