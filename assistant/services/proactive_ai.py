@@ -134,7 +134,9 @@ def candidates(
                 "SELECT source_key, content_hash FROM proactive_insights WHERE owner_user_id = ?", (str(uid),)
             ).fetchall()
         }
-    for n in notes_store.list_notes(uid, limit=200, include_transcription=True):
+    # Базу знаний не разбираем: это справочник, а не договорённости (решение владельца 2026-11-09) —
+    # ни старую личную (role=knowledge), ни документы в разделах организаций.
+    for n in notes_store.list_notes(uid, limit=200, include_transcription=True, include_org_kb=False):
         if str(n.get("owner_user_id") or n.get("user_id") or uid) != str(uid):
             continue
         if str(n.get("role") or "") == "knowledge":
@@ -500,6 +502,12 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
             "SELECT source_key, title, items_json, analyzed_at FROM proactive_insights WHERE owner_user_id = ? ORDER BY analyzed_at DESC LIMIT 30",
             (str(uid),),
         ).fetchall()
+    try:
+        from assistant.stores import org_kb
+
+        kb_ids = org_kb.all_doc_note_ids()
+    except Exception:
+        kb_ids = set()
     cards: list[dict[str, Any]] = []
     for r in rows:
         try:
@@ -508,9 +516,13 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
             continue
         src_key = str(r["source_key"])
         nid = int(src_key.split(":", 1)[1]) if src_key.startswith("note:") else 0
+        if nid in kb_ids:
+            continue  # документ базы знаний — подсказки из него не показываем (разобран до решения 2026-11-09)
         note = notes_store.get_note(uid, nid) if nid else None
         if not note:
             continue  # заметку удалили
+        if str(note.get("role") or "") == "knowledge":
+            continue
         title = str(note.get("title") or r["title"] or "заметка")
         kind_note = "transcription" if str(note.get("role") or "") == "transcription" else "note"
         src = f"из «{title}»"

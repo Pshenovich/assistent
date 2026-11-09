@@ -154,6 +154,29 @@ class TriggerTests(unittest.TestCase):
             kick.assert_not_called()
 
 
+    def test_kb_docs_not_analyzed_and_old_insights_hidden(self) -> None:
+        # База знаний — справочник: «вы договорились» из регламента в Фокусе не нужно (решение 2026-11-09)
+        from assistant.stores import org_kb, orgs_store
+
+        body = "<p>" + "Андрей сделает релиз до пятницы. " * 10 + "</p>"
+        n = notes_store.create_note(1, "Регламент релизов", body)
+        later = datetime.now(timezone.utc) + timedelta(minutes=11)
+        cands = pa.candidates(1, now=later)
+        self.assertEqual([c[0]["id"] for c in cands], [n["id"]])
+        fake = [{"kind": "agreement", "text": "Андрей сделает релиз", "who": "Андрей", "due": ""}]
+        with mock.patch.object(pa, "_llm_items", return_value=fake), mock.patch(
+            "assistant.integrations.openrouter_client.set_openrouter_usage_telegram_user"
+        ):
+            pa.analyze_note(1, cands[0][0], cands[0][1], cands[0][2])
+        self.assertEqual(len(pa.insight_cards(1, task_titles=[])), 1)
+        org = orgs_store.create_org(1, "Обучат")["id"]
+        sec = org_kb.create_section(1, org, "Регламенты")["id"]
+        org_kb.add_doc(1, org, sec, n["id"])
+        self.assertEqual(pa.insight_cards(1, task_titles=[]), [])  # разобранное раньше больше не показываем
+        notes_store.update_note(1, n["id"], body=body + "<p>Мария пришлёт смету.</p>")
+        self.assertEqual(pa.candidates(1, now=datetime.now(timezone.utc) + timedelta(minutes=11)), [])
+
+
 class BriefTests(unittest.TestCase):
     def test_brief_due_window(self) -> None:
         base = datetime(2026, 10, 17, 8, 0, tzinfo=timezone.utc)
