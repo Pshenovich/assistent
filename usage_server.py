@@ -18782,6 +18782,41 @@ async def miniapp_zoom_status(
     }
 
 
+@miniapp_router.get("/zoom/meetings")
+async def miniapp_zoom_meetings(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Ближайшие встречи пользователя в Zoom (GET /users/me/meetings) — для «Профиль → Zoom»."""
+    from assistant.integrations import zoom_api
+    from assistant.lib import zoom_gcal
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        if not zoom_gcal.user_has_zoom(uid):
+            return {"connected": False, "items": []}
+        try:
+            rows = zoom_api.list_upcoming_meetings(zoom_gcal._zoom_access_token(uid), page_size=30)
+        except Exception as e:
+            print(f"[zoom] meetings list user={uid} err={e!r}")
+            return {"connected": True, "items": [], "error": "Не удалось получить встречи из Zoom"}
+        items = [
+            {
+                "id": str(m.get("id") or ""),
+                "topic": str(m.get("topic") or "Встреча Zoom"),
+                "start_time": str(m.get("start_time") or ""),
+                "duration": int(m.get("duration") or 0),
+                "join_url": str(m.get("join_url") or ""),
+            }
+            for m in rows
+            if m.get("start_time")  # мгновенные и «без времени» не показываем
+        ]
+        items.sort(key=lambda x: x["start_time"])
+        return {"connected": True, "items": items[:10]}
+
+    return await run_in_threadpool(_run)
+
+
 @miniapp_router.get("/zoom/recordings")
 async def miniapp_zoom_recordings(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),

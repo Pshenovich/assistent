@@ -9727,6 +9727,62 @@
     startOAuthStatusPoll();
   }
 
+  // Ближайшие встречи в Zoom — все, не только созданные Орбитой (GET /users/me/meetings).
+  async function loadZoomUpcoming() {
+    var list = document.getElementById("profile-zoom-upcoming");
+    var empty = document.getElementById("profile-zoom-upcoming-empty");
+    if (!list) return;
+    list.innerHTML = "";
+    setHidden(empty, true);
+    var data;
+    try {
+      data = await apiFetch("/zoom/meetings", { method: "GET" });
+    } catch (e) {
+      data = { items: [], error: e.message || String(e) };
+    }
+    var items = (data && data.items) || [];
+    if (!items.length) {
+      empty.textContent = data && data.error ? data.error : "Ближайших встреч в Zoom нет.";
+      setHidden(empty, false);
+      setHidden(list, true);
+      return;
+    }
+    setHidden(list, false);
+    items.forEach(function (m) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "pf-row";
+      var body = document.createElement("span");
+      body.className = "pf-row-body";
+      var textWrap = document.createElement("span");
+      textWrap.className = "pf-row-text";
+      var title = document.createElement("span");
+      title.className = "pf-row-title";
+      title.textContent = m.topic || "Встреча Zoom";
+      var meta = document.createElement("span");
+      meta.className = "pf-row-sub";
+      var d = new Date(m.start_time);
+      var when = isNaN(d.getTime())
+        ? ""
+        : d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "short" }) +
+          " · " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      meta.textContent = [when, m.duration ? m.duration + " мин" : ""].filter(Boolean).join(" · ");
+      textWrap.appendChild(title);
+      textWrap.appendChild(meta);
+      body.appendChild(textWrap);
+      if (m.join_url) {
+        var chev = document.createElement("span");
+        chev.className = "pf-chev";
+        chev.setAttribute("aria-hidden", "true");
+        chev.textContent = "›";
+        body.appendChild(chev);
+        row.addEventListener("click", function () { openExternal(m.join_url); });
+      }
+      row.appendChild(body);
+      list.appendChild(row);
+    });
+  }
+
   async function loadZoomRecordings() {
     var list = document.getElementById("profile-zoom-recordings");
     var empty = document.getElementById("profile-zoom-recordings-empty");
@@ -9864,6 +9920,8 @@
       setSvcPill(stEl, on, on ? st.zoom_display_name || st.zoom_email || "Подключён" : "Не подключён");
       if (connectBtn) setHidden(connectBtn, on);
       setSvcConnectedUi("zoom", on);
+      setHidden(document.getElementById("profile-zoom-upcoming-group"), !on);
+      if (on) loadZoomUpcoming();
       // Записи — только с ботом записи (Vexa); без него про записи не говорим вовсе.
       var recOn = !!settings.meeting_bot_available;
       setHidden(document.getElementById("profile-zoom-free-hint"), !recOn);
