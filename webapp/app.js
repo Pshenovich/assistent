@@ -991,9 +991,10 @@
 
   function actualCacheKind() {
     var leftIso = meetingsPageDate || todayIsoLocal();
-    if (meetingsViewMode === "week") return "actual_week_" + startOfWeekMonday(leftIso);
-    if (meetingsViewMode === "month") return "actual_month_" + startOfMonthIso(leftIso);
-    return "actual_" + leftIso + (isDesktopLayout() ? "_2" : "");
+    var who = calViewUser ? "_u" + calViewUser.user_id : "";
+    if (meetingsViewMode === "week") return "actual_week_" + startOfWeekMonday(leftIso) + who;
+    if (meetingsViewMode === "month") return "actual_month_" + startOfMonthIso(leftIso) + who;
+    return "actual_" + leftIso + (isDesktopLayout() ? "_2" : "") + who;
   }
 
   function persistActualRemindersToDisk() {
@@ -1544,7 +1545,8 @@
     if (meetingsViewMenuBound) return;
     meetingsViewMenuBound = true;
     document.addEventListener("click", function (e) {
-      var wrap = document.querySelector(".meetings-view-wrap");
+      var vm = document.getElementById("meetings-view-menu");
+      var wrap = vm && vm.parentNode;
       if (!wrap || (e.target && wrap.contains(e.target))) return;
       closeMeetingsViewMenu();
     });
@@ -1653,6 +1655,7 @@
     strip.classList.toggle("cal-strip--month", mode === "month");
     strip.classList.toggle("cal-strip--week", mode === "week");
     strip.classList.toggle("is-posted", calShowPosted);
+    strip.classList.toggle("is-subordinate", !!calViewUser);
     if (mode === "month") calStripExpanded = false;
     strip.classList.toggle("is-expanded", calStripExpanded);
     days.innerHTML = "";
@@ -1717,11 +1720,45 @@
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-checked", on ? "true" : "false");
     });
-    menu.querySelectorAll("[data-cal-posted]").forEach(function (btn) {
-      var on = (btn.getAttribute("data-cal-posted") === "1") === calShowPosted;
-      btn.classList.toggle("is-active", on);
-      btn.setAttribute("aria-pressed", on ? "true" : "false");
-    });
+    // «Мой | Подчинённого» — только у руководителя; список людей раскрывается прямо в меню.
+    var hasPeople = !!(calPeople && calPeople.length);
+    var whose = document.getElementById("cal-menu-whose");
+    var whoseLabel = document.getElementById("cal-menu-whose-label");
+    var peopleBox = document.getElementById("cal-menu-people");
+    setHidden(whose, !hasPeople);
+    setHidden(whoseLabel, !hasPeople);
+    var subOpen = hasPeople && (!!calViewUser || menu.__peopleOpen === true);
+    if (whose) {
+      whose.querySelectorAll("[data-cal-whose]").forEach(function (btn) {
+        var isSub = btn.getAttribute("data-cal-whose") === "sub";
+        var on = isSub ? subOpen : !subOpen && !calViewUser;
+        btn.classList.toggle("is-active", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        if (isSub) btn.setAttribute("aria-expanded", subOpen ? "true" : "false");
+      });
+    }
+    if (peopleBox) {
+      peopleBox.innerHTML = subOpen ? calPeopleSearchHtml(calPeople) + '<div class="cal-people-list">' + calPeopleGroupsHtml(calPeople, { check: true }) + "</div>" : "";
+      setHidden(peopleBox, !subOpen);
+      var search = peopleBox.querySelector(".cal-people-search-input");
+      if (search) {
+        search.addEventListener("input", function () {
+          calPeopleQuery = search.value || "";
+          var list = peopleBox.querySelector(".cal-people-list");
+          if (list) list.innerHTML = calPeopleGroupsHtml(calPeople || [], { check: true });
+        });
+      }
+    }
+    var postedBtn = document.getElementById("cal-menu-posted");
+    if (postedBtn) {
+      postedBtn.classList.toggle("is-active", calShowPosted);
+      postedBtn.setAttribute("aria-checked", calShowPosted ? "true" : "false");
+    }
+    var postedCount = document.getElementById("cal-menu-posted-count");
+    if (postedCount) {
+      var pc = calPostedCount();
+      postedCount.textContent = pc ? String(pc) : "";
+    }
     var today = document.getElementById("cal-menu-today");
     if (today) {
       var onToday = meetingsPageShowsToday() && (meetingsViewMode !== "day" || (meetingsPageDate || todayIsoLocal()) === todayIsoLocal());
@@ -1822,14 +1859,36 @@
         setMeetingsViewMode(viewItem.getAttribute("data-meetings-view"));
         return;
       }
-      var postedItem = t.closest("[data-cal-posted]");
-      if (postedItem) {
+      var menuEl = document.getElementById("cal-menu");
+      var whoseItem = t.closest("[data-cal-whose]");
+      if (whoseItem && menuEl) {
         e.preventDefault();
-        var want = postedItem.getAttribute("data-cal-posted") === "1";
-        if (want !== calShowPosted) toggleCalPosted();
+        if (whoseItem.getAttribute("data-cal-whose") === "sub") {
+          menuEl.__peopleOpen = true;
+          syncCalMenu();
+          return;
+        }
+        menuEl.__peopleOpen = false;
+        if (calViewUser || calShowPosted) setCalWhose("me");
         closeCalMenu();
         return;
       }
+      var personItem = t.closest("#cal-menu [data-cal-person]");
+      if (personItem) {
+        e.preventDefault();
+        if (menuEl) menuEl.__peopleOpen = false;
+        closeCalMenu();
+        setCalWhose("user", calPersonById(personItem.getAttribute("data-cal-person")));
+        return;
+      }
+      if (t.closest("#cal-menu-posted")) {
+        e.preventDefault();
+        if (menuEl) menuEl.__peopleOpen = false;
+        closeCalMenu();
+        setCalWhose(calShowPosted ? "me" : "posted");
+        return;
+      }
+      if (t.closest(".cal-people-search")) return;
       if (t.closest("#cal-menu-today")) {
         e.preventDefault();
         closeCalMenu();
@@ -2069,6 +2128,12 @@
   }
 
   async function fetchCalendarDay(dateIso) {
+    if (calViewUser) {
+      // Календарь подчинённого: тот же ответ, что у диапазона, на один день.
+      var d = dateIso || todayIsoLocal();
+      var one = await fetchCalendarRange(d, d);
+      return Object.assign({}, one || {}, { date: d });
+    }
     var q =
       dateIso && dateIso.length ? "?date=" + encodeURIComponent(dateIso) : "";
     return apiFetch("/calendar/today" + q, { method: "GET" });
@@ -2079,7 +2144,8 @@
       "/calendar/range?start=" +
         encodeURIComponent(fromIso) +
         "&end=" +
-        encodeURIComponent(toIso),
+        encodeURIComponent(toIso) +
+        (calViewUser ? "&view_user=" + encodeURIComponent(calViewUser.user_id) : ""),
       { method: "GET" }
     );
   }
@@ -2363,10 +2429,10 @@
     return out;
   }
 
-  // Телефон: «Поставленные» в меню ☰ — отдельный календарь, только задачи, поручённые другим.
-  // Десктоп: кнопка в шапке подмешивает их к своему календарю (как раньше).
+  // «Поставленные» — отдельный календарь (телефон и компьютер): только задачи, поручённые другим,
+  // фиолетовым; свои встречи и напоминания скрыты.
   function calPostedOnly() {
-    return calShowPosted && !isDesktopLayout();
+    return calShowPosted;
   }
 
   function withPostedEvents(events, fromIso, toIso) {
@@ -2385,11 +2451,325 @@
   }
 
   function syncCalPostedToggle() {
+    syncWhoseButton();
+  }
+
+  /* ——— «Чей календарь»: мой / поставленные другим / подчинённого (только просмотр).
+     Подчинённые — как в «Показателях»: руководитель отдела — свой отдел и команды, владелец и админы — все.
+     Подчинённый не запоминается между запусками: открыли приложение — снова свой календарь. ——— */
+  var calViewUser = null; // {user_id, name, google}
+  var calPeople = null; // ответ /calendar/people (null — ещё не загружен)
+  var calPeopleLoading = null;
+  var calPeopleQuery = "";
+  var CAL_PERSON_COLORS = ["#e67c73", "#3f51b5", "#33b679", "#f4511e", "#8e24aa", "#039be5", "#0b8043", "#7986cb"];
+
+  function calHidesReminders() {
+    return calShowPosted || !!calViewUser;
+  }
+
+  function calPersonInitials(name) {
+    var parts = String(name || "").replace(/^@/, "").split(/[\s._@-]+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+  }
+
+  function calPersonColor(uid) {
+    var h = 0;
+    String(uid || "").split("").forEach(function (ch) {
+      h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    });
+    return CAL_PERSON_COLORS[h % CAL_PERSON_COLORS.length];
+  }
+
+  function calPersonAvatarHtml(p, cls) {
+    return (
+      '<span class="cal-person-av ' + (cls || "") + '" style="background:' + calPersonColor(p.user_id) + '" aria-hidden="true">' +
+      escapeHtml(calPersonInitials(p.name)) + "</span>"
+    );
+  }
+
+  function loadCalPeople() {
+    if (calPeople) return Promise.resolve(calPeople);
+    if (calPeopleLoading) return calPeopleLoading;
+    calPeopleLoading = apiFetch("/calendar/people", { method: "GET" })
+      .then(function (r) {
+        calPeople = (r && r.items) || [];
+        return calPeople;
+      })
+      .catch(function () {
+        return [];
+      })
+      .finally(function () {
+        calPeopleLoading = null;
+      });
+    return calPeopleLoading;
+  }
+
+  function calPostedCount() {
+    return calPostedItems.filter(function (t) {
+      return t && !t.owner_archived && !t.done;
+    }).length;
+  }
+
+  function setCalWhose(kind, person) {
+    var prevUser = calViewUser ? calViewUser.user_id : "";
+    if (kind === "posted") {
+      calShowPosted = true;
+      calViewUser = null;
+    } else if (kind === "user" && person) {
+      calShowPosted = false;
+      calViewUser = { user_id: String(person.user_id), name: person.name || "Сотрудник", google: person.google !== false };
+    } else {
+      calShowPosted = false;
+      calViewUser = null;
+    }
+    try {
+      localStorage.setItem("cal_show_posted", calShowPosted ? "1" : "0");
+    } catch (_) {}
+    syncWhoseButton();
+    syncCalViewBanner();
+    paintCalStrip();
+    var nowUser = calViewUser ? calViewUser.user_id : "";
+    if (nowUser !== prevUser) {
+      // Другой человек — другой календарь: грузим заново (свои и чужие данные не смешиваем).
+      lastMeetingsRange = null;
+      showMeetingsDaySkeleton();
+      loadActual();
+    } else {
+      repaintMeetingsFromState();
+    }
+    if (calShowPosted && !calPostedCount() && !postedCalendarEvents("", "").length) {
+      showNoteToast("Нет текущих задач, поставленных другим");
+    }
+  }
+
+  var CAL_WHOSE_ICONS = {
+    me: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+    posted: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5"/></svg>',
+    check: '<svg class="meetings-whose-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  };
+
+  function syncWhoseButton() {
     var b = document.getElementById("meetings-posted-toggle");
     if (!b) return;
-    b.classList.toggle("is-active", calShowPosted);
-    b.setAttribute("aria-pressed", String(calShowPosted));
-    b.title = calShowPosted ? "Скрыть в календаре задачи, поставленные другим" : "Показать в календаре задачи, поставленные другим";
+    var ico = document.getElementById("meetings-whose-ico");
+    var label = document.getElementById("meetings-whose-label");
+    var mode = calViewUser ? "user" : calShowPosted ? "posted" : "me";
+    b.classList.toggle("is-active", mode === "posted");
+    b.classList.toggle("is-user", mode === "user");
+    if (ico) {
+      ico.innerHTML = mode === "user" ? calPersonAvatarHtml(calViewUser, "cal-person-av--sm") : CAL_WHOSE_ICONS[mode];
+    }
+    if (label) label.textContent = mode === "user" ? calViewUser.name : mode === "posted" ? "Поставленные" : "Мой календарь";
+  }
+
+  function closeWhoseMenu() {
+    var menu = document.getElementById("meetings-whose-menu");
+    var b = document.getElementById("meetings-posted-toggle");
+    if (menu) menu.classList.add("hidden");
+    if (b) b.setAttribute("aria-expanded", "false");
+  }
+
+  function calPeopleGroupsHtml(list, opts) {
+    var q = String(calPeopleQuery || "").trim().toLowerCase();
+    var shown = list.filter(function (p) {
+      return !q || String(p.name || "").toLowerCase().indexOf(q) >= 0 || String(p.group || "").toLowerCase().indexOf(q) >= 0;
+    });
+    if (!shown.length) return '<p class="cal-people-empty">' + (q ? "Никого не нашли" : "Нет подчинённых") + "</p>";
+    var html = "";
+    var lastGroup = null;
+    shown.forEach(function (p) {
+      var g = p.group || "";
+      if (g !== lastGroup) {
+        lastGroup = g;
+        html += '<div class="cal-people-group">' + escapeHtml(g || "Без отдела") + "</div>";
+      }
+      var on = calViewUser && calViewUser.user_id === String(p.user_id);
+      html +=
+        '<button type="button" class="cal-person' + (on ? " is-active" : "") + '" role="menuitemradio" aria-checked="' + (on ? "true" : "false") +
+        '" data-cal-person="' + escapeHtml(String(p.user_id)) + '">' +
+        calPersonAvatarHtml(p) +
+        '<span class="cal-person-text"><span class="cal-person-name">' + escapeHtml(p.name || "Сотрудник") + "</span>" +
+        (p.status ? '<span class="cal-person-sub">' + escapeHtml(p.status) + "</span>" : "") +
+        "</span>" + (on && opts && opts.check ? CAL_WHOSE_ICONS.check : "") + "</button>";
+    });
+    return html;
+  }
+
+  function calPeopleSearchHtml(list) {
+    if (list.length <= 8) return "";
+    return (
+      '<label class="cal-people-search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>' +
+      '<input type="search" class="cal-people-search-input" placeholder="Найти сотрудника" aria-label="Найти сотрудника" value="' + escapeHtml(calPeopleQuery) + '" /></label>'
+    );
+  }
+
+  function renderWhoseMenu() {
+    var menu = document.getElementById("meetings-whose-menu");
+    if (!menu) return;
+    var mode = calViewUser ? "user" : calShowPosted ? "posted" : "me";
+    var n = calPostedCount();
+    var html =
+      '<button type="button" class="meetings-view-menu-item meetings-whose-item' + (mode === "me" ? " is-active" : "") + '" role="menuitemradio" aria-checked="' + (mode === "me") + '" data-cal-whose-pick="me">' +
+      '<span class="meetings-whose-item-ico">' + CAL_WHOSE_ICONS.me + '</span><span class="meetings-whose-item-text">Мой календарь</span>' +
+      (mode === "me" ? CAL_WHOSE_ICONS.check : "") + "</button>" +
+      '<button type="button" class="meetings-view-menu-item meetings-whose-item meetings-whose-item--posted' + (mode === "posted" ? " is-active" : "") + '" role="menuitemradio" aria-checked="' + (mode === "posted") + '" data-cal-whose-pick="posted">' +
+      '<span class="meetings-whose-item-ico">' + CAL_WHOSE_ICONS.posted + '</span><span class="meetings-whose-item-text">Поставленные другим<small>Только поручения, фиолетовым</small></span>' +
+      (n ? '<span class="cal-menu-count">' + n + "</span>" : "") + (mode === "posted" ? CAL_WHOSE_ICONS.check : "") + "</button>";
+    if (calPeople && calPeople.length) {
+      html +=
+        '<div class="meetings-whose-sep" aria-hidden="true"></div><div class="meetings-whose-label">Календарь подчинённого</div>' +
+        calPeopleSearchHtml(calPeople) + '<div class="cal-people-list">' + calPeopleGroupsHtml(calPeople, { check: true }) + "</div>";
+    } else if (calPeople === null) {
+      html += '<div class="meetings-whose-sep" aria-hidden="true"></div><p class="cal-people-empty">Загружаем…</p>';
+    }
+    menu.innerHTML = html;
+  }
+
+  function toggleWhoseMenu() {
+    var menu = document.getElementById("meetings-whose-menu");
+    var b = document.getElementById("meetings-posted-toggle");
+    if (!menu || !b) return;
+    if (!menu.classList.contains("hidden")) {
+      closeWhoseMenu();
+      return;
+    }
+    closeMeetingsViewMenu();
+    calPeopleQuery = "";
+    renderWhoseMenu();
+    menu.classList.remove("hidden");
+    b.setAttribute("aria-expanded", "true");
+    if (calPeople === null) {
+      loadCalPeople().then(function () {
+        if (!menu.classList.contains("hidden")) renderWhoseMenu();
+      });
+    }
+  }
+
+  function calPersonById(uid) {
+    return (calPeople || []).filter(function (p) {
+      return String(p.user_id) === String(uid);
+    })[0];
+  }
+
+  function bindWhoseMenuOnce() {
+    var b = document.getElementById("meetings-posted-toggle");
+    var menu = document.getElementById("meetings-whose-menu");
+    if (!b || !menu || b.__whoseBound) return;
+    b.__whoseBound = true;
+    b.addEventListener("click", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleWhoseMenu();
+    });
+    menu.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var pick = e.target.closest("[data-cal-whose-pick]");
+      if (pick) {
+        closeWhoseMenu();
+        setCalWhose(pick.getAttribute("data-cal-whose-pick"));
+        return;
+      }
+      var person = e.target.closest("[data-cal-person]");
+      if (person) {
+        closeWhoseMenu();
+        setCalWhose("user", calPersonById(person.getAttribute("data-cal-person")));
+      }
+    });
+    menu.addEventListener("input", function (e) {
+      if (!e.target.classList.contains("cal-people-search-input")) return;
+      calPeopleQuery = e.target.value || "";
+      var list = menu.querySelector(".cal-people-list");
+      if (list) list.innerHTML = calPeopleGroupsHtml(calPeople || [], { check: true });
+    });
+    document.addEventListener("click", function (e) {
+      var wrap = menu.parentNode;
+      if (wrap && e.target && wrap.contains(e.target)) return;
+      closeWhoseMenu();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeWhoseMenu();
+    });
+    // Список подчинённых нужен и для меню ☰ на телефоне — грузим заранее, тихо.
+    loadCalPeople().then(syncCalMenu);
+  }
+
+  function syncCalViewBanner() {
+    var el = document.getElementById("cal-view-banner");
+    if (!el) return;
+    if (!calViewUser) {
+      el.innerHTML = "";
+      setHidden(el, true);
+      return;
+    }
+    var p = calViewUser;
+    el.innerHTML =
+      calPersonAvatarHtml(p) +
+      '<span class="cal-view-banner-text"><b>Календарь: ' + escapeHtml(p.name) + "</b>" +
+      '<span class="cal-view-banner-sub">Только просмотр' +
+      (p.google ? "" : " · Google-календарь не подключён, видны встречи Орбиты и задачи") +
+      '</span></span><span class="cal-view-banner-legend"><i aria-hidden="true"></i>поставлено вами</span>' +
+      '<button type="button" class="cal-view-banner-back" data-cal-whose-pick="me"><span class="cal-view-banner-long">Вернуться к своему</span><span class="cal-view-banner-short">Мой календарь</span></button>';
+    setHidden(el, false);
+    if (!el.__bound) {
+      el.__bound = true;
+      el.addEventListener("click", function (e) {
+        if (e.target.closest("[data-cal-whose-pick]")) setCalWhose("me");
+      });
+    }
+  }
+
+  function calReadOnlyWhen(ev) {
+    if (eventIsAllDay(ev)) return "Весь день";
+    var s = eventStartMs(ev);
+    var e = eventEndMs(ev);
+    if (s == null) return "";
+    var d = new Date(s);
+    var day = d.toLocaleDateString("ru-RU", { weekday: "short", day: "numeric", month: "long" });
+    function hm(ms) {
+      return new Date(ms).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+    }
+    return day + ", " + hm(s) + (e != null && e > s ? "–" + hm(e) : "");
+  }
+
+  // Карточка события в календаре подчинённого: только посмотреть, без правки.
+  function openReadOnlyEntrySheet(ev) {
+    closeNotesActionSheet();
+    var who = calViewUser ? calViewUser.name : "";
+    var isTask = calendarEntryIsTask(ev);
+    var people = (ev.attendees || [])
+      .map(function (a) {
+        return a && (a.name || a.display_name || a.displayName || a.email);
+      })
+      .filter(Boolean);
+    var loc = ev.location || "";
+    var link = ev.meeting_url || ev.hangout_link || ev.hangoutLink || "";
+    var desc = String(ev.description || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    var ov = document.createElement("div");
+    ov.id = "nl-sheet-overlay";
+    ov.className = "nl-sheet-overlay";
+    ov.innerHTML =
+      '<div class="nl-sheet cal-ro-sheet" role="dialog" aria-label="Событие">' +
+      '<div class="nl-sheet-title">' + escapeHtml(meetingDisplayTitle(ev) || "Событие") + "</div>" +
+      '<p class="cal-ro-row cal-ro-when">' + escapeHtml(calReadOnlyWhen(ev)) + "</p>" +
+      (ev.private_busy ? '<p class="cal-ro-row cal-ro-muted">Событие закрыто в Google — видно только время.</p>' : "") +
+      (isTask ? '<p class="cal-ro-row cal-ro-muted">' + (ev.done ? "Задача выполнена" : "Задача") + "</p>" : "") +
+      (loc ? '<p class="cal-ro-row">' + escapeHtml(loc) + "</p>" : "") +
+      (link ? '<p class="cal-ro-row"><a href="' + escapeHtml(link) + '" target="_blank" rel="noopener">Ссылка на встречу</a></p>' : "") +
+      (people.length ? '<p class="cal-ro-row cal-ro-muted">Участники: ' + escapeHtml(people.slice(0, 12).join(", ")) + (people.length > 12 ? " и ещё " + (people.length - 12) : "") + "</p>" : "") +
+      (desc ? '<p class="cal-ro-row cal-ro-desc">' + escapeHtml(desc.slice(0, 1200)) + "</p>" : "") +
+      '<p class="cal-ro-row cal-ro-muted">Календарь: ' + escapeHtml(who) + " · только просмотр</p>" +
+      '<button type="button" class="btn ghost cal-ro-close">Закрыть</button>' +
+      "</div>";
+    ov.addEventListener("click", function (e) {
+      if (e.target === ov || e.target.closest(".cal-ro-close")) closeNotesActionSheet();
+    });
+    document.body.appendChild(ov);
+    document.addEventListener("keydown", notesSheetKeydown, true);
+    requestAnimationFrame(function () {
+      ov.classList.add("is-open");
+    });
   }
 
   function repaintMeetingsFromState() {
@@ -2399,21 +2779,15 @@
   }
 
   function toggleCalPosted() {
-    calShowPosted = !calShowPosted;
-    try {
-      localStorage.setItem("cal_show_posted", calShowPosted ? "1" : "0");
-    } catch (_) {}
-    syncCalPostedToggle();
-    paintCalStrip();
-    repaintMeetingsFromState();
-    if (calShowPosted) {
-      var n = postedCalendarEvents("", "").length;
-      if (isDesktopLayout()) showNoteToast(n ? "Показаны задачи, поставленные другим" : "Нет текущих задач, поставленных другим");
-      else if (!n) showNoteToast("Нет текущих задач, поставленных другим");
-    }
+    setCalWhose(calShowPosted ? "me" : "posted");
   }
 
+
   function openCalendarEntry(ev) {
+    if (ev && ev.read_only && !ev.posted_by_me) {
+      openReadOnlyEntrySheet(ev);
+      return;
+    }
     if (ev && ev.posted_by_me) {
       // Задача, поставленная другому: в окне — её настоящее название, без «→ Исполнитель ·».
       openTaskModal(Object.assign({}, ev, { summary: ev.posted_title || ev.summary }), {
@@ -2866,6 +3240,13 @@
 
   function bindTimedEntryInteractions(el, ev, ctx) {
     if (!el || !ev || eventIsAllDay(ev)) return;
+    if (ev.read_only && !ev.posted_by_me) {
+      // Календарь подчинённого: без переноса и растягивания — только открыть карточку.
+      el.addEventListener("click", function () {
+        openCalendarEntry(ev);
+      });
+      return;
+    }
     var startMs0 = eventStartMs(ev);
     var endMs0 = eventEndMs(ev);
     if (startMs0 == null) return;
@@ -3290,6 +3671,14 @@
 
   function bindMonthChipDrag(chip, ev, getCellAtPoint) {
     if (!chip || !ev || !getCellAtPoint) return;
+    if (ev.read_only && !ev.posted_by_me) {
+      chip.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openCalendarEntry(ev);
+      });
+      return;
+    }
     var startMs0 = eventStartMs(ev);
     var endMs0 = eventEndMs(ev);
     if (startMs0 == null) return;
@@ -3542,7 +3931,7 @@
       return !meetingIsDeclined(ev);
     });
     if (calDate) evs = withPostedEvents(evs, calDate, calDate);
-    var dayReminders = calDate && !calPostedOnly() ? remindersForDate(reminders, calDate) : [];
+    var dayReminders = calDate && !calHidesReminders() ? remindersForDate(reminders, calDate) : [];
     var disconnected = calData && calData.connected === false;
     var loadFailed = !!(calData && calData.load_error);
     setHidden(emptyM, true);
@@ -4110,7 +4499,7 @@
         if (!span || span.zone !== "grid") return;
         timed.push({ kind: "event", ev: ev, startMin: span.startMin, endMin: span.endMin });
       });
-      (calPostedOnly() ? [] : remindersForDate(lastRemindersItems, iso)).forEach(function (r) {
+      (calHidesReminders() ? [] : remindersForDate(lastRemindersItems, iso)).forEach(function (r) {
         var startMs = Date.parse(r.when_iso || "");
         if (!isFinite(startMs)) return;
         var span = timelineSpanForRange(
@@ -4154,6 +4543,7 @@
           if (calendarEntryIsTask(it.ev)) {
             slot.classList.add("meetings-week-event--task");
             if (it.ev && it.ev.done) slot.classList.add("meetings-week-event--task-done");
+            if (it.ev && it.ev.posted_by_me) slot.classList.add("meetings-week-event--posted");
           }
           slot.appendChild(
             renderMeetingCard(it.ev, { heightPx: height, skipClick: true })
@@ -4241,7 +4631,7 @@
       num.textContent = String(dateFromIso(iso).getDate());
       cell.appendChild(num);
       var dayEvs = eventsForDate(events, iso);
-      var dayRems = calPostedOnly() ? [] : remindersForDate(lastRemindersItems, iso);
+      var dayRems = calHidesReminders() ? [] : remindersForDate(lastRemindersItems, iso);
       var monthCellAtPoint = function (x, y) {
         var nodes = host.querySelectorAll(".meetings-month-cell[data-date-iso]");
         for (var i = 0; i < nodes.length; i += 1) {
@@ -25696,6 +26086,7 @@
     var b = document.createElement("button");
     b.type = "button";
     b.className = "meeting-card-check" + (ev.done ? " is-done" : "");
+    if (ev.read_only && !ev.posted_by_me) b.disabled = true;
     b.setAttribute("aria-pressed", ev.done ? "true" : "false");
     b.setAttribute("aria-label", ev.done ? "Вернуть в работу" : "Отметить выполненной");
     b.title = b.getAttribute("aria-label");
@@ -25762,8 +26153,10 @@
     if (calendarEntryIsTask(ev)) {
       card.classList.add("meeting-card--task");
       if (ev.done) card.classList.add("meeting-card--task-done");
+      if (ev.posted_by_me) card.classList.add("meeting-card--posted");
     }
-    applyEntryDisplayColor(card, ev);
+    if (ev.private_busy) card.classList.add("meeting-card--busy");
+    if (!ev.posted_by_me) applyEntryDisplayColor(card, ev);
     if (!opts.skipClick) {
       card.addEventListener("click", function () {
         if (calendarConsumeSuppressClick()) return;
@@ -59559,8 +59952,8 @@
     }
     var calPostedToggle = document.getElementById("meetings-posted-toggle");
     if (calPostedToggle) {
-      syncCalPostedToggle();
-      calPostedToggle.addEventListener("click", toggleCalPosted);
+      syncWhoseButton();
+      bindWhoseMenuOnce();
     }
     var postedBack = document.getElementById("posted-tasks-back");
     if (postedBack) {

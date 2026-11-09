@@ -99,7 +99,10 @@ def _conn() -> sqlite3.Connection:
 
 
 # Содержимое события (колонки добавлены после первой версии таблицы — отсюда ALTER).
-_CONTENT_COLS = ("description", "location", "html_link", "meeting_url", "organizer_email", "attendees_json", "g_updated")
+_CONTENT_COLS = (
+    "description", "location", "html_link", "meeting_url", "organizer_email", "attendees_json", "g_updated",
+    "visibility",  # Google: default / public / private / confidential — закрытые руководитель видит как «Занят»
+)
 MAX_DESCRIPTION = 20000
 
 
@@ -162,6 +165,7 @@ def row_from_gcal(raw: dict[str, Any], start: datetime, end: datetime) -> dict[s
         "organizer_email": str(org.get("email") or "").strip().lower()[:200],
         "attendees_json": json.dumps(people, ensure_ascii=False)[:20000] if people else "",
         "g_updated": str(raw.get("updated") or ""),
+        "visibility": str(raw.get("visibility") or "").strip().lower()[:20],
         "series_id": str(raw.get("recurringEventId") or ""),
         "title": str(raw.get("summary") or "").strip()[:200],
         "start_utc": _utc(start),
@@ -216,8 +220,8 @@ def record_window(
                 """
                 INSERT INTO mirror_events (user_id, source, calendar_id, event_id, series_id, title, start_utc, end_utc,
                     all_day, kind, status, my_response, organizer_self, others, other_emails, transparent, first_seen, updated_at,
-                    description, location, html_link, meeting_url, organizer_email, attendees_json, g_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    description, location, html_link, meeting_url, organizer_email, attendees_json, g_updated, visibility)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, source, calendar_id, event_id) DO UPDATE SET
                     series_id = excluded.series_id, title = excluded.title, start_utc = excluded.start_utc,
                     end_utc = excluded.end_utc, all_day = excluded.all_day, kind = excluded.kind, status = 'confirmed',
@@ -226,7 +230,8 @@ def record_window(
                     transparent = excluded.transparent, updated_at = excluded.updated_at,
                     description = excluded.description, location = excluded.location, html_link = excluded.html_link,
                     meeting_url = excluded.meeting_url, organizer_email = excluded.organizer_email,
-                    attendees_json = excluded.attendees_json, g_updated = excluded.g_updated
+                    attendees_json = excluded.attendees_json, g_updated = excluded.g_updated,
+                    visibility = excluded.visibility
                 """,
                 rows,
             )

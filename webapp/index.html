@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261109-chatsel1" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261109-whose1" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261107-embed1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261106-groups1" />
@@ -252,12 +252,17 @@
               <button type="button" class="cal-menu-item" role="menuitemradio" data-meetings-view="week">Неделя</button>
               <button type="button" class="cal-menu-item" role="menuitemradio" data-meetings-view="month">Месяц</button>
               <div class="cal-menu-sep" aria-hidden="true"></div>
-              <div class="cal-menu-label">Календарь</div>
-              <div class="cal-menu-seg" role="group" aria-label="Чей календарь">
-                <button type="button" data-cal-posted="0" aria-pressed="true">Мой</button>
-                <button type="button" data-cal-posted="1" data-tour="posted-toggle" aria-pressed="false" title="Задачи, которые вы поставили другим">Поставленные</button>
+              <div class="cal-menu-label hidden" id="cal-menu-whose-label">Календарь</div>
+              <div class="cal-menu-seg hidden" id="cal-menu-whose" role="group" aria-label="Чей календарь">
+                <button type="button" data-cal-whose="me" aria-pressed="true">Мой</button>
+                <button type="button" data-cal-whose="sub" aria-pressed="false" aria-expanded="false">Подчинённого</button>
               </div>
+              <div class="cal-menu-people hidden" id="cal-menu-people"></div>
               <div class="cal-menu-sep" aria-hidden="true"></div>
+              <button type="button" class="cal-menu-item cal-menu-posted" role="menuitemcheckbox" id="cal-menu-posted" data-tour="posted-toggle" aria-checked="false" title="Задачи, которые вы поставили другим">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5"/></svg>
+                <span>Поставленные задачи</span><span class="cal-menu-count" id="cal-menu-posted-count"></span>
+              </button>
               <button type="button" class="cal-menu-item" role="menuitem" id="cal-menu-today">К сегодня</button>
             </div>
           </div>
@@ -269,9 +274,14 @@
             </div>
             <div class="meetings-head-tools">
               <button type="button" class="meetings-today-btn hidden" id="meetings-today">Сегодня</button>
-              <button type="button" class="cal-nav-btn meetings-posted-toggle" id="meetings-posted-toggle" data-tour="posted-toggle" aria-pressed="false" aria-label="Задачи, поставленные другим" title="Показать в календаре задачи, поставленные другим">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6 1.4 0 2.6.4 3.6 1.2"/><path d="M15 17h6M18.5 14.5 21 17l-2.5 2.5"/></svg>
-              </button>
+              <div class="meetings-whose-wrap">
+                <button type="button" class="cal-nav-btn meetings-posted-toggle meetings-whose-btn" id="meetings-posted-toggle" data-tour="posted-toggle" aria-haspopup="menu" aria-expanded="false" aria-label="Чей календарь" title="Чей календарь: мой, поставленные другим, подчинённого">
+                  <span class="meetings-whose-ico" id="meetings-whose-ico" aria-hidden="true"></span>
+                  <span class="meetings-whose-label" id="meetings-whose-label">Мой календарь</span>
+                  <svg class="meetings-whose-chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                </button>
+                <div id="meetings-whose-menu" class="meetings-view-menu meetings-whose-menu hidden" role="menu" aria-label="Чей календарь"></div>
+              </div>
               <button type="button" class="cal-nav-btn" id="meetings-prev" aria-label="Предыдущий день">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>
               </button>
@@ -296,6 +306,7 @@
               </div>
             </div>
           </div>
+          <div id="cal-view-banner" class="cal-view-banner hidden" role="status"></div>
           <div id="meetings-board" class="meetings-board">
             <div class="meetings-day" id="meetings-day-left">
               <p class="meetings-day-title" id="meetings-day-left-title"></p>
@@ -2645,7 +2656,7 @@
   <script src="/webapp/web-canvas.js?v=20261106-kbro1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261109-focustask1" defer></script>
+  <script src="/webapp/app.js?v=20261109-whose1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>

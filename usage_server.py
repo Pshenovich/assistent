@@ -4707,7 +4707,7 @@ def _google_tasks_calendar_ids(uid: int) -> set[str]:
 
 
 def _serialize_gcal_events(
-    uid: int, events_raw: list[Any], limit: int
+    uid: int, events_raw: list[Any], limit: int, *, task_cal_ids: Optional[set[str]] = None
 ) -> list[dict[str, Any]]:
     ser: list[dict[str, Any]] = []
     try:
@@ -4715,7 +4715,8 @@ def _serialize_gcal_events(
     except Exception as ex:
         print(f"[miniapp_calendar] contacts_index err={ex!r}")
         contacts_by_email = {}
-    task_cal_ids = _google_tasks_calendar_ids(uid)
+    if task_cal_ids is None:
+        task_cal_ids = _google_tasks_calendar_ids(uid)
     for e in events_raw or []:
         if not isinstance(e, dict):
             continue
@@ -5175,6 +5176,39 @@ def _local_dev_events_range(uid: int, from_d: Any, to_d: Any, timezone_name: str
     return out
 
 
+def _gcal_raw_for_range(norm: dict[str, Any], tz: Any) -> dict[str, Any]:
+    """Событие Google (нормализованное calendar_sources) → raw с днями начала/конца в поясе пользователя."""
+    raw = dict(norm.get("raw") or {})
+    raw["_calendarId"] = str(norm.get("calendar_id") or raw.get("_calendarId") or "primary")
+    start = norm.get("start")
+    end = norm.get("end")
+    start_local = start.astimezone(tz) if isinstance(start, datetime) else None
+    if start_local is not None:
+        raw["_start_day"] = start_local.date().isoformat()
+        raw["start"] = raw.get("start") if isinstance(raw.get("start"), dict) else {}
+        if not raw["start"].get("dateTime") and not raw["start"].get("date"):
+            raw["start"] = {
+                "dateTime": start_local.isoformat(),
+                "timeZone": str(tz),
+            }
+    if isinstance(end, datetime):
+        end_local = end.astimezone(tz)
+        raw["_end_day"] = end_local.date().isoformat()
+        is_all_day = bool((raw.get("start") or {}).get("date") and not (raw.get("start") or {}).get("dateTime"))
+        ends_midnight = end_local.time() == datetime.min.time()
+        raw["_day_end_exclusive"] = is_all_day or (
+            ends_midnight
+            and (start_local is None or end_local.date() > start_local.date())
+        )
+        raw["end"] = raw.get("end") if isinstance(raw.get("end"), dict) else {}
+        if not raw["end"].get("dateTime") and not raw["end"].get("date"):
+            raw["end"] = {
+                "dateTime": end_local.isoformat(),
+                "timeZone": str(tz),
+            }
+    return raw
+
+
 def _calendar_range_payload(
     telegram_user_id: int,
     from_iso: Optional[str] = None,
@@ -5226,37 +5260,9 @@ def _calendar_range_payload(
             }
         )
     try:
-        collected: list[dict[str, Any]] = []
-        for norm in cal_sources.list_events_in_window(uid, win_start, win_end):
-            raw = dict(norm.get("raw") or {})
-            raw["_calendarId"] = str(norm.get("calendar_id") or raw.get("_calendarId") or "primary")
-            start = norm.get("start")
-            end = norm.get("end")
-            start_local = start.astimezone(tz) if isinstance(start, datetime) else None
-            if start_local is not None:
-                raw["_start_day"] = start_local.date().isoformat()
-                raw["start"] = raw.get("start") if isinstance(raw.get("start"), dict) else {}
-                if not raw["start"].get("dateTime") and not raw["start"].get("date"):
-                    raw["start"] = {
-                        "dateTime": start_local.isoformat(),
-                        "timeZone": str(tz),
-                    }
-            if isinstance(end, datetime):
-                end_local = end.astimezone(tz)
-                raw["_end_day"] = end_local.date().isoformat()
-                is_all_day = bool((raw.get("start") or {}).get("date") and not (raw.get("start") or {}).get("dateTime"))
-                ends_midnight = end_local.time() == datetime.min.time()
-                raw["_day_end_exclusive"] = is_all_day or (
-                    ends_midnight
-                    and (start_local is None or end_local.date() > start_local.date())
-                )
-                raw["end"] = raw.get("end") if isinstance(raw.get("end"), dict) else {}
-                if not raw["end"].get("dateTime") and not raw["end"].get("date"):
-                    raw["end"] = {
-                        "dateTime": end_local.isoformat(),
-                        "timeZone": str(tz),
-                    }
-            collected.append(raw)
+        collected: list[dict[str, Any]] = [
+            _gcal_raw_for_range(norm, tz) for norm in cal_sources.list_events_in_window(uid, win_start, win_end)
+        ]
         ser = _serialize_gcal_events(uid, collected, 1500)
         if not ser and _miniapp_dev_mode_on():
             ser = _local_dev_events_range(uid, start_d, end_d, str(tz))
@@ -5295,6 +5301,86 @@ def _calendar_range_payload(
                 "error": err,
             }
         )
+
+
+def _subordinate_calendar_payload(
+    viewer_id: int,
+    target_id: str,
+    from_iso: Optional[str] = None,
+    to_iso: Optional[str] = None,
+) -> dict[str, Any]:
+    """Календарь подчинённого глазами руководителя (только просмотр): встречи Google из зеркала,
+    встречи Орбиты и задачи сотрудника. Личные напоминания не отдаём; закрытые в Google — «Занят»."""
+    from assistant.services import orbita_calendar
+    from assistant.services import subordinate_calendar as subcal
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_mirror
+
+    viewer = int(viewer_id)
+    target = str(target_id or "").strip()
+    if not target.isdigit() or not subcal.can_view(viewer, target):
+        raise HTTPException(status_code=400, detail="Календарь этого человека вам не виден")
+    tz = _tz_for(viewer)
+    today = datetime.now(tz).date()
+    start_d = _parse_calendar_day(from_iso, today)
+    end_d = _parse_calendar_day(to_iso, start_d)
+    if end_d < start_d:
+        start_d, end_d = end_d, start_d
+    if (end_d - start_d).days > 62:
+        end_d = start_d + timedelta(days=62)
+    win_start = datetime.combine(start_d, datetime.min.time(), tzinfo=tz)
+    win_end = datetime.combine(end_d + timedelta(days=1), datetime.min.time(), tzinfo=tz)
+
+    rows = subcal.mirror_rows(target, win_start, win_end)
+    private_ids = {str(r.get("event_id") or "") for r in rows if subcal.is_private(r)}
+    raws = [
+        _gcal_raw_for_range(
+            {"raw": subcal.gcal_from_mirror(r, tz), "calendar_id": r.get("calendar_id"), "start": r["start"], "end": r["end"]},
+            tz,
+        )
+        for r in rows
+    ]
+    events = _serialize_gcal_events(viewer, raws, 1500, task_cal_ids=set())
+    try:
+        contacts_by_email = _miniapp_contacts_by_email(viewer)
+    except Exception:
+        contacts_by_email = {}
+    try:
+        for ev in orbita_calendar.events_for(int(target), win_start, win_end):
+            ser = _serialize_calendar_event(ev, contacts_by_email=contacts_by_email)
+            ser["orbita"] = True
+            events.append(ser)
+    except Exception as e:
+        print(f"[subordinate_calendar] orbita target={target} err={e!r}")
+    events.extend(subcal.task_events(viewer, target, win_start, win_end, tz))
+    for ev in events:
+        ev["read_only"] = True
+        if str(ev.get("id") or "") in private_ids:
+            ev["private_busy"] = True
+            for k in ("description", "location", "attendees", "html_link", "htmlLink", "meeting_url", "hangout_link"):
+                ev.pop(k, None)
+
+    def _sk(d: dict[str, Any]) -> str:
+        st = d.get("start") or {}
+        return str(st.get("dateTime") or st.get("date") or "") if isinstance(st, dict) else ""
+
+    synced = calendar_mirror.synced_from(target)
+    try:
+        from assistant.stores import analytics_store
+
+        analytics_store.track(viewer, "calendar_view_subordinate")
+    except Exception:
+        pass
+    return {
+        "connected": True,
+        "read_only": True,
+        "view_user": target,
+        "timezone": str(tz),
+        "from": start_d.isoformat(),
+        "to": end_d.isoformat(),
+        "events": sorted(events, key=_sk),
+        "google_connected": synced is not None,
+    }
 
 
 def _todoist_notes_for_miniapp(telegram_user_id: int) -> list[dict[str, Any]]:
@@ -9954,13 +10040,35 @@ async def miniapp_calendar_range(
     ),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
+    view_user: Optional[str] = Query(None, description="Календарь подчинённого (только просмотр)"),
 ) -> dict[str, Any]:
+    if view_user:
+        return await run_in_threadpool(
+            _subordinate_calendar_payload,
+            int(principal.telegram_user_id),
+            view_user,
+            start or from_date,
+            end or to_date,
+        )
     return await run_in_threadpool(
         _calendar_range_payload,
         int(principal.telegram_user_id),
         start or from_date,
         end or to_date,
     )
+
+
+@miniapp_router.get("/calendar/people")
+async def miniapp_calendar_people(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Чей календарь руководитель может открыть («Календарь подчинённого»). Пусто — подчинённых нет."""
+    from assistant.services import subordinate_calendar
+    from assistant.services.calendar import _tz_for
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(lambda: subordinate_calendar.people(uid, tz=_tz_for(uid)))
+    return {"ok": True, "items": items}
 
 
 @miniapp_router.post("/calendar/availability")
