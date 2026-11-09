@@ -467,6 +467,16 @@ def _valid_principal(org_id: int, principal: str) -> str:
         if not orgs_store.role_of(org_id, p[2:]):
             raise OrgError("Это не участник организации", 400)
         return p
+    if p.startswith("i:") and p[2:].isdigit():
+        # Приглашённый, который ещё не вошёл: права перейдут на его аккаунт при входе (orgs_store._claim_kb_acl).
+        with _LOCK:
+            ok = _conn().execute(
+                "SELECT 1 FROM org_members WHERE id = ? AND org_id = ? AND user_id IS NULL",
+                (int(p[2:]), int(org_id)),
+            ).fetchone()
+        if not ok:
+            raise OrgError("Приглашение не найдено — возможно, человек уже вошёл", 400)
+        return p
     if p.startswith("g:") and p[2:].isdigit():
         with _LOCK:
             ok = _conn().execute(

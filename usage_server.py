@@ -8405,8 +8405,10 @@ def _org_kb_state(uid: int, org_id: int) -> dict[str, Any]:
 
     members = [
         # admin: владелец/админ организации видит и правит всю базу — показываем в «Кто видит документ»
-        {"user_id": m["user_id"], "name": m["name"], "guest": m["guest"], "admin": m["role"] in ("owner", "admin")}
-        for m in orgs_store.list_members(org_id) if m["status"] == "active"
+        {"user_id": m["user_id"], "member_id": m["id"], "invited": not m["user_id"], "name": m["name"],
+         "guest": m["guest"], "admin": bool(m["user_id"]) and m["role"] in ("owner", "admin")}
+        # приглашённые, кто ещё не вошёл, — чтобы открыть им документ заранее (принципал «i:<id>»)
+        for m in orgs_store.list_members(org_id) if m["status"] == "active" or not m["user_id"]
     ]
     return {
         "ok": True,

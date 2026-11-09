@@ -548,7 +548,7 @@
     var admins = {};
     (kb.members || []).forEach(function (m) { if (m.admin) admins["u:" + m.user_id] = 1; });
     var names = (n.acl || []).filter(function (a) { return a.principal !== author && !admins[a.principal]; })
-      .sort(function (a, b) { return (a.principal.indexOf("u:") === 0) - (b.principal.indexOf("u:") === 0); })
+      .sort(function (a, b) { return /^[ui]:/.test(a.principal) - /^[ui]:/.test(b.principal); })
       .map(function (a) { return K().principalName(kb, a.principal); });
     if (!names.length) return "только автор и руководство";
     return names.length > 3 ? names.slice(0, 2).join(", ") + " и ещё " + (names.length - 2) : names.join(", ");
@@ -576,8 +576,8 @@
     (n.acl || []).slice().sort(function (a, b) { return (rank[b.role] || 0) - (rank[a.role] || 0); }).forEach(function (a) {
       if (a.principal === "u:" + author) return;
       if (a.principal.indexOf("u:") === 0 && admins.some(function (m) { return "u:" + m.user_id === a.principal; })) return;
-      var person = a.principal.indexOf("u:") === 0;
-      row(K().principalName(kb, a.principal), person ? "" : K().principalSub(kb, a.principal), roleName[a.role] || a.role, person);
+      var person = /^[ui]:/.test(a.principal);
+      row(K().principalName(kb, a.principal), person && a.principal.indexOf("i:") !== 0 ? "" : K().principalSub(kb, a.principal), roleName[a.role] || a.role, person);
     });
     var parent = n.parent_id != null ? K().nodeOf(kb, n.parent_id) : null;
     var how = n.inherit === false

@@ -705,6 +705,19 @@ def member_email_of(user_id: int | str) -> Optional[str]:
     return str(r[0]) if r else None
 
 
+def _claim_kb_acl(conn: sqlite3.Connection, member_row_id: int, user_id: str) -> None:
+    """Права в базе знаний, выданные приглашённому заранее («i:<id строки>»), — на его аккаунт."""
+    try:
+        conn.execute(
+            "INSERT OR IGNORE INTO org_kb_acl (node_id, principal, role) "
+            "SELECT node_id, ?, role FROM org_kb_acl WHERE principal = ?",
+            (f"u:{user_id}", f"i:{int(member_row_id)}"),
+        )
+        conn.execute("DELETE FROM org_kb_acl WHERE principal = ?", (f"i:{int(member_row_id)}",))
+    except sqlite3.OperationalError:
+        pass  # базы знаний ещё не было
+
+
 def claim_by_tg(user_id: int | str, username: str | None) -> list[int]:
     """/start в боте: приглашения с этим @ником (как ключ или подсказка к почте) → членство."""
     nick = normalize_nick(username or "")
@@ -719,6 +732,7 @@ def claim_by_tg(user_id: int | str, username: str | None) -> list[int]:
             (nick, "tg:" + nick),
         ).fetchall()
         for r in rows:
+            _claim_kb_acl(conn, int(r["id"]), uid)
             if _membership(r["org_id"], uid):
                 conn.execute("DELETE FROM org_members WHERE id = ?", (r["id"],))
                 continue
@@ -776,6 +790,7 @@ def claim_pending(user_id: int | str) -> list[int]:
             [*keys, uname or "\x00"],
         ).fetchall()
         for r in rows:
+            _claim_kb_acl(conn, int(r["id"]), uid)
             if _membership(r["org_id"], uid):
                 conn.execute("DELETE FROM org_members WHERE id = ?", (r["id"],))
                 continue
@@ -901,6 +916,11 @@ def remove_member(actor_id: int | str, org_id: int, member_row_id: int) -> None:
         conn.execute("DELETE FROM org_members WHERE id = ?", (m["id"],))
         if m["user_id"]:
             _drop_from_groups(conn, org_id, str(m["user_id"]))
+        else:
+            try:  # отозвали приглашение — заранее выданные права в базе знаний тоже
+                conn.execute("DELETE FROM org_kb_acl WHERE principal = ?", (f"i:{int(m['id'])}",))
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     if m["user_id"]:
         _hand_over_docs(org_id, str(m["user_id"]))

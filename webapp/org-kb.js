@@ -111,13 +111,18 @@
       });
       return found || "Удалённая группа";
     }
-    var m = (kb.members || []).filter(function (x) { return String(x.user_id) === id; })[0];
+    if (p.indexOf("i:") === 0) {
+      var inv = (kb.members || []).filter(function (x) { return x.invited && String(x.member_id) === id; })[0];
+      return inv ? inv.name : "Приглашение отозвано";
+    }
+    var m = (kb.members || []).filter(function (x) { return !x.invited && String(x.user_id) === id; })[0];
     return m ? m.name : "Бывший участник";
   }
   function principalSub(kb, p) {
     if (p === "all") return "все участники организации, кроме гостей";
     var id = String(p).slice(2);
     if (p.indexOf("u:") === 0) return "";
+    if (p.indexOf("i:") === 0) return "приглашён — увидит, когда войдёт";
     var sub = "";
     (kb.groups || []).forEach(function (g) {
       if (String(g.id) === id) sub = "отдел";
@@ -128,7 +133,7 @@
   // «Все», «ОКК, Чат-боты + 2 человека», «только владельцы»
   function accessLine(kb, n) {
     var acc = n.access || [];
-    var groups = acc.filter(function (p) { return p.indexOf("u:") !== 0; }).map(function (p) { return principalName(kb, p); });
+    var groups = acc.filter(function (p) { return p.indexOf("u:") !== 0 && p.indexOf("i:") !== 0; }).map(function (p) { return principalName(kb, p); });
     var people = acc.length - groups.length;
     var line = groups.length > 2 ? groups.slice(0, 2).join(", ") + " и ещё " + (groups.length - 2) : groups.join(", ");
     if (people) line += (line ? " + " : "") + count(people, "человек", "человека", "человек");
@@ -443,7 +448,10 @@
     if (groups) opts += '<optgroup label="Отделы и команды">' + groups + "</optgroup>";
     var people = "";
     (kb.members || []).forEach(function (m) {
-      if (taken.indexOf("u:" + m.user_id) < 0) people += '<option value="u:' + esc(m.user_id) + '">' + esc(m.name) + (m.guest ? " (гость)" : "") + "</option>";
+      var pid = m.invited ? "i:" + m.member_id : "u:" + m.user_id;
+      if (taken.indexOf(pid) < 0) {
+        people += '<option value="' + esc(pid) + '">' + esc(m.name) + (m.invited ? " (приглашён)" : m.guest ? " (гость)" : "") + "</option>";
+      }
     });
     if (people) opts += '<optgroup label="Люди">' + people + "</optgroup>";
     return opts;

@@ -58,6 +58,30 @@ class OrgKbTests(unittest.TestCase):
         self.assertIn(self.note, {int(n["id"]) for n in notes_store.list_notes(BACK)})  # поиск и Лео — видят
         self.assertIn(self.note, [int(n["id"]) for n in notes_store.search_notes(BACK, "перезапустить n8n")])
 
+    def test_invited_member_gets_access_on_login(self) -> None:
+        with mock.patch.object(orgs_store, "_resolve_key", lambda actor, key: None):
+            orgs_store.add_member(OWNER, self.org, "amyz@gmail.com", tg="asmalltalk")
+        row = next(m for m in orgs_store.list_members(self.org) if m["invited_key"] == "amyz@gmail.com")
+        self.assertIsNone(row["user_id"])
+        org_kb.set_access(BACK, self.org, self.doc, f"i:{row['id']}", "reader")
+        with self.assertRaises(OrgError):
+            org_kb.set_access(BACK, self.org, self.doc, "i:999999", "reader")
+        self.assertEqual(org_kb.role_for_note(OUTSIDER, self.note), "")
+        self.assertEqual(orgs_store.claim_by_tg(OUTSIDER, "asmalltalk"), [self.org])
+        self.assertEqual(org_kb.role_for_note(OUTSIDER, self.note), "reader")
+        own = org_kb.access(self.org, BACK, self.doc)["own"]
+        self.assertIn(f"u:{OUTSIDER}", [a["principal"] for a in own])
+        self.assertNotIn(f"i:{row['id']}", [a["principal"] for a in own])
+
+    def test_revoked_invite_drops_prepared_access(self) -> None:
+        with mock.patch.object(orgs_store, "_resolve_key", lambda actor, key: None):
+            orgs_store.add_member(OWNER, self.org, "gone@gmail.com")
+        row = next(m for m in orgs_store.list_members(self.org) if m["invited_key"] == "gone@gmail.com")
+        org_kb.set_access(BACK, self.org, self.doc, f"i:{row['id']}", "reader")
+        orgs_store.remove_member(OWNER, self.org, row["id"])
+        own = org_kb.access(self.org, BACK, self.doc)["own"]
+        self.assertNotIn(f"i:{row['id']}", [a["principal"] for a in own])
+
     def test_roles_inherit_from_section(self) -> None:
         self.assertEqual(org_kb.role_for_note(BACK, self.note), "owner")  # автор
         self.assertEqual(org_kb.role_for_note(MANAGER, self.note), "reader")
