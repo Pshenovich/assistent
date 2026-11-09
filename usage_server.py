@@ -39,7 +39,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -2545,6 +2545,9 @@ def _miniapp_event_recurrence(body: "_MiniappCalendarEventUpdate") -> Optional[l
 
 
 class _MiniappCalendarTaskBody(BaseModel):
+    # Клиент может прислать id исполнителя или документа числом (id из контактов) — принимаем как строку.
+    model_config = ConfigDict(coerce_numbers_to_str=True)
+
     title: Optional[str] = None
     description: Optional[str] = None
     result: Optional[str] = None

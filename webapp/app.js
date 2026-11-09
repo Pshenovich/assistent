@@ -23377,7 +23377,7 @@
       showNoteToast("«" + named + "» нет в контактах — выберите исполнителя");
       return;
     }
-    var who = contact ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" } : me;
+    var who = contact ? { user_id: String(contact.user_id || contact.telegram_user_id || ""), email: String(contact.email || ""), name: String(contact.name || "") } : me;
     s.taking = true;
     Promise.resolve(
       focusCreateTask(aid, f, { title: f.text || "", due: focusDeadlineIso(f.deadline) || focusDeadlineIso("завтра"), comment: f.comment || "", who: who })
@@ -48464,9 +48464,9 @@
       body: JSON.stringify(Object.assign({
         title: text,
         description: desc,
-        assignee_user_id: who.user_id || "",
-        assignee_email: who.email || "",
-        assignee_name: who.name || "",
+        assignee_user_id: String(who.user_id || ""),
+        assignee_email: String(who.email || ""),
+        assignee_name: String(who.name || ""),
         note_id: src.kind === "note" && src.id ? String(src.id) : "",
         // пункт задач встречи: поставится, только если его ещё никто не взял
         meeting_item: src.kind === "note" && src.id && src.item ? String(src.item) : undefined,
@@ -48477,7 +48477,7 @@
         if (!task || task.id == null) throw new Error("Не удалось поставить задачу");
         rememberTaskTip(task);
         loadActual({ skipCachePaint: true, silent: true });
-        var whoName = who.name && who.user_id !== defaultTaskAssignee().user_id ? " — " + who.name : "";
+        var whoName = who.name && String(who.user_id || "") !== defaultTaskAssignee().user_id ? " — " + who.name : "";
         return focusRunOp(aid, f, { op: "converted", task_id: task.id }, "Задача поставлена" + whoName);
       })
       .catch(function (e) {
