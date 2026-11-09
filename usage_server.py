@@ -18876,6 +18876,16 @@ async def orbita_landing_route() -> FileResponse:
     return FileResponse(_orbita_page_path, media_type="text/html", headers={"Cache-Control": "public, max-age=300"})
 
 
+# Английская версия лендинга — для проверок Google/Zoom и иностранных посетителей.
+_orbita_en_page_path = _docs_static_dir / "orbita-en.html"
+
+
+@app.get("/en", include_in_schema=False)
+@app.get("/en/", include_in_schema=False)
+async def orbita_landing_en_route() -> FileResponse:
+    return FileResponse(_orbita_en_page_path, media_type="text/html", headers={"Cache-Control": "public, max-age=300"})
+
+
 # Чат с Лео на лендинге: ответы о продукте и заявки (assistant/services/site_chat.py).
 from assistant.services.site_chat import make_router as _make_site_chat_router  # noqa: E402
 

@@ -305,3 +305,10 @@ def test_review_login_code_off_without_env(client: TestClient, monkeypatch: pyte
     assert not review_access.is_review_user(900_000_000_001)
     monkeypatch.setenv("REVIEW_LOGIN_CODE", "SHORT")  # короткий код не принимаем
     assert review_access.match_code("SHORT") is None
+
+
+def test_english_landing_served(client: TestClient):
+    resp = client.get("/en")
+    assert resp.status_code == 200
+    assert 'lang="en"' in resp.text and "Google API Services User Data Policy" in resp.text
+    assert 'href="/en"' in client.get("/orbita").text
