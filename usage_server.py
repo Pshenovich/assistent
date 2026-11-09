@@ -6561,13 +6561,10 @@ async def miniapp_calendar_tasks_triage(
         elif action == "done":
             await run_in_threadpool(partial(calendar_tasks_store.triage_accept, uid, task_id, actor_name=name))
             row = await run_in_threadpool(
-                partial(calendar_tasks_store.update_task, uid, task_id, done=True, result=body.result, tz=tz)
+                partial(calendar_tasks_store.update_task, uid, task_id, done=True, result=body.result, tz=tz,
+                        actor_name=name)
             )
-            if row:
-                await run_in_threadpool(
-                    partial(calendar_tasks_store.add_event, row["id"], "done", actor_user_id=uid,
-                            actor_name=name, text=str(row.get("result") or ""))
-                )
+            if row:  # событие «Сдано» пишет update_task
                 await run_in_threadpool(partial(task_notify.notify_task_owner_done, task=row, completer_name=name))
         elif action == "undo":
             # Отмена «Сделано» снимает и отметку о выполнении (постановщик уже получил пуш — это ок).
@@ -7125,6 +7122,9 @@ async def miniapp_calendar_tasks_patch(
             await run_in_threadpool(calendar_tasks_store.check_parent, uid, task_id, body.parent_id)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+    if not is_owner:
+        # «Открыто» — до правки: иначе сдача без открытия давала в ленте «Сдано», потом «Открыто».
+        await run_in_threadpool(calendar_tasks_store.mark_seen, uid, task_id)
     try:
         row = await run_in_threadpool(
             partial(
@@ -7149,6 +7149,7 @@ async def miniapp_calendar_tasks_patch(
                     "by_name": _principal_display_name(principal),
                 },
                 tz=tz,
+                actor_name=_principal_display_name(principal),
             )
         )
     except ValueError as e:
@@ -7201,16 +7202,7 @@ async def miniapp_calendar_tasks_patch(
     ):
         from assistant.lib.task_notify import notify_task_owner_done
 
-        await run_in_threadpool(
-            partial(
-                calendar_tasks_store.add_event,
-                out["id"],
-                "done",
-                actor_user_id=uid,
-                actor_name=_principal_display_name(principal),
-                text=str(out.get("result") or ""),
-            )
-        )
+        # Событие «Сдано» уже записал update_task (один раз, под замком).
         await run_in_threadpool(
             partial(
                 notify_task_owner_done,

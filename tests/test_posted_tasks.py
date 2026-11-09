@@ -208,6 +208,42 @@ def test_discussion_question_and_answer(client, store, sent):
     assert [e["text"] for e in ev if e["kind"] == "message"] == ["Квартал или 9 месяцев?", "Квартал"]
 
 
+def test_submit_result_writes_one_done_event(client, store, sent):
+    """«Сдать» исполнителем — одно «Сдано» в ленте (было по два: хранилище + обработчик)."""
+    t = _delegated(store)
+    base = f"/api/miniapp/calendar/tasks/{t['id']}"
+    r = client.patch(base, json={"done": True, "result": "Таблица готова"}, headers=_headers(ASSIGNEE))
+    assert r.status_code == 200
+    # Повтор того же запроса (двойной Enter) — задача уже сдана, второго события нет.
+    client.patch(base, json={"done": True, "result": "Таблица готова"}, headers=_headers(ASSIGNEE))
+    ev = client.get(base + "/events", headers=_headers(OWNER)).json()["events"]
+    done = [e for e in ev if e["kind"] == "done"]
+    assert len(done) == 1
+    assert done[0]["text"] == "Таблица готова" and done[0]["actor_user_id"] == str(ASSIGNEE)
+    assert done[0]["actor_name"]
+    # Сдача из разбора входящих — тоже одно событие.
+    t2 = _delegated(store, title="Второе")
+    r = client.post(f"/api/miniapp/calendar/tasks/{t2['id']}/triage", json={"action": "done", "result": "Готово"},
+                    headers=_headers(ASSIGNEE))
+    assert r.status_code == 200, r.text
+    ev2 = client.get(f"/api/miniapp/calendar/tasks/{t2['id']}/events", headers=_headers(OWNER)).json()["events"]
+    assert [e["kind"] for e in ev2].count("done") == 1
+
+
+def test_old_double_done_events_shown_once(store):
+    t = _delegated(store)
+    store.update_task(ASSIGNEE, t["id"], done=True, result="Готово", tz=TZ)
+    # Так записывалось с 7 по 9 ноября: второе «Сдано» тем же человеком через секунду.
+    store.add_event(t["id"], "done", actor_user_id=ASSIGNEE, actor_name="Ульяна", text="Готово", notify=False)
+    done = [e for e in store.list_events(store.get_task_for_user(OWNER, t["id"])) if e["kind"] == "done"]
+    assert len(done) == 1 and done[0]["actor_name"] == "Ульяна"
+    # После «Вернуть» новая сдача с тем же текстом — отдельное событие.
+    store.add_event(t["id"], "returned", actor_user_id=OWNER, text="Доделай", notify=False)
+    store.add_event(t["id"], "done", actor_user_id=ASSIGNEE, text="Готово", notify=False)
+    done = [e for e in store.list_events(store.get_task_for_user(OWNER, t["id"])) if e["kind"] == "done"]
+    assert len(done) == 2
+
+
 def test_accept_return_cancel(client, store, sent):
     t = _delegated(store)
     base = f"/api/miniapp/calendar/tasks/{t['id']}"

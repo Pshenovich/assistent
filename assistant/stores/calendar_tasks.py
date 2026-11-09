@@ -1358,6 +1358,7 @@ def update_task(
     schedule_log_entry: dict[str, Any] | None = None,
     schedule_actor: dict[str, Any] | None = None,
     tz: ZoneInfo | None = None,
+    actor_name: str = "",
 ) -> Optional[dict[str, Any]]:
     uid = _uid(owner_user_id)
     existing = get_task_for_user(uid, task_id)
@@ -1479,6 +1480,15 @@ def update_task(
     else:
         done_at = str(existing.get("done_at") or "")
     with _LOCK:
+        # «Было/стало» — по базе под замком: два почти одновременных «Сдать» (двойной Enter)
+        # оба читали задачу несданной и писали по событию «Сдано».
+        cur = _conn().execute(
+            "SELECT done, done_at FROM calendar_tasks WHERE id = ?", (int(existing["id"]),)
+        ).fetchone()
+        was_done_now = bool(int(cur["done"] or 0)) if cur else bool(existing["done"])
+        first_done = bool(fields["done"]) and not was_done_now
+        if fields["done"] and was_done_now:
+            done_at = str((cur["done_at"] if cur else existing.get("done_at")) or "")
         _conn().execute("UPDATE calendar_tasks SET done_at = ? WHERE id = ?", (done_at, int(existing["id"])))
         if reassigned:
             # Новый исполнитель — прежние «видел / в работе / напомнили» не про него.
@@ -1553,10 +1563,11 @@ def update_task(
         _sync_inline_triage(int(existing["id"]))
     if fields["done"] and not existing["done"] and not reassigned:
         mark_triaged(existing)  # сдал из обхода разбора — значит, взял
-    if fields["done"] and not existing["done"] and task_is_delegated(existing):
+    if first_done and task_is_delegated(existing):
         # Каждая сдача — событием: после «Вернуть» done_at стирается, а история сдач нужна показателям.
-        add_event(existing["id"], "done", actor_user_id=uid, at=done_at,
-                  text=str(fields["result"] or ""), notify=False)
+        # Пишется только здесь — обработчики запросов своё «Сдано» больше не добавляют (было по два).
+        add_event(existing["id"], "done", actor_user_id=uid, actor_name=actor_name, at=done_at,
+                  text=str(fields["result"] or ""))
     if bool(fields["done"]) != bool(existing["done"]):
         try:  # задача из пункта встречи — в саммари «Выполнено» / снова «поставлена»
             from assistant.services import focus_items
@@ -1686,6 +1697,30 @@ def _meeting_task_changed(note_id: int) -> None:
     threading.Thread(target=run, name=f"meeting-tasks-{note_id}", daemon=True).start()
 
 
+def _drop_double_done(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """С 7 по 9 ноября 2026 каждая сдача писалась дважды. Повтор «Сдано» тем же человеком
+    с тем же текстом в пределах пары минут — тот же клик, в ленте одним сообщением."""
+    out: list[dict[str, Any]] = []
+    last: dict[str, Any] | None = None
+    for e in events:
+        if e["kind"] == "done" and last is not None:
+            try:
+                gap = abs((datetime.fromisoformat(e["at"]) - datetime.fromisoformat(last["at"])).total_seconds())
+            except (TypeError, ValueError):
+                gap = None
+            if (gap is not None and gap <= 180 and e["actor_user_id"] == last["actor_user_id"]
+                    and e["text"].strip() == last["text"].strip()):
+                if not last.get("actor_name") and e.get("actor_name"):
+                    last["actor_name"] = e["actor_name"]
+                continue
+        out.append(e)
+        if e["kind"] == "done":
+            last = e
+        elif e["kind"] == "returned":
+            last = None  # после «Вернуть» новая сдача — отдельное событие, даже с тем же текстом
+    return out
+
+
 def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
     """События поручения по времени. Для задач, поставленных до ленты, достраиваем из полей задачи."""
     tid = int(task["id"])
@@ -1704,6 +1739,7 @@ def list_events(task: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for r in rows
     ]
+    out = _drop_double_done(out)
     kinds = {e["kind"] for e in out}
     owner = str(task.get("owner_user_id") or "")
     assignee = str(task.get("assignee_user_id") or "")

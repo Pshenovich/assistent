@@ -28685,7 +28685,10 @@
       if (!form.contains(e.target)) closeMenu();
     });
 
+    var sending = false;
     async function submit() {
+      // Enter мимо выключенной кнопки: второй Enter до ответа сервера слал «Сдать» ещё раз.
+      if (sending) return;
       var text = String(ta.value || "").trim();
       if (!mode && !text && !cmp.files.length && !cmp.refs.length) {
         ta.focus();
@@ -28696,6 +28699,7 @@
         return;
       }
       send.disabled = true;
+      sending = true;
       try {
         var r;
         if (mode === "return") r = await postedApi(state.taskId, "return", { text: text });
@@ -28724,6 +28728,8 @@
       } catch (err) {
         showNoteToast((err && err.message) || "Не получилось отправить");
         syncSend();
+      } finally {
+        sending = false;
       }
     }
     form.addEventListener("submit", function (e) {
