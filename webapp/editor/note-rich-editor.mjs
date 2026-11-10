@@ -4532,8 +4532,37 @@ function createMeetingTasksExtension(ctx) {
     e.stopPropagation();
     if (typeof ctx.onMeetingTaskClick === "function") ctx.onMeetingTaskClick(Object.assign({ anchor: e.currentTarget }, detail));
   }
+  // Исполнитель не из нашей команды: имя + компания, «+ в контакты», «следит: …» — у каждого свой клик.
+  function externalWho(item) {
+    var el = document.createElement("span");
+    el.className = "mt-ext";
+    el.setAttribute("contenteditable", "false");
+    function part(cls, text, name, tag) {
+      var p = document.createElement("span");
+      p.className = cls;
+      p.textContent = text;
+      p.setAttribute("role", "button");
+      p.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      p.addEventListener("click", function (e) {
+        fire({ item: item.id, col: 2, state: item, part: name }, e);
+      });
+      if (tag) p.appendChild(tag);
+      return p;
+    }
+    var badge = document.createElement("span");
+    badge.className = "mt-ext-org";
+    badge.textContent = item.who_company || "клиент";
+    var head = part("mt-val mt-ext-name", (item.who || "—") + " ", "who", badge);
+    el.appendChild(head);
+    if (!item.who_saved) el.appendChild(part("mt-ext-sub mt-ext-add", "+ в контакты", "contact"));
+    if (item.controller_name) el.appendChild(part("mt-ext-sub", "следит: " + item.controller_name + " ▾", "controller"));
+    return el;
+  }
   function cellWidget(item, col) {
     return function () {
+      if (col === 2 && item.external) return externalWho(item);
       var el = document.createElement("span");
       var text = col === 1 ? item.label : col === 2 ? item.who : item.due;
       el.className = "mt-val" + (col === 1 ? " mt-chip mt-chip--" + item.code : "") + (text ? "" : " is-empty");
@@ -4541,6 +4570,11 @@ function createMeetingTasksExtension(ctx) {
       el.setAttribute("role", "button");
       el.textContent = text || (col === 2 && !MT_EXCLUDED[item.code] ? "выбрать…" : "—");
       if (col === 1 && item.note) el.title = item.note;
+      if (col === 2 && text && item.who_unknown) {
+        el.textContent = text + " ?";
+        el.classList.add("is-unknown");
+        el.title = "Нет среди участников из команды — можно поручить по имени";
+      }
       el.addEventListener("mousedown", function (e) {
         e.preventDefault();
       });
@@ -5183,7 +5217,8 @@ function createMeetingTasksExtension(ctx) {
                     decos.push(Decoration.node(at, at + cell.nodeSize, { class: "mt-cell mt-col" + i, contenteditable: "false" }));
                     decos.push(
                       Decoration.widget(at + 1, cellWidget(it, i), {
-                        key: ["mt", i, it.id, it.code, it.label, it.who, it.due, it.note].join("|"),
+                        key: ["mt", i, it.id, it.code, it.label, it.who, it.due, it.note, it.who_unknown ? 1 : 0,
+                          it.external ? [it.who_company, it.who_saved ? 1 : 0, it.controller_name].join("/") : ""].join("|"),
                         side: -1,
                         ignoreSelection: true,
                         stopEvent: stop,
@@ -6276,7 +6311,7 @@ function mountTable(container, options) {
 }
 
 var noteRichEditorApi = {
-  assetVersion: "20261108-taskmark",
+  assetVersion: "20261110-extwho",
   Y: Y,
   mount: mount,
   mountTable: mountTable,

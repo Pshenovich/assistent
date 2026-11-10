@@ -370,3 +370,41 @@ def test_my_tasks_endpoint(client, store):
     got = {t["id"]: t for t in body["items"]}
     assert got[taken["id"]]["owner_name"]
     assert "owner_name" not in got[own["id"]]
+
+
+def test_external_by_name_goes_to_posted_not_my_tasks(store):
+    """Клиенту по имени (без почты и аккаунта): не моя задача и не в календаре — в «Поставленных»."""
+    t = store.create_task(OWNER, title="Выгрузка клиентов", start_at=datetime(2026, 10, 20, 15, 0, tzinfo=TZ),
+                          assignee_name="Ирина", assignee_external=True, tz=TZ)
+    assert t["assignee_external"] and t["assignee_user_id"] == str(OWNER)
+    assert store.is_external_delegation(t)
+    assert [x["id"] for x in store.list_posted_tasks(OWNER)] == [t["id"]]
+    assert t["id"] not in [x["id"] for x in store.list_my_tasks(OWNER)]
+    assert not store.task_visible_in_calendar(t, OWNER)
+    # выбрали человека из Орбиты — отметка снимается
+    upd = store.update_task(OWNER, t["id"], assignee_user_id=ASSIGNEE, assignee_name="Ульяна")
+    assert not upd["assignee_external"]
+
+
+def test_external_controller_moves_task(store):
+    t = store.create_task(OWNER, title="Договор", start_at=datetime(2026, 10, 20, 15, 0, tzinfo=TZ),
+                          assignee_name="Ирина", assignee_external=True, tz=TZ)
+    row = store.set_external_controller(t["id"], ASSIGNEE)
+    assert row["owner_user_id"] == str(ASSIGNEE) and row["assignee_user_id"] == str(ASSIGNEE)
+    assert store.list_posted_tasks(OWNER) == []
+    assert [x["id"] for x in store.list_posted_tasks(ASSIGNEE)] == [t["id"]]
+    plain = _delegated(store)
+    assert store.set_external_controller(plain["id"], OWNER) is None  # обычное поручение не трогаем
+
+
+def test_posted_overdue_external_no_nudge():
+    from assistant.services import proactive
+
+    ext = {"id": 7, "title": "Выгрузка", "owner_user_id": str(OWNER), "assignee_user_id": str(OWNER),
+           "assignee_external": True, "assignee_name": "Ирина",
+           "start_at": "2026-10-20T11:00:00+00:00", "end_at": "2026-10-20T11:30:00+00:00"}
+    assert proactive._posted_by(ext, str(OWNER))
+    evening = datetime(2026, 10, 23, 19, 0, tzinfo=TZ).astimezone(timezone.utc)
+    card = proactive.rule_posted_overdue([ext], evening, TZ)[0]
+    assert [a["act"] for a in card["actions"]] == ["open_posted"]  # Орбита клиенту не напишет
+    assert "не из команды" in card["tasks"][0]["meta"]

@@ -82,6 +82,7 @@ def _conn() -> sqlite3.Connection:
     _ensure_all_day_column(_CONN)
     _ensure_schedule_log_column(_CONN)
     _ensure_owner_archived_column(_CONN)
+    _ensure_assignee_external_column(_CONN)
     _ensure_recurrence_column(_CONN)
     _ensure_result_column(_CONN)
     _ensure_assignee_state_columns(_CONN)
@@ -277,6 +278,15 @@ def _ensure_owner_archived_column(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_assignee_external_column(conn: sqlite3.Connection) -> None:
+    """Исполнитель не из нашей команды (клиент, подрядчик): задачу ведёт постановщик — «следит»."""
+    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(calendar_tasks)")}
+    if "assignee_external" not in cols:
+        conn.execute(
+            "ALTER TABLE calendar_tasks ADD COLUMN assignee_external INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 def _normalize_schedule_log(raw: Any) -> list[dict[str, Any]]:
     if isinstance(raw, list):
         items = raw
@@ -436,6 +446,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         else False,
         "recurrence": str(row["recurrence"] or "") if "recurrence" in keys else "",
         "parent_id": int(row["parent_id"]) if "parent_id" in keys and row["parent_id"] else None,
+        "assignee_external": bool(int(row["assignee_external"] or 0)) if "assignee_external" in keys else False,
         **{c: str(row[c] or "") if c in keys else "" for c in ASSIGNEE_STATE_COLUMNS + OUTCOME_COLUMNS},
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -467,6 +478,8 @@ def task_visible_in_calendar(task: dict[str, Any] | None, viewer_id: int | str) 
         return False  # пункт внутри общей задачи
     if task_is_delegated(task) and viewer == owner:
         return False
+    if task.get("assignee_external") and viewer == owner:
+        return False  # делает клиент, а не постановщик — только в «Поставленных»
     if task_is_delegated(task) and str(task.get("outcome") or "") == "cancelled":
         return False  # постановщик отменил поручение — у исполнителя его больше нет
     if task_is_delegated(task) and viewer == assignee and str(task.get("assignee_triage") or "") in TRIAGE_HIDDEN:
@@ -711,6 +724,7 @@ def create_task(
     tz: ZoneInfo | None = None,
     recurrence: str = "",
     parent_id: int | None = None,
+    assignee_external: bool = False,
 ) -> dict[str, Any]:
     uid = _uid(owner_user_id)
     if parent_id is not None:
@@ -741,8 +755,8 @@ def create_task(
                 owner_user_id, title, description, result, start_at, end_at,
                 assignee_user_id, assignee_email, assignee_name,
                 checklist_json, note_id, all_day, recurrence, assignee_triage,
-                parent_id, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parent_id, assignee_external, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 uid,
@@ -760,6 +774,7 @@ def create_task(
                 _clip(rrule, 500),
                 "inbox" if assignee and assignee != uid else "",
                 int(parent_id) if parent_id is not None else None,
+                1 if assignee_external and assignee == uid else 0,
                 now,
                 now,
             ),
@@ -1168,11 +1183,36 @@ def _norm_emails(emails: Any) -> set[str]:
 
 def is_external_delegation(task: dict[str, Any], self_emails: Any = None) -> bool:
     """Поручил человеку без аккаунта в Орбите: исполнитель по id — сам постановщик (или пусто),
-    но в задаче чужая почта. Это не «моя» задача, а поставленная — её место в «Поставленных»."""
+    но в задаче чужая почта или отметка «не из нашей команды» (клиент — можно просто по имени).
+    Это не «моя» задача, а поставленная — её место в «Поставленных»."""
     owner = str(task.get("owner_user_id") or "")
     assignee = str(task.get("assignee_user_id") or "")
+    if assignee not in ("", owner):
+        return False
+    if task.get("assignee_external"):
+        return True
     email = str(task.get("assignee_email") or "").strip().lower()
-    return assignee in ("", owner) and bool(email) and email not in _norm_emails(self_emails)
+    return bool(email) and email not in _norm_emails(self_emails)
+
+
+def set_external_controller(task_id: int | str, controller_user_id: int | str) -> Optional[dict[str, Any]]:
+    """Кто следит за задачей человека не из команды: он и постановщик, и «исполнитель» по id.
+
+    Права проверяет вызывающий (таблица задач встречи — решают участники встречи)."""
+    row = _get_task_row(int(task_id))
+    if not row or not row.get("assignee_external"):
+        return None
+    uid = _uid(controller_user_id)
+    if not uid or uid == str(row.get("owner_user_id") or ""):
+        return row
+    with _LOCK:
+        _conn().execute(
+            "UPDATE calendar_tasks SET owner_user_id = ?, assignee_user_id = ?, google_task_id = '',"
+            " google_tasklist_id = '', google_event_id = '', google_calendar_id = '', updated_at = ? WHERE id = ?",
+            (uid, uid, _now_iso(), int(row["id"])),
+        )
+        _conn().commit()
+    return _get_task_row(int(row["id"]))
 
 
 def _external_posted(uid: str, *, include_done: bool, archived_flag: int | None, self_emails: Any) -> list[dict[str, Any]]:
@@ -1182,7 +1222,7 @@ def _external_posted(uid: str, *, include_done: bool, archived_flag: int | None,
             SELECT * FROM calendar_tasks
             WHERE owner_user_id = ?
               AND (assignee_user_id = '' OR assignee_user_id = owner_user_id)
-              AND IFNULL(assignee_email, '') != ''
+              AND (IFNULL(assignee_email, '') != '' OR IFNULL(assignee_external, 0) = 1)
               AND (? = 1 OR done = 0)
               AND (? IS NULL OR IFNULL(owner_archived, 0) = ?)
               AND """ + NOT_INLINE_SQL + """
@@ -1359,6 +1399,7 @@ def update_task(
     schedule_actor: dict[str, Any] | None = None,
     tz: ZoneInfo | None = None,
     actor_name: str = "",
+    assignee_external: bool | None = None,
 ) -> Optional[dict[str, Any]]:
     uid = _uid(owner_user_id)
     existing = get_task_for_user(uid, task_id)
@@ -1473,6 +1514,10 @@ def update_task(
         "updated_at": _now_iso(),
     }
     reassigned = fields["assignee_user_id"] != existing["assignee_user_id"]
+    # «Не из нашей команды» — только пока исполнитель по id сам постановщик; выбрали человека из Орбиты — снимаем.
+    external = bool(existing.get("assignee_external")) if assignee_external is None else bool(assignee_external)
+    if fields["assignee_user_id"] != str(existing["owner_user_id"]):
+        external = False
     if fields["done"] and not existing["done"]:
         done_at = _now_iso()
     elif not fields["done"]:
@@ -1522,7 +1567,7 @@ def update_task(
                 all_day = ?,
                 google_task_id = ?, google_tasklist_id = ?,
                 google_event_id = ?, google_calendar_id = ?,
-                schedule_log_json = ?, updated_at = ?
+                schedule_log_json = ?, assignee_external = ?, updated_at = ?
             WHERE id = ?
             """,
             (
@@ -1544,6 +1589,7 @@ def update_task(
                 fields["google_event_id"],
                 fields["google_calendar_id"],
                 fields["schedule_log_json"],
+                1 if external else 0,
                 fields["updated_at"],
                 int(existing["id"]),
             ),

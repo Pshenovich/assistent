@@ -2592,6 +2592,8 @@ class _MiniappCalendarTaskBody(BaseModel):
     meeting_item: Optional[str] = None
     # Общая задача: при создании — вложить в неё; в PATCH — null делает задачу самостоятельной.
     parent_id: Optional[int] = None
+    # Исполнитель не из нашей команды (клиент, подрядчик): можно просто по имени; задачу ведёт постановщик.
+    assignee_external: Optional[bool] = None
 
 
 class _MiniappCalendarAvailabilityBody(BaseModel):
@@ -7170,9 +7172,25 @@ async def miniapp_calendar_tasks_create(
         if reused:
             return {"ok": True, "task": _task_api(reused, tz=tz, viewer_id=uid)}
     assignee_uid = _resolve_calendar_task_assignee(principal, body)
+    owner_uid = uid
+    external = bool(body.assignee_external)
+    if not external and meeting_item and str(body.assignee_email or "").strip() and not assignee_uid:
+        external = True  # почта не из Орбиты — человек не из команды: следит владелец встречи
+    if external:
+        if not str(body.assignee_name or "").strip():
+            raise HTTPException(status_code=400, detail="Напишите, кому поручить")
+        if meeting_item:
+            # Следит владелец встречи (решение 2026-11-10); сменить — в строке таблицы задач.
+            from assistant.services import meeting_tasks as _mt
+
+            try:
+                owner_uid = int(await run_in_threadpool(_mt.meeting_owner, uid, int(body.note_id)))
+            except LookupError as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+        assignee_uid = str(owner_uid)
     create = partial(
         calendar_tasks_store.create_task,
-        uid,
+        owner_uid,
         title=title,
         description=body.description or "",
         result=body.result or "",
@@ -7186,6 +7204,7 @@ async def miniapp_calendar_tasks_create(
         all_day=bool(body.all_day),
         tz=tz,
         parent_id=body.parent_id or None,
+        assignee_external=external,
     )
     from assistant.services import meeting_tasks
 
@@ -7251,9 +7270,13 @@ async def miniapp_calendar_tasks_patch(
     assignee_uid = None
     # Пустые строки с фронта = «не менять», иначе исполнитель мог
     # затереть назначение при неполном payload.
-    patch_assignee = body.assignee_user_id is not None or body.assignee_email is not None
+    patch_assignee = body.assignee_user_id is not None or body.assignee_email is not None or bool(body.assignee_external)
     if patch_assignee:
         assignee_uid = _resolve_calendar_task_assignee(principal, body) or None
+    if body.assignee_external:
+        if not is_owner:
+            raise HTTPException(status_code=403, detail="Поручить человеку не из команды может постановщик")
+        assignee_uid = str(existing.get("owner_user_id") or uid)
     start_raw = (body.start or "").strip() or None
     end_raw = (body.end or "").strip() or None
     if "parent_id" in body.model_fields_set and body.parent_id:
@@ -7289,6 +7312,7 @@ async def miniapp_calendar_tasks_patch(
                 },
                 tz=tz,
                 actor_name=_principal_display_name(principal),
+                assignee_external=True if body.assignee_external else None,
             )
         )
     except ValueError as e:
@@ -7376,6 +7400,7 @@ class _MiniappContactBody(BaseModel):
     email: str = ""
     telegram_username: Optional[str] = None
     aliases: Optional[list[str]] = None
+    company: Optional[str] = None
 
 
 class _MiniappContactPatch(BaseModel):
@@ -7384,6 +7409,7 @@ class _MiniappContactPatch(BaseModel):
     telegram_username: Optional[str] = None
     aliases: Optional[list[str]] = None
     clear_telegram: bool = False
+    company: Optional[str] = None
 
 
 def _miniapp_tg_username(principal: _MiniappPrincipal) -> str | None:
@@ -7568,6 +7594,7 @@ async def miniapp_contacts_create(
             email=body.email,
             telegram_username_contact=body.telegram_username,
             aliases=body.aliases,
+            company=body.company,
         )
     )
     if status == "invalid":
@@ -7646,6 +7673,7 @@ async def miniapp_contacts_update(
             telegram_username_contact=body.telegram_username,
             aliases=body.aliases,
             clear_telegram=body.clear_telegram,
+            company=body.company,
         )
     )
     if item is None:
@@ -15693,7 +15721,11 @@ async def miniapp_note_meeting_tasks(
         note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
         if not note:
             raise HTTPException(status_code=404, detail="Документ не найден")
-        return meeting_tasks.rows(note)
+        out = meeting_tasks.rows(note)
+        if out.get("items"):
+            # Выбор исполнителя в ячейке: участники-команда (и «следит: …») и гости встречи без аккаунта.
+            out["people"] = meeting_tasks.people(note)
+        return out
 
     return {"ok": True, **(await run_in_threadpool(_run))}
 
@@ -15810,6 +15842,16 @@ async def miniapp_note_meeting_task_op(
     from assistant.services import meeting_tasks
 
     uid = int(principal.telegram_user_id)
+    if body.op == "controller":
+        try:
+            item = await run_in_threadpool(
+                meeting_tasks.set_controller, uid, note_id, item_id, str((body.fields or {}).get("user_id") or "")
+            )
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return {"ok": True, "item": item}
     try:
         item = await run_in_threadpool(
             partial(

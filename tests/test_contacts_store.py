@@ -29,6 +29,24 @@ class TestContactsStore(unittest.TestCase):
         self.addCleanup(self.patch_resolve.stop)
         contacts_store._CONTACTS_CACHE_BY_PATH.clear()
 
+    def test_company(self) -> None:
+        self._patch_paths()
+        item, st = contacts_store.create_contact_for_user(
+            telegram_user_id=self.uid, telegram_username=None, name="Ирина",
+            email="irina@alfa.ru", company="Альфа",
+        )
+        self.assertEqual((st, item["company"]), ("added", "Альфа"))
+        # уже записанному компания не перезаписывается
+        item, _ = contacts_store.create_contact_for_user(
+            telegram_user_id=self.uid, telegram_username=None, name="Ирина",
+            email="irina@alfa.ru", company="Бета",
+        )
+        self.assertEqual(item["company"], "Альфа")
+        row = contacts_store.update_contact_for_user(
+            telegram_user_id=self.uid, telegram_username=None, old_email="irina@alfa.ru", company="",
+        )
+        self.assertNotIn("company", row)
+
     def test_create_update_delete(self) -> None:
         self._patch_paths()
         item, st = contacts_store.create_contact_for_user(

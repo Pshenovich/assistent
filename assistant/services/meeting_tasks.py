@@ -44,6 +44,7 @@ LABELS = {
     "doubtful": "Возможно, не задача",
     "skipped": "Не разбираем",
     "nested": "Подзадача",
+    "waiting": "Ждём",
 }
 
 _DOUBT_KIND = {"decision": "это решение", "question": "это вопрос", "not_task": "не похоже на задачу", "duplicate": "похоже на дубль"}
@@ -156,15 +157,23 @@ def status_of(t: dict[str, Any], task: Optional[dict[str, Any]] = None) -> dict[
     elif task:
         out["task_id"] = int(task["id"])
         out["due"] = _short_date(str(task.get("start_at") or ""), task.get("owner_user_id")) or out["due"]
-        delegated = str(task.get("owner_user_id") or "") != str(task.get("assignee_user_id") or "")
+        external = bool(task.get("assignee_external"))
+        delegated = external or str(task.get("owner_user_id") or "") != str(task.get("assignee_user_id") or "")
         triage = str(task.get("assignee_triage") or "")
         astat = str(task.get("assignee_status") or "")
         if delegated:
             out["who"] = str(task.get("assignee_name") or "").strip() or out["who"]
         else:
             out["who"] = by or out["who"]
+        if external:
+            # Делает человек не из команды; за сроком следит постановщик задачи.
+            out["external"] = True
+            out["controller"] = str(task.get("owner_user_id") or "")
+            out["who_email"] = str(task.get("assignee_email") or "").strip().lower()
         if task.get("done"):
             out["code"] = "done"
+        elif external:
+            out["code"] = "waiting"
         elif delegated and triage == "declined":
             out["code"] = "declined"
             out["note"] = str(task.get("assignee_status_note") or "").strip()
@@ -287,6 +296,18 @@ def _who_is(name: str, parts: list[dict[str, Any]]) -> str:
     return hits[0] if len(hits) == 1 else ""
 
 
+def _unknown_who(note: dict[str, Any], t: dict[str, Any], parts: list[dict[str, Any]]) -> bool:
+    """Исполнитель назван, но среди участников-команды его нет (клиент, подрядчик?)."""
+    who = str(t.get("assignee") or "").strip()
+    if not who or who.strip(" .").lower() in _COLLECTIVE or re.match(r"(?i)^спикер\s*\d+$", who):
+        return False
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    smap = meta.get("speaker_map") if isinstance(meta.get("speaker_map"), dict) else {}
+    if any(isinstance(i, dict) and i.get("user_id") and str(i.get("name") or "").strip() == who for i in smap.values()):
+        return False
+    return not _who_is(who, parts)
+
+
 def decider(note: dict[str, Any], t: dict[str, Any], parts: list[dict[str, Any]]) -> str:
     """Кто решает судьбу пункта.
 
@@ -341,6 +362,8 @@ def rows(note: dict[str, Any], posted: Optional[list[dict[str, Any]]] = None) ->
         elif skip and s["code"] in UNDECIDED:
             s.update(code=SKIPPED, label=LABELS[SKIPPED], note="")
         dec = decider(note, t, parts) if parts else ""
+        if parts and s["code"] in CLAIMABLE and _unknown_who(note, t, parts):
+            s["who_unknown"] = True  # «Ирина ?» — не из нашей команды? Поручить можно по имени
         if s["code"] == "declined":  # исполнитель отказался — пункт снова у владельца записи
             dec = str(note.get("owner_user_id") or note.get("user_id") or dec)
         items.append({"id": iid, "task": str(t.get("task") or "").strip(), "decider": dec,
@@ -628,6 +651,46 @@ def _owner_note(viewer_uid: Any, note_id: int) -> tuple[str, dict[str, Any]]:
     if not full:
         raise LookupError("Документ не найден")
     return owner, full
+
+
+def meeting_owner(viewer_uid: Any, note_id: int) -> str:
+    """Владелец записи встречи — он по умолчанию следит за задачами людей не из команды."""
+    return _owner_note(viewer_uid, note_id)[0]
+
+
+def people(note: dict[str, Any]) -> dict[str, Any]:
+    """Для выбора исполнителя в таблице: наша команда (участники с аккаунтом) и гости встречи без аккаунта."""
+    team = [{"user_id": p["uid"], "name": p["name"] or (p["names"][0] if p["names"] else "")} for p in participants(note)]
+    guests: list[dict[str, str]] = []
+    owner = str(note.get("owner_user_id") or note.get("user_id") or "")
+    try:
+        from assistant.services import meeting_share
+
+        guests = list(meeting_share.share_with_attendees(int(owner), int(note["id"]), dry_run=True)["missing"])
+    except Exception as e:
+        print(f"[meeting_tasks] guests failed note={note.get('id')} err={e!r}")
+    return {"team": team, "guests": guests}
+
+
+def set_controller(viewer_uid: Any, note_id: int, item_id: str, controller_uid: Any) -> dict[str, Any]:
+    """«Следит: …» у задачи человека не из команды — кто-то из участников встречи с аккаунтом."""
+    from assistant.stores import calendar_tasks
+
+    owner, note = _owner_note(viewer_uid, note_id)
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    i = _find(meta, item_id)
+    if i < 0:
+        raise LookupError("Пункт не найден — обновите документ")
+    tid = _linked_task_id(meta["tasks"][i])
+    row = _task_row(tid) if tid else None
+    if not row or not row.get("assignee_external"):
+        raise ValueError("Следить можно только за задачей человека не из команды")
+    want = _account(str(controller_uid or ""))
+    if want not in {p["uid"] for p in participants(note)}:
+        raise ValueError("Следить может только участник встречи из команды")
+    calendar_tasks.set_external_controller(int(row["id"]), want)
+    refresh_note(owner, int(note_id))
+    return state_for(viewer_uid, note_id, item_id)
 
 
 def _find(meta: dict[str, Any], item_id: str) -> int:

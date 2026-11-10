@@ -191,7 +191,7 @@
   const MINIAPP_SESSION_HINT_KEY = "miniapp_session_hint";
   // Запись встречи на транскрибацию — = TRANSCRIPTION_UPLOAD_MAX_MB на сервере (файл идёт через диск).
   const TRANSCRIPTION_UPLOAD_MAX_MB = 500;
-  const NOTE_EDITOR_ASSET_V = "20261108-taskmark"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
+  const NOTE_EDITOR_ASSET_V = "20261110-extwho"; // = assetVersion внутри webapp/note-rich-editor.js (менять только вместе с пересборкой бандла)
   const MINIAPP_CACHE_SCHEMA = 3;
   let noteEditorScriptsPromise = null;
   // Доска и макет (kind=board): скрипты грузятся при первом открытии, а не с каждой страницей.
@@ -16145,9 +16145,11 @@
   }
 
   var calendarContactsByEmail = {};
+  var calendarContactsAll = []; // все контакты, и только с Telegram (calendarContactsByEmail — по почте)
 
   function setCalendarContacts(items) {
     calendarContactsByEmail = {};
+    calendarContactsAll = (items || []).filter(Boolean);
     (items || []).forEach(function (c) {
       var k = meetingEmailKey(c && c.email);
       if (k) calendarContactsByEmail[k] = c;
@@ -24518,10 +24520,14 @@
     var b = meetingTasksBound;
     if (!b.editor || !b.noteId || (noteId != null && String(noteId) !== b.noteId)) return Promise.resolve();
     var seq = ++b.seq;
-    return apiFetch("/notes/local/" + encodeURIComponent(b.noteId) + "/meeting-tasks", { method: "GET" })
-      .then(function (r) {
+    // Контакты — чтобы у исполнителя не из команды показать компанию и спрятать «+ в контакты».
+    var contactsReady = calendarContactsAll.length ? Promise.resolve() : refreshCalendarContacts();
+    return Promise.all([apiFetch("/notes/local/" + encodeURIComponent(b.noteId) + "/meeting-tasks", { method: "GET" }), contactsReady])
+      .then(function (res) {
+        var r = res[0];
         if (b !== meetingTasksBound || seq !== b.seq) return;
         b.state = r || null;
+        if (r && r.items) mtEnrichPeople(r);
         try {
           if (b.editor && typeof b.editor.setMeetingTasks === "function") {
             b.editor.setMeetingTasks(r && r.items && r.items.length ? r : null);
@@ -24856,6 +24862,7 @@
       assignee_email: assignee.email || "",
       assignee_name: assignee.name || "",
     };
+    if (assignee.external) base.assignee_external = true;
     function post(extra) {
       return apiFetch("/calendar/tasks", { method: "POST", body: JSON.stringify(Object.assign({}, base, extra)) });
     }
@@ -24948,6 +24955,18 @@
     if (!st.id || !d.anchor) return;
     // «Не разбираем» (вся встреча) — пункт всё равно можно взять, поручить или закрыть
     var open = st.code === "open" || st.code === "declined" || st.code === "skipped" || st.code === "nested";
+    if (d.col === 2 && st.external && d.part === "contact") {
+      mtContactForm(st, d.anchor);
+      return;
+    }
+    if (d.col === 2 && st.external && d.part === "controller") {
+      mtControllerMenu(st, d.anchor);
+      return;
+    }
+    if (d.col === 2 && (open || st.code === "doubtful")) {
+      mtWhoPicker(st, d.anchor); // ячейка «Ответственный» — сразу выбор человека
+      return;
+    }
     if (d.col === 3 && open) {
       promptDialog("Срок для «" + st.task + "»", st.due || "").then(function (v) {
         if (v != null) meetingTaskOp(st.id, { op: "update", fields: { deadline: v } });
@@ -24972,6 +24991,10 @@
       items.push({ label: "Не задача", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "not_a_task" }); } });
       items.push({ label: "Дубль", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "duplicate" }); } });
     } else if (st.task_id) {
+      if (st.code === "waiting") {
+        // Делает человек не из команды — отметить может тот, кто следит.
+        items.push({ label: "Сделано", fn: function () { mtExternalDone(st); } });
+      }
       items.push({ label: "Открыть задачу", fn: function () { openTaskFromChip(String(st.task_id)); } });
     } else if (st.url) {
       items.push({ label: "Открыть в трекере", fn: function () { openExternal(st.url); } });
@@ -24982,6 +25005,323 @@
     if (!items.length) return;
     if (st.by && !open) items.unshift({ label: (st.label || "") + (st.code === "taken" ? "" : " · " + st.by), info: true, fn: function () {} });
     showPostedMenu(d.anchor, items);
+  }
+
+  // ——— Исполнитель не из нашей команды (клиент, подрядчик): выбор в ячейке, «+ в контакты», «следит: …» ———
+  function mtContactFor(name, email) {
+    var em = meetingEmailKey(email);
+    if (em && calendarContactsByEmail[em]) return calendarContactsByEmail[em];
+    var n = String(name || "").trim().toLowerCase();
+    if (!n) return null;
+    for (var i = 0; i < calendarContactsAll.length; i++) {
+      var c = calendarContactsAll[i];
+      var names = [c.name].concat(c.aliases || []);
+      for (var j = 0; j < names.length; j++) {
+        if (String(names[j] || "").trim().toLowerCase() === n) return c;
+      }
+    }
+    return null;
+  }
+
+  function mtTeam() {
+    var st = meetingTasksBound.state;
+    return (st && st.people && st.people.team) || [];
+  }
+
+  function mtEnrichPeople(r) {
+    var team = (r.people && r.people.team) || [];
+    var me = defaultTaskAssignee();
+    (r.items || []).forEach(function (it) {
+      if (!it.external) return;
+      var c = mtContactFor(it.who, it.who_email);
+      it.who_company = (c && c.company) || "";
+      it.who_saved = !!c;
+      var ctl = team.filter(function (p) { return String(p.user_id) === String(it.controller); })[0];
+      it.controller_name = ctl ? ctl.name : String(it.controller) === String(me.user_id) ? me.name : "";
+    });
+  }
+
+  // Компания по умолчанию — та же, что у других людей не из команды на этой встрече.
+  function mtGuessCompany() {
+    var st = meetingTasksBound.state || {};
+    var hit = ((st.items || []).filter(function (x) { return x.external && x.who_company; })[0] || {}).who_company;
+    if (hit) return hit;
+    var guests = (st.people && st.people.guests) || [];
+    for (var i = 0; i < guests.length; i++) {
+      var c = mtContactFor(guests[i].name, guests[i].email);
+      if (c && c.company) return c.company;
+    }
+    return "";
+  }
+
+  function mtCompanies() {
+    var seen = {};
+    var out = [];
+    calendarContactsAll.forEach(function (c) {
+      var v = String((c && c.company) || "").trim();
+      if (v && !seen[v.toLowerCase()]) {
+        seen[v.toLowerCase()] = 1;
+        out.push(v);
+      }
+    });
+    return out.sort();
+  }
+
+  // Окошко под ячейкой: как .pt-menu, закрывается кликом мимо и Escape.
+  function mtFloat(anchor, m) {
+    ["pt-menu", "mt-who"].forEach(function (id) {
+      var old = document.getElementById(id);
+      if (old) old.remove();
+    });
+    m.id = "mt-who";
+    m.classList.add("pt-menu", "mt-who");
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    var vw = window.innerWidth;
+    var vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+    var w = m.offsetWidth;
+    var h = m.offsetHeight;
+    m.style.left = Math.min(Math.max(8, Math.round(r.left)), Math.max(8, vw - w - 8)) + "px";
+    var top = Math.round(r.bottom + 6);
+    if (top + h > vh - 8 && r.top - 6 - h >= 8) top = Math.round(r.top - 6 - h);
+    m.style.top = Math.max(8, top) + "px";
+    function close() {
+      m.remove();
+      document.removeEventListener("click", onDoc, true);
+      document.removeEventListener("keydown", onKey, true);
+    }
+    function onDoc(e) {
+      if (!m.contains(e.target)) close();
+    }
+    function onKey(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }
+    }
+    window.setTimeout(function () {
+      document.addEventListener("click", onDoc, true);
+      document.addEventListener("keydown", onKey, true);
+    }, 0);
+    return close;
+  }
+
+  function mtAssign(st, who) {
+    var me = defaultTaskAssignee();
+    return meetingTaskCreateQuick(st, who)
+      .then(function () {
+        kickNoteCollab(60);
+        return meetingTasksRefresh();
+      })
+      .then(function () {
+        if (who.external) showNoteToast("Поручено: " + who.name + " — задача в ваших «Поставленных»");
+        else if (who.user_id && String(who.user_id) === String(me.user_id)) showNoteToast("Задача ваша");
+        else showNoteToast("Поручено: " + (who.name || who.email || ""));
+      })
+      .catch(function (e) {
+        showNoteToast((e && e.message) || "Не получилось");
+      });
+  }
+
+  // Выбор исполнителя из ячейки: участники встречи, контакты, а если человека нет — «не из нашей команды» по имени.
+  function mtWhoPicker(st, anchor) {
+    var m = document.createElement("div");
+    var input = document.createElement("input");
+    input.type = "text";
+    input.className = "field-input mt-who-input";
+    input.placeholder = "Имя или почта";
+    input.autocomplete = "off";
+    input.value = st.who_unknown ? String(st.who || "") : "";
+    var list = document.createElement("div");
+    m.appendChild(input);
+    m.appendChild(list);
+    var close = mtFloat(anchor, m);
+    var people = (meetingTasksBound.state && meetingTasksBound.state.people) || {};
+    function head(text) {
+      var p = document.createElement("div");
+      p.className = "pt-menu-info";
+      p.textContent = text;
+      list.appendChild(p);
+    }
+    function row(label, sub, cls, fn) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "pt-menu-item" + (cls ? " " + cls : "");
+      b.textContent = label;
+      if (sub) {
+        var small = document.createElement("small");
+        small.textContent = sub;
+        b.appendChild(small);
+      }
+      b.addEventListener("mousedown", function (e) {
+        e.preventDefault();
+      });
+      b.addEventListener("click", function () {
+        close();
+        fn();
+      });
+      list.appendChild(b);
+    }
+    function paint() {
+      list.innerHTML = "";
+      var q = String(input.value || "").trim();
+      var ql = q.toLowerCase();
+      function hit() {
+        var hay = Array.prototype.slice.call(arguments).join(" ").toLowerCase();
+        return !ql || hay.indexOf(ql) >= 0;
+      }
+      var exact = false;
+      var seen = {};
+      var me = defaultTaskAssignee();
+      var team = (people.team || []).filter(function (p) { return hit(p.name); });
+      var guests = (people.guests || []).filter(function (g) { return hit(g.name, g.email); });
+      if (team.length || guests.length) head("Участники встречи");
+      team.forEach(function (p) {
+        seen[String(p.name || "").toLowerCase()] = 1;
+        if (String(p.name || "").toLowerCase() === ql) exact = true;
+        var mine = String(p.user_id) === String(me.user_id);
+        row(p.name + (mine ? " (я)" : ""), "", "", function () {
+          mtAssign(st, { user_id: String(p.user_id), email: "", name: p.name });
+        });
+      });
+      guests.forEach(function (g) {
+        if (g.email) seen[g.email] = 1;
+        seen[String(g.name || "").toLowerCase()] = 1;
+        if (String(g.name || "").toLowerCase() === ql) exact = true;
+        var c = mtContactFor(g.name, g.email);
+        row(g.name || g.email, ((c && c.company) || "не из команды") + (g.email && g.email !== g.name ? " · " + g.email : ""), "", function () {
+          mtAssign(st, { user_id: "", email: g.email || "", name: g.name || g.email, external: true });
+        });
+      });
+      var contacts = calendarContactsAll.filter(function (c) {
+        if ((c.email && seen[meetingEmailKey(c.email)]) || seen[String(c.name || "").toLowerCase()]) return false;
+        return hit(c.name, c.email, c.telegram_username, c.company, (c.aliases || []).join(" "));
+      });
+      if (q && contacts.length) {
+        head("Контакты");
+        contacts.slice(0, 6).forEach(function (c) {
+          if (String(c.name || "").toLowerCase() === ql) exact = true;
+          row(c.name || c.email, c.company || c.email || (c.telegram_username ? "@" + c.telegram_username : ""), "", function () {
+            // Сервер узнает человека из Орбиты по почте; нет такого — задача «не из команды».
+            mtAssign(st, { user_id: String(c.telegram_user_id || ""), email: c.email || "", name: c.name || c.email,
+              telegram_username: c.telegram_username || "", external: !c.email && !c.telegram_user_id });
+          });
+        });
+      }
+      if (q && !exact) {
+        row("Поручить «" + q + "» — не из нашей команды", "задача будет у вас в «Поставленных»", "is-ext", function () {
+          mtAssign(st, { user_id: "", email: "", name: q, external: true });
+        });
+      }
+      if (!list.childNodes.length) head("Напишите имя — например, человека со стороны клиента");
+    }
+    input.addEventListener("input", paint);
+    input.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      var first = list.querySelector("button.pt-menu-item");
+      if (first) first.click();
+    });
+    paint();
+    setTimeout(function () {
+      input.focus();
+      input.select();
+    }, 30);
+  }
+
+  // «Следит: …» — кто из участников встречи с аккаунтом держит задачу клиента у себя в «Поставленных».
+  function mtControllerMenu(st, anchor) {
+    var me = defaultTaskAssignee();
+    var items = [{ label: "Кто следит за задачей", info: true, fn: function () {} }];
+    mtTeam().forEach(function (p) {
+      var cur = String(p.user_id) === String(st.controller);
+      items.push({
+        label: (cur ? "✓ " : "") + p.name + (String(p.user_id) === String(me.user_id) ? " (я)" : ""),
+        fn: function () {
+          if (cur) return;
+          meetingTaskOp(st.id, { op: "controller", fields: { user_id: String(p.user_id) } }).then(function (ok) {
+            if (ok) showNoteToast("Следит: " + p.name);
+          });
+        },
+      });
+    });
+    if (items.length < 3) items.push({ label: "Других участников из команды на встрече нет", info: true, fn: function () {} });
+    showPostedMenu(anchor, items);
+  }
+
+  // «+ в контакты»: имя, компания, почта или Telegram. Почту запоминаем и в задаче (если вы следите).
+  function mtContactForm(st, anchor) {
+    var m = document.createElement("form");
+    m.className = "mt-who-form";
+    m.innerHTML =
+      '<div class="pt-menu-info">Новый контакт</div>' +
+      '<label>Имя</label><input class="field-input" name="name" autocomplete="off">' +
+      '<label>Компания</label><input class="field-input" name="company" autocomplete="off" list="mt-companies">' +
+      '<datalist id="mt-companies"></datalist>' +
+      '<label>Почта или Telegram</label><input class="field-input" name="reach" autocomplete="off" placeholder="irina@company.ru или @irina">' +
+      '<div class="mt-who-actions"><button type="button" class="btn-text mt-cancel">Отмена</button>' +
+      '<button type="submit" class="btn">Сохранить</button></div>';
+    m.elements.name.value = st.who || "";
+    m.elements.company.value = mtGuessCompany();
+    m.elements.reach.value = st.who_email || ""; // гость встречи — почта уже известна
+    var dl = m.querySelector("#mt-companies");
+    mtCompanies().forEach(function (v) {
+      var o = document.createElement("option");
+      o.value = v;
+      dl.appendChild(o);
+    });
+    var close = mtFloat(anchor, m);
+    m.querySelector(".mt-cancel").addEventListener("click", close);
+    setTimeout(function () {
+      m.elements.reach.focus();
+    }, 30);
+    m.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var name = String(m.elements.name.value || "").trim();
+      var reach = String(m.elements.reach.value || "").trim();
+      var company = String(m.elements.company.value || "").trim();
+      var isMail = reach.indexOf("@") > 0;
+      if (!name) return showNoteToast("Напишите имя");
+      if (!reach) return showNoteToast("Укажите почту или Telegram — без них контакт не сохранить");
+      var body = { name: name, company: company, email: isMail ? reach : "" };
+      if (!isMail) body.telegram_username = reach;
+      var btn = m.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      apiFetch("/contacts", { method: "POST", body: JSON.stringify(body) })
+        .then(function () {
+          var me = defaultTaskAssignee();
+          if (!isMail || String(st.controller) !== String(me.user_id) || !st.task_id) return null;
+          // Почта — в задачу: по ней Лео узнает человека в следующих встречах и письмах.
+          return apiFetch("/calendar/tasks/" + encodeURIComponent(String(st.task_id)), {
+            method: "PATCH",
+            body: JSON.stringify({ assignee_external: true, assignee_email: reach, assignee_name: name }),
+          }).catch(function () {});
+        })
+        .then(function () {
+          close();
+          return refreshCalendarContacts();
+        })
+        .then(function () {
+          showNoteToast(name + (company ? " (" + company + ")" : "") + " — в контактах");
+          return meetingTasksRefresh();
+        })
+        .catch(function (err) {
+          btn.disabled = false;
+          showNoteToast((err && err.message) || "Не получилось сохранить контакт");
+        });
+    });
+  }
+
+  function mtExternalDone(st) {
+    apiFetch("/calendar/tasks/" + encodeURIComponent(String(st.task_id)), { method: "PATCH", body: JSON.stringify({ done: true }) })
+      .then(function () {
+        showNoteToast("Отмечено: сделано");
+        return meetingTasksRefresh();
+      })
+      .catch(function (e) {
+        showNoteToast(e && e.status === 404 ? "Отметить может тот, кто следит за задачей" : (e && e.message) || "Не получилось");
+      });
   }
 
   function focusMarkAttrs(el) {
@@ -26897,7 +27237,8 @@
   // Что ждёт постановщика: вопрос исполнителя, сданная работа, просрочка. Иначе — null («в работе»).
   function postedAttention(task) {
     if (postedTaskIsArchived(task)) return null;
-    if (postedTaskIsDone(task)) return "done";
+    if (postedTaskIsDone(task)) return task && task.assignee_external ? null : "done"; // отметил сам, кто следит
+    if (task && task.assignee_external) return postedTaskIsOverdue(task) ? "late" : null;
     if (postedAssigneeState(task).triage === "declined") return "declined";
     if (postedAssigneeState(task).status === "question") return "question";
     if (postedTaskIsOverdue(task)) return "late";
@@ -27085,6 +27426,23 @@
     }
   }
 
+  // Задача человека не из команды: «Сделано» ставит тот, кто следит.
+  async function postedExternalDone(task) {
+    try {
+      var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(String(task.id)), {
+        method: "PATCH",
+        body: JSON.stringify({ done: true }),
+      });
+      if (r && r.task) upsertPostedTask(r.task);
+      postedHaptic();
+      showNoteToast("Отмечено: сделано");
+      return r;
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось");
+      return null;
+    }
+  }
+
   // После «Не моё»: постановщик оставляет задачу за тем же человеком — она снова у него во входящих.
   async function insistPostedTask(task, comment) {
     try {
@@ -27179,6 +27537,11 @@
 
   // Строка состояния в «В работе»: одно понятное слово про задачу.
   function postedWorkLine(task) {
+    if (task && task.assignee_external) {
+      // Человек не из команды: Орбита ему не пишет — статус ведёт тот, кто следит.
+      var c = mtContactFor(task.assignee_name, task.assignee_email);
+      return { text: (c && c.company) || "не из команды", cls: "" };
+    }
     var st = postedAssigneeState(task);
     if (st.status === "in_progress") return { text: "в работе", cls: "is-work" };
     // Разбор входящих у исполнителя: ещё не разобрал / отложил / взял.
@@ -27907,6 +28270,17 @@
       act("Переназначить", false, function () {
         openPostedTaskEditor(task);
       });
+    } else if (task.assignee_external && !postedTaskIsDone(task)) {
+      // Не из команды: напомнить ему Орбита не может — отмечаем сами, когда сделал.
+      act("Сделано", kind === "late", function (b) {
+        b.disabled = true;
+        postedExternalDone(task).then(function () {
+          b.disabled = false;
+        });
+      });
+      if (kind === "late") act("Перенести", false, function () {
+        openPostedTaskEditor(task);
+      });
     } else if (kind === "late") {
       act("Напомнить", true, function (b) {
         b.disabled = true;
@@ -28527,6 +28901,13 @@
         }));
         bar.appendChild(postedActBtn("undo", "Вернуть", false, function () {
           setPostedCardMode(state, "return");
+        }));
+      } else if (task.assignee_external) {
+        bar.appendChild(postedActBtn("check", "Сделано", false, async function (b) {
+          b.disabled = true;
+          var r = await postedExternalDone(task);
+          b.disabled = false;
+          if (r) refreshPostedCard(state);
         }));
       } else {
         bar.appendChild(postedActBtn("bell", "Напомнить", false, async function (b) {

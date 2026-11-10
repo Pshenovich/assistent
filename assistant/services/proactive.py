@@ -301,6 +301,8 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
 def _posted_by(t: dict[str, Any], uid: str) -> bool:
     owner = str(t.get("owner_user_id") or "")
     assignee = str(t.get("assignee_user_id") or "")
+    if owner == uid and t.get("assignee_external"):
+        return True  # клиенту / подрядчику: просрочка — в вечерней сводке поручений
     return owner == uid and bool(assignee) and assignee != uid
 
 
@@ -321,7 +323,7 @@ def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> 
     if not late:
         return []
     late.sort(key=lambda t: str(t.get("start_at") or ""))
-    ids = [int(t["id"]) for t in late]
+    nudge = [int(t["id"]) for t in late if not t.get("assignee_external")]
     n = len(late)
     word = "поручение просрочено" if n % 10 == 1 and n % 100 != 11 else (
         "поручения просрочены" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "поручений просрочено")
@@ -333,7 +335,8 @@ def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> 
     task_rows = []
     for t in late:
         start = _parse(t.get("start_at"))
-        meta = str(t.get("assignee_name") or "исполнитель") + (f" · срок {_day(start, tz, now)}" if start else "")
+        meta = str(t.get("assignee_name") or "исполнитель") + (" · не из команды" if t.get("assignee_external") else "")
+        meta += f" · срок {_day(start, tz, now)}" if start else ""
         task_rows.append({"id": int(t["id"]), "text": str(t.get("title") or "Задача"), "meta": meta})
     title = f"{n} {word}"
     return [
@@ -346,10 +349,9 @@ def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> 
             "source": ", ".join(names[:4]) + (f" и ещё {len(names) - 4}" if len(names) > 4 else ""),
             "ask": title + ". " + "; ".join(f"«{r['text']}» — {r['meta']} (task id {r['id']})" for r in task_rows[:20]),
             "tasks": task_rows,
-            "actions": [
-                {"label": "Напомнить всем", "act": "nudge_tasks", "primary": True, "payload": {"task_ids": ids}},
-                {"label": "Поручения", "act": "open_posted"},
-            ],
+            # Человеку не из команды Орбита не напишет — напомнить ему может только тот, кто следит.
+            "actions": ([{"label": "Напомнить всем", "act": "nudge_tasks", "primary": True, "payload": {"task_ids": nudge}}]
+                        if nudge else []) + [{"label": "Поручения", "act": "open_posted", "primary": not nudge}],
         }
     ]
 

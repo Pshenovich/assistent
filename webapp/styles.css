@@ -24459,9 +24459,27 @@ ol.note-discuss-md-list { list-style: decimal; }
 .mt-summary-skip { margin-left: auto; flex: none; border: none; background: transparent; color: var(--text-tertiary); font: inherit; font-size: var(--ui-font-sm); padding: 4px 0; cursor: pointer; }
 .mt-summary-skip:hover { color: var(--text-secondary); }
 .mt-chip--skipped { background: var(--surface-muted); color: var(--text-tertiary); }
-.ProseMirror table:has(tr.mt-row) col:nth-child(1) { width: 46%; }
+.mt-chip--waiting { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning-text); }
+.mt-val.is-unknown { color: var(--text-secondary); }
+/* Исполнитель не из команды: имя + компания, ниже «+ в контакты» и «следит: …» */
+.mt-ext { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px; max-width: 100%; }
+.mt-ext-name { gap: 6px; flex-wrap: wrap; }
+.mt-ext-org { display: inline-block; padding: 0 7px; line-height: 18px; border-radius: var(--radius-full); background: var(--surface-muted); color: var(--text-secondary); font-size: 0.72rem; white-space: nowrap; }
+.mt-ext-sub { font-size: 0.75rem; color: var(--text-tertiary); cursor: pointer; white-space: nowrap; }
+.mt-ext-sub:hover { color: var(--text-secondary); }
+.mt-ext-add { color: var(--accent); }
+.mt-ext-add:hover { color: var(--accent); text-decoration: underline; }
+/* Выбор исполнителя из ячейки таблицы задач */
+.mt-who { width: 300px; max-height: min(420px, 70vh); overflow-y: auto; }
+.mt-who-input { width: 100%; box-sizing: border-box; margin: 0 0 4px; }
+.mt-who .pt-menu-item small { display: block; font-size: 0.75rem; color: var(--text-tertiary); }
+.mt-who .pt-menu-item.is-ext { color: var(--accent); }
+.mt-who-form { display: flex; flex-direction: column; gap: 6px; padding: 6px; }
+.mt-who-form label { font-size: 0.75rem; color: var(--text-secondary); }
+.mt-who-form .mt-who-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.ProseMirror table:has(tr.mt-row) col:nth-child(1) { width: 42%; }
 .ProseMirror table:has(tr.mt-row) col:nth-child(2) { width: 20%; }
-.ProseMirror table:has(tr.mt-row) col:nth-child(3) { width: 20%; }
+.ProseMirror table:has(tr.mt-row) col:nth-child(3) { width: 24%; }
 .ProseMirror table:has(tr.mt-row) col:nth-child(4) { width: 14%; }
 .ProseMirror td.mt-cell > p { display: none; }
 .ProseMirror td.mt-cell { cursor: pointer; vertical-align: middle; }
@@ -24550,6 +24568,7 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   .ProseMirror tr.mt-row > td { display: block; flex: 0 0 auto; width: auto !important; min-width: 0 !important; max-width: 100%; padding: 0 !important; border: none !important; background: none !important; }
   .ProseMirror tr.mt-row > td:first-child { flex: 0 0 100%; margin-bottom: 2px; }
   .ProseMirror tr.mt-row > td:first-child > p { margin: 0; }
+  .ProseMirror tr.mt-row > td.mt-col2 .mt-ext { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
   .ProseMirror tr.mt-row > td.mt-col2 .mt-val,
   .ProseMirror tr.mt-row > td.mt-col3 .mt-val { height: 24px; padding: 0 9px; border-radius: var(--radius-full); background: var(--surface-muted); color: var(--text-secondary); font-size: 0.78rem; }
 }

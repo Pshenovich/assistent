@@ -69,6 +69,43 @@ class MeetingTasksTests(unittest.TestCase):
         self.assertIn("<p>Сделано</p>", out)
         self.assertLess(out.index("<table>"), out.index("Вопросы"))  # на месте раздела, не в конце
 
+    def test_external_assignee_waiting(self) -> None:
+        """Пункт поручили человеку не из команды: «Ждём», ответственный — он, следит постановщик."""
+        note_members.upsert_profile(user_id=1, username="v", first_name="Владимир", last_name="П", photo_url=None)
+        note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
+        note_members.add_member(1, self.nid, 2)
+        _, items = self._items()
+        self.assertTrue(items["iaaaaaaaaa1"].get("who_unknown") is None)  # Аня — участник
+        def create():
+            return tasks_store.create_task(1, title="Проверить юр. тексты", start_at="2026-10-31T12:00:00+03:00",
+                                           assignee_name="Ирина", assignee_external=True, note_id=str(self.nid))
+        task = mt.claim(2, self.nid, "iaaaaaaaaa2", create, by="Анна")
+        state, items = self._items()
+        it = items["iaaaaaaaaa2"]
+        self.assertEqual((it["code"], it["label"], it["who"]), ("waiting", "Ждём", "Ирина"))
+        self.assertTrue(it["external"])
+        self.assertEqual(it["controller"], "1")
+        self.assertEqual(state["decided"], 1)  # «Ждём» — разобрано
+        self.assertIn("<td><p>Ждём</p></td><td><p>Ирина</p></td>", notes_store.get_note(1, self.nid)["body"])
+        # следить может только участник-команда
+        with self.assertRaises(ValueError):
+            mt.set_controller(1, self.nid, "iaaaaaaaaa2", 77)
+        mt.set_controller(1, self.nid, "iaaaaaaaaa2", 2)
+        self.assertEqual(tasks_store._get_task_row(task["id"])["owner_user_id"], "2")
+        _, items = self._items()
+        self.assertEqual(items["iaaaaaaaaa2"]["controller"], "2")
+
+    def test_unknown_assignee_flag(self) -> None:
+        note_members.upsert_profile(user_id=1, username="v", first_name="Владимир", last_name="П", photo_url=None)
+        tasks = [{"id": "ibbbbbbbbb1", "assignee": "Ирина", "task": "Выгрузка", "deadline": ""},
+                 {"id": "ibbbbbbbbb2", "assignee": "все", "task": "Созвон", "deadline": ""},
+                 {"id": "ibbbbbbbbb3", "assignee": "Вова", "task": "Цены", "deadline": ""}]
+        note = notes_store.create_note(1, "Клиент", mt.table_html(tasks), role="transcription", meta={"tasks": tasks})
+        items = {x["id"]: x for x in mt.rows(notes_store.get_note(1, int(note["id"])))["items"]}
+        self.assertTrue(items["ibbbbbbbbb1"].get("who_unknown"))
+        self.assertFalse(items["ibbbbbbbbb2"].get("who_unknown"))
+        self.assertFalse(items["ibbbbbbbbb3"].get("who_unknown"))  # Вова ↔ Владимир
+
     def test_counter_and_statuses(self) -> None:
         state, items = self._items()
         self.assertEqual((state["decided"], state["total"]), (0, 3))

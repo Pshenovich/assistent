@@ -370,6 +370,9 @@ def _normalize_row(x: dict[str, Any]) -> dict[str, Any] | None:
         row["last_name"] = ln
     if tg:
         row["telegram_username"] = tg
+    company = str(x.get("company") or "").strip()[:120]
+    if company:
+        row["company"] = company
     try:
         tgid = int(x.get("telegram_user_id") or 0)
         if tgid > 0:
@@ -568,6 +571,7 @@ def update_contact_by_email(
     telegram_username: str | None = None,
     aliases: list[str] | None = None,
     clear_telegram: bool = False,
+    company: str | None = None,
 ) -> dict[str, Any] | None:
     old_clean = normalize_contact_key(old_email)
     if not old_clean:
@@ -596,6 +600,11 @@ def update_contact_by_email(
     row["email"] = new_email
     if aliases is not None:
         row["aliases"] = [str(a).strip() for a in aliases if str(a).strip()]
+    if company is not None:
+        if str(company).strip():
+            row["company"] = str(company).strip()[:120]
+        else:
+            row.pop("company", None)
     if clear_telegram:
         row.pop("telegram_username", None)
         row.pop("tg_username", None)
@@ -622,8 +631,40 @@ def create_contact_for_user(
     email: str,
     telegram_username_contact: str | None = None,
     aliases: list[str] | None = None,
+    company: str | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Возвращает (item, status) status: added | updated | existing | invalid | duplicate."""
+    """Возвращает (item, status) status: added | updated | existing | invalid | duplicate.
+
+    company — компания человека (клиент, подрядчик): у уже записанного ставится, только если не указана."""
+    item, st = _create_contact_for_user(
+        telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        name=name,
+        email=email,
+        telegram_username_contact=telegram_username_contact,
+        aliases=aliases,
+    )
+    comp = str(company or "").strip()[:120]
+    if item is None or not comp or str(item.get("company") or "").strip():
+        return item, st
+    row = update_contact_for_user(
+        telegram_user_id=telegram_user_id,
+        telegram_username=telegram_username,
+        old_email=contact_key(item),
+        company=comp,
+    )
+    return (row or item), st
+
+
+def _create_contact_for_user(
+    *,
+    telegram_user_id: int,
+    telegram_username: str | None,
+    name: str,
+    email: str,
+    telegram_username_contact: str | None = None,
+    aliases: list[str] | None = None,
+) -> tuple[dict[str, Any] | None, str]:
     items = load_contacts(
         telegram_user_id=telegram_user_id, telegram_username=telegram_username
     )
@@ -695,6 +736,7 @@ def update_contact_for_user(
     telegram_username_contact: str | None = None,
     aliases: list[str] | None = None,
     clear_telegram: bool = False,
+    company: str | None = None,
 ) -> dict[str, Any] | None:
     items = load_contacts(
         telegram_user_id=telegram_user_id, telegram_username=telegram_username
@@ -707,6 +749,7 @@ def update_contact_for_user(
         telegram_username=telegram_username_contact,
         aliases=aliases,
         clear_telegram=clear_telegram,
+        company=company,
     )
     if row is None:
         return None

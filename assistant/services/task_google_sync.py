@@ -39,8 +39,8 @@ def sync_task_google(uid: int, task: dict[str, Any] | None, action: str) -> dict
             calendar_svc.delete_task_event(owner, task)
             google_tasks.delete_remote(owner, task)
             return task
-        if calendar_tasks_store.task_is_delegated(task):
-            # Делегированные — только Leo; снять старый Google-синк если был.
+        if calendar_tasks_store.task_is_delegated(task) or task.get("assignee_external"):
+            # Делегированные (и человеку не из команды) — только Leo; снять старый Google-синк если был.
             if str(task.get("google_task_id") or "").strip() or str(
                 task.get("google_event_id") or ""
             ).strip():
