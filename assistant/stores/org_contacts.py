@@ -155,3 +155,74 @@ def granted_orgs(owner_user_id: int) -> dict[int, list[int]]:
     for r in rows:
         out.setdefault(int(r["member_user_id"]), []).append(int(r["org_id"]))
     return out
+
+
+def reassign_user(old_user_id: int, new_user_id: int) -> dict[str, int]:
+    """Склейка аккаунтов (вход по почте, потом привязка Telegram со старым аккаунтом).
+
+    Членство в организации уже переехало на новый id (orgs_store.reassign_user), а контакты — нет:
+    книга, собранная под временным аккаунтом, осталась на нём, и Лео не находил коллег
+    («Поставь Вове задачу» → «контакт не найден»). Переносим книгу, отметки «добавили мы»
+    и ссылки на человека в книгах коллег, затем досинхронизируем организации.
+    """
+    from assistant.stores import contacts_store, orgs_store
+
+    old, new = int(old_user_id), int(new_user_id)
+    if old == new or old <= 0 or new <= 0:
+        return {"moved": 0, "relinked": 0}
+
+    def _tgid(c: dict[str, Any]) -> int:
+        try:
+            return int(c.get("telegram_user_id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    # 1. Книга временного аккаунта → в книгу нового (существующие записи не трогаем).
+    moved = 0
+    old_items = contacts_store.load_contacts(telegram_user_id=old)
+    if old_items:
+        new_items = contacts_store.load_contacts(telegram_user_id=new)
+        for c in old_items:
+            if _tgid(c) in (old, new):
+                continue  # запись о самом себе
+            email = str(c.get("email") or "").strip().lower()
+            tg = contacts_store.normalize_telegram_username(str(c.get("telegram_username") or c.get("tg_username") or ""))
+            if any(contacts_store._same_person(x, email=email, tg=tg, tgid=_tgid(c)) for x in new_items):  # type: ignore[attr-defined]
+                continue
+            new_items.append(dict(c))
+            moved += 1
+        if moved:
+            contacts_store.save_contacts(new_items, telegram_user_id=new)
+        contacts_store.save_contacts([], telegram_user_id=old)
+
+    # 2. Отметки «этот контакт добавила организация».
+    with _LOCK:
+        conn = _conn()
+        for col in ("owner_user_id", "member_user_id"):
+            conn.execute(
+                f"UPDATE OR IGNORE org_contact_grants SET {col} = ? WHERE {col} = ?", (str(new), str(old))
+            )
+            conn.execute(f"DELETE FROM org_contact_grants WHERE {col} = ?", (str(old),))
+        conn.commit()
+
+    # 3. У коллег человек записан под временным id — переписываем на настоящий.
+    org_ids = [int(o["id"]) for o in orgs_store.orgs_for_user(new)]
+    relinked = 0
+    peers = {m for oid in org_ids for m in orgs_store.member_ids(oid)} - {new}
+    for peer in peers:
+        items = contacts_store.load_contacts(telegram_user_id=peer)
+        changed = False
+        for c in items:
+            if _tgid(c) == old:
+                c["telegram_user_id"] = new
+                changed = True
+        if changed:
+            contacts_store.save_contacts(items, telegram_user_id=peer)
+            relinked += 1
+
+    for oid in org_ids:
+        try:
+            sync(oid)
+        except Exception as e:
+            print(f"[org_contacts] sync after merge org={oid} err={e!r}")
+    return {"moved": moved, "relinked": relinked}

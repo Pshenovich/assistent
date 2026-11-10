@@ -391,6 +391,12 @@ def merge_into_legacy(new_uid: int, tg_id: int) -> dict[str, Any]:
         orgs_store.reassign_user(new_uid, tg)
     except Exception as e:
         print(f"[accounts] merge orgs {new_uid}->{tg} err={e!r}")
+    try:
+        from assistant.stores import org_contacts
+
+        org_contacts.reassign_user(new_uid, tg)  # контакты (коллеги по организации) — следом за членством
+    except Exception as e:
+        print(f"[accounts] merge contacts {new_uid}->{tg} err={e!r}")
     return get(tg)  # type: ignore[return-value]
 
 

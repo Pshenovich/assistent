@@ -7512,7 +7512,8 @@
     if (name !== "notes") document.documentElement.classList.remove("notes-chats-tab");
     if (name === "actual") window.setTimeout(restoreActualAssistant, 0);
     if (name === "profile") {
-      if (!tabInited.profile) {
+      // Шапка ещё не загрузилась (прошлая попытка упала) — пробуем снова, иначе профиль висит на заглушках.
+      if (!tabInited.profile || !profileHeadLoaded) {
         tabInited.profile = true;
         loadProfile();
       }
@@ -10685,16 +10686,33 @@
     }
   }
 
-  async function loadProfile() {
-    profileScreen("main");
-    loadTgLeo();
+  var profileHeadLoaded = false;
+  var profileLoading = null;
+
+  function loadProfile() {
+    if (!profileLoading) {
+      profileLoading = loadProfileOnce().finally(function () {
+        profileLoading = null;
+      });
+    }
+    return profileLoading;
+  }
+
+  async function loadProfileOnce() {
     try {
+      profileScreen("main");
+      loadTgLeo();
       const me = await apiFetch("/me", { method: "GET" });
       cachedMe = me;
-      applyServerTheme(me);
+      try {
+        applyServerTheme(me);
+      } catch (themeErr) {
+        console.warn("applyServerTheme", themeErr);
+      }
       if (me.bot_username) cachedBotUsername = me.bot_username;
 
       renderProfileHead(me);
+      profileHeadLoaded = true;
       renderProfileMeta(me);
 
       await Promise.all([
@@ -10706,6 +10724,7 @@
         refreshProactiveVal(),
       ]);
     } catch (e) {
+      console.error("loadProfile", e);
       showProfileError(e.message || String(e));
     }
     await loadIntegrations();

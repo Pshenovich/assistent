@@ -93,6 +93,31 @@ class OrgContactsTests(unittest.TestCase):
         org_contacts.sync(oid)
         self.assertNotIn(2, self._book(1))
 
+    def test_account_merge_moves_org_contacts(self) -> None:
+        """Вход по почте (временный id) → вступил в организацию → привязал Telegram со старым аккаунтом:
+        коллеги должны остаться в контактах у настоящего id, а у коллег — ссылка на него."""
+        tmp_uid, real_uid = 5000000000003159, 4
+        note_members.upsert_profile(tmp_uid, username="asmall", first_name="Алекс")
+        note_members.upsert_profile(real_uid, username="asmall", first_name="Алекс")
+        oid = orgs_store.create_org(1, "Акме", domain="acme.io")["id"]
+        self._join(oid, tmp_uid)
+        org_contacts.sync(oid)
+        self.assertIn(1, self._book(tmp_uid))
+        self.assertIn(tmp_uid, self._book(1))
+
+        orgs_store.reassign_user(tmp_uid, real_uid)
+        org_contacts.reassign_user(tmp_uid, real_uid)
+
+        self.assertEqual(self._book(real_uid)[1]["name"], "Вова")
+        self.assertEqual(self._book(tmp_uid), {})
+        self.assertIn(real_uid, self._book(1))
+        self.assertNotIn(tmp_uid, self._book(1))
+        # уход из организации по-прежнему убирает то, что добавила организация
+        orgs_store.leave(real_uid, oid)
+        org_contacts.sync(oid)
+        self.assertNotIn(1, self._book(real_uid))
+        self.assertNotIn(real_uid, self._book(1))
+
     def test_delete_org_cleans_up(self) -> None:
         oid = orgs_store.create_org(1, "Акме", domain="acme.io")["id"]
         self._join(oid, 2)
