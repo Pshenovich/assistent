@@ -5268,6 +5268,23 @@ html.note-editor-open #note-editor-overlay {
   background: var(--danger-muted);
 }
 
+/* Группы меню «⋯»: стрелка вправо, число в связке, строка «назад» в подменю. */
+.note-more-menu-group,
+.note-more-menu-back {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.note-more-menu-group .note-more-menu-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-more-menu-group > svg { flex: none; color: var(--text-secondary); }
+.note-more-menu-group--bundle > svg:first-child { color: var(--accent); }
+.note-more-menu-count { flex: none; font-size: 0.8125rem; color: var(--text-secondary); }
+.note-more-menu-back { font-weight: 600; color: var(--text-secondary); }
+.note-more-menu-back > svg { flex: none; }
+.note-more-menu-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+.note-more-menu { max-width: min(21rem, calc(100vw - 16px)); }
+.note-more-menu-item .note-more-menu-label { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .note-paei-status {
   margin: 0 0 0.7rem;
   padding: 0.55rem 0.65rem 0.65rem;
@@ -16468,6 +16485,28 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   box-shadow: none;
 }
 
+/* Связки документа — значок с числом справа от оглавления (только если связки есть). */
+.note-editor-links-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  margin: 0 2px 4px 0;
+  padding: 0 8px;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--vkui--color_text_accent, var(--accent));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  cursor: pointer;
+}
+.note-editor-links-btn:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.note-editor-links-btn.hidden { display: none; }
+
 .note-editor-sheets-bar .note-editor-toc-toggle:hover,
 .note-editor-page--toc-open .note-editor-sheets-bar .note-editor-toc-toggle {
   color: var(--vkui--color_text_accent, var(--accent));
@@ -25201,4 +25240,9 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
 @media (max-width: 959px) {
   .cal-view-banner-long { display: none; }
   .cal-view-banner-short { display: inline; }
+}
+
+/* Открытое меню «⋯» — над кнопкой «Проект» (у её обёртки свой высокий слой для выпадашки). */
+#note-editor-overlay .note-editor-sheet .note-editor-web-back-bar:has(.note-more-menu:not(.hidden)) {
+  z-index: 160;
 }

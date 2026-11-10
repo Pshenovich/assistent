@@ -32760,7 +32760,10 @@
       "</aside>";
     // Кнопка оглавления — первой в строке вкладок; на телефоне панель выезжает слева.
     var tocInSheetsBar =
-      '<div class="note-editor-toc-anchor">' + tocToggle + (mobileToc ? "" : tocPanel) + "</div>";
+      '<div class="note-editor-toc-anchor">' + tocToggle + (mobileToc ? "" : tocPanel) + "</div>" +
+      '<button type="button" id="note-editor-links-btn" class="note-editor-links-btn hidden" aria-label="Связанное">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>' +
+      '<span class="note-editor-links-count"></span></button>';
     var tocInLayout = mobileToc ? tocPanel : "";
     return (
       '<div class="note-editor-doc-layout">' +
@@ -36530,7 +36533,7 @@
       } else {
         r = await apiFetch("/bundles", {
           method: "POST",
-          body: JSON.stringify({ title: o.bundleTitle || "", items: picked.map(linkBodyItem) }),
+          body: JSON.stringify({ title: o.bundleTitle || "", items: (o.include || []).concat(picked).map(linkBodyItem) }),
         });
       }
       ov._busy = false;
@@ -36650,6 +36653,8 @@
     });
     var page = document.getElementById("bundle-page-overlay");
     if (page && !page.classList.contains("hidden") && page._bundleId) loadBundlePage(page._bundleId);
+    var openId = String(currentOpenNoteId() || "");
+    if (openId && noteBundlesState.id === openId) loadNoteLinks(openId);
     loadUserBundles(true);
   }
 
@@ -36995,50 +37000,135 @@
     if (window.LeoApp && window.LeoApp.askLeo) window.LeoApp.askLeo(p.prompt);
   }
 
-  // «Связанное» под шапкой открытого документа (рядом с плашкой встречи).
-  function noteLinksEl() {
-    var el = document.getElementById("note-editor-links");
-    if (el) return el;
-    var after = document.getElementById("note-editor-meeting") || document.getElementById("note-editor-meta");
-    if (!after || !after.parentNode) return null;
-    el = document.createElement("div");
-    el.id = "note-editor-links";
-    el.className = "linked-items linked-items--note hidden";
-    after.parentNode.insertBefore(el, after.nextSibling);
-    return el;
+  // Связки открытого документа: строки над текстом нет — иконка с числом у оглавления и пункт в «⋯».
+  var noteBundlesState = { id: "", bundles: [] };
+  var noteLinksGen = 0;
+
+  function noteBundleOthers(bd, id) {
+    var self = "note:" + String(id);
+    return (bd.items || []).filter(function (it) {
+      return linkKey(it) !== self;
+    });
   }
 
-  // Шапка документа при открытии перестраивается — блок ищем (или создаём) уже после ответа сервера.
-  var noteLinksGen = 0;
+  function paintNoteLinksBtn() {
+    var btn = document.getElementById("note-editor-links-btn");
+    if (!btn) return;
+    var st = noteBundlesState;
+    var on = !!st.id && String(currentOpenNoteId() || "") === st.id && st.bundles.length > 0;
+    var seen = {};
+    if (on) {
+      st.bundles.forEach(function (bd) {
+        noteBundleOthers(bd, st.id).forEach(function (it) {
+          seen[linkKey(it)] = 1;
+        });
+      });
+    }
+    var n = Object.keys(seen).length;
+    btn.classList.toggle("hidden", !on || !n);
+    var c = btn.querySelector(".note-editor-links-count");
+    if (c) c.textContent = n ? String(n) : "";
+    var name = on && st.bundles.length === 1 && st.bundles[0].title ? "Связка «" + st.bundles[0].title + "»" : "Связанное";
+    btn.title = name + (n ? ": " + n : "");
+    btn.setAttribute("aria-label", btn.title);
+  }
+
   function loadNoteLinks(noteId) {
     var id = String(noteId || "");
     var gen = ++noteLinksGen;
+    noteBundlesState = { id: "", bundles: [] };
     var old = document.getElementById("note-editor-links");
-    if (old) {
-      old.innerHTML = "";
-      old.classList.add("hidden");
-      old._linkItem = null;
-    }
+    if (old) old.remove();
+    paintNoteLinksBtn();
     if (!id || id.indexOf("tmp_") === 0) return;
-    var item = { kind: "note", id: id, title: noteRefDisplayTitle(resolveLocalNoteFromCache({ id: id }) || {}) };
     apiFetch("/links?kind=note&id=" + encodeURIComponent(id), { method: "GET" })
       .then(function (r) {
-        var bundles = (r && r.bundles) || [];
+        if (gen !== noteLinksGen || String(currentOpenNoteId() || "") !== id) return;
+        noteBundlesState = { id: id, bundles: (r && r.bundles) || [] };
+        // Шапка документа при открытии перестраивается — кнопку дорисуем, когда появится.
         (function paint(tries) {
-          if (gen !== noteLinksGen || String(currentOpenNoteId() || "") !== id) return;
-          var el = noteLinksEl();
-          if (!el) {
-            if (tries < 20) setTimeout(function () { paint(tries + 1); }, 150);
-            return;
-          }
-          el._linkItem = item;
-          el._linkOpts = {};
-          el._linkToken = {};
-          if (linkedHosts.indexOf(el) < 0) linkedHosts.push(el);
-          paintLinkedItems(el, bundles);
+          if (gen !== noteLinksGen) return;
+          paintNoteLinksBtn();
+          if (!document.getElementById("note-editor-links-btn") && tries < 20)
+            setTimeout(function () { paint(tries + 1); }, 150);
         })(0);
       })
       .catch(function () {});
+  }
+
+  function bundleItemSheetIcon(it) {
+    if (it.kind === "note") return "file";
+    if (it.kind === "chat") return "chat";
+    if (it.kind === "person") return "person";
+    if (it.kind === "task" || it.kind === "reminder") return "check";
+    return "file";
+  }
+
+  // По иконке у оглавления: всё связанное, по связкам.
+  function openNoteLinksSheet(anchor) {
+    var st = noteBundlesState;
+    if (!st.id) return;
+    var items = [];
+    st.bundles.forEach(function (bd, i) {
+      if (i) items.push("-");
+      if (bd.title) {
+        items.push({
+          label: bd.title,
+          icon: "stack",
+          active: true,
+          onClick: function () {
+            openBundlePage(bd.id);
+          },
+        });
+      } else if (st.bundles.length > 1) {
+        items.push({ section: "Без названия" });
+      }
+      noteBundleOthers(bd, st.id).forEach(function (it) {
+        items.push({
+          label: it.title,
+          hint: it.kind === "task" && it.done ? "готово" : "",
+          icon: bundleItemSheetIcon(it),
+          onClick: function () {
+            openLinkedItem(it);
+          },
+        });
+      });
+    });
+    items.push("-");
+    items.push({
+      label: "Связать с…",
+      icon: "link",
+      onClick: function () {
+        openLinkPicker({ source: linkSourceForOpenNote(st.id) });
+      },
+    });
+    openNotesActionSheet(st.bundles.length === 1 && !st.bundles[0].title ? "Связанное" : "", items, anchor);
+    // Значок слева в полосе вкладок — список открываем от его левого края, а не от правого.
+    var sheet = document.querySelector("#nl-sheet-overlay.is-anchored .nl-sheet");
+    if (sheet && anchor) {
+      var ar = anchor.getBoundingClientRect();
+      sheet.style.left = Math.round(Math.max(8, Math.min(ar.left, window.innerWidth - 288))) + "px";
+    }
+  }
+
+  document.addEventListener("click", function (e) {
+    var b = e.target && e.target.closest && e.target.closest("#note-editor-links-btn");
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openNoteLinksSheet(b);
+  });
+
+  async function startNamedBundleForOpenNote(noteId) {
+    var title = await promptDialog("Название новой связки", "");
+    if (title == null || !String(title).trim()) return;
+    var src = linkSourceForOpenNote(noteId);
+    openLinkPicker({
+      title: "Новая связка «" + String(title).trim() + "»",
+      bundleTitle: String(title).trim(),
+      include: [src],
+      exclude: [linkKey(src)],
+    });
   }
 
   function linkSourceForOpenNote(noteId) {
@@ -40458,157 +40548,114 @@
     }
   });
 
-  function fillNoteMoreMenu() {
-    var menu = document.getElementById("note-editor-more-menu");
+  // Меню «⋯» документа: группы («Создать», «Переместить», связка, «Действия») раскрываются
+  // в том же окне со строкой «назад»; группа из одного пункта показывается сразу пунктом.
+  var NOTE_MORE_CHEVRON =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
+  var NOTE_MORE_BACK =
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>';
+
+  function noteMoreMenuGroups() {
     var wrap = document.getElementById("note-editor-more-wrap");
-    if (!menu || !wrap) return;
-    menu.innerHTML = "";
+    if (!wrap) return [];
     var shared = !!wrap._shareShared;
-
-    function addItem(label, onClick, disabled, opts) {
-      opts = opts || {};
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className =
-        "note-more-menu-item" + (opts.danger ? " note-more-menu-item--danger" : "");
-      btn.textContent = label;
-      if (disabled) {
-        btn.disabled = true;
-        btn.classList.add("is-busy");
-      } else {
-        btn.addEventListener("click", function (e) {
-          e.stopPropagation();
-          onClick();
-        });
-      }
-      menu.appendChild(btn);
-    }
-
-    var mobileTocMenu =
-      !window.matchMedia || window.matchMedia("(max-width: 959px)").matches;
-    if (false && mobileTocMenu && getActiveNoteEditorPage()) {
-      addItem("Оглавление", function () {
-        closeNoteMoreMenu();
-        openActiveNoteEditorToc();
-      });
-    }
-
-    if (noteSheetsEnabled()) {
-      addItem("Новый лист", function () {
-        closeNoteMoreMenu();
-        createNoteSheet({ openOn: "left", kind: "doc" });
-      });
-      addItem("Новая доска", function () {
-        closeNoteMoreMenu();
-        createNoteSheet({ openOn: "left", kind: "board" });
-      });
-      addItem("Новая презентация", function () {
-        closeNoteMoreMenu();
-        createNoteSheet({ openOn: "left", kind: "web" });
-      });
-    }
-
     var shareKind = String(wrap._shareKind || "");
     var shareId = wrap._shareId ? String(wrap._shareId) : "";
+    var isLocal = !!shareId && shareKind === "local";
+    var saved = isLocal && shareId.indexOf("tmp_") !== 0;
+    function run(fn) {
+      return function () {
+        closeNoteMoreMenu();
+        fn();
+      };
+    }
+
+    var create = [];
+    if (noteSheetsEnabled()) {
+      [["Лист", "doc"], ["Доска", "board"], ["Презентация", "web"], ["Макет", "design"]].forEach(function (k) {
+        create.push({ label: k[0], onClick: run(function () { createNoteSheet({ openOn: "left", kind: k[1] }); }) });
+      });
+    }
+
+    var move = [];
+    if (isLocal && !wrap._isKnowledge) {
+      move.push({ label: "Копия в «Мои документы» базы знаний", onClick: run(function () { copyLocalNoteToKnowledge(shareId); }) });
+    }
+    if (isLocal && window.LeoOrgKb && window.LeoOrgKb.canPlace()) {
+      move.push({
+        label: window.LeoOrgKb.inKb(shareId) ? "Переместить в другой раздел…" : "В базу знаний организации…",
+        onClick: run(function () { window.LeoOrgKb.place(shareId); }),
+      });
+    }
+
+    var actions = [];
+    if (saved && !wrap._isKnowledge) {
+      var hasMeeting = noteMeetingState.noteId === shareId && !!noteMeetingState.meeting;
+      actions.push({ label: hasMeeting ? "Другая встреча" : "Добавить ко встрече", onClick: run(function () { openNoteMeetingPicker(shareId); }) });
+    }
+    if (saved) actions.push({ label: "История версий", onClick: run(openNoteHistory) });
     if (shareId && (shareKind === "local" || shareKind === "journal")) {
-      addItem("Выгрузить…", function () {
-        closeNoteMoreMenu();
-        openNoteExportSheet([{ kind: shareKind, id: shareId }]);
-      });
+      actions.push({ label: "Выгрузить…", onClick: run(function () { openNoteExportSheet([{ kind: shareKind, id: shareId }]); }) });
     }
-
-    if (shareId && shareKind === "local" && !wrap._isKnowledge) {
-      addItem("Копия в «Мои документы» базы знаний", function () {
-        closeNoteMoreMenu();
-        copyLocalNoteToKnowledge(shareId);
-      });
-    }
-
-    // База знаний организации: положить свой документ в раздел или перенести в другой (org-kb.js).
-    if (shareId && shareKind === "local" && window.LeoOrgKb && window.LeoOrgKb.canPlace()) {
-      addItem(window.LeoOrgKb.inKb(shareId) ? "Переместить в другой раздел…" : "В базу знаний организации…", function () {
-        closeNoteMoreMenu();
-        window.LeoOrgKb.place(shareId);
-      });
-    }
-
     if (wrap._isKnowledge && wrap._isNoteOwner !== false) {
-      addItem("Поделиться с группой", function () {
-        closeNoteMoreMenu();
-        openNoteTeamShareSheet();
-      });
+      actions.push({ label: "Поделиться с группой", onClick: run(openNoteTeamShareSheet) });
     }
-
     if (shareKind === "local" || shareKind === "journal") {
       // «Поделиться» — иконкой в шапке; там же «Отключить все ссылки».
     } else if (!shared) {
-      addItem("Поделиться", function () {
-        closeNoteMoreMenu();
-        openShareAccessSheet();
-      });
+      actions.push({ label: "Поделиться", onClick: run(openShareAccessSheet) });
     } else {
-      addItem(
-        wrap._shareAccess === "comment"
-          ? "Сменить доступ · комментарии"
-          : "Сменить доступ · просмотр",
-        function () {
-          closeNoteMoreMenu();
-          openShareAccessSheet();
-        }
-      );
-      addItem("Скопировать ссылку", function () {
-        copyExistingShareLink();
+      actions.push({
+        label: wrap._shareAccess === "comment" ? "Сменить доступ · комментарии" : "Сменить доступ · просмотр",
+        onClick: run(openShareAccessSheet),
       });
-      addItem("Закрыть доступ", function () {
-        revokeShareLink();
-      });
+      actions.push({ label: "Скопировать ссылку", onClick: copyExistingShareLink });
+      actions.push({ label: "Закрыть доступ", onClick: revokeShareLink });
     }
 
-    if (shareId && shareKind === "local" && String(shareId).indexOf("tmp_") !== 0 && !wrap._isKnowledge) {
-      var hasMeeting = noteMeetingState.noteId === String(shareId) && !!noteMeetingState.meeting;
-      addItem(hasMeeting ? "Другая встреча" : "Добавить ко встрече", function () {
-        closeNoteMoreMenu();
-        openNoteMeetingPicker(shareId);
-      });
+    var groups = [];
+    if (create.length) groups.push({ label: "Создать", items: create });
+    if (move.length) groups.push({ label: "Переместить", items: move });
+    if (saved) {
+      var st = noteBundlesState.id === shareId ? noteBundlesState : { bundles: [] };
+      var linkNew = { label: "Связать с…", onClick: run(function () { openLinkPicker({ source: linkSourceForOpenNote(shareId) }); }) };
+      var bundleNew = { label: "Новая связка", onClick: run(function () { startNamedBundleForOpenNote(shareId); }) };
+      if (!st.bundles.length) {
+        groups.push(linkNew);
+      } else {
+        st.bundles.forEach(function (bd) {
+          var others = noteBundleOthers(bd, shareId);
+          var list = others.map(function (it) {
+            return { label: it.title, onClick: run(function () { openLinkedItem(it); }) };
+          });
+          list.push("-");
+          list.push(
+            bd.title
+              ? { label: "Добавить в связку", onClick: run(function () {
+                  openLinkPicker({ bundleId: bd.id, title: "Добавить в «" + bd.title + "»", exclude: bd.items.map(linkKey) });
+                }) }
+              : { label: "Связать с…", onClick: run(function () {
+                  openLinkPicker({ source: linkSourceForOpenNote(shareId), exclude: bd.items.map(linkKey) });
+                }) }
+          );
+          list.push(bundleNew);
+          list.push({ label: "Открыть связку", onClick: run(function () { openBundlePage(bd.id); }) });
+          list.push({ label: bd.title ? "Переименовать связку" : "Назвать связку", onClick: run(function () { renameBundle(bd); }) });
+          groups.push({ label: bd.title || "Без названия", bundle: true, count: others.length, items: list });
+        });
+      }
     }
-
-    if (shareId && shareKind === "local" && String(shareId).indexOf("tmp_") !== 0) {
-      addItem("Связать с…", function () {
-        closeNoteMoreMenu();
-        openLinkPicker({ source: linkSourceForOpenNote(shareId) });
-      });
-    }
-
-    if (shareId && shareKind === "local" && String(shareId).indexOf("tmp_") !== 0) {
-      addItem("История версий", function () {
-        closeNoteMoreMenu();
-        openNoteHistory();
-      });
-    }
+    if (actions.length) groups.push({ label: "Действия", items: actions });
 
     if (shareId && (shareKind === "local" || shareKind === "journal")) {
-      var isKb = !!wrap._isKnowledge;
-      var deleteLabel =
-        wrap._isNoteOwner === false
-          ? isKb
-            ? "Убрать из списка"
-            : "Убрать из списка"
-          : isKb
-            ? "Удалить документ"
-            : "Удалить документ";
-      addItem(
-        deleteLabel,
-        async function () {
+      var notOwner = wrap._isNoteOwner === false;
+      groups.push("-");
+      groups.push({
+        label: notOwner ? "Убрать из списка" : "Удалить документ",
+        danger: true,
+        onClick: async function () {
           closeNoteMoreMenu();
-          var msg =
-            wrap._isNoteOwner === false
-              ? isKb
-                ? "Убрать документ из списка?"
-                : "Убрать документ из списка?"
-              : isKb
-                ? "Удалить документ?"
-                : "Удалить документ?";
-          if (!(await confirmDialog(msg))) return;
+          if (!(await confirmDialog(notOwner ? "Убрать документ из списка?" : "Удалить документ?"))) return;
           try {
             await deleteLocalNoteById(shareId);
             closeNoteEditorModal();
@@ -40618,10 +40665,70 @@
             alert(err.message || String(err));
           }
         },
-        false,
-        { danger: true }
-      );
+      });
     }
+    return groups;
+  }
+
+  function fillNoteMoreMenu(openGroup) {
+    var menu = document.getElementById("note-editor-more-menu");
+    if (!menu) return;
+    menu.innerHTML = "";
+    var groups = noteMoreMenuGroups();
+
+    function addSep() {
+      var sep = document.createElement("div");
+      sep.className = "note-more-menu-sep";
+      menu.appendChild(sep);
+    }
+    function addItem(it, onClick, extraClass) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "note-more-menu-item" + (it.danger ? " note-more-menu-item--danger" : "") + (extraClass || "");
+      var lbl = document.createElement("span");
+      lbl.className = "note-more-menu-label";
+      lbl.textContent = it.label;
+      btn.appendChild(lbl);
+      btn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        onClick();
+      });
+      menu.appendChild(btn);
+      return btn;
+    }
+
+    var g = typeof openGroup === "number" ? groups[openGroup] : null;
+    if (g && g.items) {
+      var back = addItem({ label: g.label }, function () {
+        fillNoteMoreMenu();
+        positionNoteMoreMenu();
+      }, " note-more-menu-back");
+      back.insertAdjacentHTML("afterbegin", NOTE_MORE_BACK);
+      addSep();
+      g.items.forEach(function (it) {
+        if (it === "-") return addSep();
+        addItem(it, it.onClick);
+      });
+      return;
+    }
+
+    groups.forEach(function (it, i) {
+      if (it === "-") return addSep();
+      var only = it.items && it.items.length === 1 && !it.bundle ? it.items[0] : null;
+      if (!it.items || only) return addItem(only || it, (only || it).onClick);
+      var btn = addItem(it, function () {
+        fillNoteMoreMenu(i);
+        positionNoteMoreMenu();
+      }, " note-more-menu-group" + (it.bundle ? " note-more-menu-group--bundle" : ""));
+      if (it.bundle) btn.insertAdjacentHTML("afterbegin", LINK_ICONS.stack);
+      if (it.count) {
+        var c = document.createElement("span");
+        c.className = "note-more-menu-count";
+        c.textContent = String(it.count);
+        btn.appendChild(c);
+      }
+      btn.insertAdjacentHTML("beforeend", NOTE_MORE_CHEVRON);
+    });
   }
 
   var GPT_MODEL_LS = "leo_gpt_model";
@@ -57489,6 +57596,10 @@
     copy: '<rect x="8" y="8" width="12" height="12" rx="3" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" />',
     trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />',
     check: '<path d="M5 12.5l4.5 4.5L19 7.5" />',
+    file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" />',
+    stack: '<path d="m12 4 8 4-8 4-8-4z" /><path d="m4 12 8 4 8-4M4 16l8 4 8-4" />',
+    chat: '<path d="M5 18l-1 3 4-1.5A8 8 0 1 0 5 18z" />',
+    person: '<circle cx="12" cy="8" r="4" /><path d="M5 20a7 7 0 0 1 14 0" />',
   };
 
   function closeNotesActionSheet() {
@@ -57501,6 +57612,8 @@
   function notesSheetKeydown(e) {
     if (e.key === "Escape") {
       e.preventDefault();
+      // Окно бывает поверх документа — Escape закрывает только его, не документ.
+      e.stopImmediatePropagation();
       closeNotesActionSheet();
     }
   }
