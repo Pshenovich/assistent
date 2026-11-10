@@ -23700,6 +23700,26 @@ textarea.tracker-desc {
 .pt-c-sources { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .pt-c-sources.hidden { display: none; }
 .pt-c-sources .event-sheet-row-label { font-size: 0.82rem; color: var(--text-secondary); }
+/* Карточка поставленной задачи: в шапке — с кем задача; ниже — блок с названием и строками «Срок» / «Статус» / «Источник». */
+.pt-c-head > .pt-c-who { flex: 1; min-width: 0; justify-content: center; margin-top: 0; }
+.pt-c-head > .pt-c-who .pt-c-who-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-c-head > .pt-c-who + .pt-c-more { margin-left: 0; }
+.pt-c-block { margin-top: 6px; padding: 12px 14px 4px; border-radius: 14px; background: var(--surface-elevated); }
+.pt-c-block .pt-c-title { margin-top: 0; }
+.pt-c-rows { margin: 10px -14px 0; padding: 0 14px; border-top: 0.5px solid var(--border); }
+.pt-c-row { display: flex; align-items: center; gap: 8px; min-height: 40px; box-sizing: border-box; }
+.pt-c-row + .pt-c-row { border-top: 0.5px solid var(--border); }
+button.pt-c-row { width: 100%; padding: 0; border: none; border-top: 0.5px solid var(--border); background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.pt-c-rows > button.pt-c-row:first-child { border-top: none; }
+.pt-c-row-label, .pt-c-row.pt-c-sources .event-sheet-row-label { flex: none; width: 76px; font-size: 0.82rem; color: var(--text-secondary); }
+.pt-c-row-val { flex: 1; min-width: 0; font-size: 0.9rem; color: var(--text); }
+.pt-c-due-row.is-late .pt-c-row-val { color: var(--pt-late); }
+.pt-c-row-chev { flex: none; display: inline-flex; color: var(--text-tertiary); }
+.pt-c-row.pt-c-sources { margin-top: 0; padding: 6px 0; flex-wrap: wrap; row-gap: 6px; }
+.pt-c-row.pt-c-sources.hidden { display: none; }
+.pt-c-block + .pt-subtasks { margin-top: 8px; }
+.pt-subtasks.is-empty .st-head, .pt-subtasks.is-empty .st-list { display: none; }
+.pt-subtasks.is-empty > .st-add { margin-top: 0; }
 
 /* ---- Редактор заметок как в Telegram: меню-стекло с крупными строками, галочка у текущего пункта ---- */
 .note-tg-capsule { box-shadow: inset 0 0 0 1px var(--overlay-3); }

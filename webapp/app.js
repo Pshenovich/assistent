@@ -17617,6 +17617,7 @@
       var subs = t.subtasks || [];
       var canAdd = parents.length < SUBTASK_MAX_DEPTH;
       if (!subs.length && !canAdd) return;
+      host.classList.toggle("is-empty", !subs.length);
       var head = subtaskEl("div", "st-head");
       head.appendChild(subtaskEl("span", "st-head-title", "Подзадачи"));
       if (subs.length) {
@@ -18028,6 +18029,15 @@
     onModalSheetOpen();
     syncAppOverlay();
     var titleEl = document.getElementById("m-ev-sum");
+    if (opts.expandWhen) {
+      // Нажали на срок в карточке поставленной задачи — сразу раскрываем дату и время.
+      window.setTimeout(function () {
+        var whenGroup = document.getElementById("m-sheet-when");
+        var whenSum = whenGroup && whenGroup.querySelector(".sheet-when-summary");
+        if (whenGroup && whenSum && whenGroup.classList.contains("is-collapsed")) whenSum.click();
+        if (whenGroup && whenGroup.scrollIntoView) whenGroup.scrollIntoView({ block: "nearest" });
+      }, 0);
+    }
     if (!existing && opts.focusAssignee && assToggle && assEditor) {
       // «Поручить задачу» из «Поручено другим»: сразу выбор исполнителя.
       assEditor.classList.remove("hidden");
@@ -27248,6 +27258,17 @@
     return String(name || "").trim().split(/\s+/)[0] || "Исполнитель";
   }
 
+  // «Напомнить Ульяне»: дательный падеж русского имени по простым правилам; не уверены — пустая строка.
+  function postedDativeName(name) {
+    var n = String(name || "").trim();
+    if (!/^[А-ЯЁ][а-яё]+$/.test(n) || n === "Исполнитель" || n === "Постановщик") return "";
+    if (/ия$/.test(n)) return n.slice(0, -1) + "и";
+    if (/[ая]$/.test(n)) return n.slice(0, -1) + "е";
+    if (/й$/.test(n)) return n.slice(0, -1) + "ю";
+    if (/[бвгдзклмнпрстфхжшчщц]$/.test(n)) return n + "у";
+    return "";
+  }
+
   function postedInitials(name) {
     var parts = String(name || "").trim().split(/\s+/).filter(Boolean);
     if (!parts.length) return "?";
@@ -28768,8 +28789,30 @@
       x.addEventListener("click", closePostedCard);
       head.appendChild(x);
     }
+    // Шапка: «×» · с кем задача (исполнитель / постановщик) · «…». Статус и срок — в блоке ниже.
+    var who = document.createElement("div");
+    who.className = "pt-c-who";
+    if (isOwner) {
+      who.appendChild(postedAvatar(postedAssigneeUid(task), assigneeName, "s"));
+      var wn = document.createElement("span");
+      wn.className = "pt-c-who-name";
+      wn.textContent = assigneeName;
+      who.appendChild(wn);
+    } else {
+      who.appendChild(postedAvatar(String(task.owner_user_id || ""), postedOwnerName(state), "s"));
+      var on = document.createElement("span");
+      on.className = "pt-c-who-name";
+      on.textContent = postedOwnerName(state);
+      var role = document.createElement("span");
+      role.className = "pt-c-role";
+      role.textContent = "постановщик";
+      on.appendChild(role);
+      who.appendChild(on);
+    }
+    head.appendChild(who);
     var pill = document.createElement("span");
     var attn = isOwner ? postedAttention(task) : null;
+    var late = false;
     if (archived) {
       pill.className = "pt-pill pt-pill--muted";
       pill.textContent = outcome === "cancelled" ? "Отменено" : "Принято";
@@ -28783,8 +28826,7 @@
       pill.className = "pt-pill pt-pill--question";
       pill.textContent = isOwner ? "Вопрос" : "Ждёт ответа";
     } else if (postedTaskIsOverdue(task)) {
-      pill.className = "pt-pill pt-pill--late";
-      pill.textContent = postedLateLabel(task);
+      late = true;
     } else if (st.status === "in_progress") {
       pill.className = "pt-pill pt-pill--work";
       pill.textContent = "В работе";
@@ -28802,7 +28844,6 @@
                 ? "Открыта"
                 : "Ещё не открыта";
     }
-    head.appendChild(pill);
     var more = document.createElement("button");
     more.type = "button";
     more.className = "pt-icon-btn pt-c-more";
@@ -28823,36 +28864,17 @@
       paintSubtaskCrumb(crumbHost, task.parents, { card: state });
       body.appendChild(crumbHost);
     }
+    // Блок задачи: название, описание, затем строки «Срок» / «Статус» / «Источник».
+    var block = document.createElement("div");
+    block.className = "pt-c-block";
     var h = document.createElement("h3");
     h.className = "pt-c-title";
     h.textContent = String(task.title || ev.summary || "Задача");
-    body.appendChild(h);
-    var who = document.createElement("div");
-    who.className = "pt-c-who";
-    if (isOwner) {
-      who.appendChild(postedAvatar(postedAssigneeUid(task), assigneeName, "s"));
-      var wn = document.createElement("span");
-      wn.textContent = assigneeName;
-      who.appendChild(wn);
-    } else {
-      who.appendChild(postedAvatar(String(task.owner_user_id || ""), postedOwnerName(state), "s"));
-      var on = document.createElement("span");
-      on.textContent = postedOwnerName(state);
-      var role = document.createElement("span");
-      role.className = "pt-c-role";
-      role.textContent = "постановщик";
-      on.appendChild(role);
-      who.appendChild(on);
-    }
-    var due = document.createElement("span");
-    due.className = "pt-c-due" + (postedTaskIsOverdue(task) ? " is-late" : "");
-    due.textContent = postedDueLong(task);
-    who.appendChild(due);
-    body.appendChild(who);
-    // «Из «Заметка»» в описании (так пишут задачи из Фокуса и выделения) + note_id → ссылка «Источник».
+    block.appendChild(h);
+    // «Из «Заметка»» / «Из встречи «…»» в описании + note_id → это уже есть в «Источник», в тексте не повторяем.
     var descText = String(task.description || "");
     var srcTitle = "";
-    var srcM = descText.match(/(?:^|\n)Из «([^»\n]+)»\s*$/);
+    var srcM = descText.match(/(?:^|\n)Из (?:встречи )?«([^»\n]+)»\s*$/);
     if (srcM && task.note_id) {
       srcTitle = srcM[1];
       descText = descText.slice(0, srcM.index).trim();
@@ -28861,11 +28883,60 @@
       var d = document.createElement("p");
       d.className = "pt-c-desc";
       d.textContent = descText;
-      body.appendChild(d);
+      block.appendChild(d);
+    }
+    var rows = document.createElement("div");
+    rows.className = "pt-c-rows";
+    // «Срок» — кнопка: постановщику открывает перенос срока, исполнителю — просьбу о переносе.
+    var canMoveDue = !archived && !done && (isOwner || !task.assignee_external);
+    var dueRow = document.createElement(canMoveDue ? "button" : "div");
+    dueRow.className = "pt-c-row pt-c-due-row" + (late ? " is-late" : "");
+    if (canMoveDue) dueRow.type = "button";
+    var dueLbl = document.createElement("span");
+    dueLbl.className = "pt-c-row-label";
+    dueLbl.textContent = "Срок";
+    dueRow.appendChild(dueLbl);
+    var dueVal = document.createElement("span");
+    dueVal.className = "pt-c-row-val";
+    var dueTxt = postedDueLong(task).replace(/^срок /, "");
+    dueVal.textContent = late ? dueTxt + " · " + postedLateLabel(task).toLowerCase() : dueTxt;
+    dueRow.appendChild(dueVal);
+    if (canMoveDue) {
+      var chev = document.createElement("span");
+      chev.className = "pt-c-row-chev";
+      chev.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+      dueRow.appendChild(chev);
+      dueRow.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (isOwner) {
+          openPostedTaskEditor(task, state, { expandWhen: true });
+          return;
+        }
+        setPostedCardMode(state, "");
+        var ta = host.querySelector(".pt-composer textarea");
+        if (ta) {
+          ta.value = "Прошу перенести срок на ";
+          ta.focus();
+          ta.setSelectionRange(ta.value.length, ta.value.length);
+        }
+      });
+    }
+    rows.appendChild(dueRow);
+    if (!late) {
+      var stRow = document.createElement("div");
+      stRow.className = "pt-c-row";
+      var stLbl = document.createElement("span");
+      stLbl.className = "pt-c-row-label";
+      stLbl.textContent = "Статус";
+      stRow.appendChild(stLbl);
+      stRow.appendChild(pill);
+      rows.appendChild(stRow);
     }
     var srcHost = document.createElement("div");
-    srcHost.className = "pt-c-sources hidden";
-    body.appendChild(srcHost);
+    srcHost.className = "pt-c-sources pt-c-row hidden";
+    rows.appendChild(srcHost);
+    block.appendChild(rows);
+    body.appendChild(block);
     mountPostedSources(srcHost, task, srcTitle, state);
     var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
     if (checklist.length) body.appendChild(renderPostedChecklist(state, checklist, !archived));
@@ -28961,14 +29032,12 @@
           if (r) refreshPostedCard(state);
         }));
       } else {
-        bar.appendChild(postedActBtn("bell", "Напомнить", false, async function (b) {
+        // Срок переносится нажатием на строку «Срок» в блоке — внизу одна кнопка.
+        bar.appendChild(postedActBtn("bell", postedDativeName(otherName) ? "Напомнить " + postedDativeName(otherName) : "Напомнить", false, async function (b) {
           b.disabled = true;
           var r = await nudgePostedTask(task.id);
           b.disabled = false;
           if (r.ok) refreshPostedCard(state);
-        }));
-        bar.appendChild(postedActBtn("cal", "Перенести срок", false, function () {
-          openPostedTaskEditor(task, state);
         }));
       }
     } else if (!done && !archived) {
@@ -28988,15 +29057,7 @@
           b.disabled = false;
         }));
       }
-      bar.appendChild(postedActBtn("cal", "Попросить перенос", false, function () {
-        setPostedCardMode(state, "");
-        var ta = host.querySelector(".pt-composer textarea");
-        if (ta) {
-          ta.value = "Прошу перенести срок на ";
-          ta.focus();
-          ta.setSelectionRange(ta.value.length, ta.value.length);
-        }
-      }));
+      // «Попросить перенос» — нажатием на строку «Срок» в блоке.
     }
     if (bar.childNodes.length) foot.appendChild(bar);
     host.appendChild(foot);
@@ -29240,6 +29301,9 @@
       var label = POSTED_EVENT_TEXT[e.kind] || "";
       if (e.kind === "seen") label = "Открыто · " + postedFirstName(e.actor_name || assigneeName);
       sys.textContent = label + " · " + postedTimeShort(e.at);
+      // Одна и та же системная строка подряд (например, «Задача поставлена» дважды) — показываем один раз.
+      var prev = feed.lastChild;
+      if (prev && prev.className === "pt-sys" && prev.textContent === sys.textContent) return;
       feed.appendChild(sys);
     });
     if (!feed.childNodes.length) {
@@ -29941,7 +30005,7 @@
   }
 
   // «Изменить» / «Перенести срок» — обычное окно задачи (срок, исполнитель, чек-лист).
-  function openPostedTaskEditor(task, state) {
+  function openPostedTaskEditor(task, state, editorOpts) {
     var ev = (task && task.event) || {};
     var payload = Object.assign({}, ev, {
       task_id: task.id,
@@ -29956,6 +30020,7 @@
     });
     openTaskModal(payload, {
       forceEdit: true,
+      expandWhen: !!(editorOpts && editorOpts.expandWhen),
       onSaved: function () {
         loadPostedTasksList();
         loadActual({ silent: true });
