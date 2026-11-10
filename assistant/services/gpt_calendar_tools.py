@@ -211,6 +211,7 @@ class GptCalendarContext:
     cards_shown: bool = False
     slots_offered: bool = False
     wrote: bool = False
+    open_note_id: str = ""  # документ, в котором спрашивают (для «свяжи этот документ с…»)
 
 
 _CAL_INTENT_RE = None
@@ -276,6 +277,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Повтор (каждый день / по будням / еженедельно / до даты): один вызов с recurrence (freq + byday/until). НЕ создавай серию отдельными вызовами — иначе пользователь не сможет удалить всё сразу.
 - Действия из прошлых сообщений уже выполнены (в истории они помечены «Уже выполнено»). Не повторяй их: создавай/меняй только то, о чём просит последнее сообщение. На вопросы «какие у меня…» ничего не создавай — смотри calendar_events.
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
+- «Свяжи / объедини в связку» документы, саммари встреч, задачи, чаты: найди id (notes_find, tasks_search) и вызови propose_link — сам не связывай, пользователь подтвердит кнопкой. «Этот документ» — type=current_note.
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
 - У встреч бывают материалы (транскрипции с саммари, заметки) — в calendar_events это поле materials. Что было/решили на встрече — meeting_materials; что решали с человеком, что он обещал/не сделал, подготовка к встрече с ним — person_history (там и задачи, поставленные ему, — tasks_given). Отвечай по материалам, называй встречу и дату.
@@ -413,6 +415,14 @@ TOOLS: list[dict[str, Any]] = [
          "reason": {"type": "string", "enum": ["not_a_task", "not_relevant", "duplicate", "recognition_error"]},
          "type": {"type": "string", "enum": ["task", "promise", "decision", "reminder", "thought"]}},
         ["op"]),
+    _fn("propose_link", "Предложить связать документы, саммари встреч, задачи, чаты в одну связку («свяжи X с Y»). "
+        "НЕ связывает — пользователь подтвердит кнопкой. id документов бери из notes_find, задач — из tasks_search; "
+        "открытый документ — type=current_note.",
+        {"items": {"type": "array", "items": {"type": "object", "properties": {
+            "type": {"type": "string", "enum": ["note", "current_note", "task", "chat"]},
+            "id": {"type": "string"}}, "required": ["type"]}},
+         "title": {"type": "string", "description": "Название связки, если пользователь его назвал"}},
+        ["items"]),
     _fn("propose_delete", "Предложить удалить встречу/задачу/напоминание. НЕ удаляет — пользователь подтвердит кнопкой.",
         {"kind": {"type": "string", "enum": ["event", "task", "reminder"]}, "id": {"type": "string"},
          "title": {"type": "string", "description": "Название, если id неизвестен"},
@@ -1152,6 +1162,72 @@ def tool_propose_delete(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     return _ok({"proposed": True, "note": "Пользователь подтвердит удаление кнопкой под ответом."})
 
 
+def tool_propose_link(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    """«Свяжи X с Y»: код проверяет доступ к каждому элементу, пользователь подтверждает кнопкой."""
+    from assistant.services import bundle_access
+
+    ctx.wrote = True
+    picked: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in args.get("items") or []:
+        if not isinstance(raw, dict):
+            continue
+        typ = str(raw.get("type") or "").strip()
+        oid = str(raw.get("id") or "").strip()
+        if typ == "current_note":
+            typ, oid = "note", str(ctx.open_note_id or "")
+        if typ not in ("note", "task", "chat") or not oid:
+            continue
+        info = bundle_access.resolve(ctx.uid, typ, oid)
+        if not info or (info["kind"], info["id"]) in seen:
+            continue
+        seen.add((info["kind"], info["id"]))
+        picked.append({"kind": info["kind"], "id": info["id"], "title": info["title"]})
+    if len(picked) < 2:
+        return _err("Нужно хотя бы два доступных элемента: найди id через notes_find / tasks_search.")
+    picked = picked[:8]
+    names = " + ".join(f"«{p['title']}»" for p in picked)
+    title = " ".join(str(args.get("title") or "").split())[:120]
+    payload = {"items": picked, "bundle_title": title, "detail": "связать?"}
+    aid = record_action(ctx.uid, "link_items", "proposed", title=names[:300], payload=payload)
+    ctx.actions.append(aid)
+    return _ok({"proposed": True, "note": "Пользователь подтвердит связь кнопкой «Связать» под ответом."})
+
+
+def apply_link(a: dict[str, Any]) -> dict[str, Any]:
+    """Подтверждённая связь: доступ проверяется ещё раз (мог измениться)."""
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(a["owner_uid"])
+    p = a.get("payload") or {}
+    items = []
+    for it in p.get("items") or []:
+        try:
+            info = bundle_access.can_add(uid, it.get("kind"), it.get("id"))
+        except ValueError:
+            continue
+        items.append((info["kind"], info["id"], info["title"]))
+    if len(items) < 2:
+        raise ValueError("Нет доступа к элементам связки")
+    title = str(p.get("bundle_title") or "")
+    if title:
+        bundle = bundles_store.create(uid, title, items)
+    else:
+        first = items[0]
+        bundle = {}
+        for other in items[1:]:
+            visible = bundle_access.visible_ids_for_item(uid, first[0], first[1])
+            bundle = bundles_store.link(uid, first, other, visible_bundle_ids=visible)
+    try:
+        from assistant.realtime import notify as realtime_notify
+
+        realtime_notify.links_changed(bundle_access.member_user_ids(bundle) + [str(uid)], bundle_id=bundle.get("id"))
+    except Exception as e:
+        print(f"[gpt_calendar] links notify err={e!r}")
+    return {"bundle_id": bundle.get("id")}
+
+
 def _task_exists(ctx: GptCalendarContext, oid: str) -> bool:
     try:
         from assistant.stores import calendar_tasks
@@ -1430,6 +1506,7 @@ EXECUTORS: dict[str, Callable[[GptCalendarContext, dict[str, Any]], str]] = {
     "task_create": tool_task_create,
     "reminder_create": tool_reminder_create,
     "propose_delete": tool_propose_delete,
+    "propose_link": tool_propose_link,
     "show_calendar_cards": tool_show_calendar_cards,
     "offer_slots": tool_offer_slots,
 }

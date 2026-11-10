@@ -335,6 +335,49 @@ def related_items(uid: int, meeting: dict[str, Any], series: list[dict[str, Any]
     return out
 
 
+def linked_items(user_id: int, ev: dict[str, Any]) -> list[dict[str, Any]]:
+    """Что пользователь сам связал со встречей (связки): документы — с началом текста, задачи — со статусом."""
+    from assistant.services import bundle_access
+    from assistant.stores import meeting_links
+
+    raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
+    ev_id = str(ev.get("event_id") or ev.get("id") or raw.get("id") or "").strip()
+    if not ev_id:
+        return []
+    key = meeting_links.event_key(ev.get("calendar_id") or "primary", ev_id)
+    try:
+        items = bundle_access.context_items(int(user_id), "event", key, limit=8)
+    except Exception as e:
+        print(f"[meeting_brief] linked uid={user_id} err={e!r}")
+        return []
+    out = []
+    for it in items:
+        row: dict[str, Any] = {"kind": it.get("subtitle") or it["kind"], "title": it["title"]}
+        if it["kind"] == "task":
+            row["status"] = "выполнена" if it.get("done") else "открыта"
+        elif it["kind"] == "note":
+            row["excerpt"] = _linked_note_excerpt(int(user_id), it["id"])
+        out.append(row)
+    return out
+
+
+def _linked_note_excerpt(uid: int, note_id: str) -> str:
+    from assistant.lib.telegram_html import html_to_plain
+    from assistant.stores import notes as notes_store
+
+    try:
+        n = notes_store.get_readable_note(uid, int(note_id), with_sharing=False)
+    except Exception:
+        return ""
+    if not n:
+        return ""
+    try:
+        text = html_to_plain(str(n.get("body") or ""))
+    except Exception:
+        text = str(n.get("body") or "")
+    return " ".join(text.split())[:600]
+
+
 def collect_facts(user_id: int, ev: dict[str, Any], *, assume_topics: bool = False,
                   debug: Optional[dict] = None) -> dict[str, Any]:
     from assistant.services import meeting_topics
@@ -405,6 +448,7 @@ def collect_facts(user_id: int, ev: dict[str, Any], *, assume_topics: bool = Fal
         "stuck": stuck,
         "chats": chats,
         "related": related,
+        "linked": linked_items(int(user_id), ev),
     }
 
 
@@ -423,6 +467,7 @@ def has_substance(facts: dict[str, Any]) -> bool:
     """Только «кто и когда виделись» — не бриф. Нужны итоги темы, чат, найденное или повестка."""
     return bool(
         facts.get("series") or facts.get("chats") or facts.get("related")
+        or any(x.get("excerpt") or x.get("status") == "открыта" for x in facts.get("linked") or [])
         or len((facts.get("meeting") or {}).get("description") or "") >= _DESC_MIN
     )
 

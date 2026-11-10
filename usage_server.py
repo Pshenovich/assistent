@@ -2799,6 +2799,30 @@ class _MiniappJournalPatch(BaseModel):
     description: Optional[str] = None
 
 
+class _MiniappLinkItem(BaseModel):
+    kind: str = ""
+    id: str = ""
+    label: str = ""
+
+
+class _MiniappLinkBody(BaseModel):
+    a: _MiniappLinkItem
+    b: list[_MiniappLinkItem] = []
+
+
+class _MiniappBundleCreate(BaseModel):
+    title: str = ""
+    items: list[_MiniappLinkItem] = []
+
+
+class _MiniappBundlePatch(BaseModel):
+    title: str = ""
+
+
+class _MiniappBundleItems(BaseModel):
+    items: list[_MiniappLinkItem] = []
+
+
 class _MiniappTagCreate(BaseModel):
     name: str = ""
 
@@ -11091,6 +11115,8 @@ async def miniapp_gpt_chat(
         uid, telegram_username=tg_uname, display_name=_principal_display_name(principal)
     )
     gcal_tools.seed_quoted_tasks(gcal_ctx, [body.quote or "", *(body.quotes or [])])
+    if str(body.item_kind or "") == "local" and str(body.item_id or "").strip().isdigit():
+        gcal_ctx.open_note_id = str(body.item_id).strip()  # доступ проверит propose_link
     run_model = model or sanitize_openrouter_model_id(str(agent.get("model") or ""))
     tg_leo_thread = False
     if str(body.item_kind or "") == "chat" and agent_id == "gpt":
@@ -11258,6 +11284,20 @@ async def miniapp_gpt_chat(
                 uid, query, note_ids=kb_ids if body.knowledge_note_ids is not None else None
             )
         attached_notes = pack_attached_notes(uid, body.context_note_ids)
+        if kind == "local" and iid:
+            # Связки документа: связанные документы и саммари — текстом, задачи и чаты — списком.
+            try:
+                from assistant.services import bundle_access as _bundle_access
+
+                linked_ids, linked_list = _bundle_access.leo_context(uid, "note", iid)
+                already = {str(x).strip() for x in (body.context_note_ids or [])} | {iid}
+                linked_ids = [x for x in linked_ids if x not in already]
+                linked_text = pack_attached_notes(uid, linked_ids, budget=5000, each=1800) if linked_ids else ""
+                extra = "\n\n".join(p for p in (linked_list, linked_text) if p)
+                if extra:
+                    attached_notes = (attached_notes + "\n\n" + extra).strip()
+            except Exception as e:
+                print(f"[gpt.chat] bundle context note={iid} err={e!r}")
         from assistant.integrations.openrouter_client import model_emits_images as _emits_images
         from assistant.nlu import auto_model
 
@@ -13835,6 +13875,226 @@ async def miniapp_notes_backlinks(
         return note_sheets_store.find_ref_backlinks(uid, k, ref_id, origin_note_ids=origin)
 
     return {"ok": True, "items": await run_in_threadpool(_run)}
+
+
+def _links_notify(bundle: dict[str, Any] | None, extra: list[Any] | None = None) -> None:
+    from assistant.realtime import notify as realtime_notify
+    from assistant.services import bundle_access
+
+    ids = list(extra or [])
+    if bundle:
+        ids += bundle_access.member_user_ids(bundle)
+    realtime_notify.links_changed(ids, bundle_id=(bundle or {}).get("id"))
+
+
+def _links_checked(uid: int, items: list[_MiniappLinkItem]) -> list[tuple[str, str, str]]:
+    from assistant.services import bundle_access
+
+    out: list[tuple[str, str, str]] = []
+    for it in items[:60]:
+        try:
+            info = bundle_access.can_add(uid, it.kind, it.id, it.label)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        out.append((info["kind"], info["id"], str(it.label or info.get("title") or "")[:200]))
+    return out
+
+
+@miniapp_router.get("/links")
+async def miniapp_links_for_item(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    kind: str = "",
+    id: str = "",
+) -> dict[str, Any]:
+    """Связки элемента («Связанное» и именованные) — только то, что человеку доступно."""
+    from assistant.services import bundle_access
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> list[dict[str, Any]]:
+        k = str(kind or "").strip().lower()
+        if k not in ("person", "event") and not bundle_access.resolve(uid, k, id):
+            return []
+        try:
+            return bundle_access.bundles_for_item(uid, k, id)
+        except ValueError:
+            return []
+
+    return {"ok": True, "bundles": await run_in_threadpool(_run)}
+
+
+@miniapp_router.post("/links")
+async def miniapp_links_link(
+    body: _MiniappLinkBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Быстрая связь: элемент a + один или несколько b. Попадают в безымянную связку a."""
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(principal.telegram_user_id)
+    if not body.b:
+        raise HTTPException(status_code=400, detail="Выберите, с чем связать")
+
+    def _run() -> dict[str, Any]:
+        a = _links_checked(uid, [body.a])[0]
+        others = _links_checked(uid, body.b)
+        bundle: dict[str, Any] = {}
+        try:
+            for b in others:
+                if (b[0], b[1]) == (a[0], a[1]):
+                    continue
+                visible = bundle_access.visible_ids_for_item(uid, a[0], a[1]) | bundle_access.visible_ids_for_item(
+                    uid, b[0], b[1]
+                )
+                bundle = bundles_store.link(uid, a, b, visible_bundle_ids=visible)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        if not bundle:
+            raise HTTPException(status_code=400, detail="Нельзя связать элемент с самим собой")
+        _links_notify(bundle, [uid])
+        return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.post("/bundles")
+async def miniapp_bundle_create(
+    body: _MiniappBundleCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Новая связка из нескольких элементов (мультивыбор), с названием или без."""
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        items = _links_checked(uid, body.items)
+        try:
+            bundle = bundles_store.create(uid, body.title, items)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(bundle, [uid])
+        return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
+
+    return await run_in_threadpool(_run)
+
+
+def _bundle_or_400(uid: int, bundle_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    raw = bundles_store.get(bundle_id)
+    view = bundle_access.view_bundle(uid, raw) if raw else None
+    if not raw or not view:
+        raise HTTPException(status_code=400, detail="Связка не найдена")
+    return raw, view
+
+
+@miniapp_router.get("/bundles/{bundle_id}")
+async def miniapp_bundle_get(
+    bundle_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    _raw, view = await run_in_threadpool(_bundle_or_400, uid, bundle_id)
+    return {"ok": True, "bundle": view}
+
+
+@miniapp_router.patch("/bundles/{bundle_id}")
+async def miniapp_bundle_rename(
+    bundle_id: int,
+    body: _MiniappBundlePatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Назвать / переименовать связку (пустое название — снова просто «Связанное»)."""
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        _bundle_or_400(uid, bundle_id)
+        bundle = bundles_store.rename(bundle_id, body.title)
+        _links_notify(bundle, [uid])
+        return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.post("/bundles/{bundle_id}/items")
+async def miniapp_bundle_add_items(
+    bundle_id: int,
+    body: _MiniappBundleItems,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        _bundle_or_400(uid, bundle_id)
+        items = _links_checked(uid, body.items)
+        try:
+            bundle = bundles_store.add_items(uid, bundle_id, items)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(bundle, [uid])
+        return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.delete("/bundles/{bundle_id}/items/{kind}/{item_id}")
+async def miniapp_bundle_remove_item(
+    bundle_id: int,
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Убрать элемент из связки: автор связки или тот, кто элемент добавил."""
+    from assistant.services import bundle_access
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        raw, view = _bundle_or_400(uid, bundle_id)
+        try:
+            k, rid = bundles_store.norm_item(kind, item_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        mine = next((i for i in view["items"] if (i["kind"], i["id"]) == (k, rid)), None)
+        if not mine or not mine.get("can_remove"):
+            raise HTTPException(status_code=400, detail="Убрать может автор связки или тот, кто добавил")
+        left = bundles_store.remove_item(bundle_id, k, rid)
+        _links_notify(raw, [uid])
+        return {"ok": True, "bundle": bundle_access.view_bundle(uid, left) if left else None}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.delete("/bundles/{bundle_id}")
+async def miniapp_bundle_delete(
+    bundle_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Удалить связку (сами документы и задачи остаются). Только автор."""
+    from assistant.stores import bundles as bundles_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        raw, view = _bundle_or_400(uid, bundle_id)
+        if not view["can_delete"]:
+            raise HTTPException(status_code=400, detail="Удалить связку может только её автор")
+        bundles_store.delete(bundle_id)
+        _links_notify(raw, [uid])
+        return {"ok": True}
+
+    return await run_in_threadpool(_run)
 
 
 @miniapp_router.get("/notes/search")

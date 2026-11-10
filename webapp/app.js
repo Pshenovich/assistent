@@ -1294,6 +1294,7 @@
   let cachedMe = null;
   let notesSubTab = "notes";
   var chatThreadsCache = [];
+  var realtimeLinksTimer = null;
   var activeChatThreadId = "";
   var chatThreadsLoading = false;
   var leavingChatsTab = false;
@@ -17625,6 +17626,7 @@
       '<div id="m-task-assignee-host"></div>' +
       "</div>" +
       '<div id="m-task-backlinks" class="event-sheet-row note-backlinks-row hidden"></div>' +
+      '<div id="m-task-links" class="linked-items linked-items--card hidden"></div>' +
       "</div>" +
       "</div>";
     bindCreateKindSwitcher(
@@ -17641,6 +17643,12 @@
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
     if (existing) mountNoteBacklinks(document.getElementById("m-task-backlinks"), "task", taskId, closeModal);
+    if (existing)
+      mountLinkedItems(
+        document.getElementById("m-task-links"),
+        { kind: "task", id: String(taskId), title: ev.summary || ev.title || "Задача" },
+        { closeCard: closeModal, alwaysShow: true }
+      );
     else mountTaskTargetSwitch(ev, opts);
     var logLines =
       (ev.schedule_log_lines && ev.schedule_log_lines.length
@@ -21101,6 +21109,16 @@
       acts.appendChild(b);
     });
     box.appendChild(acts);
+    // Связки встречи: документы, задачи, чаты, связанные с ней вручную (видит тот, кто связал).
+    var linksHost = document.createElement("div");
+    linksHost.className = "linked-items linked-items--card hidden";
+    box.appendChild(linksHost);
+    if (ev && ev.id && String(ev.id).indexOf("tmp_") !== 0)
+      mountLinkedItems(
+        linksHost,
+        { kind: "event", id: meetingEventKey(ev), title: meetingDisplayTitle(ev, { blank: true }) || "Встреча" },
+        { closeCard: closeModal, alwaysShow: true }
+      );
     var file = document.createElement("input");
     file.type = "file";
     file.accept = "audio/*,video/*,.mp3,.m4a,.wav,.ogg,.oga,.webm,.mp4,.mov,.aac,.flac";
@@ -30439,6 +30457,16 @@
       closeContactDetail();
       return true;
     }
+    var linkPick = document.getElementById("link-pick-overlay");
+    if (linkPick && !linkPick.classList.contains("hidden")) {
+      closeLinkPicker();
+      return true;
+    }
+    var bundlePage = document.getElementById("bundle-page-overlay");
+    if (bundlePage && !bundlePage.classList.contains("hidden")) {
+      closeBundlePage();
+      return true;
+    }
     var meetPick = document.getElementById("meeting-pick-overlay");
     if (meetPick && !meetPick.classList.contains("hidden")) {
       closeNoteMeetingPicker();
@@ -34883,6 +34911,7 @@
     reminder_create: ["bell", "Напоминание", "Напоминание"],
     event_delete: ["trash", "Встреча", "Удалить встречу"],
     task_delete: ["trash", "Задача", "Удалить задачу"],
+    link_items: ["link", "Связка", "Связать"],
     reminder_delete: ["trash", "Напоминание", "Удалить напоминание"],
     slot: ["cal", "Встреча", "Создана встреча"],
   };
@@ -35038,11 +35067,14 @@
     var st = a.status;
     var head = ui[2];
     if (st === "undone") head = "Отменено";
+    else if (a.kind === "link_items" && st === "done") head = "Связано";
+    else if (a.kind === "link_items" && st === "dismissed") head = "Не связано";
     else if (st === "applied") head = "Удалено";
     else if (st === "dismissed") head = "Оставлено";
-    var parts = [head + " «" + (a.title || ui[1]) + "»"];
+    var parts = [a.kind === "link_items" ? head + " " + (a.title || ui[1]) : head + " «" + (a.title || ui[1]) + "»"];
     if (a.when) parts.push(a.when);
-    if (a.detail && st !== "undone" && st !== "applied" && st !== "dismissed" && a.detail !== "удалить?") parts.push(a.detail);
+    if (a.detail && st !== "undone" && st !== "applied" && st !== "dismissed" && a.detail !== "удалить?" && a.detail !== "связать?") parts.push(a.detail);
+    if (a.kind === "link_items") return { icon: "link", text: parts.join(" · ") + (st === "proposed" ? "?" : "") };
     return { icon: st === "proposed" ? "trash" : ui[0], text: parts.join(" · ") + (st === "proposed" ? "?" : "") };
   }
 
@@ -35055,7 +35087,7 @@
           if (typeof loadActual === "function") loadActual({ silent: true });
         } catch (_) {}
         if (op === "undo") showNoteToast("Отменено");
-        else if (op === "apply") showNoteToast("Удалено");
+        else if (op === "apply") showNoteToast(a.kind === "link_items" ? "Связано" : "Удалено");
       })
       .catch(function (e) {
         showNoteToast((e && e.message) || "Не получилось");
@@ -35175,6 +35207,15 @@
           });
           btn("Отменить", "", function () {
             calActionOp(a, "undo");
+          });
+        } else if (a.status === "proposed" && a.kind === "link_items") {
+          btn("Связать", "", function () {
+            calActionOp(a, "apply").then(function () {
+              refreshLinkedBlocks();
+            });
+          });
+          btn("Не надо", "", function () {
+            calActionOp(a, "dismiss");
           });
         } else if (a.status === "proposed") {
           btn("Удалить", "is-danger", function () {
@@ -36071,6 +36112,808 @@
         else alert("Контакт «" + (label || "") + "» не найден");
       });
     }
+  }
+
+  // ---- Связки: «Связанное» у документа/задачи и именованные связки (документ + саммари + задача…) ----
+  var LINK_ICONS = {
+    task:
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>',
+    chat:
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 18.5V7a3 3 0 0 1 3-3h8a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H8.5z"/></svg>',
+    reminder:
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
+    person:
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></svg>',
+    stack:
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/></svg>',
+    link:
+      '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+  };
+  var LINK_KIND_TAB = [
+    ["", "Всё"],
+    ["note", "Документы"],
+    ["meeting", "Встречи"],
+    ["task", "Задачи"],
+    ["chat", "Чаты"],
+    ["person", "Люди"],
+  ];
+
+  function linkItemIcon(it) {
+    if (it.kind === "note") return it.is_transcription ? WAVE_ICON : NOTE_ICON;
+    if (it.kind === "event") return MEET_ICON;
+    return LINK_ICONS[it.kind] || NOTE_ICON;
+  }
+
+  function linkKey(it) {
+    return String(it.kind) + ":" + String(it.id);
+  }
+
+  function openLinkedItem(it, closeCard) {
+    if (!it) return;
+    if (typeof closeCard === "function") closeCard();
+    if (it.kind === "note") return openNoteRefFromChip(String(it.id), "");
+    if (it.kind === "chat") return openNoteRefFromChip("", "", String(it.id));
+    if (it.kind === "task" || it.kind === "reminder" || it.kind === "person")
+      return openEntityRefFromChip(it.kind, String(it.id), it.title || "");
+  }
+
+  // Поиск для «Связать с…»: документы и саммари встреч, задачи, чаты, люди, напоминания.
+  function searchLinkItems(query, tab) {
+    var q = String(query || "").trim().toLowerCase();
+    var jobs = [];
+    var wantNote = !tab || tab === "note" || tab === "meeting";
+    if (wantNote) {
+      jobs.push(
+        linkNotesPool().then(function (pool) {
+          var seenN = {};
+          return pool
+            .filter(function (n) {
+              var id = String((n && n.id) || "");
+              if (!id || id.indexOf("tmp_") === 0 || seenN[id]) return false;
+              seenN[id] = true;
+              var tr = looksLikeTranscriptionNote(n);
+              if (tab === "meeting" && !tr) return false;
+              if (tab === "note" && tr) return false;
+              return !q || noteRefDisplayTitle(n).toLowerCase().indexOf(q) >= 0;
+            })
+            .sort(function (a, b) {
+              return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+            })
+            .slice(0, tab ? 30 : 8)
+            .map(function (n) {
+              var tr = looksLikeTranscriptionNote(n);
+              return {
+                kind: "note",
+                id: String(n.id),
+                title: noteRefDisplayTitle(n),
+                subtitle: (tr ? "Саммари встречи" : "Документ") + (n.updated_at ? " · " + noteRefShortDate(n.updated_at) : ""),
+                is_transcription: tr,
+              };
+            });
+        })
+      );
+      if (q.length >= 2) {
+        jobs.push(
+          apiFetch(
+            "/notes/search?limit=15&kind=" + (tab === "meeting" ? "transcriptions" : "notes") + "&q=" + encodeURIComponent(q),
+            { method: "GET" }
+          )
+            .then(function (r) {
+              return ((r && r.items) || []).map(function (n) {
+                var tr = looksLikeTranscriptionNote(n);
+                return {
+                  kind: "note",
+                  id: String(n.id),
+                  title: noteRefDisplayTitle(n),
+                  subtitle: tr ? "Саммари встречи" : "Документ",
+                  is_transcription: tr,
+                };
+              });
+            })
+            .catch(function () {
+              return [];
+            })
+        );
+      }
+    }
+    if (!tab || tab === "task") {
+      jobs.push(
+        searchTaskRefItems(query).then(function (xs) {
+          return xs.slice(0, tab ? 30 : 5).map(function (x) {
+            return { kind: "task", id: x.refId, title: x.label, subtitle: x.hint };
+          });
+        })
+      );
+    }
+    if (!tab || tab === "chat") {
+      var chatsP = (chatThreadsCache || []).length
+        ? Promise.resolve(chatThreadsCache)
+        : apiFetch("/chats?limit=100", { method: "GET" })
+            .then(function (d) {
+              return (d && d.chats) || [];
+            })
+            .catch(function () {
+              return [];
+            });
+      jobs.push(
+        chatsP.then(function (chats) {
+          return chats
+            .filter(function (c) {
+              return c && c.id && (!q || String(c.title || "").toLowerCase().indexOf(q) >= 0);
+            })
+            .slice(0, tab ? 30 : 4)
+            .map(function (c) {
+              return { kind: "chat", id: String(c.id), title: String(c.title || "").trim() || "Чат", subtitle: "Чат" };
+            });
+        })
+      );
+    }
+    if (!tab || tab === "person") {
+      jobs.push(
+        searchPersonRefItems(query).then(function (xs) {
+          return xs.slice(0, tab ? 30 : 3).map(function (x) {
+            return { kind: "person", id: x.refId, title: x.label, subtitle: x.hint };
+          });
+        })
+      );
+    }
+    if (!tab) {
+      jobs.push(
+        searchReminderRefItems(query).then(function (xs) {
+          return xs.slice(0, 3).map(function (x) {
+            return { kind: "reminder", id: x.refId, title: x.label, subtitle: x.hint };
+          });
+        })
+      );
+    }
+    return Promise.all(jobs).then(function (parts) {
+      var seen = {};
+      var out = [];
+      parts.forEach(function (xs) {
+        (xs || []).forEach(function (x) {
+          var k = linkKey(x);
+          if (seen[k]) return;
+          seen[k] = true;
+          out.push(x);
+        });
+      });
+      return out;
+    });
+  }
+
+  // Документы и саммари для выбора: из уже загруженного списка, иначе один раз с сервера.
+  var linkNotesFetched = null;
+  function linkNotesPool() {
+    var d = notesDataCache;
+    if (d && (d.local_notes || []).length) {
+      return Promise.resolve([].concat(d.local_notes || [], d.transcriptions || []));
+    }
+    if (!linkNotesFetched) {
+      linkNotesFetched = apiFetch("/notes", { method: "GET" })
+        .then(function (r) {
+          return [].concat((r && r.local_notes) || [], (r && r.transcriptions) || []);
+        })
+        .catch(function () {
+          linkNotesFetched = null;
+          return [];
+        });
+    }
+    return linkNotesFetched;
+  }
+
+  // Окно выбора. opts: { source:{kind,id,title}, bundleId, title, exclude:[keys], onDone(bundle) }
+  // source есть — «Связать с…» (в «Связанное» этого элемента); bundleId — «+ Добавить» в связку.
+  function openLinkPicker(opts) {
+    opts = opts || {};
+    var ov = document.getElementById("link-pick-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "link-pick-overlay";
+      ov.className = "modal-overlay meeting-pick-overlay link-pick-overlay hidden";
+      ov.innerHTML =
+        '<div class="modal modal--sheet meeting-pick-sheet link-pick-sheet" role="dialog" aria-modal="true" aria-label="Связать">' +
+        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-lp="close" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<h2 class="modal-title link-pick-title">Связать с…</h2><span></span></div>' +
+        '<div class="modal-body meeting-pick-body link-pick-body">' +
+        '<input type="search" class="field-input meeting-pick-search link-pick-search" placeholder="Документ, встреча, задача, чат" autocomplete="off" />' +
+        '<div class="link-pick-tabs"></div>' +
+        '<div class="meeting-pick-list link-pick-list"></div></div>' +
+        '<div class="link-pick-foot"><button type="button" class="btn primary link-pick-go" data-lp="go">Связать</button></div></div>';
+      document.body.appendChild(ov);
+      var tabs = ov.querySelector(".link-pick-tabs");
+      LINK_KIND_TAB.forEach(function (t) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "link-pick-tab";
+        b.setAttribute("data-tab", t[0]);
+        b.textContent = t[1];
+        tabs.appendChild(b);
+      });
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov || e.target.closest('[data-lp="close"]')) return closeLinkPicker();
+        var tab = e.target.closest(".link-pick-tab");
+        if (tab) {
+          ov._tab = tab.getAttribute("data-tab") || "";
+          runLinkPickerSearch();
+          return;
+        }
+        if (e.target.closest('[data-lp="go"]')) submitLinkPicker();
+      });
+      var t0 = null;
+      ov.querySelector(".link-pick-search").addEventListener("input", function () {
+        if (t0) clearTimeout(t0);
+        t0 = setTimeout(runLinkPickerSearch, 180);
+      });
+    }
+    ov._opts = opts;
+    ov._tab = "";
+    ov._picked = {};
+    ov._busy = false;
+    ov.querySelector(".link-pick-title").textContent = opts.title || (opts.bundleId ? "Добавить в связку" : "Связать с…");
+    ov.querySelector(".link-pick-search").value = "";
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    runLinkPickerSearch();
+    paintLinkPickerFoot();
+  }
+
+  function closeLinkPicker() {
+    var ov = document.getElementById("link-pick-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function paintLinkPickerFoot() {
+    var ov = document.getElementById("link-pick-overlay");
+    if (!ov) return;
+    var n = Object.keys(ov._picked || {}).length;
+    var go = ov.querySelector(".link-pick-go");
+    go.textContent = ov._busy ? "Связываю…" : n ? "Связать (" + n + ")" : "Выберите, что связать";
+    go.classList.toggle("is-empty", !n);
+  }
+
+  function runLinkPickerSearch() {
+    var ov = document.getElementById("link-pick-overlay");
+    if (!ov) return;
+    var tab = ov._tab || "";
+    Array.prototype.forEach.call(ov.querySelectorAll(".link-pick-tab"), function (b) {
+      b.classList.toggle("is-active", (b.getAttribute("data-tab") || "") === tab);
+    });
+    var gen = (ov._gen = (ov._gen || 0) + 1);
+    var list = ov.querySelector(".link-pick-list");
+    if (!list.children.length) list.innerHTML = '<p class="ev-materials-empty">Ищу…</p>';
+    searchLinkItems(ov.querySelector(".link-pick-search").value, tab).then(function (items) {
+      if (gen !== ov._gen) return;
+      var o = ov._opts || {};
+      var skip = {};
+      (o.exclude || []).forEach(function (k) {
+        skip[k] = true;
+      });
+      if (o.source) skip[linkKey(o.source)] = true;
+      items = items.filter(function (x) {
+        return !skip[linkKey(x)];
+      });
+      list.innerHTML = "";
+      if (!items.length) {
+        list.innerHTML = '<p class="ev-materials-empty">Ничего не нашлось</p>';
+        return;
+      }
+      items.forEach(function (it) {
+        var k = linkKey(it);
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "link-pick-row" + (ov._picked[k] ? " is-picked" : "");
+        b.innerHTML =
+          '<span class="link-ico link-ico--' + escapeHtml(it.is_transcription ? "meeting" : it.kind) + '">' + linkItemIcon(it) + "</span>" +
+          '<span class="link-pick-txt"><b></b><small></small></span><span class="link-pick-check" aria-hidden="true"></span>';
+        b.querySelector("b").textContent = it.title;
+        b.querySelector("small").textContent = it.subtitle || "";
+        b.setAttribute("aria-pressed", ov._picked[k] ? "true" : "false");
+        b.addEventListener("click", function () {
+          if (ov._picked[k]) delete ov._picked[k];
+          else ov._picked[k] = it;
+          b.classList.toggle("is-picked", !!ov._picked[k]);
+          b.setAttribute("aria-pressed", ov._picked[k] ? "true" : "false");
+          paintLinkPickerFoot();
+        });
+        list.appendChild(b);
+      });
+    });
+  }
+
+  function linkBodyItem(it) {
+    return { kind: it.kind, id: String(it.id), label: it.title || "" };
+  }
+
+  async function submitLinkPicker() {
+    var ov = document.getElementById("link-pick-overlay");
+    if (!ov || ov._busy) return;
+    var picked = Object.keys(ov._picked).map(function (k) {
+      return ov._picked[k];
+    });
+    if (!picked.length) return;
+    var o = ov._opts || {};
+    ov._busy = true;
+    paintLinkPickerFoot();
+    try {
+      await flushOpenNoteForShare().catch(function () {});
+      var r;
+      if (o.bundleId) {
+        r = await apiFetch("/bundles/" + encodeURIComponent(o.bundleId) + "/items", {
+          method: "POST",
+          body: JSON.stringify({ items: picked.map(linkBodyItem) }),
+        });
+      } else if (o.source) {
+        r = await apiFetch("/links", {
+          method: "POST",
+          body: JSON.stringify({ a: linkBodyItem(o.source), b: picked.map(linkBodyItem) }),
+        });
+      } else {
+        r = await apiFetch("/bundles", {
+          method: "POST",
+          body: JSON.stringify({ title: o.bundleTitle || "", items: picked.map(linkBodyItem) }),
+        });
+      }
+      ov._busy = false;
+      closeLinkPicker();
+      showNoteToast(picked.length > 1 ? "Связано: " + picked.length : "Связано");
+      refreshLinkedBlocks();
+      if (typeof o.onDone === "function") o.onDone((r && r.bundle) || null);
+    } catch (e) {
+      ov._busy = false;
+      paintLinkPickerFoot();
+      showNoteToast((e && e.message) || "Не удалось связать");
+    }
+  }
+
+  // Блок «Связанное»: host — контейнер, item — {kind, id, title}. opts.closeCard — закрыть карточку перед переходом.
+  var linkedHosts = [];
+
+  function mountLinkedItems(host, item, opts) {
+    if (!host || !item || !item.id || String(item.id).indexOf("tmp_") === 0) {
+      if (host) {
+        host.innerHTML = "";
+        host.classList.add("hidden");
+      }
+      return;
+    }
+    host._linkItem = item;
+    host._linkOpts = opts || {};
+    if (linkedHosts.indexOf(host) < 0) linkedHosts.push(host);
+    var token = (host._linkToken = {});
+    apiFetch("/links?kind=" + encodeURIComponent(item.kind) + "&id=" + encodeURIComponent(String(item.id)), { method: "GET" })
+      .then(function (r) {
+        if (host._linkToken !== token || !host.isConnected) return;
+        paintLinkedItems(host, (r && r.bundles) || []);
+      })
+      .catch(function () {
+        if (host._linkToken === token) host.classList.add("hidden");
+      });
+  }
+
+  function refreshLinkedBlocks() {
+    linkedHosts = linkedHosts.filter(function (h) {
+      return h.isConnected;
+    });
+    linkedHosts.forEach(function (h) {
+      if (h._linkItem) mountLinkedItems(h, h._linkItem, h._linkOpts);
+    });
+    var page = document.getElementById("bundle-page-overlay");
+    if (page && !page.classList.contains("hidden") && page._bundleId) loadBundlePage(page._bundleId);
+  }
+
+  function paintLinkedItems(host, bundles) {
+    var item = host._linkItem;
+    var opts = host._linkOpts || {};
+    var self = linkKey(item);
+    host.innerHTML = "";
+    host.classList.toggle("hidden", !bundles.length && !opts.alwaysShow);
+    if (!bundles.length) {
+      if (opts.alwaysShow) {
+        var add0 = document.createElement("button");
+        add0.type = "button";
+        add0.className = "linked-add linked-add--solo";
+        add0.innerHTML = LINK_ICONS.link + "<span>Связать с…</span>";
+        add0.addEventListener("click", function () {
+          openLinkPicker({ source: item });
+        });
+        host.appendChild(add0);
+      }
+      return;
+    }
+    bundles.forEach(function (bd) {
+      var box = document.createElement("div");
+      box.className = "linked-box" + (bd.title ? " linked-box--named" : "");
+      var head = document.createElement("div");
+      head.className = "linked-head";
+      var name = document.createElement(bd.title ? "button" : "span");
+      name.className = "linked-name";
+      if (bd.title) {
+        name.type = "button";
+        name.innerHTML = LINK_ICONS.stack;
+        var nt = document.createElement("span");
+        nt.textContent = bd.title;
+        name.appendChild(nt);
+        name.title = "Открыть связку";
+        name.addEventListener("click", function () {
+          if (typeof opts.closeCard === "function") opts.closeCard();
+          openBundlePage(bd.id);
+        });
+      } else {
+        name.textContent = "Связанное";
+      }
+      head.appendChild(name);
+      var sp = document.createElement("span");
+      sp.className = "linked-sp";
+      head.appendChild(sp);
+      var add = document.createElement("button");
+      add.type = "button";
+      add.className = "linked-add";
+      add.textContent = "+ Связать";
+      add.addEventListener("click", function () {
+        openLinkPicker(
+          bd.title
+            ? { bundleId: bd.id, title: "Добавить в «" + bd.title + "»", exclude: bd.items.map(linkKey) }
+            : { source: item, exclude: bd.items.map(linkKey) }
+        );
+      });
+      head.appendChild(add);
+      var more = document.createElement("button");
+      more.type = "button";
+      more.className = "linked-more";
+      more.setAttribute("aria-label", "Ещё");
+      more.textContent = "⋯";
+      more.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openLinkedBundleMenu(bd, item, more, opts);
+      });
+      head.appendChild(more);
+      box.appendChild(head);
+      var chips = document.createElement("div");
+      chips.className = "linked-chips";
+      bd.items.forEach(function (it) {
+        if (linkKey(it) === self) return;
+        var c = document.createElement("button");
+        c.type = "button";
+        c.className = "linked-chip linked-chip--" + (it.is_transcription ? "meeting" : it.kind);
+        c.innerHTML = linkItemIcon(it);
+        var t = document.createElement("span");
+        t.textContent = it.title;
+        c.appendChild(t);
+        c.title = (it.subtitle ? it.subtitle + ": " : "") + it.title;
+        c.addEventListener("click", function () {
+          openLinkedItem(it, opts.closeCard);
+        });
+        chips.appendChild(c);
+      });
+      box.appendChild(chips);
+      if (!bd.title) {
+        var nm = document.createElement("button");
+        nm.type = "button";
+        nm.className = "linked-name-it";
+        nm.textContent = "Назвать связку";
+        nm.addEventListener("click", function () {
+          renameBundle(bd);
+        });
+        box.appendChild(nm);
+      }
+      host.appendChild(box);
+    });
+  }
+
+  async function renameBundle(bd) {
+    var title = await promptDialog(bd.title ? "Название связки" : "Как назвать связку?", bd.title || "");
+    if (title == null) return;
+    try {
+      await apiFetch("/bundles/" + encodeURIComponent(bd.id), {
+        method: "PATCH",
+        body: JSON.stringify({ title: String(title).trim() }),
+      });
+      refreshLinkedBlocks();
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось переименовать");
+    }
+  }
+
+  function openLinkedBundleMenu(bd, item, anchor, opts) {
+    var items = [];
+    if (bd.title) {
+      items.push({
+        label: "Открыть связку",
+        onClick: function () {
+          if (typeof opts.closeCard === "function") opts.closeCard();
+          openBundlePage(bd.id);
+        },
+      });
+    }
+    items.push({
+      label: bd.title ? "Переименовать" : "Назвать связку",
+      onClick: function () {
+        renameBundle(bd);
+      },
+    });
+    var mine = bd.items.filter(function (x) {
+      return linkKey(x) === linkKey(item);
+    })[0];
+    if (mine && mine.can_remove) {
+      items.push({
+        label: "Убрать отсюда",
+        onClick: function () {
+          removeFromBundle(bd.id, mine);
+        },
+      });
+    }
+    if (bd.can_delete) {
+      items.push({
+        label: "Удалить связку",
+        danger: true,
+        onClick: function () {
+          deleteBundle(bd);
+        },
+      });
+    }
+    openNotesActionSheet(bd.title || "Связанное", items, anchor);
+  }
+
+  async function removeFromBundle(bundleId, it) {
+    try {
+      await apiFetch(
+        "/bundles/" + encodeURIComponent(bundleId) + "/items/" + encodeURIComponent(it.kind) + "/" + encodeURIComponent(String(it.id)),
+        { method: "DELETE" }
+      );
+      refreshLinkedBlocks();
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось убрать");
+    }
+  }
+
+  async function deleteBundle(bd) {
+    var ok = await confirmDialog(
+      "Удалить связку" + (bd.title ? " «" + bd.title + "»" : "") + "? Документы, задачи и чаты останутся, пропадёт только связь между ними."
+    );
+    if (!ok) return;
+    try {
+      await apiFetch("/bundles/" + encodeURIComponent(bd.id), { method: "DELETE" });
+      var page = document.getElementById("bundle-page-overlay");
+      if (page && page._bundleId === bd.id) closeBundlePage();
+      refreshLinkedBlocks();
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось удалить");
+    }
+  }
+
+  // Страница связки: всё, что в неё входит, по типам; «+ Добавить»; «Спросить Лео про связку».
+  var BUNDLE_GROUPS = [
+    ["note", "Документы"],
+    ["meeting", "Встречи"],
+    ["task", "Задачи"],
+    ["chat", "Чаты"],
+    ["person", "Люди"],
+    ["reminder", "Напоминания"],
+    ["event", "Встречи в календаре"],
+  ];
+
+  function openBundlePage(bundleId) {
+    var ov = document.getElementById("bundle-page-overlay");
+    if (!ov) {
+      ov = document.createElement("div");
+      ov.id = "bundle-page-overlay";
+      ov.className = "modal-overlay bundle-page-overlay hidden";
+      ov.innerHTML =
+        '<div class="modal modal--sheet bundle-page-sheet" role="dialog" aria-modal="true" aria-label="Связка">' +
+        '<div class="modal-header"><button type="button" class="modal-header-btn modal-header-btn--close" data-bp="close" aria-label="Закрыть">' +
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
+        '<h2 class="modal-title">Связка</h2><button type="button" class="modal-header-btn bundle-page-more" data-bp="more" aria-label="Ещё">⋯</button></div>' +
+        '<div class="modal-body bundle-page-body"></div></div>';
+      document.body.appendChild(ov);
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov || e.target.closest('[data-bp="close"]')) return closeBundlePage();
+        var b = e.target.closest("[data-bp]");
+        if (!b || !ov._bundle) return;
+        var act = b.getAttribute("data-bp");
+        var bd = ov._bundle;
+        if (act === "rename") renameBundle(bd);
+        else if (act === "add")
+          openLinkPicker({ bundleId: bd.id, title: "Добавить в «" + (bd.title || "связку") + "»", exclude: bd.items.map(linkKey) });
+        else if (act === "ask") askLeoAboutBundle(bd);
+        else if (act === "more") {
+          var items = [{ label: "Переименовать", onClick: function () { renameBundle(bd); } }];
+          if (bd.can_delete) items.push({ label: "Удалить связку", danger: true, onClick: function () { deleteBundle(bd); } });
+          openNotesActionSheet(bd.title || "Связка", items, b);
+        }
+      });
+    }
+    ov._bundleId = bundleId;
+    ov._bundle = null;
+    ov.querySelector(".bundle-page-body").innerHTML = '<p class="ev-materials-empty">Загружаю…</p>';
+    ov.classList.remove("hidden");
+    ov.setAttribute("aria-hidden", "false");
+    onModalSheetOpen();
+    syncAppOverlay();
+    loadBundlePage(bundleId);
+  }
+
+  function closeBundlePage() {
+    var ov = document.getElementById("bundle-page-overlay");
+    if (!ov || ov.classList.contains("hidden")) return;
+    ov.classList.add("hidden");
+    ov.setAttribute("aria-hidden", "true");
+    ov._bundleId = null;
+    onModalSheetClose();
+    syncAppOverlay();
+  }
+
+  function loadBundlePage(bundleId) {
+    var ov = document.getElementById("bundle-page-overlay");
+    if (!ov) return;
+    apiFetch("/bundles/" + encodeURIComponent(bundleId), { method: "GET" })
+      .then(function (r) {
+        if (ov._bundleId !== bundleId) return;
+        ov._bundle = r && r.bundle;
+        paintBundlePage();
+      })
+      .catch(function (e) {
+        if (ov._bundleId !== bundleId) return;
+        var body = ov.querySelector(".bundle-page-body");
+        body.innerHTML = '<p class="ev-materials-empty"></p>';
+        body.firstChild.textContent = (e && e.message) || "Связка не найдена";
+      });
+  }
+
+  function paintBundlePage() {
+    var ov = document.getElementById("bundle-page-overlay");
+    var bd = ov && ov._bundle;
+    if (!bd) return;
+    var body = ov.querySelector(".bundle-page-body");
+    body.innerHTML = "";
+    var h = document.createElement("button");
+    h.type = "button";
+    h.className = "bundle-page-title";
+    h.setAttribute("data-bp", "rename");
+    h.textContent = bd.title || "Без названия";
+    body.appendChild(h);
+    var meta = document.createElement("p");
+    meta.className = "bundle-page-meta";
+    meta.textContent =
+      bd.items.length + " " + pluralRu(bd.items.length, "элемент", "элемента", "элементов") +
+      " · видят все, у кого есть доступ" + (bd.hidden ? " · ещё " + bd.hidden + " вам недоступно" : "");
+    body.appendChild(meta);
+    BUNDLE_GROUPS.forEach(function (g) {
+      var xs = bd.items.filter(function (it) {
+        var k = it.kind === "note" && it.is_transcription ? "meeting" : it.kind;
+        return k === g[0];
+      });
+      if (!xs.length) return;
+      var sect = document.createElement("div");
+      sect.className = "bundle-sect";
+      var st = document.createElement("div");
+      st.className = "meeting-pick-sect";
+      st.textContent = g[1] + " · " + xs.length;
+      sect.appendChild(st);
+      xs.forEach(function (it) {
+        var row = document.createElement("div");
+        row.className = "bundle-row";
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "link-pick-row bundle-row-open";
+        b.innerHTML =
+          '<span class="link-ico link-ico--' + escapeHtml(it.is_transcription ? "meeting" : it.kind) + '">' + linkItemIcon(it) + "</span>" +
+          '<span class="link-pick-txt"><b></b><small></small></span>';
+        b.querySelector("b").textContent = it.title;
+        b.querySelector("small").textContent = it.subtitle || "";
+        b.addEventListener("click", function () {
+          closeBundlePage();
+          openLinkedItem(it);
+        });
+        row.appendChild(b);
+        if (it.can_remove) {
+          var x = document.createElement("button");
+          x.type = "button";
+          x.className = "nmp-x bundle-row-x";
+          x.setAttribute("aria-label", "Убрать из связки");
+          x.textContent = "×";
+          x.addEventListener("click", function () {
+            removeFromBundle(bd.id, it);
+          });
+          row.appendChild(x);
+        }
+        sect.appendChild(row);
+      });
+      body.appendChild(sect);
+    });
+    var foot = document.createElement("div");
+    foot.className = "bundle-page-foot";
+    foot.innerHTML =
+      '<button type="button" class="btn ghost" data-bp="add">+ Добавить</button>' +
+      '<button type="button" class="btn primary" data-bp="ask">Спросить Лео про связку</button>';
+    body.appendChild(foot);
+  }
+
+  function askLeoAboutBundle(bd) {
+    var noteItem = bd.items.filter(function (it) {
+      return it.kind === "note";
+    })[0];
+    var prompt = "Что важного в связке «" + (bd.title || "Связанное") + "»? Коротко: договорённости, открытые задачи, риски.";
+    closeBundlePage();
+    if (noteItem) {
+      // Лео отвечает в чате документа — контекст связки он подтягивает сам.
+      pendingBundleAsk = { noteId: String(noteItem.id), prompt: prompt };
+      openNoteRefFromChip(String(noteItem.id), "");
+      setTimeout(flushPendingBundleAsk, 900);
+      return;
+    }
+    if (window.LeoApp && window.LeoApp.askLeo) window.LeoApp.askLeo(prompt);
+  }
+
+  var pendingBundleAsk = null;
+  function flushPendingBundleAsk(tries) {
+    var p = pendingBundleAsk;
+    if (!p) return;
+    if (String(currentOpenNoteId() || "") !== p.noteId) {
+      if ((tries || 0) < 10) setTimeout(function () { flushPendingBundleAsk((tries || 0) + 1); }, 400);
+      else pendingBundleAsk = null;
+      return;
+    }
+    pendingBundleAsk = null;
+    if (window.LeoApp && window.LeoApp.askLeo) window.LeoApp.askLeo(p.prompt);
+  }
+
+  // «Связанное» под шапкой открытого документа (рядом с плашкой встречи).
+  function noteLinksEl() {
+    var el = document.getElementById("note-editor-links");
+    if (el) return el;
+    var after = document.getElementById("note-editor-meeting") || document.getElementById("note-editor-meta");
+    if (!after || !after.parentNode) return null;
+    el = document.createElement("div");
+    el.id = "note-editor-links";
+    el.className = "linked-items linked-items--note hidden";
+    after.parentNode.insertBefore(el, after.nextSibling);
+    return el;
+  }
+
+  // Шапка документа при открытии перестраивается — блок ищем (или создаём) уже после ответа сервера.
+  var noteLinksGen = 0;
+  function loadNoteLinks(noteId) {
+    var id = String(noteId || "");
+    var gen = ++noteLinksGen;
+    var old = document.getElementById("note-editor-links");
+    if (old) {
+      old.innerHTML = "";
+      old.classList.add("hidden");
+      old._linkItem = null;
+    }
+    if (!id || id.indexOf("tmp_") === 0) return;
+    var item = { kind: "note", id: id, title: noteRefDisplayTitle(resolveLocalNoteFromCache({ id: id }) || {}) };
+    apiFetch("/links?kind=note&id=" + encodeURIComponent(id), { method: "GET" })
+      .then(function (r) {
+        var bundles = (r && r.bundles) || [];
+        (function paint(tries) {
+          if (gen !== noteLinksGen || String(currentOpenNoteId() || "") !== id) return;
+          var el = noteLinksEl();
+          if (!el) {
+            if (tries < 20) setTimeout(function () { paint(tries + 1); }, 150);
+            return;
+          }
+          el._linkItem = item;
+          el._linkOpts = {};
+          el._linkToken = {};
+          if (linkedHosts.indexOf(el) < 0) linkedHosts.push(el);
+          paintLinkedItems(el, bundles);
+        })(0);
+      })
+      .catch(function () {});
+  }
+
+  function linkSourceForOpenNote(noteId) {
+    var id = String(noteId || currentOpenNoteId() || "");
+    var n = resolveLocalNoteFromCache({ id: id }) || { id: id };
+    return { kind: "note", id: id, title: noteRefDisplayTitle(n), is_transcription: looksLikeTranscriptionNote(n) };
   }
 
   // Строка «Заметки» в карточке задачи/напоминания/контакта: где сущность упомянута через «+».
@@ -38340,6 +39183,15 @@
       }, 700);
       return;
     }
+    if (type === "links.changed") {
+      // Кто-то связал или развязал документы/задачи — открытые блоки «Связанное» перечитываются.
+      if (realtimeLinksTimer) clearTimeout(realtimeLinksTimer);
+      realtimeLinksTimer = setTimeout(function () {
+        realtimeLinksTimer = null;
+        refreshLinkedBlocks();
+      }, 400);
+      return;
+    }
     if (type === "calendar.changed") {
       // Встречу добавили или передвинули в Google Календаре — открытое «Актуальное» перечитывает календарь.
       // Google часто шлёт несколько уведомлений подряд — склеиваем их в одно обновление.
@@ -39586,6 +40438,13 @@
       addItem(hasMeeting ? "Другая встреча" : "Добавить ко встрече", function () {
         closeNoteMoreMenu();
         openNoteMeetingPicker(shareId);
+      });
+    }
+
+    if (shareId && shareKind === "local" && String(shareId).indexOf("tmp_") !== 0) {
+      addItem("Связать с…", function () {
+        closeNoteMoreMenu();
+        openLinkPicker({ source: linkSourceForOpenNote(shareId) });
       });
     }
 
@@ -54890,6 +55749,7 @@
     wrap._shareShared = false;
     if (kind === "local") loadNoteMeeting(itemId);
     else noteMeetingState = { noteId: "", meeting: null, people: [] };
+    loadNoteLinks(kind === "local" ? itemId : "");
     wrap._shareUrl = "";
     wrap._shareAccess = "view";
     wrap._shareSheetIds = [];
@@ -56426,6 +57286,7 @@
   var NOTES_SHEET_ICONS = {
     pin: '<path d="M9 4h6l-1 6 4 4H6l4-4zM12 14v6" />',
     folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" />',
     share: '<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />',
     pdf: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14" />',
     select: '<rect x="4" y="4" width="16" height="16" rx="5" /><path d="M8.5 12.5l2.5 2.5 4.5-5" />',
@@ -56994,6 +57855,7 @@
     }
     bar.innerHTML =
       btn("project", "В проект", "folder") +
+      btn("link", "Связать", "link") +
       btn("pin", "Закрепить", "pin") +
       btn("pdf", "Выгрузить", "pdf") +
       btn("delete", "Удалить", "trash", true);
@@ -57020,6 +57882,9 @@
       if (act === "project") {
         openNotesProjectSheet(items);
         exitNotesSelectMode();
+      } else if (act === "link") {
+        linkSelectedNotes(items);
+        exitNotesSelectMode();
       } else if (act === "pin") {
         var pin = items.some(function (n) {
           return !n.pinned;
@@ -57040,6 +57905,34 @@
         exitNotesSelectMode();
       }
     });
+  }
+
+  // Мультивыбор → «Связать»: один документ — выбрать, с чем связать; несколько — новая связка с названием.
+  async function linkSelectedNotes(items) {
+    var picked = items
+      .map(function (n) {
+        var id = String(localNoteIdFrom(n) || "");
+        return id && id.indexOf("tmp_") !== 0 ? { kind: "note", id: id, label: noteRefDisplayTitle(n) } : null;
+      })
+      .filter(Boolean);
+    if (!picked.length) return;
+    if (picked.length === 1) {
+      openLinkPicker({ source: { kind: "note", id: picked[0].id, title: picked[0].label } });
+      return;
+    }
+    var title = await promptDialog("Название связки (можно оставить пустым)", "");
+    if (title == null) return;
+    try {
+      var r = await apiFetch("/bundles", {
+        method: "POST",
+        body: JSON.stringify({ title: String(title).trim(), items: picked }),
+      });
+      showNoteToast("Связано: " + picked.length);
+      refreshLinkedBlocks();
+      if (r && r.bundle && r.bundle.title) openBundlePage(r.bundle.id);
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не удалось связать");
+    }
   }
 
   function syncNotesSelectUi() {

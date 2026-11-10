@@ -160,6 +160,13 @@ def action_keyboard(actions: list[dict[str, Any]]) -> InlineKeyboardMarkup | Non
             rows.append(
                 [InlineKeyboardButton(_btn_label("🕒", a), callback_data=f"{CB_PREFIX}apply:{aid}")]
             )
+        elif kind == "link_items" and status == "proposed":
+            rows.append(
+                [
+                    InlineKeyboardButton("🔗 Связать", callback_data=f"{CB_PREFIX}apply:{aid}"),
+                    InlineKeyboardButton("Не надо", callback_data=f"{CB_PREFIX}dismiss:{aid}"),
+                ]
+            )
         elif kind.endswith("_delete") and status == "proposed":
             rows.append(
                 [

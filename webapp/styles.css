@@ -17789,6 +17789,69 @@ html:not(.digest-on) .sidebar-nav-group[data-sidebar-group="digest"] { display: 
 .meeting-pick-row em { font-style: normal; font-size: 0.75rem; color: var(--accent); }
 .meeting-pick-row small { grid-column: 1 / 3; font-size: 0.8rem; color: var(--text-secondary); }
 #m-ev-avail.ev-avail-past { display: none !important; }
+
+/* ---- Связки: «Связанное» у документа и задачи, выбор, страница связки ---- */
+/* поверх панели чата документа (220), под окном ввода (320) и меню действий (420) */
+.link-pick-overlay, .bundle-page-overlay { z-index: 300; }
+.linked-items { display: flex; flex-direction: column; gap: 8px; }
+.linked-items.hidden { display: none; }
+.linked-items--note { margin: 4px 0 10px; }
+.linked-items--card { margin-top: 10px; }
+.linked-box { padding: 9px 12px; border-radius: 12px; background: var(--surface-elevated); display: flex; flex-direction: column; gap: 7px; font-size: 0.85rem; }
+.linked-box--named { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.linked-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.linked-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-weight: 600; color: var(--text); border: none; background: none; padding: 0; font: inherit; font-weight: 600; cursor: default; }
+button.linked-name { cursor: pointer; color: var(--accent); }
+.linked-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-sp { flex: 1; }
+.linked-add, .linked-more, .linked-name-it { border: none; background: none; padding: 2px 4px; font: inherit; font-size: 0.82rem; color: var(--accent); cursor: pointer; }
+.linked-more { font-size: 1.05rem; line-height: 1; color: var(--text-secondary); }
+.linked-name-it { align-self: flex-start; padding: 0; font-size: 0.78rem; }
+.linked-add--solo { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 4px 0; }
+.linked-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.linked-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; height: var(--ui-chip-h); padding: 0 10px 0 8px; border: none; border-radius: 999px; background: var(--surface); color: var(--text); font: inherit; font-size: 0.8rem; cursor: pointer; }
+.linked-box--named .linked-chip { background: var(--surface); }
+.linked-chip:hover { background: var(--accent-subtle); }
+.linked-chip span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linked-chip svg { flex-shrink: 0; width: 0.95rem; height: 0.95rem; color: var(--accent); }
+.linked-chip--meeting svg, .link-ico--meeting { color: var(--violet-text); }
+.linked-chip--task svg, .link-ico--task { color: var(--emerald-text); }
+.linked-chip--chat svg, .link-ico--chat { color: var(--ui-due-fg); }
+.linked-chip--person svg, .link-ico--person, .linked-chip--reminder svg, .link-ico--reminder { color: var(--text-secondary); }
+.link-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: var(--accent-subtle); color: var(--accent); }
+.link-ico svg { width: 17px; height: 17px; }
+.link-ico--meeting { background: var(--violet-muted); }
+.link-ico--task { background: var(--emerald-muted); }
+.link-ico--chat { background: var(--ui-due-bg); }
+.link-ico--person, .link-ico--reminder { background: var(--overlay-3); }
+.link-pick-sheet { display: flex; flex-direction: column; }
+.link-pick-tabs { flex: none; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px 0; }
+.link-pick-tabs::-webkit-scrollbar { display: none; }
+.link-pick-tab { flex: none; height: var(--ui-chip-h); padding: 0 12px; border: none; border-radius: 999px; background: var(--surface-elevated); color: var(--text); font: inherit; font-size: 0.82rem; cursor: pointer; }
+.link-pick-tab.is-active { background: var(--accent); color: var(--on-accent); }
+.link-pick-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; border: none; border-radius: 12px; background: var(--surface-elevated); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.link-pick-row:hover { background: var(--accent-subtle); }
+.link-pick-row.is-picked { background: var(--accent-subtle); box-shadow: inset 0 0 0 1px var(--accent-border); }
+.link-pick-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.link-pick-txt b { font-size: 0.92rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-pick-txt small { font-size: 0.78rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-pick-check { flex: none; width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--border-strong); }
+.link-pick-check { display: inline-flex; align-items: center; justify-content: center; }
+.link-pick-row.is-picked .link-pick-check { background: var(--accent); box-shadow: none; }
+.link-pick-row.is-picked .link-pick-check::after { content: ""; width: 5px; height: 9px; margin-top: -2px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.link-pick-foot { padding: 10px 16px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); }
+.link-pick-go { width: 100%; height: var(--ui-h); }
+.btn.primary.link-pick-go.is-empty { background: var(--surface-elevated); color: var(--text-secondary); }
+.bundle-page-body { display: flex; flex-direction: column; gap: 8px; }
+.bundle-page-title { align-self: flex-start; border: none; background: none; padding: 0; color: var(--text); font-family: var(--font-heading); font-size: 1.2rem; font-weight: 500; text-align: left; cursor: text; }
+.bundle-page-meta { margin: 0 0 4px; font-size: 0.8rem; color: var(--text-secondary); }
+.bundle-sect { display: flex; flex-direction: column; gap: 6px; }
+.bundle-row { display: flex; align-items: center; gap: 6px; }
+.bundle-row-open { flex: 1; min-width: 0; }
+.bundle-row-x { flex: none; }
+.bundle-page-foot { display: flex; gap: 8px; margin-top: 8px; }
+.bundle-page-foot .btn { flex: 1; height: var(--ui-h); }
+.bundle-page-more { font-size: 1.2rem; }
 @media (min-width: 960px) {
   /* «Удалить» — под колонкой полей, а не на всю ширину широкого окна встречи. */
   #modal-overlay .modal--ev-materials .modal-sheet-actions { width: calc(50% - 10px); }

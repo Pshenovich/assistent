@@ -340,6 +340,12 @@ def apply_action_op(
             created = res.pop("_created", None)
             gcal_tools.set_action_status(action_id, "done", result=res)
             gcal_tools.dismiss_slot_siblings(a)
+        elif a.get("kind") == "link_items":
+            try:
+                res = gcal_tools.apply_link(a)
+            except ValueError as e:
+                raise ActionError(str(e)) from e
+            gcal_tools.set_action_status(action_id, "done", result=res)
         else:
             res = gcal_tools.apply_delete(a)
             gcal_tools.set_action_status(action_id, "applied", result=res)

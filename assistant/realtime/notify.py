@@ -271,6 +271,23 @@ def calendar_changed(user_id: int | str) -> None:
         return
 
 
+def links_changed(user_ids: list[Any], *, kind: str = "", item_id: Any = "", bundle_id: Any = None) -> None:
+    """Связки поменялись — открытый блок «Связанное» и страница связки перечитываются."""
+    ev: dict[str, Any] = {"type": "links.changed"}
+    if bundle_id is not None:
+        ev["bundle_id"] = int(bundle_id)
+    seen: set[str] = set()
+    for u in user_ids or []:
+        uid = str(u or "").strip()
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        try:
+            publish(user_topic(uid), ev)
+        except (TypeError, ValueError):
+            continue
+
+
 def prefs_changed(user_id: int | str, **fields: Any) -> None:
     """Настройка пользователя поменялась (например, тема) — его другие устройства применяют сразу."""
     try:
