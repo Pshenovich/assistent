@@ -85,6 +85,9 @@ Yjs ↔ комментарии ↔ задачи) остаются верными
 владельцы `sem_sources/sem_chunks.owner_user_id`; имена файлов `data/users/<uid>.json`, `*_user_tokens/<uid>.json`,
 `data/zoom_recent_meetings/<uid>.json`, `mail_attachments/<uid>/`.
 
+Не переписываются «сырые» Telegram id: `chat_digest.sqlite` (участники и отправители в группах, подписки на
+срочные), `usage.sqlite` (учёт вызовов — админка сама сворачивает Telegram в аккаунт), `site_chat.sqlite`.
+
 ### 2.3 Организации и команды старого формата
 
 - Старый формат — те же `orgs / org_members / org_domains / org_invites / org_settings / org_dismissed`, роли
@@ -134,7 +137,7 @@ Yjs ↔ комментарии ↔ задачи) остаются верными
 |---|---|
 | `user_profiles`, `mail_settings`, `focus_items`, `tracker_settings`, `board.user_context`, `org_settings` | Новая строка побеждает; пустые поля дополняются старыми |
 | `tags`, `hashtags` (UNIQUE user+name) | Старый тег с тем же именем → id нового; `tag_links/hashtag_links` переписать на него |
-| `credit_accounts` (баланс) | **Решение владельца.** По умолчанию: старый баланс − потрачено на новом с 05.11 (без повторного стартового подарка) |
+| `credit_accounts` (баланс) | Старый баланс + все движения на новом, кроме стартового подарка (т.е. − потрачено, + пополнения) — ✅ 10.11 |
 | `user_day_spend` | Сумма |
 | `leo_chats` (Telegram chat id) | Объединение, метаданные новые; `leo_chat_messages` — вставка без дублей `(chat_id, message_id)` |
 | `leo_chat_alert_cursor.last_rowid` | После вставки **сдвинуть на текущий максимум** — иначе старые сообщения уйдут как «срочные» |
@@ -142,8 +145,8 @@ Yjs ↔ комментарии ↔ задачи) остаются верными
 | `tracker_credentials.secret_enc`, `mail_accounts.secret_enc` | Расшифровать старым `mail_secret.key`, зашифровать новым (ключ старого сервера — из `state.tar.gz` спасения) |
 
 **Старая БЗ → личные документы авторов** (п. 2.1): `knowledge_bases`, `kb_documents`, `kb_chunks`, `kb_members`
-как таблицы не переносятся — из них собираются документы в `local_notes` (+ первый лист), семантический индекс
-строится заново.
+как таблицы не переносятся — из них собираются документы в `local_notes` (текст Markdown: заголовки кусков —
+`## …`), семантический индекс строится заново.
 
 **Не переносим (кэши):** `gcal_push.sqlite`, `calendar_mirror`, `web_login_codes.json`, `push_subscriptions`
 (браузеры подпишутся заново).
@@ -169,9 +172,18 @@ Yjs ↔ комментарии ↔ задачи) остаются верными
 
 ## 5. Порядок работ
 
-1. **Сейчас (Beget тёмный):** написать `scripts/merge_beget.py` — `--plan` (только отчёт), `--apply` (в
-   указанный каталог, не на живые базы). Тесты на фикстурах: старые базы, созданные кодом `6b26411`
-   (git worktree), + новые от HEAD; проверить каждый пункт п. 2–4.
+1. ✅ **10.11: `scripts/merge_beget.py` готов**, тесты `tests/test_merge_beget.py`. Схемы старого (`6b26411`) и
+   нового кода сравнены на пустых базах: у старого нет колонок, которых нет в новом; новые колонки
+   (`org_members.tg_hint/guest`, `user_profiles.custom_*`, `calendar_tasks.assignee_external`,
+   `org_member_ai.max_effort`) получают значения по умолчанию. Пробный `plan` на копии прода (10.11) — без ошибок.
+   ```
+   python3 scripts/merge_beget.py unpack <каталог спасения> /root/merge-rehearsal/old   # *.sqlite.gz + state.tar.gz
+   python3 scripts/merge_beget.py plan  --old /root/merge-rehearsal/old --new /opt/assistant --report report.md
+   python3 scripts/merge_beget.py apply --old /root/merge-rehearsal/old --new /opt/assistant --out /root/merge-rehearsal/out --report report.md
+   ```
+   `--new` читается через sqlite backup API (живые базы не меняются), результат — только в `--out` (базы целиком +
+   объединённые файлы). Установка в окне: сервисы остановлены → удалить `*-wal`/`*-shm` у баз из `out` →
+   `rsync -a out/ /opt/assistant/`. Код возврата 1 — если не сошлись числа строк или `quick_check`.
 2. **Beget ожил:** `./scripts/rescue_old_server.sh` (копия → Мак, S3 `beget-rescue/`, новый сервер), затем
    остановить Орбиту на Beget (разрешено владельцем) — его бот со старым токеном иначе помешает.
 3. **Репетиция:** копия текущего прода (sqlite backup API) + спасённые базы → `merge_beget.py --plan` и
@@ -192,6 +204,6 @@ Yjs ↔ комментарии ↔ задачи) остаются верными
 ## 6. Что нужно от владельца
 
 - ✅ 09.11: старые документы БЗ — авторам в «Документы» (п. 2.1).
-- Согласовать правила по умолчанию: дубли (не удалять, помечать), кредиты (старый баланс − расход на новом),
-  пропущенные напоминания (без отправки).
+- ✅ 10.11: правила по умолчанию согласованы — дубли (не удалять, помечать «(до 01.11)»), кредиты (старый баланс −
+  расход на новом, без повторного подарка), пропущенные напоминания (без отправки).
 - Время окна на проде — после отчёта репетиции.
