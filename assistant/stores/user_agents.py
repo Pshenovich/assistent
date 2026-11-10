@@ -158,11 +158,22 @@ def builtin_max_rounds() -> int:
 
 
 def allowed_model_ids() -> set[str]:
-    from assistant.integrations.openrouter_client import GPT_PICKER_MODELS, PAIE_REASONING_MODELS
-
+    """«Авто» и модели, включённые в админке (/dashboard/models)."""
+    from assistant.integrations.openrouter_client import picker_registry
     from assistant.nlu.auto_model import AUTO_MODEL_ID
 
-    return {AUTO_MODEL_ID} | {mid for mid, _name in GPT_PICKER_MODELS} | {mid for mid, _name in PAIE_REASONING_MODELS}
+    return {AUTO_MODEL_ID} | {r["id"] for r in picker_registry()}
+
+
+def _still_listed(model: str, kind: str) -> bool:
+    """Модель, сохранённую раньше, оператор мог убрать из списка — тогда берём модель по умолчанию."""
+    if kind == "research":
+        return True
+    try:
+        allowed = paie_allowed_model_ids() if kind == "paie" else allowed_model_ids()
+    except Exception:
+        return True
+    return not allowed or model in allowed
 
 
 def paie_allowed_model_ids() -> set[str]:
@@ -283,7 +294,7 @@ def _merge_builtin(kind: str, overlay: dict[str, Any] | None) -> dict[str, Any]:
     if kind == LEO_LOCKED_KIND:
         base = _lock_leo(base)
         model = str((overlay or {}).get("model") or "").strip()
-        if model:
+        if model and _still_listed(model, kind):
             base["model"] = model
         return base
     if not overlay:
@@ -293,7 +304,7 @@ def _merge_builtin(kind: str, overlay: dict[str, Any] | None) -> dict[str, Any]:
     rules = str(overlay.get("rules") or "").strip()
     if prompt:
         base["prompt"] = prompt
-    if model:
+    if model and _still_listed(model, kind):
         base["model"] = model
     base["rules"] = rules
     if overlay.get("temperature") is not None and kind != "paie":

@@ -228,9 +228,23 @@ def _auto_row(label_key: str) -> dict[str, Any]:
     return {"id": AUTO_MODEL_ID, label_key: AUTO_LABEL, "note": AUTO_NOTE}
 
 
+def picker_registry() -> list[dict[str, Any]]:
+    """Включённые модели из админки (/dashboard/models) в порядке показа; при сбое базы — прежний набор."""
+    try:
+        from assistant.stores import llm_models
+
+        return llm_models.list_models(enabled_only=True)
+    except Exception as e:
+        print(f"[openrouter_client] llm_models failed err={e!r}")
+        from assistant.stores.llm_models import seed_rows
+
+        return seed_rows()
+
+
 def tg_leo_models() -> list[dict[str, str]]:
     """Модели, которые можно выбрать для Лео в Telegram (Профиль → «Лео в Telegram»). «Авто» — первым."""
-    return [_auto_row("label"), *({"id": mid, "label": label} for mid, label in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS))]
+    return [_auto_row("label"), *({"id": r["id"], "label": r["label"], "reasoning": bool(r["efforts"])}
+                                  for r in picker_registry())]
 
 
 def tg_leo_model_allowed(model_id: str | None) -> bool:
@@ -247,6 +261,14 @@ def gpt_display_label(model_id: str | None) -> str:
 
     if is_auto(mid):
         return AUTO_LABEL
+    try:
+        from assistant.stores import llm_models
+
+        known = llm_models.labels()
+    except Exception:
+        known = {}
+    if mid in known:
+        return known[mid]
     for pid, pname in (*GPT_PICKER_MODELS, *PAIE_REASONING_MODELS, *AUTO_INTERNAL_LABELS.items()):
         if pid == mid:
             return pname
@@ -917,12 +939,7 @@ def list_openrouter_models(*, force: bool = False) -> dict[str, Any]:
     }
     headers.update(extra)
     try:
-        r = requests.get(_openrouter_models_url(), headers=headers, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        items = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(items, list):
-            items = []
+        items = _fetch_models_raw(headers)
         out = normalize_openrouter_models(items, default=default)
     except BaseException:
         out = normalize_openrouter_models([], default=default)
@@ -930,51 +947,149 @@ def list_openrouter_models(*, force: bool = False) -> dict[str, Any]:
     return out
 
 
+_RAW_MODELS_CACHE: tuple[float, list[dict[str, Any]]] | None = None
+
+
+def _fetch_models_raw(headers: dict[str, str]) -> list[dict[str, Any]]:
+    global _RAW_MODELS_CACHE
+    r = requests.get(_openrouter_models_url(), headers=headers, timeout=20)
+    r.raise_for_status()
+    data = r.json()
+    items = data.get("data") if isinstance(data, dict) else None
+    items = [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
+    _RAW_MODELS_CACHE = (time.monotonic(), items)
+    return items
+
+
+def _usd_per_m(raw: Any) -> float | None:
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return round(v * 1_000_000, 4) if v >= 0 else None
+
+
+def catalog_entry(item: dict[str, Any]) -> dict[str, Any]:
+    """Модель каталога OpenRouter для админки: цена за 1 млн токенов и уровни усилия.
+
+    efforts: None — модель не рассуждает; [] — принимает все уровни (supported_efforts: null).
+    """
+    from assistant.stores.llm_models import normalize_efforts
+
+    pricing = item.get("pricing") if isinstance(item.get("pricing"), dict) else {}
+    reasoning = item.get("reasoning") if isinstance(item.get("reasoning"), dict) else None
+    params = [str(x) for x in (item.get("supported_parameters") or []) if x]
+    efforts: list[str] | None = None
+    default_effort = ""
+    mandatory = False
+    if reasoning is not None:
+        sup = reasoning.get("supported_efforts")
+        efforts = normalize_efforts(sup) if isinstance(sup, list) else []
+        default_effort = str(reasoning.get("default_effort") or "")
+        mandatory = bool(reasoning.get("mandatory"))
+    elif "reasoning" in params:
+        efforts = []
+    return {
+        "id": str(item.get("id") or ""),
+        "name": _model_short_name(item),
+        "input_usd_m": _usd_per_m(pricing.get("prompt")),
+        "output_usd_m": _usd_per_m(pricing.get("completion")),
+        "context": int(item.get("context_length") or 0),
+        "efforts": efforts,
+        "default_effort": default_effort,
+        "mandatory": mandatory,
+    }
+
+
+def openrouter_catalog(*, force: bool = False) -> list[dict[str, Any]]:
+    """Весь каталог текстовых моделей OpenRouter с ценами и уровнями (для админки), кэш 10 минут."""
+    cached = _RAW_MODELS_CACHE
+    if force or cached is None or time.monotonic() - cached[0] > _MODELS_TTL_SEC:
+        list_openrouter_models(force=True)
+        cached = _RAW_MODELS_CACHE
+    items = cached[1] if cached else []
+    out = []
+    for it in items:
+        mid = str(it.get("id") or "")
+        # «:batch» — пакетная обработка с ответом позже, для чата не годится.
+        if not _is_text_chat_model(it) or not sanitize_openrouter_model_id(mid) or mid.endswith(":batch"):
+            continue
+        out.append(catalog_entry(it))
+    return out
+
+
+def _catalog_hides(mid: str, catalog_ids: set[str]) -> bool:
+    """Модель пропала из каталога OpenRouter: каталог этого провайдера есть, а её в нём нет."""
+    if not catalog_ids or mid in catalog_ids:
+        return False
+    vendor = mid.split("/", 1)[0] + "/"
+    return any(c.startswith(vendor) for c in catalog_ids)
+
+
 def build_gpt_picker_models(
     catalog_ids: set[str],
     *,
     ask: str | None = None,
 ) -> dict[str, Any]:
-    catalog_has_openai = any(mid.startswith("openai/") for mid in catalog_ids)
+    """Список для переключателя Лео: модели из админки; «Авто» — первым.
+
+    Строка: id, name, reasoning (есть уровни усилия), efforts — уровни модели из админки,
+    default_effort. Уровни под конкретного пользователя добавляет with_user_efforts().
+    """
+    catalog_ids = set(catalog_ids or [])
     models: list[dict[str, Any]] = []
-    for mid, name in GPT_PICKER_MODELS:
-        if catalog_has_openai and mid not in catalog_ids:
+    for r in picker_registry():
+        # Думающие модели — всегда (как раньше): каталог через прокси бывает неполным.
+        if not r["efforts"] and _catalog_hides(r["id"], catalog_ids):
             continue
-        models.append({"id": mid, "name": name, "reasoning": False})
-    if not any(not row.get("reasoning") for row in models):
-        models = [
-            {"id": mid, "name": name, "reasoning": False} for mid, name in GPT_PICKER_MODELS
-        ]
-    for mid, name in PAIE_REASONING_MODELS:
-        if any(row["id"] == mid for row in models):
-            continue
-        models.append({"id": mid, "name": name, "reasoning": True})
+        models.append({"id": r["id"], "name": r["label"], "reasoning": bool(r["efforts"]),
+                       "efforts": list(r["efforts"]), "default_effort": r["default_effort"]})
     from assistant.nlu.auto_model import AUTO_MODEL_ID
 
     ask_id = sanitize_openrouter_model_id(ask)
     preferred = ask_id or AUTO_MODEL_ID
-    default = preferred if any(row["id"] == preferred for row in models) or preferred == AUTO_MODEL_ID else models[0]["id"]
-    models.sort(
-        key=lambda row: (
-            0 if row["id"] == default else 1,
-            1 if row.get("reasoning") else 0,
-            str(row["name"]).lower(),
-        )
+    default = preferred if any(row["id"] == preferred for row in models) or preferred == AUTO_MODEL_ID else (
+        models[0]["id"] if models else AUTO_MODEL_ID
     )
+    # Порядок — как в админке; модель по умолчанию — первой после «Авто».
+    models.sort(key=lambda row: 0 if row["id"] == default else 1)
     # «Авто» — всегда первым, с подписью про экономию.
     return {"models": [{**_auto_row("name"), "reasoning": False}, *models], "default": default}
 
 
+def with_user_efforts(models: list[dict[str, Any]], user_id: int | str | None) -> list[dict[str, Any]]:
+    """Добавить к строкам уровни, доступные этому пользователю, и его текущий выбор."""
+    from assistant.stores import llm_models
+
+    out = []
+    for m in models:
+        row = {k: v for k, v in m.items() if k not in ("efforts", "default_effort")}
+        try:
+            row.update(llm_models.picker_fields(str(m.get("id") or ""), user_id))
+        except Exception as e:
+            print(f"[openrouter_client] efforts for picker failed err={e!r}")
+            row.update({"efforts": [], "effort": None})
+        out.append(row)
+    return out
+
+
 def paie_static_model_ids() -> set[str]:
-    return (
-        {mid for mid, _name in PAIE_BASE_MODELS}
-        | {mid for mid, _name in GPT_PICKER_MODELS}
-        | {mid for mid, _name in PAIE_REASONING_MODELS}
-    )
+    return {mid for mid, _name in PAIE_BASE_MODELS} | {r["id"] for r in picker_registry()}
 
 
 def is_paie_reasoning_model(model_id: str | None) -> bool:
+    """У модели в админке отмечены уровни усилия — она думает до ответа (reasoning в запросе)."""
     mid = sanitize_openrouter_model_id(model_id) or ""
+    if not mid:
+        return False
+    try:
+        from assistant.stores import llm_models
+
+        entry = llm_models.get(mid)
+    except Exception:
+        entry = None
+    if entry is not None:
+        return bool(entry["efforts"])
     return mid in {row[0] for row in PAIE_REASONING_MODELS}
 
 
@@ -1014,22 +1129,21 @@ def build_paie_picker_models(
         rows.append(
             {
                 "id": clean,
-                "name": labels.get(clean) or name,
+                "name": name or labels.get(clean) or clean,
                 "reasoning": bool(reasoning),
             }
         )
 
+    registry = {r["id"]: r for r in picker_registry()}
     add(
         default_id,
-        labels.get(default_id) or default_id.split("/")[-1],
+        (registry.get(default_id) or {}).get("label") or labels.get(default_id) or default_id.split("/")[-1],
         reasoning=is_paie_reasoning_model(default_id),
     )
     for mid, name in PAIE_BASE_MODELS:
         add(mid, name, reasoning=False)
-    for mid, name in GPT_PICKER_MODELS:
-        add(mid, name, reasoning=False)
-    for mid, name in PAIE_REASONING_MODELS:
-        add(mid, name, reasoning=True)
+    for r in registry.values():
+        add(r["id"], r["label"], reasoning=bool(r["efforts"]))
     rows.sort(
         key=lambda row: (
             0 if row["id"] == default_id else 1,

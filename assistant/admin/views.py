@@ -15,6 +15,7 @@ NAV = (
     ("users", "Пользователи", "/users"),
     ("orgs", "Организации", "/orgs"),
     ("spend", "Расход", "/spend"),
+    ("models", "Модели", "/models"),
     ("audit", "Журнал действий", "/audit"),
     ("board", "PAIE", "/board"),
 )
@@ -29,7 +30,8 @@ PLAN_LABEL = _plan_labels()
 ROLE_LABEL = {"owner": "Владелец", "admin": "Админ", "member": "Участник"}
 MEMBER_STATUS = {"active": "", "pending": "Просится", "invited": "Приглашён"}
 DETAIL_LABEL = {"username": "ник", "user_id": "пользователь", "key": "указали", "plan": "тариф",
-                "seats": "мест", "member": "участник №"}
+                "seats": "мест", "member": "участник №",
+                "label": "название", "enabled": "показывать", "efforts": "уровни", "default_effort": "по умолчанию"}
 
 ACTION_LABEL = {
     "access.approve": "Открыл доступ",
@@ -38,6 +40,10 @@ ACTION_LABEL = {
     "org.owner": "Назначил владельца",
     "org.billing": "Изменил тариф организации",
     "org.member_plan": "Изменил тариф участника",
+    "models.add": "Добавил модель",
+    "models.save": "Изменил модель",
+    "models.remove": "Убрал модель",
+    "models.move": "Переставил модель",
 }
 
 CSS = """

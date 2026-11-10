@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261110-extwho2" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261110-effort" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261107-embed1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261106-groups1" />
@@ -752,6 +752,17 @@
                     <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
                   </span>
                   <select id="profile-tg-leo-model" class="pf-row-select" aria-label="Модель Лео в Telegram"></select>
+                </div>
+                <div class="pf-row pf-row--select hidden" id="profile-tg-leo-effort-row">
+                  <span class="pf-ico pf-ico--violet" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v3" /><path d="M5.6 5.6l2.1 2.1" /><path d="M3 12h3" /><path d="M18 12h3" /><path d="M16.3 7.7l2.1-2.1" /><circle cx="12" cy="14" r="5" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Усилие</span><span class="pf-row-sub">Сколько модель думает: выше — точнее, но дольше и дороже</span></span>
+                    <span class="pf-row-val" id="profile-tg-leo-effort-value"></span>
+                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                  </span>
+                  <select id="profile-tg-leo-effort" class="pf-row-select" aria-label="Уровень усилия Лео в Telegram"></select>
                 </div>
                 <button type="button" class="pf-row" id="profile-tg-leo-history">
                   <span class="pf-ico pf-ico--sky" aria-hidden="true">
@@ -2666,12 +2677,12 @@
   <script src="/webapp/web-canvas.js?v=20261110-enter" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261110-extwho2" defer></script>
+  <script src="/webapp/app.js?v=20261110-effort" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
-  <script src="/webapp/org.js?v=20261108-usage1" defer></script>
+  <script src="/webapp/org.js?v=20261110-effort" defer></script>
   <script src="/webapp/metrics.js?v=20261107-people5" defer></script>
   <script src="/webapp/people.js?v=20261107-profile1" defer></script>
   <script src="/webapp/org-kb.js?v=20261109-guest1" defer></script>

@@ -113,17 +113,27 @@ def with_russian_output(system: str) -> str:
 
 
 def reasoning_request_fields(model: str, max_tokens: int | None) -> dict[str, Any]:
-    """OpenRouter reasoning для моделей, которые думают отдельно от ответа.
+    """OpenRouter reasoning для моделей, у которых в админке отмечены уровни усилия.
 
-    effort=medium забирает около половины max_tokens на рассуждение,
-    поэтому потолок ответа поднимается, а само рассуждение в текст не попадает.
+    Уровень — выбор текущего пользователя (из контекста usage), иначе уровень модели по умолчанию,
+    с потолком организации. OpenRouter отдаёт на рассуждение долю max_tokens, поэтому потолок
+    поднимается, чтобы осталось место на ответ; само рассуждение в текст не попадает.
     """
     if not is_paie_reasoning_model(model):
         return {}
-    cap = int(max_tokens or 0)
+    from assistant.integrations.openrouter_client import get_openrouter_usage_telegram_user
+    from assistant.stores import llm_models
+
+    uid, _name = get_openrouter_usage_telegram_user()
+    try:
+        effort = llm_models.effort_for(model, uid)
+    except Exception as e:
+        print(f"[board.llm] effort lookup failed model={model!r} err={e!r}")
+        effort = None
+    effort = effort or llm_models.SEED_DEFAULT_EFFORT
     return {
-        "reasoning": {"effort": "medium", "exclude": True},
-        "max_tokens": max(cap * 2, 8000) if cap else 8000,
+        "reasoning": {"effort": effort, "exclude": True},
+        "max_tokens": llm_models.reasoning_max_tokens(effort, max_tokens),
     }
 
 

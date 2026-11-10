@@ -63,9 +63,13 @@ def test_allowed_models():
     assert cs.model_allowed("o3", 9, "google/gemini-2.5-flash")
     assert cs.model_allowed(None, 9, "anthropic/claude-opus-5.5")  # без организации — без ограничений
     cs.set_member_settings("o3", 9, daily_limit=800)
-    assert cs.member_settings("o3", 9) == {"daily_limit": 800, "allowed_models": ["google/gemini-2.5-flash", "openai/gpt-4.1-mini"]}
+    assert cs.member_settings("o3", 9) == {"daily_limit": 800, "allowed_models": ["google/gemini-2.5-flash", "openai/gpt-4.1-mini"], "max_effort": None}
     cs.set_member_settings("o3", 9, clear_models=True)
     assert cs.member_settings("o3", 9)["allowed_models"] is None
+    cs.set_member_settings("o3", 9, max_effort="medium")
+    assert cs.member_settings("o3", 9)["max_effort"] == "medium" and cs.member_settings("o3", 9)["daily_limit"] == 800
+    cs.set_member_settings("o3", 9, clear_effort=True)
+    assert cs.member_settings("o3", 9)["max_effort"] is None
 
 
 def _spender(path: str, n: int) -> None:

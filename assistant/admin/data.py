@@ -254,4 +254,7 @@ def label_targets(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 org_names[oid] = (orgs_store.get_org(oid) or {}).get("name") or f"Организация {oid} (удалена)"
             it["target_label"] = org_names[oid]
             it["target_path"] = "/org/" + ref
+        elif kind == "model" and ref:
+            it["target_label"] = ref
+            it["target_path"] = "/models"
     return items

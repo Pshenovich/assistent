@@ -132,6 +132,9 @@ def _conn() -> sqlite3.Connection:
         );
         """
     )
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(org_member_ai)")}
+    if "max_effort" not in cols:
+        conn.execute("ALTER TABLE org_member_ai ADD COLUMN max_effort TEXT")
     _CONN, _CONN_PATH = conn, path
     return conn
 
@@ -228,12 +231,14 @@ def spend_by_users(user_ids: list[str | int], day_from: str, day_to: str) -> dic
 def member_settings(org_id: str | int, user_id: str | int) -> dict[str, Any]:
     with _lock:
         row = _conn().execute(
-            "SELECT daily_limit, allowed_models FROM org_member_ai WHERE org_id = ? AND user_id = ?",
+            "SELECT daily_limit, allowed_models, max_effort FROM org_member_ai WHERE org_id = ? AND user_id = ?",
             (str(org_id), str(user_id)),
         ).fetchone()
     limit = DEFAULT_DAILY_LIMIT
     allowed: list[str] | None = None  # None — доступны все модели
+    max_effort: str | None = None  # None — уровень усилия не ограничен
     if row is not None:
+        max_effort = str(row["max_effort"] or "") or None
         if row["daily_limit"] is not None:
             limit = float(row["daily_limit"])
         if row["allowed_models"]:
@@ -242,7 +247,7 @@ def member_settings(org_id: str | int, user_id: str | int) -> dict[str, Any]:
                 allowed = [str(x) for x in val] if isinstance(val, list) else None
             except ValueError:
                 allowed = None
-    return {"daily_limit": limit, "allowed_models": allowed}
+    return {"daily_limit": limit, "allowed_models": allowed, "max_effort": max_effort}
 
 
 def set_member_settings(
@@ -252,18 +257,24 @@ def set_member_settings(
     daily_limit: float | None = None,
     allowed_models: list[str] | None = None,
     clear_models: bool = False,
+    max_effort: str | None = None,
+    clear_effort: bool = False,
 ) -> dict[str, Any]:
-    """Права проверяет вызывающий (только владелец или админ организации)."""
+    """Права проверяет вызывающий (только владелец или админ организации).
+
+    max_effort — потолок уровня усилия ИИ (llm_models.EFFORTS); clear_effort снимает ограничение.
+    """
     cur = member_settings(org_id, user_id)
     limit = cur["daily_limit"] if daily_limit is None else max(0.0, float(daily_limit))
     models = None if clear_models else (allowed_models if allowed_models is not None else cur["allowed_models"])
+    effort = None if clear_effort else (max_effort if max_effort is not None else cur["max_effort"])
     with _tx() as conn:
         conn.execute(
-            "INSERT INTO org_member_ai(org_id, user_id, daily_limit, allowed_models) VALUES (?, ?, ?, ?) "
+            "INSERT INTO org_member_ai(org_id, user_id, daily_limit, allowed_models, max_effort) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(org_id, user_id) DO UPDATE SET daily_limit = excluded.daily_limit, "
-            "allowed_models = excluded.allowed_models",
+            "allowed_models = excluded.allowed_models, max_effort = excluded.max_effort",
             (str(org_id), str(user_id), limit,
-             None if models is None else json.dumps(sorted(set(models)), ensure_ascii=False)),
+             None if models is None else json.dumps(sorted(set(models)), ensure_ascii=False), effort),
         )
     return member_settings(org_id, user_id)
 

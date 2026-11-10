@@ -10689,6 +10689,54 @@
       })[0];
       val.textContent = (cur && (cur.label || cur.id)) || tgLeoState.model || "—";
     }
+    renderTgLeoEffort();
+  }
+
+  // Уровень усилия модели Лео в Telegram: строка видна, если у модели больше одного уровня.
+  function renderTgLeoEffort() {
+    var row = document.getElementById("profile-tg-leo-effort-row");
+    var sel = document.getElementById("profile-tg-leo-effort");
+    if (!row || !sel) return;
+    var cur = (tgLeoState.models || []).filter(function (m) {
+      return m.id === tgLeoState.model;
+    })[0];
+    var levels = modelEffortRow(cur);
+    row.classList.toggle("hidden", !levels);
+    if (!levels) return;
+    sel.innerHTML = "";
+    levels.forEach(function (e) {
+      var opt = document.createElement("option");
+      opt.value = e.id;
+      opt.textContent = e.label;
+      if (e.id === cur.effort) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    var val = document.getElementById("profile-tg-leo-effort-value");
+    if (val) val.textContent = modelEffortLabel(cur) || "—";
+  }
+
+  async function saveTgLeoEffort(effort) {
+    var cur = (tgLeoState.models || []).filter(function (m) {
+      return m.id === tgLeoState.model;
+    })[0];
+    if (!cur) return;
+    var prev = cur.effort;
+    cur.effort = effort;
+    renderTgLeoEffort();
+    try {
+      var r = await apiFetch("/llm/effort", { method: "POST", body: JSON.stringify({ model: cur.id, effort: effort }) });
+      cur.effort = (r && r.effort) || effort;
+      [gptModelsState, paieModelsState].forEach(function (st) {
+        (st.models || []).forEach(function (m) {
+          if (m.id === cur.id) m.effort = cur.effort;
+        });
+      });
+      showNoteToast("Лео в Telegram: усилие «" + modelEffortLabel(cur) + "»");
+    } catch (e) {
+      cur.effort = prev;
+      showNoteToast((e && e.message) || "Не удалось сохранить уровень");
+    }
+    renderTgLeoEffort();
   }
 
   async function loadTgLeo() {
@@ -42425,6 +42473,7 @@
       btn.setAttribute("data-model-id", m.id);
       btn.textContent = (m.name || m.id) + (m.reasoning ? " · рассуждение" : "");
       btn.title = m.id;
+      if (m.id === selected && modelEffortRow(m)) btn.classList.add("has-effort");
       if (m.note && !m.locked) {
         var note = document.createElement("span");
         note.className = "note-paie-menu-item-sub";
@@ -42446,9 +42495,12 @@
         if (paie) applyPaieModel(m.id, true);
         else if (research) applyResearchModel(m.id, true);
         else setSelectedGptModelId(m.id);
-        closeNoteComposerMenus();
+        // У модели с уровнями меню остаётся открытым: сразу можно выбрать усилие.
+        if (modelEffortRow(m)) renderGptModelMenu(query);
+        else closeNoteComposerMenus();
       });
       list.appendChild(btn);
+      if (m.id === selected) appendModelEffortRow(list, m);
     });
   }
 
@@ -42529,12 +42581,91 @@
     var form = document.getElementById("note-paie-reply-form");
     var label = form && form.querySelector(".note-paie-model-label");
     if (label) {
+      var paieMode = noteAskMode() === "paie";
+      var id = paieMode ? selectedPaieModelId() : selectedGptModelId();
       label.textContent =
-        noteAskMode() === "paie"
-          ? paieModelShortName(selectedPaieModelId())
-          : gptModelShortName(selectedGptModelId());
+        (paieMode ? paieModelShortName(id) : gptModelShortName(id)) +
+        modelEffortSuffix(paieMode ? paieModelsState : gptModelsState, id);
     }
     syncComposerModeChip();
+  }
+
+  // Уровень усилия (сколько модель думает) — у моделей, где его разрешили в админке.
+  function modelEffortRow(model) {
+    var levels = (model && Array.isArray(model.efforts) ? model.efforts : []).filter(function (e) {
+      return e && e.id;
+    });
+    if (levels.length < 2) return null;
+    return levels;
+  }
+
+  function modelEffortLabel(model) {
+    var levels = (model && Array.isArray(model.efforts) ? model.efforts : []);
+    var cur = levels.find(function (e) { return e && e.id === model.effort; });
+    return cur ? cur.label : "";
+  }
+
+  function modelEffortSuffix(state, id) {
+    var found = (state.models || []).find(function (m) { return m.id === id; });
+    if (!found || !modelEffortRow(found)) return "";
+    var lbl = modelEffortLabel(found);
+    return lbl ? " · " + lbl : "";
+  }
+
+  function setModelEffort(model, effort) {
+    if (!model || model.effort === effort) return;
+    var prev = model.effort;
+    model.effort = effort;
+    // Уровень один на модель для человека — переносим во все списки сразу.
+    [gptModelsState, paieModelsState].forEach(function (st) {
+      (st.models || []).forEach(function (m) {
+        if (m.id === model.id) m.effort = effort;
+      });
+    });
+    syncGptModelButton();
+    renderGptModelMenu();
+    apiFetch("/llm/effort", { method: "POST", body: JSON.stringify({ model: model.id, effort: effort }) })
+      .then(function (r) {
+        if (r && r.effort && r.effort !== effort) {
+          model.effort = r.effort;
+          syncGptModelButton();
+          renderGptModelMenu();
+        }
+      })
+      .catch(function (err) {
+        model.effort = prev;
+        syncGptModelButton();
+        renderGptModelMenu();
+        showNoteToast((err && err.message) || "Не удалось сохранить уровень");
+      });
+  }
+
+  function appendModelEffortRow(list, model) {
+    var levels = modelEffortRow(model);
+    if (!levels) return;
+    var row = document.createElement("div");
+    row.className = "note-effort-row";
+    row.setAttribute("role", "group");
+    row.setAttribute("aria-label", "Уровень усилия");
+    var cap = document.createElement("span");
+    cap.className = "note-effort-cap";
+    cap.textContent = "Усилие";
+    cap.title = "Сколько модель думает перед ответом: выше — точнее, но дольше и дороже";
+    row.appendChild(cap);
+    levels.forEach(function (e) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      var on = e.id === model.effort;
+      chip.className = "note-effort-chip" + (on ? " is-on" : "");
+      chip.setAttribute("aria-pressed", on ? "true" : "false");
+      chip.textContent = e.label;
+      chip.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        setModelEffort(model, e.id);
+      });
+      row.appendChild(chip);
+    });
+    list.appendChild(row);
   }
 
   async function loadGptModels() {
@@ -42793,7 +42924,10 @@
       }
     }
     var mv = form.querySelector(".note-ask-model-val");
-    if (mv) mv.textContent = model;
+    if (mv) {
+      var mid = paie ? selectedPaieModelId() : research ? selectedResearchModelId() : selectedGptModelId();
+      mv.textContent = model + modelEffortSuffix(paie ? paieModelsState : gptModelsState, mid);
+    }
   }
 
   function profileAgentsMsg(ok, err) {
@@ -62132,6 +62266,12 @@
     if (tgLeoSel) {
       tgLeoSel.addEventListener("change", function () {
         saveTgLeoModel(tgLeoSel.value);
+      });
+    }
+    var tgLeoEffortSel = document.getElementById("profile-tg-leo-effort");
+    if (tgLeoEffortSel) {
+      tgLeoEffortSel.addEventListener("change", function () {
+        saveTgLeoEffort(tgLeoEffortSel.value);
       });
     }
     var tgLeoHistoryBtn = document.getElementById("profile-tg-leo-history");

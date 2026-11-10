@@ -274,6 +274,100 @@ def make_router(
         q = request.url.query
         return RedirectResponse(prefix + "/spend" + (("?" + q) if q else ""), status_code=307)
 
+    # ---------- модели ИИ ----------
+
+    def _catalog() -> list[dict[str, Any]]:
+        from assistant.integrations.openrouter_client import openrouter_catalog
+
+        try:
+            return openrouter_catalog()
+        except Exception as e:
+            print(f"[admin] openrouter catalog failed err={e!r}")
+            return []
+
+    @r.get("/models", response_class=HTMLResponse)
+    async def admin_models(request: Request) -> Response:
+        actor = _actor(request)
+        if not isinstance(actor, Actor):
+            return actor
+        from assistant.admin import models_page
+        from assistant.stores import llm_models
+
+        models = await run_in_threadpool(llm_models.list_models)
+        catalog = await run_in_threadpool(_catalog)
+        return _html(models_page.models_page(
+            _ctx(actor), models, catalog, q=(request.query_params.get("q") or "").strip(),
+            labels=llm_models.EFFORT_LABELS, all_levels=llm_models.EFFORTS, **_flash(request),
+        ))
+
+    @r.post("/models/add")
+    async def admin_models_add(request: Request, id: str = Form(...)) -> Response:
+        actor = _writer(request)
+        from assistant.stores import llm_models
+
+        cat = {c["id"]: c for c in await run_in_threadpool(_catalog)}
+        c = cat.get(id.strip())
+        if c is None:
+            return _back("/models", err="Такой модели нет в каталоге OpenRouter")
+        # Уровни по умолчанию: «быстро / обычно / тщательно» из тех, что принимает модель.
+        efforts: list[str] = []
+        if c["efforts"] is not None:
+            sup = c["efforts"] or list(llm_models.EFFORTS)
+            efforts = [e for e in llm_models.SEED_EFFORTS if e in sup] or sup[:1]
+        default = c["default_effort"] if c["default_effort"] in efforts else ""
+        try:
+            m = await run_in_threadpool(lambda: llm_models.save(
+                c["id"], label=c["name"], enabled=True, efforts=efforts, default_effort=default, by=actor.label))
+        except llm_models.ModelError as e:
+            return _back("/models", err=str(e))
+        await run_in_threadpool(lambda: audit.log(actor.label, "models.add", "model:" + m["id"],
+                                                  efforts=", ".join(m["efforts"])))
+        return _back("/models", msg=f"«{m['label']}» добавлена — проверьте название и уровни")
+
+    @r.post("/models/save")
+    async def admin_models_save(request: Request) -> Response:
+        actor = _writer(request)
+        from assistant.stores import llm_models
+
+        form = await request.form()
+        mid = str(form.get("id") or "").strip()
+        cur = await run_in_threadpool(llm_models.get, mid)
+        if cur is None:
+            return _back("/models", err="Модели нет в списке")
+        efforts = [str(x) for x in form.getlist("efforts")]
+        try:
+            m = await run_in_threadpool(lambda: llm_models.save(
+                mid, label=str(form.get("label") or ""), enabled=bool(form.get("enabled")),
+                efforts=efforts, default_effort=str(form.get("default_effort") or ""), by=actor.label))
+        except llm_models.ModelError as e:
+            return _back("/models", err=str(e))
+        await run_in_threadpool(lambda: audit.log(
+            actor.label, "models.save", "model:" + mid, label=m["label"], enabled="да" if m["enabled"] else "нет",
+            efforts=", ".join(m["efforts"]) or "—", default_effort=m["default_effort"]))
+        return _back("/models", msg=f"«{m['label']}» сохранена")
+
+    @r.post("/models/remove")
+    async def admin_models_remove(request: Request, id: str = Form(...)) -> Response:
+        actor = _writer(request)
+        from assistant.stores import llm_models
+
+        if not await run_in_threadpool(llm_models.remove, id.strip()):
+            return _back("/models", err="Модели нет в списке")
+        await run_in_threadpool(lambda: audit.log(actor.label, "models.remove", "model:" + id.strip()))
+        return _back("/models", msg="Модель убрана из списка. У тех, кто её выбрал, Лео ответит моделью по умолчанию")
+
+    @r.post("/models/move")
+    async def admin_models_move(request: Request, id: str = Form(...), delta: int = Form(0)) -> Response:
+        actor = _writer(request)
+        from assistant.stores import llm_models
+
+        try:
+            await run_in_threadpool(llm_models.move, id.strip(), max(-1, min(1, int(delta))))
+        except llm_models.ModelError as e:
+            return _back("/models", err=str(e))
+        await run_in_threadpool(lambda: audit.log(actor.label, "models.move", "model:" + id.strip()))
+        return _back("/models")
+
     @r.get("/audit", response_class=HTMLResponse)
     async def admin_audit(request: Request) -> Response:
         actor = _actor(request)

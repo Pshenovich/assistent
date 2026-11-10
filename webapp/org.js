@@ -442,7 +442,17 @@
     return staticRow("Дневной лимит, кр", spent,
         '<input type="number" class="pf-num-input org-num" data-org-ai="limit" data-uid="' + uid + '" min="0" max="1000000" step="50" inputmode="numeric" value="' +
         Math.round(ai.daily_limit) + '" aria-label="Дневной лимит, кредитов" />', "label") +
-      '<div class="pf-field"><span class="pf-field-label">Доступные модели</span><div class="pf-chips org-chips">' + chips + "</div></div>";
+      '<div class="pf-field"><span class="pf-field-label">Доступные модели</span><div class="pf-chips org-chips">' + chips + "</div></div>" +
+      memberEffortHtml(d, uid, ai);
+  }
+
+  // Потолок уровня усилия (сколько модель думает): выше — дороже. Пусто — без ограничения.
+  function memberEffortHtml(d, uid, ai) {
+    var levels = d.credits.efforts || [];
+    if (!levels.length) return "";
+    var opts = [["", "Без ограничения"]].concat(levels.map(function (e) { return [e.id, "не выше «" + e.label + "»"]; }));
+    return staticRow("Уровень усилия ИИ", "Выше — точнее на трудных задачах, но дольше и дороже",
+      selectHtml(opts, ai.max_effort || "", 'data-org-ai="effort" data-uid="' + uid + '" aria-label="Потолок уровня усилия"'), "label");
   }
 
   function saveMemberAi(uid, body) {
@@ -481,6 +491,11 @@
   }
 
   function onAiChange(e) {
+    var eff = e.target.closest('[data-org-ai="effort"]');
+    if (eff) {
+      saveMemberAi(eff.getAttribute("data-uid"), eff.value ? { max_effort: eff.value } : { any_effort: true });
+      return true;
+    }
     var el = e.target.closest('[data-org-ai="limit"]');
     if (!el) return false;
     var v = Number(el.value);

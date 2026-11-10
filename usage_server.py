@@ -8065,6 +8065,11 @@ def _org_credits_detail(org_id: int, members: list[dict[str, Any]], *, manage: b
             seen[mid] = str(m.get("name") or m.get("label") or mid)
     out["credits"]["members"] = ai
     out["credits"]["models"] = [{"id": k, "name": v} for k, v in seen.items()]
+    # Потолок уровня усилия для сотрудника: уровни, которые есть хоть у одной модели.
+    from assistant.stores import llm_models
+
+    used = {e for r in llm_models.list_models(enabled_only=True) for e in r["efforts"]}
+    out["credits"]["efforts"] = [{"id": e, "label": llm_models.EFFORT_LABELS[e]} for e in llm_models.EFFORTS if e in used]
     return out
 
 
@@ -9321,6 +9326,8 @@ class _MiniappOrgMemberAi(BaseModel):
     daily_limit: Optional[float] = None
     allowed_models: Optional[list[str]] = None
     all_models: bool = False
+    max_effort: Optional[str] = None  # потолок уровня усилия ИИ; any_effort — без ограничения
+    any_effort: bool = False
 
 
 def _org_set_member_ai(uid: int, org_id: int, member_user_id: str, body: "_MiniappOrgMemberAi") -> None:
@@ -9337,8 +9344,16 @@ def _org_set_member_ai(uid: int, org_id: int, member_user_id: str, body: "_Minia
         models = [str(m).strip() for m in body.allowed_models if str(m).strip()]
         if not models:
             raise orgs_store.OrgError("Оставьте участнику хотя бы одну модель", 400)
+    from assistant.stores import llm_models
+
+    effort = None
+    if body.max_effort is not None and not body.any_effort:
+        effort = str(body.max_effort).strip().lower()
+        if effort not in llm_models.EFFORTS:
+            raise orgs_store.OrgError("Неизвестный уровень усилия", 400)
     credits_store.set_member_settings(
-        org_id, member_user_id, daily_limit=body.daily_limit, allowed_models=models, clear_models=body.all_models
+        org_id, member_user_id, daily_limit=body.daily_limit, allowed_models=models, clear_models=body.all_models,
+        max_effort=effort, clear_effort=body.any_effort,
     )
 
 
@@ -9551,7 +9566,7 @@ class _MiniappTgLeoPatch(BaseModel):
 
 
 def _tg_leo_payload(uid: int) -> dict[str, Any]:
-    from assistant.integrations.openrouter_client import tg_leo_models
+    from assistant.integrations.openrouter_client import tg_leo_models, with_user_efforts
     from assistant.stores import chat_threads as chat_threads_store
     from assistant.stores import user_prefs
 
@@ -9559,7 +9574,7 @@ def _tg_leo_payload(uid: int) -> dict[str, Any]:
 
     return {
         "model": user_prefs.get_tg_leo_model(uid),
-        "models": billing_store.mark_locked(uid, list(tg_leo_models())),
+        "models": with_user_efforts(billing_store.mark_locked(uid, list(tg_leo_models())), uid),
         "thread": chat_threads_store.telegram_thread(uid),
     }
 
@@ -10811,14 +10826,14 @@ async def miniapp_calendar_event_telemost_link(
 async def miniapp_gpt_models(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    from assistant.integrations.openrouter_client import list_gpt_picker_models
+    from assistant.integrations.openrouter_client import list_gpt_picker_models, with_user_efforts
     from assistant.lib import billing_store
 
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any]:
         out = dict(list_gpt_picker_models())
-        out["models"] = billing_store.mark_locked(uid, list(out.get("models") or []))
+        out["models"] = with_user_efforts(billing_store.mark_locked(uid, list(out.get("models") or [])), uid)
         return out
 
     return await run_in_threadpool(_run)
@@ -10828,13 +10843,37 @@ async def miniapp_gpt_models(
 async def miniapp_paie_models(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    del principal
-    from assistant.integrations.openrouter_client import list_paie_picker_models
+    from assistant.integrations.openrouter_client import list_paie_picker_models, with_user_efforts
+
+    uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any]:
-        return list_paie_picker_models()
+        out = dict(list_paie_picker_models())
+        out["models"] = with_user_efforts(list(out.get("models") or []), uid)
+        return out
 
     return await run_in_threadpool(_run)
+
+
+class _MiniappLlmEffort(BaseModel):
+    model: str
+    effort: str
+
+
+@miniapp_router.post("/llm/effort")
+async def miniapp_llm_effort(
+    body: _MiniappLlmEffort,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Уровень усилия для модели: один на пользователя — в приложении, Telegram и PAIE."""
+    from assistant.stores import llm_models
+
+    uid = int(principal.telegram_user_id)
+    try:
+        effort = await run_in_threadpool(llm_models.set_user_effort, uid, body.model, body.effort)
+    except llm_models.ModelError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"model": body.model, "effort": effort}
 
 
 async def _start_chat_url_transcription(
