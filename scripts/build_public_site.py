@@ -76,7 +76,19 @@ def build_legal(name: str) -> str:
         ('href="/privacy"', 'href="/privacy/"'),
         ('href="/terms"', 'href="/terms/"'),
     ])
-    return _strip_comments(html)
+    return _english_first(_strip_comments(html))
+
+
+def _english_first(html: str) -> str:
+    """Проверяющие читают по-английски: секция #en — первой (на getorbita.me порядок прежний)."""
+    m_ru = re.search(r'\s*<section id="ru".*?</section>', html, flags=re.S)
+    m_sep = re.search(r'\s*<hr class="legal-sep" />', html)
+    m_en = re.search(r'\s*<section id="en".*?</section>', html, flags=re.S)
+    if not (m_ru and m_sep and m_en) or not (m_ru.start() < m_sep.start() < m_en.start()):
+        return html  # уже английский первым (страница Zoom) или другая разметка
+    head, tail = html[:m_ru.start()], html[m_en.end():]
+    html = head + m_en.group(0) + m_sep.group(0) + m_ru.group(0) + tail
+    return html.replace('<a href="#ru">Русский</a><a href="#en">English</a>', '<a href="#en">English</a><a href="#ru">Русский</a>')
 
 
 def main() -> int:
