@@ -1,4 +1,43 @@
 (function () {
+  // Комментарии — как в Claude: Enter отправляет, Shift+Enter и Cmd/Ctrl+Enter — новая строка.
+  // На сенсорном устройстве без мыши/трекпада Enter остаётся переносом — отправка кнопкой.
+  function enterSendsMessage() {
+    try {
+      if (!window.matchMedia) return true;
+      if (window.matchMedia("(any-pointer: fine)").matches) return true;
+      return !window.matchMedia("(pointer: coarse)").matches;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  document.addEventListener("keydown", function (e) {
+    var ta = e.target;
+    if (!ta || ta.tagName !== "TEXTAREA" || !ta.classList.contains("share-comments-input")) return;
+    if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.altKey) return;
+    if (e.shiftKey) return;
+    if (e.metaKey || e.ctrlKey) {
+      e.preventDefault();
+      var ok = false;
+      try {
+        ok = document.execCommand && document.execCommand("insertText", false, "\n");
+      } catch (_) {}
+      if (!ok) {
+        var s = ta.selectionStart;
+        ta.value = ta.value.slice(0, s) + "\n" + ta.value.slice(ta.selectionEnd);
+        ta.selectionStart = ta.selectionEnd = s + 1;
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      return;
+    }
+    if (!enterSendsMessage()) return;
+    e.preventDefault();
+    var form = ta.form || ta.closest("form");
+    if (!form || !String(ta.value || "").trim()) return;
+    if (typeof form.requestSubmit === "function") form.requestSubmit();
+    else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+  });
+
   function escapeHtml(s) {
     return String(s || "")
       .replace(/&/g, "&amp;")

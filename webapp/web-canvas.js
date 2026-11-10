@@ -1623,10 +1623,21 @@
         });
         ta.addEventListener("keydown", function (e) {
           e.stopPropagation();
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+          // Как в Claude: Enter — отправить, Shift+Enter и Cmd/Ctrl+Enter — новая строка
+          // (на сенсорном экране без мыши Enter — перенос, отправка кнопкой).
+          if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.altKey || e.shiftKey) return;
+          if (e.metaKey || e.ctrlKey) {
             e.preventDefault();
-            sendThis();
+            var s0 = ta.selectionStart;
+            ta.value = ta.value.slice(0, s0) + "\n" + ta.value.slice(ta.selectionEnd);
+            ta.selectionStart = ta.selectionEnd = s0 + 1;
+            ta.dispatchEvent(new Event("input", { bubbles: true }));
+            return;
           }
+          var mm = window.matchMedia;
+          if (mm && !mm("(any-pointer: fine)").matches && mm("(pointer: coarse)").matches) return;
+          e.preventDefault();
+          sendThis();
         });
         send.addEventListener("click", function (e) {
           e.preventDefault();

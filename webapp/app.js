@@ -7207,6 +7207,62 @@
     return window.matchMedia && window.matchMedia("(min-width: 960px)").matches;
   }
 
+  // Обсуждения и комментарии — как в Claude: Enter отправляет, Shift+Enter и Cmd/Ctrl+Enter —
+  // новая строка. На сенсорном устройстве без мыши/трекпада Enter экранной клавиатуры
+  // остаётся переносом строки — отправка кнопкой.
+  function enterSendsMessage() {
+    try {
+      if (!window.matchMedia) return true;
+      if (window.matchMedia("(any-pointer: fine)").matches) return true;
+      return !window.matchMedia("(pointer: coarse)").matches;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /** "send" | "newline" | "" (не Enter или набор через IME — не трогаем). */
+  function messageEnterAction(e) {
+    if (!e || e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.altKey) return "";
+    if (e.shiftKey || e.metaKey || e.ctrlKey) return "newline";
+    return enterSendsMessage() ? "send" : "";
+  }
+
+  /** Cmd/Ctrl+Enter в textarea сам строку не переносит — вставляем перенос с сохранением «отменить». */
+  function insertTextareaNewline(ta) {
+    if (!ta) return;
+    var ok = false;
+    try {
+      ok = document.execCommand && document.execCommand("insertText", false, "\n");
+    } catch (_) {}
+    if (ok) return;
+    var s = ta.selectionStart;
+    var en = ta.selectionEnd;
+    ta.value = ta.value.slice(0, s) + "\n" + ta.value.slice(en);
+    ta.selectionStart = ta.selectionEnd = s + 1;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function submitFormOf(el) {
+    var form = el && (el.form || (el.closest && el.closest("form")));
+    if (!form) return;
+    if (typeof form.requestSubmit === "function") form.requestSubmit();
+    else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+  }
+
+  // Комментарии к выделенному тексту (поле создаётся заново при каждом открытии документа).
+  document.addEventListener("keydown", function (e) {
+    var ta = e.target;
+    if (!ta || ta.tagName !== "TEXTAREA" || !ta.classList.contains("note-comments-input")) return;
+    var act = messageEnterAction(e);
+    if (act === "send") {
+      e.preventDefault();
+      if (String(ta.value || "").trim()) submitFormOf(ta);
+    } else if (act === "newline" && !e.shiftKey) {
+      e.preventDefault();
+      insertTextareaNewline(ta);
+    }
+  });
+
   var NOTE_PANE_W_LS = "leo_note_pane_w";
   var DISCUSS_PANE_W_LS = "leo_discuss_pane_w";
   var MIN_NOTE_PANE_W = 360;
@@ -29245,7 +29301,13 @@
         closeMenu();
         return;
       }
-      if (e.key === "Enter" && (e.metaKey || e.ctrlKey || (isDesktopLayout() && !e.shiftKey))) {
+      var enterAct = messageEnterAction(e);
+      if (enterAct === "newline" && !e.shiftKey) {
+        e.preventDefault();
+        insertTextareaNewline(ta);
+        return;
+      }
+      if (enterAct === "send") {
         if (menu._mode === "mention") {
           var first = menu.querySelector(".note-paie-menu-item");
           if (first) {
@@ -43712,6 +43774,10 @@
     var modelBtn = form.querySelector(".note-paie-model-btn");
     var modelMenu = form.querySelector(".note-paie-menu--models");
     var modelSearch = form.querySelector(".note-paie-model-search");
+    function noteComposerAnswerBusy() {
+      var w = document.getElementById("note-editor-more-wrap");
+      return !!(w && w._gptBusy);
+    }
     form.addEventListener("submit", function (e) {
       e.preventDefault();
       closeNoteComposerMenus();
@@ -43857,10 +43923,15 @@
         input._composerRo.observe(input);
       }
       input.addEventListener("keydown", function (e) {
-        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        var enterAct = messageEnterAction(e);
+        if (enterAct === "send") {
           e.preventDefault();
+          if (noteComposerAnswerBusy()) return;
           if (typeof form.requestSubmit === "function") form.requestSubmit();
           else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+        } else if (enterAct === "newline" && !e.shiftKey) {
+          e.preventDefault();
+          insertTextareaNewline(input);
         }
       });
       input.addEventListener("keyup", function (e) {
@@ -43965,11 +44036,43 @@
             return;
           }
         }
-        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        var enterAct = messageEnterAction(e);
+        if (enterAct === "send") {
           e.preventDefault();
+          var mentionMenu = document.getElementById("note-discuss-mention-menu");
+          var firstMention =
+            mentionMenu && !mentionMenu.classList.contains("hidden") && mentionMenu.querySelector(".note-discuss-mention-item");
+          if (firstMention) {
+            firstMention.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+            return;
+          }
           closeDiscussMentionMenu();
+          // Пока Лео отвечает, отправка = «Стоп» — Enter её не жмёт, только кнопка.
+          if (noteComposerAnswerBusy()) return;
           if (typeof form.requestSubmit === "function") form.requestSubmit();
           else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+          return;
+        }
+        if (enterAct === "newline" && (e.metaKey || e.ctrlKey)) {
+          // Cmd/Ctrl+Enter — новая строка, как раньше обычный Enter (в списке — новый пункт).
+          e.preventDefault();
+          var plainEnter = {
+            key: "Enter",
+            shiftKey: false,
+            metaKey: false,
+            ctrlKey: false,
+            altKey: false,
+            preventDefault: function () {},
+          };
+          if (!composerMdKeydown(editor, plainEnter)) {
+            try {
+              document.execCommand("insertParagraph");
+            } catch (_) {}
+          }
+          syncGptEditorEmpty(editor);
+          autosizeNoteComposer(editor);
+          rememberGptEditorRange();
+          syncNotePaieReplyForm();
           return;
         }
         if (!e.isComposing && composerMdKeydown(editor, e)) {
