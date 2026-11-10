@@ -90,7 +90,14 @@ class MeetingTasksTests(unittest.TestCase):
         # следить может только участник-команда
         with self.assertRaises(ValueError):
             mt.set_controller(1, self.nid, "iaaaaaaaaa2", 77)
-        mt.set_controller(1, self.nid, "iaaaaaaaaa2", 2)
+        with tasks_store._LOCK:  # успела попасть в Google Задачи прежнего контролёра
+            tasks_store._conn().execute("UPDATE calendar_tasks SET google_task_id='g1' WHERE id=?", (task["id"],))
+            tasks_store._conn().commit()
+        from assistant.services import google_tasks
+        with mock.patch.object(google_tasks, "delete_remote") as dr:
+            mt.set_controller(1, self.nid, "iaaaaaaaaa2", 2)
+        self.assertEqual(dr.call_args[0][0], 1)  # удалена у прежнего контролёра
+        self.assertEqual(tasks_store._get_task_row(task["id"])["google_task_id"], "")
         self.assertEqual(tasks_store._get_task_row(task["id"])["owner_user_id"], "2")
         _, items = self._items()
         self.assertEqual(items["iaaaaaaaaa2"]["controller"], "2")

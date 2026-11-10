@@ -408,3 +408,22 @@ def test_posted_overdue_external_no_nudge():
     card = proactive.rule_posted_overdue([ext], evening, TZ)[0]
     assert [a["act"] for a in card["actions"]] == ["open_posted"]  # Орбита клиенту не напишет
     assert "не из команды" in card["tasks"][0]["meta"]
+
+
+def test_external_never_pushed_to_google(store, monkeypatch):
+    """Досылка в Google Задачи пропускает задачу человека не из команды (иначе импорт вернёт её копией)."""
+    from assistant.services import google_tasks
+
+    calls = []
+    monkeypatch.setattr(google_tasks, "_service", lambda *a, **k: calls.append(a) or None)
+    t = store.create_task(OWNER, title="Выгрузка", start_at=datetime(2026, 10, 20, 15, 0, tzinfo=TZ),
+                          assignee_name="Ирина", assignee_external=True, tz=TZ)
+    assert google_tasks.push_task(OWNER, t) is t
+    google_tasks.push_unsynced_in_window(OWNER, datetime(2026, 10, 19, tzinfo=TZ), datetime(2026, 10, 22, tzinfo=TZ))
+    assert calls == []
+    # уже попавшую в Google — убираем оттуда
+    store.update_task(OWNER, t["id"], google_task_id="g1", google_tasklist_id="l1")
+    removed = []
+    monkeypatch.setattr(google_tasks, "delete_remote", lambda uid, task: removed.append(task["google_task_id"]))
+    google_tasks.push_unsynced_in_window(OWNER, datetime(2026, 10, 19, tzinfo=TZ), datetime(2026, 10, 22, tzinfo=TZ))
+    assert removed == ["g1"] and store._get_task_row(t["id"])["google_task_id"] == ""

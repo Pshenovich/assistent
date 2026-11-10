@@ -688,6 +688,14 @@ def set_controller(viewer_uid: Any, note_id: int, item_id: str, controller_uid: 
     want = _account(str(controller_uid or ""))
     if want not in {p["uid"] for p in participants(note)}:
         raise ValueError("Следить может только участник встречи из команды")
+    if want != str(row.get("owner_user_id") or "") and str(row.get("google_task_id") or "").strip():
+        # Была в Google Задачах прежнего контролёра — убрать там, иначе импорт из Google вернёт её ему копией.
+        try:
+            from assistant.services import google_tasks
+
+            google_tasks.delete_remote(int(row["owner_user_id"]), row)
+        except Exception as e:
+            print(f"[meeting_tasks] google delete failed task={row.get('id')} err={e!r}")
     calendar_tasks.set_external_controller(int(row["id"]), want)
     refresh_note(owner, int(note_id))
     return state_for(viewer_uid, note_id, item_id)

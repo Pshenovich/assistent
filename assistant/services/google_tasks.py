@@ -190,8 +190,8 @@ def push_task(user_id: int, task: dict[str, Any]) -> dict[str, Any] | None:
         return task
     from assistant.stores.calendar_tasks import task_is_delegated
 
-    if task_is_delegated(task):
-        return task
+    if task_is_delegated(task) or task.get("assignee_external"):
+        return task  # делает другой (в т.ч. человек не из команды) — не в Google Задачи постановщика
     owner = str(task.get("owner_user_id") or "")
     if owner and owner != str(int(user_id)):
         return task
@@ -557,6 +557,14 @@ def push_unsynced_in_window(
         if str(row.get("owner_user_id") or "") != str(int(user_id)):
             continue
         if row.get("done"):
+            continue
+        if row.get("assignee_external"):
+            # Задача человека не из команды — не в Google; попала туда до 2026-11-10 — убрать.
+            if str(row.get("google_task_id") or "").strip():
+                delete_remote(user_id, row)
+                calendar_tasks_store.update_task(
+                    user_id, row["id"], google_task_id="", google_tasklist_id=""
+                )
             continue
         if str(row.get("google_task_id") or "").strip():
             continue
