@@ -105,3 +105,50 @@ def test_overview_and_spend_render(env):
     for path in ("/dashboard/", "/dashboard/spend?days=7", "/dashboard/audit", "/dashboard/days"):
         r = c.get(path)
         assert r.status_code == 200, (path, r.text[:300])
+
+
+def test_users_list_twins_email_org_and_merge(env, monkeypatch):
+    """Два аккаунта одного человека — рядом, почта вместо «ID 5…», доступ через организацию, склейка."""
+    from assistant.stores import accounts, note_members
+
+    c, op = env["c"], env["op"]
+    monkeypatch.setattr(orgs_store, "verified_emails", lambda uid: [])
+    tg = next(_ids)
+    note_members.upsert_profile(tg, username="twin_admin_nick", first_name="Тимур")
+    mail = f"twin-admin-{tg}@obuchat.me"
+    email_uid = int(accounts.create_email_account(mail)["user_id"])
+    note_members.upsert_profile(email_uid, username="twin_admin_nick")
+    lonely = int(accounts.create_email_account(f"lonely-{tg}@obuchat.me")["user_id"])
+    member = next(_ids)
+    note_members.upsert_profile(member, first_name="Олег")
+    orgs_store.create_org(member, "Twin Org")
+    # доступ к чужому документу, выданный почтовому аккаунту
+    with note_members._LOCK:
+        conn = note_members._conn()
+        conn.execute("INSERT INTO note_members (owner_user_id, note_id, member_user_id, role, added_at) "
+                     "VALUES (?, 1, ?, 'edit', '2026-11-10')", (str(op), str(email_uid)))
+        conn.commit()
+
+    _login(c, op)
+    page = c.get("/dashboard/users").text
+    assert "Доступ в бота" in page
+    assert f"lonely-{tg}@obuchat.me" in page and f"ID {lonely}" not in page
+    assert page.count("тот же человек") == 2 and "Склеить" in page
+    i_tg, i_mail = page.index(f"/user/{tg}\""), page.index(f"/user/{email_uid}\"")
+    assert abs(i_tg - i_mail) < 2000  # строки пары рядом
+    row = page[page.index(f"/user/{member}\""):]
+    row = row[:row.index("</tr>")]
+    assert "Через организацию" in row and "Открыть доступ" not in row
+
+    r = c.post(f"/dashboard/user/{email_uid}/merge", follow_redirects=False)
+    assert r.status_code == 303 and "msg=" in r.headers["location"]
+    acc = accounts.get_by_email(mail)
+    assert acc and int(acc["user_id"]) == tg and accounts.resolve_alias(email_uid) == tg
+    with note_members._LOCK:
+        got = note_members._conn().execute(
+            "SELECT member_user_id FROM note_members WHERE owner_user_id = ? AND note_id = 1", (str(op),)).fetchall()
+    assert [str(x[0]) for x in got] == [str(tg)]
+    page = c.get("/dashboard/users").text
+    assert f"/user/{email_uid}\"" not in page and "тот же человек" not in page
+    assert c.get(f"/dashboard/user/{email_uid}", follow_redirects=False).status_code == 303
+    assert audit.recent(target=f"user:{tg}")[0]["action"] == "account.merge"

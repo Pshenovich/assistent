@@ -134,6 +134,13 @@ def make_router(
             return actor
         days = _days(request)
         card = await run_in_threadpool(data.user_card, uid, *data.period(days))
+        if not card and uid.isdigit():
+            # старый id: склеен с другим аккаунтом или это Telegram, привязанный к почте
+            from assistant.stores import accounts
+
+            target = accounts.resolve_alias(uid) or (accounts.get_by_tg(int(uid)) or {}).get("user_id")
+            if target and str(target) != uid:
+                return RedirectResponse(_ctx(actor).url("/user/" + str(target)), status_code=303)
         if not card:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
         hist = await run_in_threadpool(lambda: data.label_targets(audit.recent(limit=50, target="user:" + uid)))
@@ -182,6 +189,25 @@ def make_router(
         await run_in_threadpool(lambda: audit.log(actor.label, "access." + action, "user:" + uid,
                                                   username=("@" + username) if username else ""))
         return _back(back, msg=msg)
+
+    @r.post("/user/{uid}/merge")
+    async def admin_user_merge(uid: str, request: Request) -> Response:
+        actor = _writer(request)
+        if not uid.isdigit():
+            raise HTTPException(status_code=400, detail="Неверный id")
+        chk = await run_in_threadpool(data.merge_check, uid)
+        if isinstance(chk, str):
+            return _back("/user/" + uid, err=chk)
+        email_uid, tg_uid = chk
+        from assistant.stores import accounts
+
+        try:
+            await run_in_threadpool(accounts.merge_into_legacy, email_uid, tg_uid)
+        except accounts.AccountError as e:
+            return _back("/user/" + uid, err=str(e))
+        await run_in_threadpool(lambda: audit.log(actor.label, "account.merge", f"user:{tg_uid}",
+                                                  merged=str(email_uid)))
+        return _back("/user/" + str(tg_uid), msg="Аккаунты склеены: вход по почте теперь ведёт в аккаунт из Telegram")
 
     @r.get("/orgs", response_class=HTMLResponse)
     async def admin_orgs(request: Request) -> Response:

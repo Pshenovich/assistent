@@ -397,7 +397,24 @@ def merge_into_legacy(new_uid: int, tg_id: int) -> dict[str, Any]:
         org_contacts.reassign_user(new_uid, tg)  # контакты (коллеги по организации) — следом за членством
     except Exception as e:
         print(f"[accounts] merge contacts {new_uid}->{tg} err={e!r}")
+    try:
+        _reassign_note_access(new_uid, tg)
+    except Exception as e:
+        print(f"[accounts] merge note access {new_uid}->{tg} err={e!r}")
     return get(tg)  # type: ignore[return-value]
+
+
+def _reassign_note_access(old_uid: int, new_uid: int) -> None:
+    """Доступ к чужим документам и чатам, выданный почтовому аккаунту (в т.ч. через email_twin),
+    переходит на склеенный аккаунт; если там такой доступ уже есть — дубль удаляем."""
+    from assistant.stores import note_members
+
+    old, new = str(int(old_uid)), str(int(new_uid))
+    with _LOCK:
+        conn = note_members._conn()  # type: ignore[attr-defined]
+        conn.execute("UPDATE OR IGNORE note_members SET member_user_id = ? WHERE member_user_id = ?", (new, old))
+        conn.execute("DELETE FROM note_members WHERE member_user_id = ?", (old,))
+        conn.commit()
 
 
 def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optional[int], bool]:

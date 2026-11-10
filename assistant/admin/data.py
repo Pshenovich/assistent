@@ -16,6 +16,8 @@ STATUS_LABEL = {
     "open": "Доступ открыт",
     "pending": "Ждёт одобрения",
     "denied": "Отклонён",
+    "org": "Через организацию",
+    "review": "Проверяющий",
     "none": "Без доступа",
 }
 
@@ -66,13 +68,21 @@ def display_name(prof: dict[str, Any] | None, fallback: str = "") -> str:
     return note_members.profile_display_name(prof, fallback=fallback)
 
 
-def access_status(uid: int, username: str | None = None) -> str:
+def access_status(uid: int, username: str | None = None, *, in_org: bool = False) -> str:
+    """Пускает ли Telegram-бот — в том же порядке, что access_gate.is_user_allowed.
+    Веб-приложение по почте этот список не проверяет."""
+    from assistant.lib import review_access
+
     if uid in access.approver_user_ids():
         return "operator"
     if not access.gate_enabled():
         return "open"
+    if review_access.is_review_user(uid):
+        return "review"
     if access.is_extra_allowed(username, uid, scope=SCOPE):
         return "open"
+    if in_org:
+        return "org"
     if uid in access.list_pending(SCOPE):
         return "pending"
     if uid in access.denied_ids(SCOPE):
@@ -94,8 +104,36 @@ def _ts(s: str | None) -> datetime | None:
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def _accounts() -> tuple[dict[str, dict[str, Any]], set[str]]:
+    """Аккаунты по почте (user_id → почта, Telegram) и id, склеенные с другим аккаунтом."""
+    from assistant.stores import accounts
+
+    with accounts._LOCK:  # type: ignore[attr-defined]
+        conn = accounts._conn()  # type: ignore[attr-defined]
+        rows = conn.execute("SELECT user_id, email, tg_user_id FROM accounts").fetchall()
+        aliased = {str(r[0]) for r in conn.execute("SELECT old_user_id FROM account_aliases").fetchall()}
+    return {str(r[0]): {"email": str(r[1] or ""), "tg_user_id": str(r[2] or "")} for r in rows}, aliased
+
+
+def _twin_of(uid: str, username: str) -> str | None:
+    """Почтовый аккаунт того же человека (тот же @ник, Telegram к почте не привязан)."""
+    from assistant.stores import note_members
+
+    try:
+        twin = note_members.email_twin(uid, username or None)
+    except Exception as e:
+        print(f"[admin] twin lookup uid={uid} err={e!r}")
+        return None
+    return str(twin) if twin else None
+
+
 def users_directory(from_d: str, to_d: str) -> list[dict[str, Any]]:
-    """Все, кого знает Орбита: профили, одобренные, заявки и те, кто тратил токены."""
+    """Все, кого знает Орбита: профили, одобренные, заявки и те, кто тратил токены.
+
+    Один человек может быть двумя аккаунтами: старый из Telegram (id = Telegram id) и новый
+    по почте. Если Telegram уже привязан к почте, старый id сворачиваем в строку аккаунта;
+    если не привязан, но @ник совпадает — ставим строки рядом и помечаем «twin»."""
+    from assistant.stores import accounts as accounts_store
     from assistant.stores import orgs_store
 
     profiles = _profiles()
@@ -104,40 +142,98 @@ def users_directory(from_d: str, to_d: str) -> list[dict[str, Any]]:
     spend = {str(r["telegram_user_id"]): r for r in usage_store.users_summary(from_d, to_d)}
     last_use = usage_store.last_usage_by_user()
     orgs = orgs_store.org_names_by_user()
+    accs, aliased = _accounts()
     ids: set[str] = set(profiles) | {str(x) for x in pending} | {str(x) for x in allowed_ids}
     ids |= {k for k in spend if k.isdigit()} | {k for k in last_use if k.isdigit()}
     ids |= {str(x) for x in access.approver_user_ids()}
+    ids |= set(accs)
+    # Telegram id, привязанный к аккаунту по почте → строка этого аккаунта.
+    folded: dict[str, str] = {}
+    for acc_id, a in accs.items():
+        tg = a["tg_user_id"]
+        if tg and tg != acc_id:
+            folded[tg] = acc_id
     rate = usd_to_rub()
-    out: list[dict[str, Any]] = []
+    out: dict[str, dict[str, Any]] = {}
     for uid in ids:
-        if not uid.isdigit():
+        if not uid.isdigit() or uid in aliased or uid in folded:
             continue
         prof = profiles.get(uid)
         req = pending.get(int(uid)) or {}
-        username = (prof or {}).get("username") or req.get("username") or (spend.get(uid) or {}).get("telegram_username") or ""
+        acc = accs.get(uid) or {}
+        tg_old = next((t for t, a in folded.items() if a == uid), None)
+        username = ((prof or {}).get("username") or req.get("username") or (spend.get(uid) or {}).get("telegram_username")
+                    or (profiles.get(tg_old or "") or {}).get("username") or "")
+        email = acc.get("email") or ""
         name = display_name(prof, fallback="")
+        if (not name or name == "Участник") and tg_old:
+            name = display_name(profiles.get(tg_old), fallback="")
         if not name or name == "Участник":
             fn = " ".join(x for x in (req.get("first_name"), req.get("last_name")) if x).strip()
-            name = fn or ("@" + username if username else "ID " + uid)
+            name = fn or email or ("@" + username if username else "ID " + uid)
         seen = [t for t in (_ts((prof or {}).get("updated_at")), _ts(last_use.get(uid))) if t]
+        if tg_old:
+            seen += [t for t in (_ts(last_use.get(tg_old)),) if t]
         if req.get("requested_at"):
             seen.append(datetime.fromtimestamp(int(req["requested_at"]), tz=timezone.utc))
         sp = spend.get(uid) or {}
-        out.append({
+        sp_old = spend.get(tg_old or "") or {}
+        user_orgs = orgs.get(uid, [])
+        out[uid] = {
             "user_id": uid,
             "name": name,
             "username": str(username or "").lstrip("@"),
-            "status": access_status(int(uid), username),
-            "orgs": orgs.get(uid, []),
+            "email": email,
+            "tg_linked": bool(acc.get("tg_user_id")) or not accounts_store.is_synthetic(uid),
+            "status": access_status(int(uid), username, in_org=bool(user_orgs)),
+            "orgs": user_orgs,
             "last_seen": max(seen) if seen else None,
             "requested_at": req.get("requested_at"),
-            "n_calls": int(sp.get("n_calls") or 0),
-            "cost_rub": float(sp.get("cost_usd") or 0) * rate,
-        })
+            "n_calls": int(sp.get("n_calls") or 0) + int(sp_old.get("n_calls") or 0),
+            "cost_rub": (float(sp.get("cost_usd") or 0) + float(sp_old.get("cost_usd") or 0)) * rate,
+            "twin": None,
+        }
+    # Двойники: старый Telegram-аккаунт и почтовый аккаунт без Telegram с тем же @ником.
+    for uid, u in out.items():
+        if accounts_store.is_synthetic(uid) or uid in accs:
+            continue
+        twin = _twin_of(uid, u["username"])
+        if twin and twin in out and not out[twin]["twin"]:
+            u["twin"], out[twin]["twin"] = twin, uid
+    rows = list(out.values())
     order = {"pending": 0}
     epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    out.sort(key=lambda u: (order.get(u["status"], 1), -(u["last_seen"] or epoch).timestamp()))
-    return out
+    rows.sort(key=lambda u: (order.get(u["status"], 1), -(u["last_seen"] or epoch).timestamp()))
+    # Двойника — сразу под первой строкой пары.
+    placed: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for u in rows:
+        if u["user_id"] in placed:
+            continue
+        result.append(u)
+        placed.add(u["user_id"])
+        tw = u["twin"]
+        if tw and tw not in placed:
+            result.append(out[tw])
+            placed.add(tw)
+    return result
+
+
+def merge_check(uid: str) -> tuple[int, int] | str:
+    """Можно ли склеить пару двойников: (почтовый id, Telegram id) или причина отказа."""
+    from assistant.stores import accounts
+
+    row = next((u for u in users_directory(*period(1)) if u["user_id"] == uid), None)
+    if not row or not row["twin"]:
+        return "Второго аккаунта этого человека не нашли."
+    a, b = int(uid), int(row["twin"])
+    email_uid, tg_uid = (a, b) if accounts.is_synthetic(a) else (b, a)
+    if not accounts.is_synthetic(email_uid) or accounts.is_synthetic(tg_uid):
+        return "Пара не «почта + Telegram»."
+    if accounts._has_data(email_uid):  # type: ignore[attr-defined]
+        return ("В аккаунте по почте уже есть свои документы — автоматически не склеить. "
+                "Перенос документов между аккаунтами пока не сделан.")
+    return email_uid, tg_uid
 
 
 def unknown_spend(from_d: str, to_d: str) -> float:

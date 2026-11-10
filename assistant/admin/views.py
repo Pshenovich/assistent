@@ -37,6 +37,7 @@ ACTION_LABEL = {
     "access.approve": "Открыл доступ",
     "access.deny": "Отклонил заявку",
     "access.revoke": "Закрыл доступ",
+    "account.merge": "Склеил аккаунты",
     "org.owner": "Назначил владельца",
     "org.billing": "Изменил тариф организации",
     "org.member_plan": "Изменил тариф участника",
@@ -84,8 +85,8 @@ tbody tr:hover{background:color-mix(in srgb,var(--accent) 4%,transparent)}
 .tw{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;box-shadow:var(--shadow)}
 .badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--bg);color:var(--muted);white-space:nowrap}
 .b-open,.b-active{background:var(--ok-soft);color:var(--ok)}.b-pending{background:var(--warn-soft);color:var(--warn)}
-.b-denied,.b-none{background:var(--bad-soft);color:var(--bad)}.b-operator{background:var(--accent-soft);color:var(--accent)}
-.muted{color:var(--muted)}.small{font-size:12px}
+.b-denied,.b-none{background:var(--bad-soft);color:var(--bad)}.b-operator,.b-org,.b-review{background:var(--accent-soft);color:var(--accent)}
+.muted{color:var(--muted)}.small{font-size:12px}.warn{color:var(--warn)}
 .bar{height:6px;border-radius:3px;background:var(--bar);opacity:.85}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
 .chips a{padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--text)}
@@ -241,11 +242,27 @@ def user_link(ctx: Ctx, u: dict[str, Any]) -> str:
     if u.get("username") and not str(u["name"]).startswith("@"):
         nick = f' <span class="muted small">@{esc(u["username"])}</span>'
 
-    return f'<a href="{esc(ctx.url("/user/" + u["user_id"]))}">{esc(u["name"])}</a>{nick}'
+    extra = ""
+    if u.get("email") and u["email"] != u["name"]:
+        extra += f'<div class="muted small">{esc(u["email"])}</div>'
+    if u.get("twin"):
+        kind = "по почте" if u.get("email") and not u.get("tg_linked") else "из Telegram"
+        extra += (f'<div class="small warn">↕ тот же человек, второй аккаунт — {kind}'
+                  f'{merge_button(ctx, u) if u.get("email") else ""}</div>')
+    return f'<a href="{esc(ctx.url("/user/" + u["user_id"]))}">{esc(u["name"])}</a>{nick}{extra}'
+
+
+def merge_button(ctx: Ctx, u: dict[str, Any]) -> str:
+    if not ctx.can_write:
+        return ""
+    action = esc(ctx.prefix + "/user/" + u["user_id"] + "/merge")
+    return (f' <form class="inl" method="post" action="{action}" '
+            'onsubmit="return confirm(\'Склеить два аккаунта в один? Почта перейдёт на аккаунт из Telegram, '
+            'отменить нельзя.\')"><button>Склеить</button></form>')
 
 
 def access_buttons(ctx: Ctx, u: dict[str, Any], *, back: str) -> str:
-    if not ctx.can_write or u["status"] == "operator":
+    if not ctx.can_write or u["status"] in ("operator", "org", "review"):
         return ""
     action = esc(ctx.prefix + "/user/" + u["user_id"] + "/access")
     def btn(a: str, label: str, cls: str = "") -> str:
@@ -317,14 +334,15 @@ def users_page(ctx: Ctx, users: list[dict[str, Any]], *, q: str, status: str, da
     if q:
         ql = q.lower().lstrip("@")
         shown = [u for u in shown if ql in u["name"].lower() or ql in u["username"].lower() or ql == u["user_id"]
+                 or ql in (u.get("email") or "").lower()
                  or any(ql in o.lower() for o in u["orgs"])]
     st = [f'<a class="{"on" if not status else ""}" href="{esc(ctx.url("/users", q=q, days=days))}">Все · {len(users)}</a>']
-    for key in ("pending", "open", "operator", "denied"):
+    for key in ("pending", "open", "org", "operator", "denied", "none"):
         if counts.get(key):
             st.append(f'<a class="{"on" if status == key else ""}" href="{esc(ctx.url("/users", status=key, q=q, days=days))}">'
                       f'{esc(STATUS_LABEL[key])} · {counts[key]}</a>')
     tools = (f'<form class="tools" method="get" action="{esc(ctx.prefix + "/users")}">'
-             f'<input type="search" name="q" value="{esc(q)}" placeholder="Имя, @ник, id или организация" style="min-width:260px">'
+             f'<input type="search" name="q" value="{esc(q)}" placeholder="Имя, @ник, почта, id или организация" style="min-width:260px">'
              f'<input type="hidden" name="status" value="{esc(status)}"><input type="hidden" name="days" value="{days}">'
              + (f'<input type="hidden" name="access_token" value="{esc(ctx.token)}">' if ctx.token else "")
              + '<button>Найти</button></form>')
@@ -339,9 +357,9 @@ def users_page(ctx: Ctx, users: list[dict[str, Any]], *, q: str, status: str, da
         )
     body = (
         '<h1>Пользователи</h1><p class="sub">Все, кто открывал Орбиту, просил доступ или тратил токены. '
-        f'Расход — за {days} дн.</p>'
+        f'Расход — за {days} дн. «Доступ в бота» — пускает ли Telegram-бот; веб-приложение по почте его не проверяет.</p>'
         f'<div class="chips">{"".join(st)}</div>{tools}{period_chips(ctx, "/users", days, status=status, q=q)}'
-        + table((("Пользователь", ""), ("Доступ", ""), ("Организация", ""), ("Был", ""), ("Вызовов", "n"), ("Расход", "n"), ("", "n")),
+        + table((("Пользователь", ""), ("Доступ в бота", ""), ("Организация", ""), ("Был", ""), ("Вызовов", "n"), ("Расход", "n"), ("", "n")),
                 rows, "Никого не нашли")
     )
     return page(ctx, active="users", title="Пользователи", body=body, **flash)
@@ -359,8 +377,11 @@ def user_page(ctx: Ctx, u: dict[str, Any], *, days: int, audit: list[dict[str, A
         f"<td class=\"n\">{num(r['calls'])}</td><td class=\"n\">{rub(r['rub'])}</td></tr>" for r in u["days"]
     ]
     info = (
-        f'<div class="kv"><div>Telegram</div><div>{("@" + esc(u["username"])) if u["username"] else "—"} · id {esc(u["user_id"])}</div>'
-        f'<div>Доступ</div><div>{badge(u["status"])} {access_buttons(ctx, u, back="/user/" + u["user_id"])}</div>'
+        f'<div class="kv"><div>Почта</div><div>{esc(u.get("email") or "—")}</div>'
+        f'<div>Telegram</div><div>{("@" + esc(u["username"])) if u["username"] else "—"} · id {esc(u["user_id"])}</div>'
+        + (f'<div>Второй аккаунт</div><div><a href="{esc(ctx.url("/user/" + u["twin"]))}">id {esc(u["twin"])}</a>'
+           f'{merge_button(ctx, u)}</div>' if u.get("twin") else "")
+        + f'<div>Доступ в бота</div><div>{badge(u["status"])} {access_buttons(ctx, u, back="/user/" + u["user_id"])}</div>'
         f'<div>Был в Орбите</div><div>{ago(u["last_seen"])}</div>'
         f'<div>Расход за {days} дн</div><div>{rub(u["cost_rub"])} · {num(u["n_calls"])} вызовов</div>'
         f'<div>За всё время</div><div>{rub(u["lifetime_rub"])} · {num(u["lifetime_calls"])} вызовов</div></div>'
