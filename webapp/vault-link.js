@@ -19,6 +19,9 @@
   }
 
   var busy = false;
+  // Вернулись «назад» со страницы сейфов — браузер показывает страницу из памяти вместе с busy=true,
+  // и «Сейфы» больше не нажимались. Сбрасываем при каждом показе страницы.
+  window.addEventListener("pageshow", function () { busy = false; });
   async function openVaults(vaultId) {
     if (busy) return;
     busy = true;
@@ -27,6 +30,7 @@
       var u = new URL(r.url);
       if (vaultId) u.searchParams.set("vault", String(vaultId));
       location.assign(u.toString()); // та же вкладка: «назад» в браузере вернёт в Орбиту
+      setTimeout(function () { busy = false; }, 4000); // переход не случился (отменили) — кнопка снова работает
     } catch (e) {
       busy = false;
       toast((e && (e.detail || e.message)) || "Не получилось открыть сейфы");
