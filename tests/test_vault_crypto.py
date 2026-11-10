@@ -62,6 +62,19 @@ const out = {};
   const c1 = await V.linkCode(link.publicKey), c2 = await V.linkCode(link.publicKey), c3 = await V.linkCode(other.publicKey);
   out.linkCode = /^[0-9]{3} [0-9]{3}$/.test(c1) && c1 === c2 && c1 !== c3;
 
+  // формат 2: номер сейфа, номер записи и версия ключа в AAD
+  const ctxA = { fmt: 2, vault: "VaultA", item: "ItemA", kv: 3 };
+  const blob2 = await V.sealItem(vk, 7, { password: "x" }, ctxA);
+  out.v2Ok = (await V.openItem(vk, 7, blob2, ctxA)).password === "x";
+  out.v2OtherItem = await V.openItem(vk, 7, blob2, { ...ctxA, item: "ItemB" }).then(() => false, () => true);
+  out.v2OldVersion = await V.openItem(vk, 7, blob2, { ...ctxA, kv: 2 }).then(() => false, () => true);
+  out.v2NotV1 = await V.openItem(vk, 7, blob2).then(() => false, () => true);
+  const env2 = await V.sealEnvelope(vk, me.publicKey, V.envelopeAad({ fmt: 2, vault: "VaultA", kv: 3 }));
+  out.env2Ok = Buffer.from(await V.openEnvelope(env2, priv, me.publicKey, V.envelopeAad({ fmt: 2, vault: "VaultA", kv: 3 }))).equals(Buffer.from(vk));
+  out.env2OtherVault = await V.openEnvelope(env2, priv, me.publicKey, V.envelopeAad({ fmt: 2, vault: "VaultB", kv: 3 })).then(() => false, () => true);
+  out.env2AsV1 = await V.openEnvelope(env2, priv, me.publicKey).then(() => false, () => true);
+  out.uid = /^[A-Za-z0-9_-]{20,}$/.test(V.newUid());
+
   const pw = V.generatePassword(20);
   out.pw = pw.length === 20 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /[0-9]/.test(pw);
   console.log(JSON.stringify(out));

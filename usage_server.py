@@ -195,6 +195,10 @@ class _OwaspSecurityHeadersMiddleware(BaseHTTPMiddleware):
         return xf == "https"
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        from assistant.lib import vault_host
+
+        if vault_host.is_vault_host(request):
+            return await self._vault_dispatch(request, call_next)
         t0 = time.perf_counter()
         response = await call_next(request)
         _log_slow_request(request, response, time.perf_counter() - t0)
@@ -218,6 +222,28 @@ class _OwaspSecurityHeadersMiddleware(BaseHTTPMiddleware):
                 del response.headers["X-Frame-Options"]
         else:
             response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        return response
+
+    async def _vault_dispatch(self, request: Request, call_next):
+        """Адрес сейфов: только страница сейфов и её API, строгий CSP (assistant/lib/vault_host.py)."""
+        from assistant.lib import vault_host
+
+        path = request.url.path
+        if not vault_host.path_allowed(path):
+            response: Any = Response("Not found", status_code=404, media_type="text/plain")
+        elif path in ("/", "/index.html"):
+            page = Path(__file__).resolve().parent / "webapp" / "vault-app.html"
+            text = page.read_text(encoding="utf-8").replace("__VAULT_MAIN_URL__", vault_host.main_url_for(request))
+            response = Response(text, media_type="text/html; charset=utf-8")
+            response.headers["Cache-Control"] = "no-cache"
+        else:
+            response = await call_next(request)
+        if path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+        for k, v in vault_host.security_headers().items():
+            response.headers[k] = v
+        if self._request_is_https(request):
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
 
 
@@ -8737,7 +8763,7 @@ def _vault_rp_id(request: Request) -> str:
 
 def _vault_unlocker_in(u: "_VaultUnlocker", request: Request) -> dict[str, Any]:
     d = u.model_dump()
-    d["rp_id"] = _vault_rp_id(request) if d.get("kind") == "device" else ""
+    d["rp_id"] = _vault_rp_id(request) if d.get("kind") in ("device", "passkey") else ""
     return d
 
 
@@ -8754,6 +8780,7 @@ class _VaultCreate(BaseModel):
     envelope: str
     access: list[dict[str, str]] = []
     owner_envelopes: list[dict[str, str]] = []
+    uid: str = ""  # номер сейфа от браузера — формат шифра 2
 
 
 class _VaultRename(BaseModel):
@@ -8778,17 +8805,21 @@ class _VaultEnvelopes(BaseModel):
 class _VaultItem(BaseModel):
     blob: str
     key_version: Optional[int] = None
+    uid: str = ""  # номер записи от браузера (формат 2)
 
 
 class _VaultRotateItem(BaseModel):
     id: int
     blob: str
+    uid: str = ""
 
 
 class _VaultRotate(BaseModel):
     key_version: int
     items: list[_VaultRotateItem]
     envelopes: list[_VaultEnvelope]
+    fmt: int = 1
+    uid: str = ""
 
 
 class _VaultDecide(BaseModel):
@@ -8805,10 +8836,68 @@ def _vaults_enabled() -> bool:
     return os.environ.get("VAULTS_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-async def _require_vault_user(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> _MiniappPrincipal:
+def _vault_principal(request: Request) -> _MiniappPrincipal:
+    """Сейфы открываются только на своём адресе и по его сессии (кука vault_session).
+
+    Основной сайт к API сейфов доступа не имеет: XSS там не дотянется ни до шифра, ни до действий.
+    """
+    from assistant.lib import vault_host
+
+    if not vault_host.is_vault_host(request):
+        raise HTTPException(status_code=404, detail=f"Сейфы открываются на {vault_host.vault_host()}")
+    parsed = vault_host.verify_session(request.cookies.get(vault_host.SESSION_COOKIE) or "")
+    if parsed is None:
+        raise HTTPException(status_code=401, detail="Войдите в сейфы через Орбиту")
+    return _MiniappPrincipal(parsed[0], parsed[1])
+
+
+async def _require_vault_user(request: Request) -> _MiniappPrincipal:
     if not _vaults_enabled():
         raise HTTPException(status_code=404, detail="Сейфы пока недоступны")
-    return principal
+    return _vault_principal(request)
+
+
+class _VaultSessionIn(BaseModel):
+    code: str
+
+
+@miniapp_router.post("/vault-handoff")
+async def miniapp_vault_handoff(request: Request, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Основной сайт → адрес сейфов: одноразовый код на минуту (во фрагменте ссылки)."""
+    from assistant.lib import vault_host
+
+    if not _vaults_enabled():
+        raise HTTPException(status_code=404, detail="Сейфы пока недоступны")
+    user = dict(principal.user or {})
+    code = await run_in_threadpool(vault_host.handoff_create, int(principal.telegram_user_id), user)
+    return {"ok": True, "url": f"{vault_host.vault_origin(request)}/#c={code}"}
+
+
+@miniapp_router.post("/vault-session")
+async def miniapp_vault_session(body: _VaultSessionIn, request: Request) -> Response:
+    """Адрес сейфов: код из основного приложения → своя сессия (кука только этого адреса, 12 часов)."""
+    from assistant.lib import vault_host
+
+    if not vault_host.is_vault_host(request) or not _vaults_enabled():
+        raise HTTPException(status_code=404, detail="Не найдено")
+    got = await run_in_threadpool(vault_host.handoff_take, body.code)
+    if got is None:
+        raise HTTPException(status_code=400, detail="Ссылка входа устарела — откройте сейфы из Орбиты ещё раз")
+    token = vault_host.issue_session(got[0], got[1])
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(vault_host.SESSION_COOKIE, token, httponly=True, secure=_OwaspSecurityHeadersMiddleware._request_is_https(request),
+                    samesite="strict", max_age=vault_host.SESSION_TTL, path="/")
+    _track(got[0], "vault.session")
+    return resp
+
+
+@miniapp_router.post("/vault-session/logout")
+async def miniapp_vault_session_logout(request: Request) -> Response:
+    from assistant.lib import vault_host
+
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(vault_host.SESSION_COOKIE, path="/")
+    return resp
 
 
 def _vaults_state(uid: int) -> dict[str, Any]:
@@ -8819,10 +8908,40 @@ def _vaults_state(uid: int) -> dict[str, Any]:
 
 
 @miniapp_router.get("/vaults")
-async def miniapp_vaults(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+async def miniapp_vaults(request: Request) -> dict[str, Any]:
+    principal = _vault_principal(request)  # сначала адрес и сессия: без них — ни слова, даже «выключены»
     if not _vaults_enabled():
         return {"ok": True, "enabled": False, "keys": None, "vaults": []}
     return await _org_call(_vaults_state, int(principal.telegram_user_id))
+
+
+def _vault_orgs(uid: int) -> list[dict[str, Any]]:
+    """Организации человека с участниками и группами — для окна «Доступ» на адресе сейфов (только имена)."""
+    from assistant.stores import org_groups, orgs_store
+
+    out = []
+    for o in orgs_store.orgs_for_user(uid):
+        oid = int(o["id"])
+        members = []
+        for m in orgs_store.list_members(oid):
+            if m.get("status") not in (None, "active") or not m.get("user_id"):
+                continue
+            members.append({"user_id": str(m["user_id"]), "name": str(m.get("name") or m.get("display_name") or "Участник"),
+                            "guest": bool(m.get("guest"))})
+        try:
+            groups = org_groups.list_groups(oid, uid)
+        except Exception:
+            groups = []
+        out.append({"org": {"id": oid, "name": o.get("name") or ""},
+                    "kb": {"members": members, "groups": [{"id": g["id"], "name": g["name"],
+                                                           "teams": [{"id": t["id"], "name": t["name"]} for t in (g.get("teams") or [])]}
+                                                          for g in groups]}})
+    return out
+
+
+@miniapp_router.get("/vaults/orgs")
+async def miniapp_vault_orgs(principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    return {"ok": True, "orgs": await _org_call(_vault_orgs, int(principal.telegram_user_id))}
 
 
 @miniapp_router.post("/vaults/keys")
@@ -8921,7 +9040,8 @@ async def miniapp_vault_create(body: _VaultCreate, principal: _MiniappPrincipal 
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    created = await _org_call(vaults.create, uid, body.org_id, body.name, body.envelope, body.access, body.owner_envelopes)
+    created = await _org_call(vaults.create, uid, body.org_id, body.name, body.envelope, body.access, body.owner_envelopes,
+                              body.uid)
     _track(uid, "vault.create", personal=body.org_id is None)
     return {**(await _org_call(_vaults_state, uid)), "created": created}
 
@@ -8980,7 +9100,7 @@ async def miniapp_vault_rotate(vault_id: int, body: _VaultRotate, principal: _Mi
     uid = int(principal.telegram_user_id)
     v = await _org_call(
         vaults.rotate, uid, vault_id, body.key_version, [i.model_dump() for i in body.items],
-        [e.model_dump() for e in body.envelopes],
+        [e.model_dump() for e in body.envelopes], body.fmt, body.uid,
     )
     _track(uid, "vault.rotate")
     return {"ok": True, "vault": v}
@@ -9058,7 +9178,7 @@ async def miniapp_vault_item_add(vault_id: int, body: _VaultItem, principal: _Mi
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    res = await _org_call(vaults.add_item, uid, vault_id, body.blob, body.key_version)
+    res = await _org_call(vaults.add_item, uid, vault_id, body.blob, body.key_version, body.uid)
     _track(uid, "vault.item_add")
     return {"ok": True, **res}
 

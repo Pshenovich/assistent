@@ -1,0 +1,37 @@
+/* Страница сейфов на отдельном адресе (vault.getorbita.me): список слева, сейф справа.
+   Только токены темы (styles.css), никаких встроенных стилей — строгий CSP. */
+.vh-body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); }
+.vh-body .hidden { display: none !important; }
+.vh-app { display: grid; grid-template-columns: 272px minmax(0, 1fr); min-height: 100vh; }
+.vh-side {
+  position: sticky; top: 0; height: 100vh; overflow-y: auto; box-sizing: border-box;
+  padding: 14px 10px 12px; background: var(--surface); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.vh-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 14px; font-weight: 600; font-size: 0.9375rem; color: var(--text); }
+.vh-brand svg { width: 18px; height: 18px; fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.vh-org { display: flex; align-items: center; justify-content: space-between; margin: 10px 2px 2px 8px; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); }
+.vh-side .vlt-tree-head { display: none; }
+.vh-side .kb-node svg, .vh-side .kb-foot-row svg, .vh-side .kb-n-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.vh-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 2px; }
+.vh-main { min-width: 0; }
+.vh-body #kb-desk { display: block; max-width: 980px; margin: 0 auto; padding: 22px 28px 48px; box-sizing: border-box; }
+.vh-body #kb-desk svg { fill: none; stroke: currentColor; stroke-width: 1.8; }
+
+.vh-login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+.vh-login-card { max-width: 420px; text-align: center; }
+.vh-login-ico svg { width: 32px; height: 32px; fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.vh-login .kb-btn { display: inline-flex; text-decoration: none; margin-top: 8px; }
+
+.vh-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100; max-width: min(520px, calc(100vw - 32px));
+  padding: 10px 14px; border-radius: 12px; background: var(--surface-elevated); color: var(--text);
+  border: 1px solid var(--border); font-size: 0.875rem; box-shadow: var(--shadow-md);
+}
+.vh-menu { position: fixed; z-index: 90; }
+
+@media (max-width: 760px) {
+  .vh-app { grid-template-columns: 1fr; }
+  .vh-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .vh-body #kb-desk { padding: 16px 16px 40px; }
+}

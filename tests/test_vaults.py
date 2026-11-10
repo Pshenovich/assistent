@@ -14,7 +14,8 @@ OWNER, ADMIN, BACK, BACK2, MANAGER, GUEST, OUTSIDER = 1, 2, 3, 4, 5, 6, 99
 
 def unlockers(cred: str = "Y3JlZA") -> list[dict[str, str]]:
     return [
-        {"kind": "passkey", "credential_id": cred, "salt": "c2FsdA", "wrapped_umk": "d3JhcA", "label": "MacBook"},
+        {"kind": "passkey", "credential_id": cred, "salt": "c2FsdA", "wrapped_umk": "d3JhcA", "label": "MacBook",
+         "rp_id": "vault.getorbita.me"},
         {"kind": "recovery", "salt": "c2FsdDI", "wrapped_umk": "d3JhcDI"},
     ]
 
@@ -70,7 +71,8 @@ class VaultsTests(unittest.TestCase):
         pk = next(u for u in vaults.my_keys(OWNER)["unlockers"] if u["kind"] == "passkey")
         with self.assertRaises(OrgError):
             vaults.remove_unlocker(OWNER, pk["id"])
-        vaults.add_unlocker(OWNER, {"kind": "passkey", "credential_id": "aXBob25l", "salt": "cw", "wrapped_umk": "dw"})
+        vaults.add_unlocker(OWNER, {"kind": "passkey", "credential_id": "aXBob25l", "salt": "cw", "wrapped_umk": "dw",
+                                    "rp_id": "vault.getorbita.me"})
         vaults.remove_unlocker(OWNER, pk["id"])
         vaults.add_unlocker(OWNER, {"kind": "recovery", "salt": "bmV3", "wrapped_umk": "bmV3"})
         rec = [u for u in vaults.my_keys(OWNER)["unlockers"] if u["kind"] == "recovery"]
@@ -172,6 +174,35 @@ class VaultsTests(unittest.TestCase):
             with self.assertRaises(OrgError):
                 vaults.put_envelopes(who, self.vault, [{"user_id": str(ADMIN), "envelope": "ZXZpbA"}])
         self.assertIn(str(ADMIN), [p["user_id"] for p in vaults.get(self.vault, OWNER)["pending"]])
+
+    def test_format2_uids_and_upgrade(self) -> None:
+        # Формат 2 (аудит 2026-11-10): номера сейфа и записей от браузера, в AAD; старый сейф переводится сменой ключа
+        U = "VaultUid0123456789ab"
+        pv = vaults.create(BACK, None, "Личный", "cA", vault_uid=U)
+        self.assertEqual((pv["fmt"], pv["uid"], pv["upgrade"]), (2, U, False))
+        with self.assertRaises(OrgError):  # запись без номера в формате 2
+            vaults.add_item(BACK, pv["id"], "Y3Q")
+        it = vaults.add_item(BACK, pv["id"], "Y3Q", item_uid="ItemUid0123456789ab")
+        with self.assertRaises(OrgError):  # номер записи не повторяется
+            vaults.add_item(BACK, pv["id"], "Y3Q", item_uid="ItemUid0123456789ab")
+        self.assertEqual(vaults.items(pv["id"], BACK)[0]["uid"], "ItemUid0123456789ab")
+        # старый сейф: редактор видит upgrade и переводит его
+        iid = vaults.add_item(OWNER, self.vault, "b2xk")["id"]
+        v = vaults.get(self.vault, OWNER)
+        self.assertTrue(v["upgrade"])
+        with self.assertRaises(OrgError):  # без номеров записей — нельзя
+            vaults.rotate(OWNER, self.vault, v["key_version"], [{"id": iid, "blob": "bmV3"}],
+                          [{"user_id": str(OWNER), "envelope": "ZQ"}], fmt=2, vault_uid=U)
+        vaults.rotate(OWNER, self.vault, v["key_version"], [{"id": iid, "blob": "bmV3", "uid": "Item2Uid0123456789ab"}],
+                      [{"user_id": str(OWNER), "envelope": "ZQ"}], fmt=2, vault_uid="Vault2Uid0123456789ab")
+        v2 = vaults.get(self.vault, OWNER)
+        self.assertEqual((v2["fmt"], v2["uid"], v2["upgrade"]), (2, "Vault2Uid0123456789ab", False))
+        with self.assertRaises(OrgError):  # назад на формат 1 — нельзя
+            vaults.rotate(OWNER, self.vault, v2["key_version"], [{"id": iid, "blob": "b2xk"}],
+                          [{"user_id": str(OWNER), "envelope": "ZQ"}], fmt=1)
+        with self.assertRaises(OrgError):  # номер сейфа не меняется
+            vaults.rotate(OWNER, self.vault, v2["key_version"], [{"id": iid, "blob": "b2xk", "uid": "Item2Uid0123456789ab"}],
+                          [{"user_id": str(OWNER), "envelope": "ZQ"}], fmt=2, vault_uid="OtherUid0123456789ab")
 
     def _backdate_items(self) -> None:
         with orgs_store._LOCK:

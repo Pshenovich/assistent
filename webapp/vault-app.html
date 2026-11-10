@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="orbita-main" content="__VAULT_MAIN_URL__" />
+  <title>Сейфы Орбиты</title>
+  <!-- Адрес сейфов: только эта страница, строгий CSP (assistant/lib/vault_host.py). Никаких встроенных скриптов и стилей. -->
+  <script src="/webapp/theme.js?v=20261029-spktools"></script>
+  <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261109-whose1" />
+  <link rel="stylesheet" href="/webapp/org-kb.css?v=20261108-acc1" />
+  <link rel="stylesheet" href="/webapp/vault.css?v=20261110-vh3" />
+  <link rel="stylesheet" href="/webapp/vault-app.css?v=20261110-vh3" />
+</head>
+<body class="vh-body">
+  <div class="vh-app">
+    <aside class="vh-side" id="vh-side" aria-label="Сейфы"></aside>
+    <main class="vh-main"><div id="kb-desk" class="vh-desk"></div></main>
+  </div>
+  <div class="vh-login hidden" id="vh-login">
+    <div class="vh-login-card">
+      <div class="vlt-big vh-login-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+      <h1 class="screen-title kb-title">Сейфы Орбиты</h1>
+      <p class="muted lead" id="vh-login-text">Чтобы открыть сейфы, войдите через Орбиту — откроется вход и вернёт сюда.</p>
+      <a class="kb-btn kb-btn--primary vlt-btn-lg" id="vh-login-btn" href="#">Войти через Орбиту</a>
+    </div>
+  </div>
+  <div class="vh-toast hidden" id="vh-toast" role="status" aria-live="polite"></div>
+  <script src="/webapp/vault-crypto.js?v=20261110-vh3" defer></script>
+  <script src="/webapp/vault-app.js?v=20261110-vh3" defer></script>
+  <script src="/webapp/vault.js?v=20261110-vh3" defer></script>
+</body>
+</html>

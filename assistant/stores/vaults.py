@@ -100,6 +100,10 @@ def _conn() -> sqlite3.Connection:
     _add_column(conn, "vaults", "key_version", "INTEGER NOT NULL DEFAULT 1")
     _add_column(conn, "vaults", "needs_rotation", "INTEGER NOT NULL DEFAULT 0")
     _add_column(conn, "vault_departures", "notified", "INTEGER NOT NULL DEFAULT 0")
+    # Формат шифра 2 (аудит 2026-11-10): номер сейфа и записей придумывает браузер, они в AAD вместе с версией ключа
+    _add_column(conn, "vaults", "fmt", "INTEGER NOT NULL DEFAULT 1")
+    _add_column(conn, "vaults", "uid", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "vault_items", "uid", "TEXT NOT NULL DEFAULT ''")
     # kind=device (браузеры без PRF): открытый ключ passkey, алгоритм, rp_id и счётчик — для проверки касания
     _add_column(conn, "vault_unlockers", "public_key", "TEXT NOT NULL DEFAULT ''")
     _add_column(conn, "vault_unlockers", "alg", "INTEGER NOT NULL DEFAULT 0")
@@ -143,6 +147,16 @@ def _blob(value: Any, field: str, limit: int = KEY_MAX) -> str:
     return text
 
 
+_UID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def _check_uid(value: Any, field: str) -> str:
+    u = str(value or "").strip()
+    if not _UID.match(u):
+        raise OrgError(f"Поле {field} повреждено", 400)
+    return u
+
+
 def _clean_name(name: str) -> str:
     text = " ".join(str(name or "").split())
     if not text:
@@ -176,6 +190,7 @@ def _unlocker_out(r: sqlite3.Row) -> dict[str, Any]:
         "id": int(r["id"]), "kind": r["kind"], "credential_id": r["credential_id"], "salt": r["salt"],
         "wrapped_umk": "" if r["kind"] == "device" else r["wrapped_umk"], "label": r["label"],
         "created_at": r["created_at"], "last_used_at": r["last_used_at"],
+        "rp_id": r["rp_id"],  # адрес, к которому привязан passkey: страница берёт только свои
     }
 
 
@@ -201,6 +216,7 @@ def _check_unlocker(u: dict[str, Any]) -> tuple[str, str, str, str, str, str, in
             wa.check_public_key(pub, alg)
         except (ValueError, TypeError) as e:
             raise OrgError("Ключ устройства не подходит", 400) from e
+    if kind in DEVICE_KINDS:
         rp_id = str(u.get("rp_id") or "").strip().lower()
         if not rp_id or len(rp_id) > 253:
             raise OrgError("Нет адреса сайта для ключа устройства", 400)
@@ -741,6 +757,9 @@ def _vault_out(v: sqlite3.Row, role: str, uid: str) -> dict[str, Any]:
         "items": int(count),
         "envelope": mine["envelope"] if mine else None,
         "key_version": int(v["key_version"]),
+        "fmt": int(v["fmt"] or 1), "uid": v["uid"],
+        # старый формат шифра: первый же редактор переведёт сейф на формат 2 сменой ключа
+        "upgrade": int(v["fmt"] or 1) < 2 and editor and bool(mine),
         "members": len(members),
         "holders": len(have),  # у скольких есть ключ: 0 — сейф уже никто не откроет
         # ключ нужен тем, у кого он есть: только они могут положить конверт
@@ -750,7 +769,8 @@ def _vault_out(v: sqlite3.Row, role: str, uid: str) -> dict[str, Any]:
         "departures": [{"user_id": str(d["user_id"]), "name": names[str(d["user_id"])], "at": d["at"]} for d in deps],
         # сменить ключ: всем участникам с ключами — новые конверты
         "rotate": rotate,
-        "rotate_keys": [{"user_id": u, "public_key": keys[u]} for u in sorted(members & have) if u in keys] if rotate else [],
+        "rotate_keys": [{"user_id": u, "public_key": keys[u]} for u in sorted(members & have) if u in keys]
+        if rotate or (int(v["fmt"] or 1) < 2 and editor and bool(mine)) else [],
         "requests": [{"user_id": str(r["user_id"]), "name": names[str(r["user_id"])], "at": r["created_at"]} for r in reqs],
         "access": _access_line(v["org_id"], acl),
     }
@@ -781,7 +801,7 @@ def _access_line(org_id: Optional[int], acl: dict[str, str]) -> str:
 
 def create(user_id: int | str, org_id: Optional[int], name: str, envelope: str,
            access: Optional[list[dict[str, str]]] = None,
-           owner_envelopes: Optional[list[dict[str, str]]] = None) -> dict[str, Any]:
+           owner_envelopes: Optional[list[dict[str, str]]] = None, vault_uid: str = "") -> dict[str, Any]:
     """Новый сейф. Создатель — владелец; ``envelope`` — ключ сейфа, запечатанный его открытым ключом.
 
     Сейф организации сразу получает конверты владельцев организации (``owner_envelopes``) — они владельцы
@@ -791,6 +811,7 @@ def create(user_id: int | str, org_id: Optional[int], name: str, envelope: str,
     uid = _uid(user_id)
     title = _clean_name(name)
     env = _blob(envelope, "envelope")
+    vuid = _check_uid(vault_uid, "uid") if vault_uid else ""  # с номером — сразу формат 2
     if org_id is not None and not orgs_store.role_of(int(org_id), uid):
         raise OrgError("Организация не найдена", 404)
     extra: list[tuple[str, str]] = []
@@ -820,8 +841,8 @@ def create(user_id: int | str, org_id: Optional[int], name: str, envelope: str,
                 raise OrgError("Не хватает ключа для владельца организации — обновите страницу", 400)
         now = _now()
         cur = conn.execute(
-            "INSERT INTO vaults (org_id, name, created_by, created_at) VALUES (?,?,?,?)",
-            (None if org_id is None else int(org_id), title, uid, now),
+            "INSERT INTO vaults (org_id, name, created_by, created_at, fmt, uid) VALUES (?,?,?,?,?,?)",
+            (None if org_id is None else int(org_id), title, uid, now, 2 if vuid else 1, vuid),
         )
         vid = int(cur.lastrowid)
         conn.execute("INSERT INTO vault_acl (vault_id, principal, role) VALUES (?,?,?)", (vid, f"u:{uid}", "owner"))
@@ -1039,12 +1060,13 @@ def items(vault_id: int, user_id: int | str) -> list[dict[str, Any]]:
         return names[u]
 
     return [{
-        "id": int(r["id"]), "blob": r["blob"], "created_at": r["created_at"], "updated_at": r["updated_at"],
+        "id": int(r["id"]), "uid": r["uid"], "blob": r["blob"], "created_at": r["created_at"], "updated_at": r["updated_at"],
         "updated_by": str(r["updated_by"]), "updated_by_name": name(str(r["updated_by"])),
     } for r in rows]
 
 
-def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional[int] = None) -> dict[str, Any]:
+def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional[int] = None,
+             item_uid: str = "") -> dict[str, Any]:
     _require(vault_id, user_id, "editor")
     _check_writable(vault_id)
     uid = _uid(user_id)
@@ -1053,13 +1075,18 @@ def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional
     with _LOCK:
         conn = _conn()
         _check_version(conn, vault_id, key_version)
+        iuid = ""
+        if int(_vault(conn, vault_id)["fmt"] or 1) >= 2:
+            iuid = _check_uid(item_uid, "uid")
+            if conn.execute("SELECT 1 FROM vault_items WHERE vault_id = ? AND uid = ?", (int(vault_id), iuid)).fetchone():
+                raise OrgError("Такая запись уже есть — обновите страницу", 400)
         cur = conn.execute(
-            "INSERT INTO vault_items (vault_id, blob, created_by, created_at, updated_by, updated_at) VALUES (?,?,?,?,?,?)",
-            (int(vault_id), data, uid, now, uid, now),
+            "INSERT INTO vault_items (vault_id, blob, created_by, created_at, updated_by, updated_at, uid) VALUES (?,?,?,?,?,?,?)",
+            (int(vault_id), data, uid, now, uid, now, iuid),
         )
         conn.commit()
         iid = int(cur.lastrowid)
-    return {"id": iid, "updated_at": now}
+    return {"id": iid, "uid": iuid, "updated_at": now}
 
 
 def _item(conn: sqlite3.Connection, vault_id: int, item_id: int) -> sqlite3.Row:
@@ -1147,7 +1174,7 @@ def item_log(user_id: int | str, vault_id: int, item_id: int, limit: int = 30) -
 
 
 def rotate(user_id: int | str, vault_id: int, key_version: int, items_in: list[dict[str, Any]],
-           envelopes: list[dict[str, str]]) -> dict[str, Any]:
+           envelopes: list[dict[str, str]], fmt: int = 1, vault_uid: str = "") -> dict[str, Any]:
     """Новый ключ сейфа: все записи перешифрованы, конверты — заново. Делает браузер участника.
 
     Нужно после ухода человека: старый ключ мог остаться у него. Записи меняются целиком и разом;
@@ -1159,11 +1186,26 @@ def rotate(user_id: int | str, vault_id: int, key_version: int, items_in: list[d
     if uid not in have:
         raise OrgError("Сначала откройте сейф у себя", 400)
     blobs: dict[int, str] = {}
+    uids: dict[int, str] = {}
     for it in items_in or []:
         blobs[int(it.get("id") or 0)] = _blob(it.get("blob"), "blob", BLOB_MAX)
+        if int(fmt or 1) >= 2:
+            uids[int(it.get("id") or 0)] = _check_uid(it.get("uid"), "uid")
+    if len(set(uids.values())) != len(uids):
+        raise OrgError("Номера записей повторяются — попробуйте ещё раз", 400)
     with _LOCK:
         conn = _conn()
         _check_version(conn, vault_id, key_version)
+        cur_v = _vault(conn, vault_id)
+        cur_fmt = int(cur_v["fmt"] or 1)
+        new_fmt = max(cur_fmt, int(fmt or 1))
+        if new_fmt > 2 or int(fmt or 1) < cur_fmt:
+            raise OrgError("Формат сейфа не подходит — обновите страницу", 400)  # назад на старый формат нельзя
+        new_vuid = cur_v["uid"] or ""
+        if new_fmt >= 2:
+            new_vuid = new_vuid or _check_uid(vault_uid, "uid")
+            if vault_uid and vault_uid != new_vuid:
+                raise OrgError("Номер сейфа не совпадает — обновите страницу", 400)
         ids = {int(r["id"]) for r in conn.execute("SELECT id FROM vault_items WHERE vault_id = ?", (int(vault_id),))}
         if ids != set(blobs):
             raise OrgError("Записи в сейфе только что изменились — попробуйте ещё раз", 400)
@@ -1177,7 +1219,10 @@ def rotate(user_id: int | str, vault_id: int, key_version: int, items_in: list[d
             raise OrgError("Не хватает ключей для участников — попробуйте ещё раз", 400)
         now = _now()
         for iid, blob in blobs.items():
-            conn.execute("UPDATE vault_items SET blob = ? WHERE id = ?", (blob, iid))
+            if new_fmt >= 2:
+                conn.execute("UPDATE vault_items SET blob = ?, uid = ? WHERE id = ?", (blob, uids[iid], iid))
+            else:
+                conn.execute("UPDATE vault_items SET blob = ? WHERE id = ?", (blob, iid))
         conn.execute("DELETE FROM vault_envelopes WHERE vault_id = ?", (int(vault_id),))
         for target, env in envs.items():
             conn.execute(
@@ -1185,7 +1230,8 @@ def rotate(user_id: int | str, vault_id: int, key_version: int, items_in: list[d
                 (int(vault_id), target, env, uid, now),
             )
         conn.execute(
-            "UPDATE vaults SET key_version = key_version + 1, needs_rotation = 0 WHERE id = ?", (int(vault_id),)
+            "UPDATE vaults SET key_version = key_version + 1, needs_rotation = 0, fmt = ?, uid = ? WHERE id = ?",
+            (new_fmt, new_vuid, int(vault_id)),
         )
         conn.commit()
     return get(vault_id, uid)

@@ -597,6 +597,24 @@ if [[ -f deploy/nginx-getorbita.me.conf && ! -e /etc/nginx/sites-enabled/getorbi
   fi
 fi
 
+# vault.getorbita.me — отдельный адрес сейфов (аудит 2026-11-10). DNS (A → этот сервер) владелец завёл.
+if [[ -f deploy/nginx-vault.getorbita.me.conf && ! -e /etc/nginx/sites-enabled/vault.getorbita.me ]]; then
+  cp deploy/nginx-vault.getorbita.me.conf /etc/nginx/sites-available/vault.getorbita.me
+  ln -s /etc/nginx/sites-available/vault.getorbita.me /etc/nginx/sites-enabled/vault.getorbita.me
+  if nginx -t; then
+    systemctl reload nginx
+    if certbot --nginx --non-interactive --redirect -d vault.getorbita.me; then
+      echo "vault.getorbita.me: https on"
+    else
+      echo "WARN: certbot не выпустил сертификат vault.getorbita.me — сейфы пока не откроются" >&2
+    fi
+    nginx -t && systemctl reload nginx
+  else
+    rm -f /etc/nginx/sites-enabled/vault.getorbita.me
+    echo "WARN: nginx vault.getorbita.me: nginx -t failed, сайт снят" >&2
+  fi
+fi
+
 # Живые nginx-конфиги (их ставит только первая выкатка, дальше правит certbot): gzip для text/javascript,
 # буферизация прокси, лимиты тела — идемпотентно, с откатом, если nginx -t не прошёл.
 _ng_files=()

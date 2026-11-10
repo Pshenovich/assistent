@@ -31,6 +31,7 @@ def _headers(uid: int) -> dict[str, str]:
 @pytest.fixture
 def env(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+    monkeypatch.setenv("VAULT_HOST", "vault.test")
     monkeypatch.delenv("MINIAPP_DEV_MODE", raising=False)
     monkeypatch.setattr(access_gate, "miniapp_access_message", lambda **_: (True, ""))
     owner, guest = next(_ids), next(_ids)
@@ -307,13 +308,48 @@ def test_kb_mcp_write_token(env, monkeypatch, tmp_path):
     assert call(rw["token"], "create_section", {"title": "Своё", "org_id": oid}).get("isError")
 
 
+def _vh(uid):
+    """Запрос к API сейфов — только на их адресе и с их сессией (vault_session)."""
+    from assistant.lib import vault_host
+
+    return {"Host": "vault.test", "Cookie": f"{vault_host.SESSION_COOKIE}={vault_host.issue_session(int(uid), {'id': int(uid)})}"}
+
+
+def test_vault_host_handoff_and_isolation(env, monkeypatch):
+    """Основной сайт к сейфам не пускает; вход на адрес сейфов — одноразовым кодом; там только сейфы."""
+    c, owner = env["c"], env["owner"]
+    monkeypatch.setenv("VAULTS_ENABLED", "1")
+    assert c.get("/api/miniapp/vaults", headers=_headers(owner)).status_code == 404
+    assert c.get("/api/miniapp/vaults", headers={"Host": "vault.test"}).status_code == 401
+    url = c.post("/api/miniapp/vault-handoff", headers=_headers(owner)).json()["url"]
+    code = url.split("#c=", 1)[1]
+    assert c.post("/api/miniapp/vault-session", headers=_headers(owner), json={"code": code}).status_code == 404
+    r = c.post("/api/miniapp/vault-session", headers={"Host": "vault.test"}, json={"code": code})
+    assert r.status_code == 200 and "vault_session=" in r.headers.get("set-cookie", "")
+    assert "samesite=strict" in r.headers["set-cookie"].lower()
+    assert c.post("/api/miniapp/vault-session", headers={"Host": "vault.test"}, json={"code": code}).status_code == 400
+    token = r.headers["set-cookie"].split("vault_session=", 1)[1].split(";", 1)[0]
+    ok = c.get("/api/miniapp/vaults", headers={"Host": "vault.test", "Cookie": f"vault_session={token}"})
+    assert ok.status_code == 200 and ok.json()["enabled"] is True
+    # сессия основного сайта на адресе сейфов не подходит
+    c.cookies.clear()
+    assert c.get("/api/miniapp/vaults", headers={**_headers(owner), "Host": "vault.test"}).status_code == 401
+    # на адресе сейфов — только сейфы, со строгим CSP
+    assert c.get("/api/miniapp/me", headers={"Host": "vault.test"}).status_code == 404
+    assert c.get("/webapp/app.js", headers={"Host": "vault.test"}).status_code == 404
+    page = c.get("/", headers={"Host": "vault.test"})
+    assert page.status_code == 200
+    csp = page.headers["content-security-policy"]
+    assert "unsafe-inline" not in csp and "frame-ancestors 'none'" in csp and "trusted-types vault-html" in csp
+
+
 def test_vaults_api_flag_and_flow(env, monkeypatch):
     """Сейфы: выключены флагом — пусто и 404; включены — ключи, сейф, запись, конверт коллеге."""
     c, owner, guest = env["c"], env["owner"], env["guest"]
     monkeypatch.delenv("VAULTS_ENABLED", raising=False)
-    r = c.get("/api/miniapp/vaults", headers=_headers(owner))
+    r = c.get("/api/miniapp/vaults", headers=_vh(owner))
     assert r.json() == {"ok": True, "enabled": False, "keys": None, "vaults": []}
-    assert c.get("/api/miniapp/vaults/1/items", headers=_headers(owner)).status_code == 404
+    assert c.get("/api/miniapp/vaults/1/items", headers=_vh(owner)).status_code == 404
 
     monkeypatch.setenv("VAULTS_ENABLED", "1")
     org = c.post("/api/miniapp/orgs", headers=_headers(owner), json={"name": "Сейфы", "domain": env["domain"]}).json()["org"]
@@ -321,26 +357,26 @@ def test_vaults_api_flag_and_flow(env, monkeypatch):
     c.post(f"/api/miniapp/orgs/{org['id']}/approve", headers=_headers(owner), json={"user_id": guest})
     unl = [{"kind": "recovery", "salt": "c2FsdA", "wrapped_umk": '{"v":1,"iv":"aXY","ct":"Y3Q"}'}]
     for uid in (owner, guest):
-        r = c.post("/api/miniapp/vaults/keys", headers=_headers(uid),
+        r = c.post("/api/miniapp/vaults/keys", headers=_vh(uid),
                    json={"public_key": f'{{"kty":"EC","x":"{uid}"}}', "enc_private": '{"v":1,"iv":"aXY","ct":"cHI"}', "unlockers": unl})
         assert r.status_code == 200, r.text
-    r = c.post("/api/miniapp/vaults", headers=_headers(owner), json={"org_id": org["id"], "name": "Серверы", "envelope": '{"v":1}'})
+    r = c.post("/api/miniapp/vaults", headers=_vh(owner), json={"org_id": org["id"], "name": "Серверы", "envelope": '{"v":1}'})
     assert r.status_code == 200, r.text
     vid = r.json()["created"]["id"]
     # «всем» — нельзя (400, не 403)
-    assert c.put(f"/api/miniapp/vaults/{vid}/access", headers=_headers(owner), json={"principal": "all", "role": "viewer"}).status_code == 400
-    r = c.put(f"/api/miniapp/vaults/{vid}/access", headers=_headers(owner), json={"principal": f"u:{guest}", "role": "viewer"})
+    assert c.put(f"/api/miniapp/vaults/{vid}/access", headers=_vh(owner), json={"principal": "all", "role": "viewer"}).status_code == 400
+    r = c.put(f"/api/miniapp/vaults/{vid}/access", headers=_vh(owner), json={"principal": f"u:{guest}", "role": "viewer"})
     assert [p["user_id"] for p in r.json()["vault"]["pending"]] == [str(guest)]
-    r = c.post(f"/api/miniapp/vaults/{vid}/envelopes", headers=_headers(owner), json={"envelopes": [{"user_id": str(guest), "envelope": '{"v":1,"g":1}'}]})
+    r = c.post(f"/api/miniapp/vaults/{vid}/envelopes", headers=_vh(owner), json={"envelopes": [{"user_id": str(guest), "envelope": '{"v":1,"g":1}'}]})
     assert r.json()["put"] == 1
-    r = c.post(f"/api/miniapp/vaults/{vid}/items", headers=_headers(owner), json={"blob": '{"v":1,"iv":"aXY","ct":"c2VjcmV0"}'})
+    r = c.post(f"/api/miniapp/vaults/{vid}/items", headers=_vh(owner), json={"blob": '{"v":1,"iv":"aXY","ct":"c2VjcmV0"}'})
     iid = r.json()["id"]
-    got = c.get(f"/api/miniapp/vaults/{vid}/items", headers=_headers(guest)).json()["items"]
+    got = c.get(f"/api/miniapp/vaults/{vid}/items", headers=_vh(guest)).json()["items"]
     assert [i["id"] for i in got] == [iid]
     # смотрящий не правит
-    assert c.post(f"/api/miniapp/vaults/{vid}/items", headers=_headers(guest), json={"blob": '{"v":1}'}).status_code == 400
-    assert c.post(f"/api/miniapp/vaults/{vid}/items/{iid}/log", headers=_headers(guest), json={"action": "copy"}).status_code == 200
-    mine = c.get("/api/miniapp/vaults", headers=_headers(guest)).json()
+    assert c.post(f"/api/miniapp/vaults/{vid}/items", headers=_vh(guest), json={"blob": '{"v":1}'}).status_code == 400
+    assert c.post(f"/api/miniapp/vaults/{vid}/items/{iid}/log", headers=_vh(guest), json={"action": "copy"}).status_code == 200
+    mine = c.get("/api/miniapp/vaults", headers=_vh(guest)).json()
     assert mine["vaults"][0]["envelope"] == '{"v":1,"g":1}'
 
 
@@ -357,39 +393,39 @@ def test_vaults_api_request_and_rotate(env, monkeypatch):
     c.post(f"/api/miniapp/orgs/{org['id']}/approve", headers=_headers(owner), json={"user_id": guest})
     unl = [{"kind": "recovery", "salt": "c2FsdA", "wrapped_umk": '{"v":1,"iv":"aXY","ct":"Y3Q"}'}]
     for uid in (owner, guest):
-        c.post("/api/miniapp/vaults/keys", headers=_headers(uid),
+        c.post("/api/miniapp/vaults/keys", headers=_vh(uid),
                json={"public_key": f'{{"kty":"EC","x":"{uid}"}}', "enc_private": '{"v":1}', "unlockers": unl})
     # без конверта владельцу организации — нельзя
-    assert c.post("/api/miniapp/vaults", headers=_headers(guest),
+    assert c.post("/api/miniapp/vaults", headers=_vh(guest),
                   json={"org_id": org["id"], "name": "Бэкапы", "envelope": '{"v":1}'}).status_code == 400
-    owners = c.get("/api/miniapp/vaults", headers=_headers(guest)).json()["org_owner_keys"][str(org["id"])]
+    owners = c.get("/api/miniapp/vaults", headers=_vh(guest)).json()["org_owner_keys"][str(org["id"])]
     assert [o["user_id"] for o in owners] == [str(owner)]
-    vid = c.post("/api/miniapp/vaults", headers=_headers(guest), json={
+    vid = c.post("/api/miniapp/vaults", headers=_vh(guest), json={
         "org_id": org["id"], "name": "Бэкапы", "envelope": '{"v":1,"me":1}',
         "owner_envelopes": [{"user_id": str(owner), "envelope": '{"v":1,"own":1}'}],
     }).json()["created"]["id"]
-    mine = [v for v in c.get("/api/miniapp/vaults", headers=_headers(owner)).json()["vaults"] if v["id"] == vid][0]
+    mine = [v for v in c.get("/api/miniapp/vaults", headers=_vh(owner)).json()["vaults"] if v["id"] == vid][0]
     assert mine["role"] == "owner" and mine["envelope"] == '{"v":1,"own":1}'
     # владелец организации забирает себе сейф целиком: сотрудника убирает из доступа — а запрос: сотрудник просит снова
-    r = c.put(f"/api/miniapp/vaults/{vid}/access", headers=_headers(owner), json={"principal": f"u:{guest}", "role": ""})
+    r = c.put(f"/api/miniapp/vaults/{vid}/access", headers=_vh(owner), json={"principal": f"u:{guest}", "role": ""})
     assert r.status_code == 200, r.text
-    foreign = [v for v in c.get("/api/miniapp/vaults", headers=_headers(guest)).json()["vaults"] if v["id"] == vid][0]
+    foreign = [v for v in c.get("/api/miniapp/vaults", headers=_vh(guest)).json()["vaults"] if v["id"] == vid][0]
     assert foreign["foreign"] and foreign["envelope"] is None
-    assert c.get(f"/api/miniapp/vaults/{vid}/items", headers=_headers(guest)).status_code == 404
-    assert c.post(f"/api/miniapp/vaults/{vid}/request", headers=_headers(guest)).status_code == 200
-    mine = c.get("/api/miniapp/vaults", headers=_headers(owner)).json()["vaults"]
+    assert c.get(f"/api/miniapp/vaults/{vid}/items", headers=_vh(guest)).status_code == 404
+    assert c.post(f"/api/miniapp/vaults/{vid}/request", headers=_vh(guest)).status_code == 200
+    mine = c.get("/api/miniapp/vaults", headers=_vh(owner)).json()["vaults"]
     assert [r["user_id"] for r in [v for v in mine if v["id"] == vid][0]["requests"]] == [str(guest)]
-    r = c.post(f"/api/miniapp/vaults/{vid}/request/decide", headers=_headers(owner), json={"user_id": str(guest), "role": "editor"})
+    r = c.post(f"/api/miniapp/vaults/{vid}/request/decide", headers=_vh(owner), json={"user_id": str(guest), "role": "editor"})
     assert r.status_code == 200, r.text
     assert [p["user_id"] for p in r.json()["vault"]["pending"]] == [str(guest)]
     # смена ключа (после ухода сотрудника флаг стоит): записи и конверты заново
     v = r.json()["vault"]
     assert v["rotate"]
-    r = c.post(f"/api/miniapp/vaults/{vid}/rotate", headers=_headers(owner), json={
+    r = c.post(f"/api/miniapp/vaults/{vid}/rotate", headers=_vh(owner), json={
         "key_version": v["key_version"], "items": [],
         "envelopes": [{"user_id": str(owner), "envelope": '{"v":1,"own":2}'}, {"user_id": str(guest), "envelope": '{"v":1,"g":2}'}],
     })
     assert r.status_code == 200, r.text
     assert r.json()["vault"]["key_version"] == v["key_version"] + 1
-    assert c.post(f"/api/miniapp/vaults/{vid}/items", headers=_headers(guest),
+    assert c.post(f"/api/miniapp/vaults/{vid}/items", headers=_vh(guest),
                   json={"blob": '{"v":1}', "key_version": v["key_version"]}).status_code == 400

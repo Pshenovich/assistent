@@ -154,3 +154,10 @@
 .vlt-pending-head { margin: 0 0 6px; font-size: 0.8125rem; line-height: 1.45; color: var(--text-secondary); }
 .vlt-pending-head b { color: var(--text); }
 .vlt-pending .vlt-actions { margin: 6px 0 8px; }
+/* Аварийный лист: печать этой же страницы (на адресе сейфов нельзя открыть окно со встроенным скриптом) */
+#vlt-print-sheet { display: none; }
+@media print {
+  html.vlt-printing body > *:not(#vlt-print-sheet) { display: none !important; }
+  html.vlt-printing #vlt-print-sheet { display: block; font: 15px/1.5 -apple-system, system-ui, sans-serif; padding: 40px; color: #000; background: #fff; }
+  html.vlt-printing .vlt-print-code { font: 600 22px/1.6 ui-monospace, Menlo, monospace; letter-spacing: .06em; border: 1px dashed #000; padding: 16px; text-align: center; }
+}

@@ -11,11 +11,11 @@ from typing import Any
 
 
 def vault_url(vault_id: int) -> str:
-    from assistant.lib.webapp_public import webapp_entry_url
+    """Ссылка на сейф — на отдельном адресе сейфов; без сессии там страница отправит войти через Орбиту."""
+    from assistant.lib import vault_host
 
-    base = webapp_entry_url()
     target = int(vault_id) or "link"  # 0 — экран сейфов (подтвердить новое устройство)
-    return f"{base}{'&' if '?' in base else '?'}vault={target}"
+    return f"{vault_host.vault_origin()}/?vault={target}"
 
 
 ROLE_WORD = {"viewer": "смотреть", "editor": "смотреть и править", "owner": "владеть сейфом"}

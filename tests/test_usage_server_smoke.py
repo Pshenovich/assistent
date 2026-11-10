@@ -34,6 +34,10 @@ PUBLIC_MINIAPP_ROUTES = {
     # Выгрузка заметки «на устройство»: одноразовая ссылка со случайным токеном на 10 минут
     # (её открывает Telegram.WebApp.downloadFile — без заголовков авторизации).
     ("GET", "/api/miniapp/notes/export/file/{token}"),
+    # Адрес сейфов (vault.getorbita.me): обмен одноразового кода из Орбиты на сессию сейфов — это и есть вход;
+    # на основном сайте маршрут отвечает 404.
+    ("POST", "/api/miniapp/vault-session"),
+    ("POST", "/api/miniapp/vault-session/logout"),
 }
 
 OAUTH_PROVIDERS = ("google", "todoist", "yandex-disk", "telemost", "zoom")
@@ -79,6 +83,8 @@ def test_every_miniapp_route_rejects_anonymous_requests(client: TestClient):
         if (method, path) in PUBLIC_MINIAPP_ROUTES:
             continue
         resp = client.request(method, re.sub(r"\{[^}]+\}", "1", path))
+        if path.startswith("/api/miniapp/vaults") and resp.status_code == 404:
+            continue  # сейфов на основном сайте нет — они на своём адресе (там без сессии 401: test_orgs_endpoints)
         if resp.status_code != 401:
             leaked.append((method, path, resp.status_code))
     assert leaked == []

@@ -79,6 +79,12 @@
   function app() {
     return window.LeoApp || {};
   }
+  // Адрес сейфов (vault.getorbita.me): строгий CSP с Trusted Types — разметку вставляем через политику
+  // каркаса страницы (vault-app.js). Все строки разметки собираются здесь же и экранируются esc().
+  var HOST = window.LeoVaultHost || null;
+  function setHTML(el, html) {
+    el.innerHTML = HOST && HOST.html ? HOST.html(html) : html;
+  }
   function K() {
     return (window.LeoOrgKb && window.LeoOrgKb._) || null;
   }
@@ -289,6 +295,15 @@
     await afterOpen();
   }
 
+  // Формат шифра 2: в AAD номер сейфа (от браузера), номер записи и версия ключа. Формат 1 — старые сейфы,
+  // их переводит первый редактор сменой ключа (upgrade). Вниз сервер формат не меняет.
+  function envAad(v, kv) {
+    return CR.envelopeAad(v.fmt === 2 ? { fmt: 2, vault: v.uid, kv: kv } : null);
+  }
+  function itemCtx(v, kv, itemUid) {
+    return v.fmt === 2 ? { fmt: 2, vault: v.uid, item: itemUid, kv: kv } : null;
+  }
+
   // Ключи сейфов из конвертов + выдать ключ тем, кто ждёт (сервер ключа не знает — это делает браузер участника).
   async function afterOpen() {
     for (var i = 0; i < st.vaults.length; i++) {
@@ -296,7 +311,7 @@
       if (!v.envelope) continue;
       if (st.vk[v.id] && st.vkVer[v.id] === v.key_version) continue;
       try {
-        st.vk[v.id] = await CR.openEnvelope(v.envelope, st.priv, st.keys.public_key);
+        st.vk[v.id] = await CR.openEnvelope(v.envelope, st.priv, st.keys.public_key, envAad(v, v.key_version));
         st.vkVer[v.id] = v.key_version;
         delete st.items[v.id]; // ключ мог смениться — записи расшифруем заново
       } catch (_) {
@@ -304,7 +319,7 @@
         v.broken = true; // конверт не открылся: ключи сменились (вход «с нуля») — ждём нового конверта
       }
     }
-    for (var k = 0; k < st.vaults.length; k++) if (st.vaults[k].rotate) await rotateVault(st.vaults[k]);
+    for (var k = 0; k < st.vaults.length; k++) if (st.vaults[k].rotate || st.vaults[k].upgrade) await rotateVault(st.vaults[k]);
     // Ключ новым людям сам не раздаём: только владелец сейфа кнопкой «Выдать» (аудит 2026-11-10)
   }
 
@@ -321,7 +336,7 @@
         vk = st.vk[v.id];
         var envs = [];
         for (var i = 0; i < list.length; i++) {
-          envs.push({ user_id: list[i].user_id, envelope: await CR.sealEnvelope(vk, list[i].public_key) });
+          envs.push({ user_id: list[i].user_id, envelope: await CR.sealEnvelope(vk, list[i].public_key, envAad(v, st.vkVer[v.id])) });
         }
         var r = await api("/" + v.id + "/envelopes", json("POST", { envelopes: envs, key_version: st.vkVer[v.id] }));
         if (r && r.vault) replaceVault(r.vault);
@@ -332,29 +347,34 @@
 
   // Новый ключ сейфа после ухода участника: старый мог остаться у него. Всё делает браузер:
   // расшифровать записи старым ключом, зашифровать новым, разложить новые конверты. Сервер ключей не видит.
+  // Смена ключа: после ухода участника (rotate) или перевод старого сейфа на формат 2 (upgrade) — всегда в формат 2.
   async function rotateVault(v) {
-    if (!v || !v.rotate || !st.vk[v.id] || st.rotating[v.id]) return;
+    if (!v || !(v.rotate || v.upgrade) || !st.vk[v.id] || st.rotating[v.id]) return;
     st.rotating[v.id] = true;
     try {
       var old = st.vk[v.id];
       var list = (await api("/" + v.id + "/items")).items || [];
       var nvk = CR.newVaultKey();
+      var nkv = v.key_version + 1;
+      var nv = { fmt: 2, uid: v.uid || CR.newUid() };
       var items = [];
       for (var i = 0; i < list.length; i++) {
         // не расшифровалось — не трогаем сейф, чтобы ничего не потерять
-        var data = await CR.openItem(old, v.id, list[i].blob);
-        items.push({ id: list[i].id, blob: await CR.sealItem(nvk, v.id, data) });
+        var data = await CR.openItem(old, v.id, list[i].blob, itemCtx(v, v.key_version, list[i].uid));
+        var iuid = list[i].uid || CR.newUid();
+        items.push({ id: list[i].id, uid: iuid, blob: await CR.sealItem(nvk, v.id, data, itemCtx(nv, nkv, iuid)) });
       }
       var envs = [];
       for (var j = 0; j < v.rotate_keys.length; j++) {
-        envs.push({ user_id: v.rotate_keys[j].user_id, envelope: await CR.sealEnvelope(nvk, v.rotate_keys[j].public_key) });
+        envs.push({ user_id: v.rotate_keys[j].user_id, envelope: await CR.sealEnvelope(nvk, v.rotate_keys[j].public_key, envAad(nv, nkv)) });
       }
-      var r = await api("/" + v.id + "/rotate", json("POST", { key_version: v.key_version, items: items, envelopes: envs }));
+      var r = await api("/" + v.id + "/rotate", json("POST", { key_version: v.key_version, items: items, envelopes: envs, fmt: 2, uid: nv.uid }));
+      var wasRotate = v.rotate;
       replaceVault(r.vault);
       st.vk[v.id] = nvk;
       st.vkVer[v.id] = r.vault.key_version;
       delete st.items[v.id];
-      toast("Ключ сейфа «" + v.name + "» сменён — у ушедших его больше нет");
+      if (wasRotate) toast("Ключ сейфа «" + v.name + "» сменён — у ушедших его больше нет");
     } catch (e) {
       console.warn("[vault] rotate", v.id, e && e.name); // попробуем при следующем открытии
     }
@@ -473,7 +493,7 @@
 
   // Вход по ключу устройства: сервер выдаёт вызов → касание → сервер проверяет подпись и отдаёт обёртку.
   async function deviceUnlockHere() {
-    var devs = ((st.keys && st.keys.unlockers) || []).filter(function (u) { return u.kind === "device"; });
+    var devs = ((st.keys && st.keys.unlockers) || []).filter(function (u) { return u.kind === "device" && hereRp(u); });
     for (var i = 0; i < devs.length; i++) {
       var dk = await devKeys.get(devs[i].credential_id);
       if (!dk) continue;
@@ -503,7 +523,7 @@
   }
 
   async function passkeyGet() {
-    var pks = ((st.keys && st.keys.unlockers) || []).filter(function (u) { return u.kind === "passkey"; });
+    var pks = ((st.keys && st.keys.unlockers) || []).filter(function (u) { return u.kind === "passkey" && hereRp(u); });
     if (!pks.length) throw new Error("nopasskey");
     var byCred = {};
     pks.forEach(function (u) {
@@ -525,6 +545,11 @@
     var out = ext.prf && ext.prf.results && ext.prf.results.first;
     if (!u || !out) throw new Error("prf");
     return { unlocker: u, prf: new Uint8Array(out) };
+  }
+
+  // passkey привязан к адресу (rp.id): с другого адреса браузер его не предложит — показываем только свои
+  function hereRp(u) {
+    return String(u.rp_id || "") === location.hostname;
   }
 
   function deviceLabel() {
@@ -742,7 +767,7 @@
 
   function linksHtml() {
     if (!st.links.length || !st.keys || !st.keys.enabled) return "";
-    var hasTouch = ((st.keys && st.keys.unlockers) || []).some(function (u) { return u.kind === "passkey" || u.kind === "device"; });
+    var hasTouch = ((st.keys && st.keys.unlockers) || []).some(function (u) { return (u.kind === "passkey" || u.kind === "device") && hereRp(u); });
     return '<div class="vlt-deps vlt-links">' + st.links.map(function (l) {
       var code = st.linkCodes[l.id] || "…";
       return '<div class="vlt-link-req"><div class="vlt-link-head">' + IC.phone + "<span><b>" + esc(l.label || "Новое устройство") + "</b> просит открыть ваши сейфы · " + esc(when(l.created_at)) + "</span></div>" +
@@ -843,14 +868,15 @@
     if (!name || !String(name).trim()) return;
     try {
       var vk = CR.newVaultKey();
-      var env = await CR.sealEnvelope(vk, st.keys.public_key);
+      var nv = { fmt: 2, uid: CR.newUid() }; // новый сейф — сразу формат 2, ключ версии 1
+      var env = await CR.sealEnvelope(vk, st.keys.public_key, envAad(nv, 1));
       // владельцы организации — владельцы всех её сейфов: конверт им сразу, чтобы сейф не потерялся, если создатель уйдёт
       var ownerEnvs = [];
       var owners = personal ? [] : (st.ownerKeys && st.ownerKeys[String(orgId)]) || [];
       for (var i = 0; i < owners.length; i++) {
-        ownerEnvs.push({ user_id: owners[i].user_id, envelope: await CR.sealEnvelope(vk, owners[i].public_key) });
+        ownerEnvs.push({ user_id: owners[i].user_id, envelope: await CR.sealEnvelope(vk, owners[i].public_key, envAad(nv, 1)) });
       }
-      var r = await api("", json("POST", { org_id: personal ? null : orgId, name: String(name).trim(), envelope: env, owner_envelopes: ownerEnvs }));
+      var r = await api("", json("POST", { org_id: personal ? null : orgId, name: String(name).trim(), envelope: env, owner_envelopes: ownerEnvs, uid: nv.uid }));
       applyState(r);
       st.vk[r.created.id] = vk;
       st.vkVer[r.created.id] = r.created.key_version;
@@ -871,9 +897,9 @@
       for (var i = 0; i < r.items.length; i++) {
         var it = r.items[i];
         try {
-          out.push({ id: it.id, updated_at: it.updated_at, updated_by_name: it.updated_by_name, data: await CR.openItem(st.vk[v.id], v.id, it.blob) });
+          out.push({ id: it.id, uid: it.uid, updated_at: it.updated_at, updated_by_name: it.updated_by_name, data: await CR.openItem(st.vk[v.id], v.id, it.blob, itemCtx(v, st.vkVer[v.id], it.uid)) });
         } catch (_) {
-          out.push({ id: it.id, updated_at: it.updated_at, updated_by_name: it.updated_by_name, data: { type: "note", title: "Не удалось расшифровать" }, broken: true });
+          out.push({ id: it.id, uid: it.uid, updated_at: it.updated_at, updated_by_name: it.updated_by_name, data: { type: "note", title: "Не удалось расшифровать" }, broken: true });
         }
       }
       st.items[v.id] = out;
@@ -904,8 +930,10 @@
         v = vaultOf(v.id) || v;
         if (v.rotate) throw new Error("Не удалось сменить ключ сейфа — откройте сейф заново");
       }
-      var blob = await CR.sealItem(st.vk[v.id], v.id, data);
-      var body = { blob: blob, key_version: st.vkVer[v.id] };
+      var prev = d.id ? itemOf(v.id, d.id) : null;
+      var iuid = (prev && prev.uid) || (v.fmt === 2 ? CR.newUid() : "");
+      var blob = await CR.sealItem(st.vk[v.id], v.id, data, itemCtx(v, st.vkVer[v.id], iuid));
+      var body = { blob: blob, key_version: st.vkVer[v.id], uid: d.id ? undefined : iuid };
       var r = d.id
         ? await api("/" + v.id + "/items/" + d.id, json("PUT", body))
         : await api("/" + v.id + "/items", json("POST", body));
@@ -915,7 +943,7 @@
         cur.data = data;
         cur.updated_at = r.updated_at;
       } else {
-        list.push({ id: r.id, data: data, updated_at: r.updated_at, updated_by_name: "" });
+        list.push({ id: r.id, uid: r.uid || iuid, data: data, updated_at: r.updated_at, updated_by_name: "" });
         st.items[v.id] = list;
         v.items = list.length;
       }
@@ -1156,7 +1184,7 @@
         }
         html += "</div>";
       }
-      sh.body.innerHTML = html;
+      setHTML(sh.body, html);
     }
 
     async function put(principal, role) {
@@ -1275,9 +1303,9 @@
     var mobile = !!st.mobile;
     var path = mobile
       ? '<button type="button" class="vlt-back" data-v="back">' + IC.back + "<span>" + esc(pathParts.length > 1 ? pathParts[pathParts.length - 2][0] : "База знаний") + "</span></button>"
-      : '<nav class="kb-path" aria-label="Путь"><button type="button" data-v="home">База знаний</button>' + pathParts.map(function (p, i) {
+      : '<nav class="kb-path" aria-label="Путь">' + (HOST ? "" : '<button type="button" data-v="home">База знаний</button>') + pathParts.map(function (p, i) {
         var last = i === pathParts.length - 1;
-        return '<span class="kb-path-sep">›</span>' + (last || !p[1]
+        return (HOST && i === 0 ? "" : '<span class="kb-path-sep">›</span>') + (last || !p[1]
           ? '<span class="' + (last ? "kb-path-cur" : "") + '"' + (last ? ' aria-current="page"' : "") + ">" + esc(p[0]) + "</span>"
           : '<button type="button" data-v="' + p[1] + '">' + esc(p[0]) + "</button>");
       }).join("") + "</nav>";
@@ -1366,7 +1394,7 @@
   }
 
   function lockedHtml(v) {
-    var hasPk = ((st.keys && st.keys.unlockers) || []).some(function (u) { return u.kind === "passkey" || u.kind === "device"; });
+    var hasPk = ((st.keys && st.keys.unlockers) || []).some(function (u) { return (u.kind === "passkey" || u.kind === "device") && hereRp(u); });
     return bar(crumbs(v)) + '<div class="kb-page vlt-page vlt-center">' +
       '<div class="vlt-big">' + IC.face + '</div><h1 class="screen-title kb-title">' + (v ? "Сейф «" + esc(v.name) + "» закрыт" : "Сейфы закрыты") + "</h1>" +
       '<p class="muted lead">Подтвердите, что это вы. Сейфы закрываются сами через 15 минут без действий.</p>' +
@@ -1784,18 +1812,25 @@
     if (f) readForm(f);
   }
 
+  // Аварийный лист — печать этой же страницы (без нового окна и встроенных скриптов: строгий CSP)
   function printCode() {
     var s = st.setup;
     if (!s) return;
-    var w = window.open("", "_blank", "width=600,height=500");
-    if (!w) return toast("Браузер не дал открыть окно печати");
-    w.document.write('<!doctype html><meta charset="utf-8"><title>Аварийный лист сейфов Орбиты</title>' +
-      '<body style="font:15px/1.5 -apple-system,system-ui,sans-serif;padding:40px;color:#000;background:#fff">' +
-      "<h2>Аварийный лист сейфов Орбиты</h2><p>Код восстановления — откроет ваши сейфы, если не будет ваших устройств.</p>" +
-      '<p style="font:600 22px/1.6 ui-monospace,Menlo,monospace;letter-spacing:.06em;border:1px dashed #000;padding:16px;text-align:center">' + esc(s.code) + "</p>" +
-      "<p>Дата: " + esc(new Date().toLocaleDateString("ru-RU")) + "</p><p>Храните вне компьютера. Не фотографируйте и не пересылайте. Орбита этот код не знает и восстановить не сможет.</p>" +
-      "<script>window.print()<\/script></body>");
-    w.document.close();
+    var el = document.createElement("div");
+    el.id = "vlt-print-sheet";
+    setHTML(el, "<h2>Аварийный лист сейфов Орбиты</h2><p>Код восстановления — откроет ваши сейфы, если не будет ваших устройств.</p>" +
+      '<p class="vlt-print-code">' + esc(s.code) + "</p>" +
+      "<p>Дата: " + esc(new Date().toLocaleDateString("ru-RU")) + "</p><p>Храните вне компьютера. Не фотографируйте и не пересылайте. Орбита этот код не знает и восстановить не сможет.</p>");
+    document.body.appendChild(el);
+    document.documentElement.classList.add("vlt-printing");
+    function done() {
+      document.documentElement.classList.remove("vlt-printing");
+      el.remove();
+      window.removeEventListener("afterprint", done);
+    }
+    window.addEventListener("afterprint", done);
+    window.print();
+    setTimeout(done, 60000);
   }
 
   // ---------- блоки для дерева и главной ----------
@@ -1811,7 +1846,7 @@
       '<button type="button" class="kb-n-btn" data-v="new-vault" data-org="' + orgId + '" aria-label="Новый сейф" title="Новый сейф">' + IC.plus + "</button></div>";
     html += list.map(function (v) {
       var cur = currentId === v.id;
-      return '<div class="kb-node vlt-node' + (cur ? " is-current" : "") + (v.foreign ? " vlt-foreign" : "") + '" role="treeitem" tabindex="-1" style="--kb-depth:0" data-v="vault" data-id="' + v.id + '"' + (cur ? ' aria-current="page"' : "") + ">" +
+      return '<div class="kb-node vlt-node' + (cur ? " is-current" : "") + (v.foreign ? " vlt-foreign" : "") + '" role="treeitem" tabindex="-1" data-v="vault" data-id="' + v.id + '"' + (cur ? ' aria-current="page"' : "") + ">" +
         '<span class="kb-chev kb-chev--none" aria-hidden="true"></span><span class="kb-n-ico" aria-hidden="true">' + IC.lock + "</span>" +
         '<span class="kb-n-title">' + esc(v.name) + '</span><span class="kb-n-count">' + (v.foreign ? (v.request && v.request.status === "pending" ? "⏳" : "—") : v.envelope ? v.items : "·") + (v.requests && v.requests.length ? '<i class="vlt-req-dot" title="Просят доступ"></i>' : "") + "</span></div>";
     }).join("");
@@ -1863,7 +1898,7 @@
     if (!st.mobile) {
       var el = document.createElement("div");
       el.className = "vlt-mobile";
-      el.innerHTML = '<div class="vlt-mobile-body"></div>';
+      setHTML(el, '<div class="vlt-mobile-body"></div>');
       el.addEventListener("click", function (e) { onClick(e); });
       el.addEventListener("submit", onSubmit);
       el.addEventListener("input", onInput);
@@ -1881,7 +1916,7 @@
   function paintMobile() {
     if (!st.mobile) return;
     var body = st.mobile.querySelector(".vlt-mobile-body");
-    keepInputs(body, function () { body.innerHTML = pageHtml(); });
+    keepInputs(body, function () { setHTML(body, pageHtml()); });
   }
 
   // Перерисовка не должна терять набранное (поле кода, форма записи).
@@ -1902,7 +1937,7 @@
   // ---------- для org-kb-desk.js ----------
 
   function render(el) {
-    keepInputs(el, function () { el.innerHTML = pageHtml(); });
+    keepInputs(el, function () { setHTML(el, pageHtml()); });
   }
 
   document.addEventListener("submit", function (e) {

@@ -197,11 +197,24 @@
 
   // ---------- записи ----------
 
-  async function sealItem(vk, vaultId, data) {
-    return seal(vk, enc.encode(JSON.stringify(data)), "orbita-vault:item:" + vaultId);
+  // Формат 1 — AAD записи только с id сейфа. Формат 2 (аудит 2026-11-10): номер сейфа и номер записи придумывает
+  // браузер, вместе с версией ключа они в AAD — сервер не переставит записи и не подсунет конверт от другого сейфа.
+  // ctx = {fmt: 2, vault: <uid сейфа>, item: <uid записи>, kv: <версия ключа>}
+  function itemAad(vaultId, ctx) {
+    if (ctx && ctx.fmt === 2) return "orbita-vault:item:v2|" + ctx.vault + "|" + ctx.item + "|" + ctx.kv;
+    return "orbita-vault:item:" + vaultId;
   }
-  async function openItem(vk, vaultId, blob) {
-    return JSON.parse(dec.decode(await open(vk, blob, "orbita-vault:item:" + vaultId)));
+  function envelopeAad(ctx) {
+    return ctx && ctx.fmt === 2 ? "orbita-vault:vk:v2|" + ctx.vault + "|" + ctx.kv : "orbita-vault:vk";
+  }
+  function newUid() {
+    return b64u(rand(16));
+  }
+  async function sealItem(vk, vaultId, data, ctx) {
+    return seal(vk, enc.encode(JSON.stringify(data)), itemAad(vaultId, ctx));
+  }
+  async function openItem(vk, vaultId, blob, ctx) {
+    return JSON.parse(dec.decode(await open(vk, blob, itemAad(vaultId, ctx))));
   }
 
   // ---------- генератор паролей ----------
@@ -235,6 +248,7 @@
 
   var api = {
     b64u: b64u, unb64u: unb64u, rand: rand,
+    envelopeAad: envelopeAad, newUid: newUid,
     newLinkKey: newLinkKey, linkCode: linkCode, sealUmkForLink: sealUmkForLink, openUmkFromLink: openUmkFromLink,
     newDeviceKey: newDeviceKey, wrapUmkDevice: wrapUmkDevice, unwrapUmkDevice: unwrapUmkDevice,
     newIdentity: newIdentity, openPrivate: openPrivate,
