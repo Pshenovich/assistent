@@ -12180,29 +12180,46 @@ def looks_like_list_preview_overwrite(new_body: str | None, old_body: str | None
     return old_plain.startswith(head[: max(20, len(head) - 12)])
 
 
+def _note_meeting_brief(m: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "event_id": m["event_id"],
+        "calendar_id": m["calendar_id"],
+        "summary": m["summary"],
+        "start_iso": m["start_iso"],
+        "end_iso": m["end_iso"],
+        "people": [a.get("name") or a.get("email") for a in m.get("attendees") or []][:6],
+    }
+
+
 def _attach_note_meetings(uid: int, notes: list[dict[str, Any]]) -> None:
-    """Строчка встречи на карточке: тема, время, участники (своя привязка)."""
+    """Строчка встречи на карточке: тема, время, участники.
+
+    Привязка — владельца документа: встречей поделились — участник видит ту же встречу
+    (и не получает «+ ко встрече» на документе, который уже у встречи)."""
+    by_owner: dict[str, list[Any]] = {}
+    for n in notes:
+        if isinstance(n, dict) and n.get("id") is not None:
+            owner = str(n.get("owner_user_id") or n.get("user_id") or uid)
+            by_owner.setdefault(owner, []).append(n.get("id"))
+    links: dict[tuple[str, int], dict[str, Any]] = {}
     try:
         from assistant.stores import meeting_links
 
-        links = meeting_links.for_notes(uid, [n.get("id") for n in notes if isinstance(n, dict)])
+        for owner, ids in by_owner.items():
+            for nid, m in meeting_links.for_notes(owner, ids).items():
+                links[(owner, nid)] = m
     except Exception as e:
         print(f"[meeting_links] list attach failed uid={uid} err={e!r}")
         return
     for n in notes:
+        if not isinstance(n, dict):
+            continue
         try:
-            m = links.get(int(n.get("id")))
+            m = links.get((str(n.get("owner_user_id") or n.get("user_id") or uid), int(n.get("id"))))
         except (TypeError, ValueError):
             m = None
         if m:
-            n["meeting"] = {
-                "event_id": m["event_id"],
-                "calendar_id": m["calendar_id"],
-                "summary": m["summary"],
-                "start_iso": m["start_iso"],
-                "end_iso": m["end_iso"],
-                "people": [a.get("name") or a.get("email") for a in m.get("attendees") or []][:6],
-            }
+            n["meeting"] = _note_meeting_brief(m)
 
 
 def minify_note_for_list(item: dict[str, Any]) -> dict[str, Any]:
@@ -12971,6 +12988,19 @@ async def miniapp_calendar_event_note(
     return {"ok": True, "item": item}
 
 
+def _note_share_status(uid: int, note_id: int, username: str | None) -> dict[str, Any] | None:
+    """Кто из участников встречи уже видит документ, кому открыть нечего (нет в Орбите), кому — можно."""
+    from assistant.services import meeting_share
+
+    try:
+        res = meeting_share.share_with_attendees(uid, note_id, owner_username=username, dry_run=True)
+    except Exception as e:
+        print(f"[note_meeting] share status failed note={note_id} err={e!r}")
+        return None
+    names = lambda arr: [str(x.get("name") or "") for x in arr if x.get("name")]  # noqa: E731
+    return {"pending": names(res["added"]), "shared": names(res["already"]), "missing": names(res["missing"])}
+
+
 @miniapp_router.get("/notes/local/{note_id}/meeting")
 async def miniapp_note_meeting_get(
     note_id: int,
@@ -12986,11 +13016,14 @@ async def miniapp_note_meeting_get(
         if note is None:
             return None
         owner = str(note.get("owner_user_id") or note.get("user_id") or uid)  # встречей могли поделиться
-        return {
+        out = {
             "meeting": meeting_links.get_for_note(owner, note_id),
             "people": meeting_links.people_for_note(owner, note_id),
             "is_owner": owner == str(uid),
         }
+        if out["is_owner"] and (out["meeting"] or out["people"]):
+            out["share"] = _note_share_status(uid, note_id, _miniapp_tg_username(principal))
+        return out
 
     res = await run_in_threadpool(_run)
     if res is None:
@@ -14744,6 +14777,9 @@ async def miniapp_local_note_get(
     kb = await run_in_threadpool(org_kb.doc_info, uid, note_id)
     if kb:
         item["org_kb"] = kb
+    if tnotes.is_transcription_note(item):
+        # строчка встречи — как в списке: без неё обновлённая карточка теряла привязку («+ ко встрече»)
+        await run_in_threadpool(_attach_note_meetings, uid, [item])
     if item.get("is_knowledge"):
         from assistant.stores import teams_store
 
@@ -15125,6 +15161,7 @@ async def miniapp_transcription_upload(
             raise HTTPException(status_code=400, detail=str(e)) from e
         background_tasks.add_task(tnotes.generate_summary_for_note, uid, note_id)
 
+    await run_in_threadpool(_attach_note_meetings, uid, [item])
     return {"ok": True, "id": item["id"], "item": item, "with_summary": want_summary}
 
 

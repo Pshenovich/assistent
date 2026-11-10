@@ -508,8 +508,10 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
         kb_ids = org_kb.all_doc_note_ids()
     except Exception:
         kb_ids = set()
+    pairs: list[tuple[Any, Optional[dict[str, Any]]]] = [(r, None) for r in rows]
+    pairs += _shared_meeting_rows(uid, now)
     cards: list[dict[str, Any]] = []
-    for r in rows:
+    for r, shared in pairs:
         try:
             items = json.loads(r["items_json"] or "[]")
         except ValueError:
@@ -518,9 +520,11 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
         nid = int(src_key.split(":", 1)[1]) if src_key.startswith("note:") else 0
         if nid in kb_ids:
             continue  # документ базы знаний — подсказки из него не показываем (разобран до решения 2026-11-09)
-        note = notes_store.get_note(uid, nid) if nid else None
+        note = shared or (notes_store.get_note(uid, nid) if nid else None)
         if not note:
             continue  # заметку удалили
+        if shared:
+            items = _for_participant(uid, shared, items)
         if str(note.get("role") or "") == "knowledge":
             continue
         title = str(note.get("title") or r["title"] or "заметка")
@@ -541,6 +545,64 @@ def insight_cards(uid: int, *, now: Optional[datetime] = None, task_titles: Opti
             if card:
                 cards.append(card)
     return cards
+
+
+def _shared_meeting_rows(uid: int, now: datetime) -> list[tuple[Any, dict[str, Any]]]:
+    """Разбор чужих встреч, которыми с uid поделились: берём то, что Лео уже разобрал для
+    владельца записи, — без второго разбора за участника (решение владельца 2026-11-10)."""
+    from assistant.stores import notes as notes_store
+
+    try:
+        notes = notes_store.list_transcription_notes(uid, limit=40)
+    except Exception as e:
+        print(f"[proactive_ai] shared meetings failed uid={uid} err={e!r}")
+        return []
+    out: list[tuple[Any, dict[str, Any]]] = []
+    for n in notes:
+        owner = str(n.get("owner_user_id") or n.get("user_id") or uid)
+        if owner == str(uid):
+            continue
+        upd = _parse(n.get("updated_at"))
+        if not upd or upd < now - LOOKBACK:
+            continue
+        with _LOCK:
+            r = _conn().execute(
+                "SELECT source_key, title, items_json, analyzed_at FROM proactive_insights"
+                " WHERE owner_user_id = ? AND source_key = ?",
+                (owner, f"note:{int(n['id'])}"),
+            ).fetchone()
+        if r:
+            out.append((r, n))
+    return out
+
+
+def _for_participant(uid: int, note: dict[str, Any], items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Пункты разбора чужой встречи глазами участника.
+
+    Встречи, открытые вопросы и договорённости без исполнителя — всем; договорённость с
+    исполнителем — только ему (у него «Вы обещали»); «я» в разборе — это владелец записи, не участник."""
+    from assistant.services import meeting_tasks
+
+    parts: Optional[list[dict[str, Any]]] = None
+    out = []
+    for it in items:
+        if it.get("kind") != "agreement":
+            out.append(it)
+            continue
+        who = str(it.get("who") or "").strip()
+        if not who or who.strip(" .").lower() in meeting_tasks._COLLECTIVE:
+            out.append({**it, "who": "все"})
+            continue
+        if _is_me(who):
+            continue  # обещание владельца записи
+        if parts is None:
+            parts = meeting_tasks.participants(note)
+        if meeting_tasks._who_is(who, parts) == str(uid):
+            text = str(it.get("text") or "")
+            if text.lower().startswith(who.lower()):  # «Аня согласует…» → «Вы обещали: согласует…»
+                text = text[len(who):].lstrip(" ,:—-") or text
+            out.append({**it, "who": "я", "text": text})
+    return out
 
 
 def card_for(
@@ -564,10 +626,11 @@ def card_for(
     if kind == "agreement":
         if _covered(text, task_titles):
             return None
-        me = _is_me(who)
+        common = who == "все"  # чужая встреча, исполнителя нет — пункт у всех участников
+        me = _is_me(who) or common
         urgent = bool(due) and due <= (today + timedelta(days=1)).isoformat()
         body = text
-        if who and body.lower().startswith(who.lower()):
+        if who and not common and body.lower().startswith(who.lower()):
             body = body[len(who):].lstrip(" ,:—-")
         body = body[:1].lower() + body[1:] if body else text
         return {
@@ -575,10 +638,10 @@ def card_for(
             "type": "agreement",
             "tag": "🤝 договорённость",
             "urgency": 3 if urgent else 2,
-            "title": (f"Вы обещали: {body}" if me else f"{who} — {body}"),
+            "title": (f"Договорились: {body}" if common else f"Вы обещали: {body}" if me else f"{who} — {body}"),
             "actions": [
                 {
-                    "label": ("Себе" if me else "Поставить задачу") + (f" на {due_l}" if due_l else ""),
+                    "label": ("Взять себе" if common else "Себе" if me else "Поставить задачу") + (f" на {due_l}" if due_l else ""),
                     "act": "assistant",
                     "primary": True,
                     "payload": {

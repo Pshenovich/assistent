@@ -237,13 +237,34 @@ def participants(note: dict[str, Any]) -> list[dict[str, Any]]:
     except Exception as e:
         print(f"[meeting_tasks] members failed note={note.get('id')} err={e!r}")
     out = []
-    for uid in dict.fromkeys(u for u in uids if u):
-        prof = note_members.get_profile(uid) or {}
+    seen: set[str] = set()
+    for raw in dict.fromkeys(u for u in uids if u):
+        # Добавлен по Telegram, а входит по почте (Telegram привязан) — решает его аккаунт по почте:
+        # Фокус сравнивает с тем, кто смотрит.
+        uid = _account(raw)
+        if uid in seen:
+            continue
+        seen.add(uid)
+        prof = note_members.get_profile(raw) or note_members.get_profile(uid) or {}
         names = [str(prof.get(k) or "").strip() for k in ("first_name", "last_name", "username")]
         full = " ".join(x for x in names[:2] if x)
         out.append({"uid": uid, "names": [n for n in names + [full] if n], "name": full,
                     "first": names[0], "last": names[1]})
     return out
+
+
+def _account(uid: str) -> str:
+    """Telegram id → аккаунт Орбиты, к которому он привязан; иначе как есть."""
+    from assistant.stores import note_members
+
+    try:
+        return str(note_members._account_for_tg(int(uid)))
+    except (TypeError, ValueError):
+        return str(uid)
+
+
+# Исполнитель «все / мы / команда» — то же, что без исполнителя: пункт для всех участников.
+_COLLECTIVE = {"все", "всем", "мы", "команда", "вместе", "каждый", "участники", "все участники", "команде"}
 
 
 def _who_is(name: str, parts: list[dict[str, Any]]) -> str:
@@ -267,18 +288,22 @@ def _who_is(name: str, parts: list[dict[str, Any]]) -> str:
 
 
 def decider(note: dict[str, Any], t: dict[str, Any], parts: list[dict[str, Any]]) -> str:
-    """Кто решает судьбу пункта: исполнитель из участников с Лео, иначе — владелец записи встречи.
+    """Кто решает судьбу пункта.
 
-    Исполнитель ответил «Не моя» — пункт возвращается владельцу."""
+    Без исполнителя (или «все/мы/команда») — "": пункт у всех участников встречи, кто первым
+    взял — у того и закрыт (решение владельца 2026-11-10). Исполнитель из участников с Лео — он;
+    исполнитель не узнан, не в Лео или ответил «Не моя» — владелец записи встречи."""
     meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
     owner = str(note.get("owner_user_id") or note.get("user_id") or "")
     refused = {str(x) for x in t.get("not_me") or []}
     uid = ""
     who = str(t.get("assignee") or "").strip()
+    if not who or who.strip(" .").lower() in _COLLECTIVE:
+        return ""
     smap = meta.get("speaker_map") if isinstance(meta.get("speaker_map"), dict) else {}
     for info in smap.values():  # «Это я» в «Кто есть кто»: имя спикера → тот, кто себя отметил
         if isinstance(info, dict) and info.get("user_id") and who and str(info.get("name") or "").strip() == who:
-            uid = str(info["user_id"])
+            uid = _account(str(info["user_id"]))
     if not uid and who:
         uid = _who_is(who, parts)
     member = {p["uid"] for p in parts}

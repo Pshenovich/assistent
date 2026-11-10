@@ -5408,9 +5408,13 @@
     if (!notesDataCache.transcriptions) notesDataCache.transcriptions = [];
     var lid = localNoteIdFrom(item);
     if (!lid) return;
+    var prevMeeting = null;
     notesDataCache.transcriptions = notesDataCache.transcriptions.filter(function (x) {
+      if (String(x.id) === String(lid) && x.meeting) prevMeeting = x.meeting;
       return String(x.id) !== String(lid);
     });
+    // ответ без строчки встречи не стирает привязку (иначе на карточке «+ ко встрече»)
+    if (prevMeeting && !("meeting" in item)) item = Object.assign({}, item, { meeting: prevMeeting });
     var merged = Object.assign({}, item, {
       role: "transcription",
       is_transcription: true,
@@ -21514,6 +21518,24 @@
     }, 100);
   }
 
+  // Кто из участников уже видит документ: после привязки / добавления участника / «Поделиться».
+  // Саммари открывается участникам само (в фоне) — поэтому спрашиваем ещё раз чуть позже.
+  function refreshNoteShareStatus(delayMs) {
+    var st = noteMeetingState;
+    var id = st.noteId;
+    if (!id || id.indexOf("tmp_") === 0) return;
+    setTimeout(function () {
+      if (noteMeetingState !== st) return;
+      apiFetch("/notes/local/" + encodeURIComponent(id) + "/meeting", { method: "GET" })
+        .then(function (data) {
+          if (noteMeetingState !== st) return;
+          st.share = (data && data.share) || null;
+          renderNoteMeetingPlaque();
+        })
+        .catch(function () {});
+    }, delayMs || 0);
+  }
+
   // ---- Плашка встречи в заметке / транскрипции ----
   function loadNoteMeeting(noteId) {
     var id = String(noteId || "");
@@ -21526,6 +21548,7 @@
         noteMeetingState.meeting = (data && data.meeting) || null;
         noteMeetingState.people = (data && data.people) || [];
         noteMeetingState.isOwner = !data || data.is_owner !== false;
+        noteMeetingState.share = (data && data.share) || null;
         noteMeetingState.loading = false;
         renderNoteMeetingPlaque();
       })
@@ -21600,10 +21623,23 @@
     }
     html += "</div>";
     if (own && Object.keys(seen).length) {
-      html +=
-        '<div class="nmp-line nmp-share"><button type="button" class="nmp-link" data-nmp="share"' + (st.sharing ? " disabled" : "") + ">" +
-        (st.sharing ? "Открываю доступ…" : "Поделиться с участниками") + "</button>" +
-        '<span class="nmp-hint">транскрипция, саммари и задачи встречи — в их Фокус</span></div>';
+      // Саммари встречи открывается участникам само — кнопка, только если кому-то ещё не открыто
+      // (добавили участника вручную, саммари ещё нет). share нет (старый сервер) — кнопка как раньше.
+      var sh = st.share;
+      var pending = sh ? sh.pending || [] : null;
+      var hint = [];
+      if (sh && (sh.shared || []).length) hint.push("Документ видят: " + sh.shared.join(", "));
+      if (sh && (sh.missing || []).length) hint.push("нет в Орбите: " + sh.missing.join(", "));
+      if (!pending || pending.length || st.sharing) {
+        html +=
+          '<div class="nmp-line nmp-share"><button type="button" class="nmp-link" data-nmp="share"' + (st.sharing ? " disabled" : "") + ">" +
+          (st.sharing ? "Открываю доступ…" : "Поделиться с участниками") + "</button>" +
+          '<span class="nmp-hint">' +
+          escapeHtml(pending && pending.length ? "ещё не видят: " + pending.join(", ") : "транскрипция, саммари и задачи встречи — в их Фокус") +
+          "</span></div>";
+      } else if (hint.length) {
+        html += '<div class="nmp-line nmp-share"><span class="nmp-hint">' + escapeHtml(hint.join(" · ")) + "</span></div>";
+      }
     }
     el.innerHTML = html;
   }
@@ -21645,6 +21681,7 @@
       if (noteMeetingState === st) {
         st.sharing = false;
         renderNoteMeetingPlaque();
+        refreshNoteShareStatus();
       }
     }
   }
@@ -21787,6 +21824,7 @@
       showNoteToast((e && e.message) || "Не удалось добавить участника");
     }
     renderNoteMeetingPlaque();
+    refreshNoteShareStatus();
   }
 
   async function removeNotePerson(key) {
@@ -21797,6 +21835,7 @@
       noteMeetingState.people = (data && data.people) || [];
     } catch (_) {}
     renderNoteMeetingPlaque();
+    refreshNoteShareStatus();
   }
 
   // ---- «Добавить ко встрече» ----
@@ -21933,6 +21972,7 @@
         noteMeetingState.meeting = data.meeting || null;
         noteMeetingState.people = data.people || noteMeetingState.people;
         renderNoteMeetingPlaque();
+        refreshNoteShareStatus(2000); // доступ участникам открывается в фоне
         if (data.title) {
           var ti = document.getElementById("note-editor-title-input");
           if (ti && ti.value !== data.title) {

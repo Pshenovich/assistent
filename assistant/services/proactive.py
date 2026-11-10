@@ -557,8 +557,9 @@ def rule_summary_tasks(
 
     has_tasks[note_id]: задачи, уже поставленные из этой встречи (названия или {title, by, task_id}
     — от любого участника); True — встреча разобрана целиком (старый вызов).
-    viewer — кто смотрит: в карточке только пункты, где он исполнитель (или владелец записи, если
-    исполнитель неясен, не в Лео или отказался); нет таких — нет карточки. Без viewer — все открытые.
+    viewer — кто смотрит: в карточке пункты без исполнителя (у всех участников) и те, где он
+    исполнитель (или владелец записи, если исполнитель не узнан, не в Лео или отказался); нет таких —
+    нет карточки. Без viewer — все открытые.
     Разобранные кем-то — в closed_items (со статусом и автором), в счёт карточки не идут."""
     from assistant.services import meeting_tasks
     from assistant.services.meeting_share import task_state
@@ -596,6 +597,11 @@ def rule_summary_tasks(
                 continue  # в работе / в трекере и т.п. — по таблице
             if viewer and st_row.get("decider") and str(st_row["decider"]) != str(viewer):
                 continue  # решать не ему — пункт у исполнителя или владельца записи
+            if (
+                viewer and not st_row.get("decider") and str(viewer) in {str(x) for x in t.get("not_me") or []}
+                and str(viewer) != str(n.get("owner_user_id") or n.get("user_id") or viewer)
+            ):
+                continue  # пункт без исполнителя — у всех; этот участник ответил «Не моя»
             if iid in done:
                 continue
             item = {"id": iid, "text": line}

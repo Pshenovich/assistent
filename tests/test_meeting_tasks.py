@@ -178,17 +178,77 @@ class MeetingTasksTests(unittest.TestCase):
         note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
         note_members.add_member(1, self.nid, 2)
         anna = self._card("2")
-        self.assertEqual([i["item"] for i in anna["items"]], ["iaaaaaaaaa1"])  # «Аня» — это Анна
+        # свой («Аня» — это Анна) первым, потом ничей — он у всех участников; «Вова» — не у неё
+        self.assertEqual([i["item"] for i in anna["items"]], ["iaaaaaaaaa1", "iaaaaaaaaa2"])
         self.assertEqual(anna["tag"], "Задачи встречи · 0/3")
         self.assertEqual(anna["source"], "Синк по запуску")  # футер — название заметки
         self.assertEqual(anna["note"]["anchor"], "tasks")
-        self.assertTrue(anna["title"].startswith("1 пункт ждёт вашего решения: Согласовать бюджет"))
+        self.assertTrue(anna["title"].startswith("2 пункта ждут вашего решения: Согласовать бюджет"))
         owner = self._card("1")
         self.assertEqual([i["item"] for i in owner["items"]], ["iaaaaaaaaa3", "iaaaaaaaaa2"])  # свой (Вова) первым, потом ничей
-        # «Не моя» от Анны — пункт у владельца, у Анны карточки больше нет
+        # «Не моя» от Анны — её пункт у владельца, ничей пропал только у неё
         mt.not_me(2, self.nid, "iaaaaaaaaa1")
+        mt.not_me(2, self.nid, "iaaaaaaaaa2")
         self.assertIsNone(self._card("2"))
-        self.assertIn("iaaaaaaaaa1", [i["item"] for i in self._card("1")["items"]])
+        self.assertCountEqual([i["item"] for i in self._card("1")["items"]], ["iaaaaaaaaa1", "iaaaaaaaaa2", "iaaaaaaaaa3"])
+
+    def test_unassigned_taken_by_one_closes_for_all(self) -> None:
+        note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
+        note_members.add_member(1, self.nid, 2)
+        mt.claim(2, self.nid, "iaaaaaaaaa2", lambda: self._new_task(owner=2, title="Проверить юр. тексты"), by="Анна")
+        for viewer in ("1", "2"):
+            card = self._card(viewer)
+            self.assertNotIn("iaaaaaaaaa2", [i["item"] for i in card["items"]])
+            self.assertIn("iaaaaaaaaa2", [i.get("item") for i in card["closed_items"]])
+
+    def test_collective_assignee_is_for_all(self) -> None:
+        note = notes_store.get_note(1, self.nid)
+        meta = dict(note["meta"])
+        meta["tasks"] = [dict(t) for t in meta["tasks"]]
+        meta["tasks"][2]["assignee"] = "Все"
+        notes_store.update_note(1, self.nid, meta=meta)
+        note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
+        note_members.add_member(1, self.nid, 2)
+        self.assertIn("iaaaaaaaaa3", [i["item"] for i in self._card("2")["items"]])
+
+    def test_member_added_by_telegram_decides_from_email_account(self) -> None:
+        # Анну добавили по Telegram 2, а входит она по почте (аккаунт 5000000000000002, Telegram привязан)
+        email_uid = 5000000000000002
+        note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
+        note_members.add_member(1, self.nid, 2)
+        with mock.patch.object(note_members, "_account_for_tg", lambda u: email_uid if int(u) == 2 else int(u)):
+            card = self._card(str(email_uid))
+            self.assertIn("iaaaaaaaaa1", [i["item"] for i in card["items"]])
+            self.assertTrue([i for i in card["items"] if i["item"] == "iaaaaaaaaa1"][0].get("mine"))
+            self.assertNotIn("iaaaaaaaaa1", [i["item"] for i in self._card("2")["items"]])
+
+    def test_shared_meeting_insights_for_participant(self) -> None:
+        from datetime import date
+
+        note_members.upsert_profile(user_id=2, username="a", first_name="Анна", last_name="К", photo_url=None)
+        note_members.add_member(1, self.nid, 2)
+        items = [
+            {"kind": "agreement", "text": "Я пришлю договор", "who": "я"},
+            {"kind": "agreement", "text": "Аня согласует макет", "who": "Аня"},
+            {"kind": "agreement", "text": "Обновить прайс", "who": ""},
+            {"kind": "agreement", "text": "Петя созвонится с юристом", "who": "Петя"},
+            {"kind": "open_question", "text": "Кто платит за хостинг", "who": ""},
+        ]
+        note = notes_store.get_note(1, self.nid)
+        out = pa._for_participant(2, note, items)
+        self.assertEqual([(i["text"], i["who"]) for i in out],
+                         [("согласует макет", "я"), ("Обновить прайс", "все"), ("Кто платит за хостинг", "")])
+        args = dict(src="из «Синк»", note={"id": self.nid, "kind": "transcription", "title": "Синк"},
+                    today=date(2026, 11, 10), task_titles=[])
+        self.assertEqual(pa.card_for(out[0], **args)["title"], "Вы обещали: согласует макет")
+        common = pa.card_for(out[1], **args)
+        self.assertEqual(common["title"], "Договорились: обновить прайс")
+        self.assertTrue(common["actions"][0]["label"].startswith("Взять себе"))
+        # разбор владельца виден участнику без второго разбора
+        pa.save(1, f"note:{self.nid}", "h", "Синк по запуску", [{"kind": "open_question", "text": "Кто платит за хостинг"}])
+        with mock.patch("assistant.services.calendar._tz_for", lambda uid: __import__("datetime").timezone.utc):
+            cards = pa.insight_cards(2)
+        self.assertEqual([c["title"] for c in cards], ["Не решено: Кто платит за хостинг"])
 
     def test_skip_meeting_tasks(self) -> None:
         # «Не разбирать»: задачи ведут в Битриксе — в Фокусе карточки нет, статусы «Не разбираем»

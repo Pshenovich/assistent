@@ -30,8 +30,13 @@ def _candidates(owner_uid: int, note_id: int) -> list[dict[str, str]]:
     return out
 
 
-def share_with_attendees(owner_uid: int, note_id: int, *, owner_username: Optional[str] = None) -> dict[str, Any]:
-    """added — кому открыли доступ сейчас; already — у кого уже был; missing — нет в Лео."""
+def share_with_attendees(
+    owner_uid: int, note_id: int, *, owner_username: Optional[str] = None, dry_run: bool = False
+) -> dict[str, Any]:
+    """added — кому открыли доступ сейчас; already — у кого уже был; missing — нет в Лео.
+
+    dry_run — только посмотреть: added — кому доступ ещё не открыт (плашка встречи прячет
+    «Поделиться с участниками», когда открывать некому — саммари открывается участникам само)."""
     from assistant.bot.access_gate import is_user_allowed
     from assistant.services.meeting_invites import telegram_id_for_attendee_email
     from assistant.stores import note_members
@@ -59,7 +64,8 @@ def share_with_attendees(owner_uid: int, note_id: int, *, owner_username: Option
         if note_members.is_member(owner_uid, note_id, uid):
             already.append(row)
             continue
-        note_members.add_member(owner_uid, note_id, uid)
+        if not dry_run:
+            note_members.add_member(owner_uid, note_id, uid)
         added.append(row)
     return {"added": added, "already": already, "missing": missing}
 

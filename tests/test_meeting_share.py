@@ -85,12 +85,34 @@ class ShareTests(unittest.TestCase):
         for m in (notes_store, pa, proactive, fi, meeting_links, note_members):
             m._CONN = None  # type: ignore[attr-defined]
 
-    def _share(self) -> dict:
+    def _share(self, dry_run: bool = False) -> dict:
         ids = {"me@x.ru": 1, "u@x.ru": 2}
         with mock.patch("assistant.services.meeting_invites.telegram_id_for_attendee_email",
                         side_effect=lambda owner, em, **kw: ids.get(em)), \
                 mock.patch("assistant.bot.access_gate.is_user_allowed", return_value=True):
-            return ms.share_with_attendees(1, self.nid)
+            return ms.share_with_attendees(1, self.nid, dry_run=dry_run)
+
+    def test_dry_run_reports_without_sharing(self) -> None:
+        # плашка встречи: «Поделиться» нужна, только пока кому-то не открыто
+        res = self._share(dry_run=True)
+        self.assertEqual([m["name"] for m in res["added"]], ["Ульяна Виноградова"])
+        self.assertFalse(note_members.is_member(1, self.nid, 2))
+        self._share()
+        res = self._share(dry_run=True)
+        self.assertEqual(res["added"], [])
+        self.assertEqual([m["name"] for m in res["already"]], ["Ульяна Виноградова"])
+
+    def test_list_shows_owner_meeting_to_member(self) -> None:
+        # у участника на карточке — встреча владельца, а не «+ ко встрече»
+        import usage_server
+
+        self._share()
+        own = [{"id": self.nid, "user_id": "1"}]
+        usage_server._attach_note_meetings(1, own)
+        self.assertEqual(own[0]["meeting"]["event_id"], "ev1")
+        shared = [{"id": self.nid, "owner_user_id": "1", "user_id": "1"}]
+        usage_server._attach_note_meetings(2, shared)
+        self.assertEqual(shared[0]["meeting"]["summary"], "Командный синк")
 
     def test_share_adds_leo_users_and_reports_missing(self) -> None:
         res = self._share()
