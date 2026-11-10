@@ -277,6 +277,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Повтор (каждый день / по будням / еженедельно / до даты): один вызов с recurrence (freq + byday/until). НЕ создавай серию отдельными вызовами — иначе пользователь не сможет удалить всё сразу.
 - Действия из прошлых сообщений уже выполнены (в истории они помечены «Уже выполнено»). Не повторяй их: создавай/меняй только то, о чём просит последнее сообщение. На вопросы «какие у меня…» ничего не создавай — смотри calendar_events.
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
+- Вопрос про связку («что по Контент заводу», «что в связке …») — bundles_find, потом при необходимости читай её документы.
 - «Свяжи / объедини в связку» документы, саммари встреч, задачи, чаты: найди id (notes_find, tasks_search) и вызови propose_link — сам не связывай, пользователь подтвердит кнопкой. «Этот документ» — type=current_note.
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
@@ -415,6 +416,10 @@ TOOLS: list[dict[str, Any]] = [
          "reason": {"type": "string", "enum": ["not_a_task", "not_relevant", "duplicate", "recognition_error"]},
          "type": {"type": "string", "enum": ["task", "promise", "decision", "reminder", "thought"]}},
         ["op"]),
+    _fn("bundles_find", "Связки пользователя (именованные наборы документов, саммари встреч, задач, чатов — "
+        "«Контент завод», «Запуск Pro»): по названию связки или её элементов. Пустой query — все. "
+        "Возвращает состав связки с id; тексты документов читай через notes_find/чтение документа.",
+        {"query": {"type": "string", "description": "Название связки или слова из него; можно пусто"}}),
     _fn("propose_link", "Предложить связать документы, саммари встреч, задачи, чаты в одну связку («свяжи X с Y»). "
         "НЕ связывает — пользователь подтвердит кнопкой. id документов бери из notes_find, задач — из tasks_search; "
         "открытый документ — type=current_note.",
@@ -1162,6 +1167,32 @@ def tool_propose_delete(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     return _ok({"proposed": True, "note": "Пользователь подтвердит удаление кнопкой под ответом."})
 
 
+def tool_bundles_find(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    """Связки человека — только видимые ему элементы (как в приложении)."""
+    from assistant.services import bundle_access
+    from assistant.stores.note_members import note_webapp_url
+
+    found = bundle_access.list_for_user(ctx.uid, query=str(args.get("query") or ""), limit=10)
+    out = []
+    for b in found:
+        items = []
+        for it in b["items"][:20]:
+            row: dict[str, Any] = {"type": it.get("subtitle") or it["kind"], "title": it["title"], "id": it["id"],
+                                   "kind": it["kind"]}
+            if it["kind"] == "task":
+                row["done"] = bool(it.get("done"))
+            if it["kind"] == "note":
+                try:
+                    row["url"] = note_webapp_url(int(it["id"]))
+                except Exception:
+                    pass
+            items.append(row)
+        out.append({"bundle": b["title"], "items": items, "hidden_from_user": b.get("hidden", 0)})
+    if not out:
+        return _ok({"bundles": [], "note": "Связок с таким названием нет."})
+    return _ok({"bundles": out})
+
+
 def tool_propose_link(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     """«Свяжи X с Y»: код проверяет доступ к каждому элементу, пользователь подтверждает кнопкой."""
     from assistant.services import bundle_access
@@ -1506,6 +1537,7 @@ EXECUTORS: dict[str, Callable[[GptCalendarContext, dict[str, Any]], str]] = {
     "task_create": tool_task_create,
     "reminder_create": tool_reminder_create,
     "propose_delete": tool_propose_delete,
+    "bundles_find": tool_bundles_find,
     "propose_link": tool_propose_link,
     "show_calendar_cards": tool_show_calendar_cards,
     "offer_slots": tool_offer_slots,

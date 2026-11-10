@@ -288,3 +288,38 @@ def forget_item(kind: Any, item_id: Any) -> None:
         return
     for bd in bundles_for_item(k, rid):
         remove_item(bd["id"], k, rid)
+
+
+def candidate_ids_for_user(user_id: Any, *, note_ids: Iterable[Any] = (), named_only: bool = True) -> list[int]:
+    """Связки, которые человеку стоит показать в списке: свои, куда он что-то добавлял,
+    и те, где есть его доступные документы. Доступ к элементам дальше проверяет bundle_access."""
+    uid = _uid(user_id)
+    nids = sorted({str(int(n)) for n in note_ids if str(n).strip().isdigit()})
+    with _LOCK:
+        conn = _conn()
+        ids = {
+            int(r[0])
+            for r in conn.execute(
+                "SELECT id FROM bundles WHERE owner_user_id = ? UNION "
+                "SELECT bundle_id FROM bundle_items WHERE added_by = ?",
+                (uid, uid),
+            )
+        }
+        for i in range(0, len(nids), 500):
+            chunk = nids[i : i + 500]
+            ids.update(
+                int(r[0])
+                for r in conn.execute(
+                    "SELECT DISTINCT bundle_id FROM bundle_items WHERE item_kind = 'note' AND item_id IN (%s)"
+                    % ",".join("?" * len(chunk)),
+                    chunk,
+                )
+            )
+        if not ids:
+            return []
+        q = ",".join("?" * len(ids))
+        where = f"id IN ({q})" + (" AND title != ''" if named_only else "")
+        return [
+            int(r[0])
+            for r in conn.execute(f"SELECT id FROM bundles WHERE {where} ORDER BY updated_at DESC", sorted(ids))
+        ]

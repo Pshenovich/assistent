@@ -14014,6 +14014,22 @@ async def miniapp_bundle_create(
     return await run_in_threadpool(_run)
 
 
+@miniapp_router.get("/bundles")
+async def miniapp_bundles_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    q: str = "",
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Именованные связки человека — для «Проектов», поиска; только видимые ему элементы."""
+    from assistant.services import bundle_access
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(
+        partial(bundle_access.list_for_user, uid, query=str(q or "")[:200], limit=min(max(int(limit), 1), 100))
+    )
+    return {"ok": True, "bundles": items}
+
+
 def _bundle_or_400(uid: int, bundle_id: int) -> tuple[dict[str, Any], dict[str, Any]]:
     from assistant.services import bundle_access
     from assistant.stores import bundles as bundles_store

@@ -8360,6 +8360,39 @@
           } else {
             appendSidebarProjectBranch(kids, sec.id, groups, sec.kind, sec.openItem);
           }
+          if (sec.id === "notes" && (userBundlesCache || []).length) {
+            var bOpen = !!sidebarTreeState.sections.bundles;
+            kids.appendChild(
+              makeSidebarTreeRow({
+                depth: 1,
+                expandable: true,
+                expanded: bOpen,
+                label: "Связки",
+                onToggle: function () {
+                  sidebarTreeState.sections.bundles = !bOpen;
+                  renderSidebarTrees();
+                },
+                onClick: function () {
+                  sidebarTreeState.sections.bundles = !bOpen;
+                  renderSidebarTrees();
+                },
+              })
+            );
+            if (bOpen) {
+              userBundlesCache.forEach(function (b) {
+                kids.appendChild(
+                  makeSidebarTreeRow({
+                    depth: 2,
+                    leaf: true,
+                    label: b.title,
+                    onClick: function () {
+                      openBundlePage(b.id);
+                    },
+                  })
+                );
+              });
+            }
+          }
           if (sec.id === "notes") {
             kids.appendChild(
               makeSidebarTreeRow({
@@ -36537,6 +36570,77 @@
       });
   }
 
+  // Именованные связки человека: блок под проектами (меню и левая колонка) и поиск в «Документах».
+  var userBundlesCache = null;
+  var userBundlesLoading = null;
+  function loadUserBundles(force) {
+    if (userBundlesLoading && !force) return userBundlesLoading;
+    if (userBundlesCache && !force) return Promise.resolve(userBundlesCache);
+    var p = (userBundlesLoading = apiFetch("/bundles?limit=100", { method: "GET" })
+      .then(function (r) {
+        var next = (r && r.bundles) || [];
+        var changed = JSON.stringify(next.map(bundleListSig)) !== JSON.stringify((userBundlesCache || []).map(bundleListSig));
+        userBundlesCache = next;
+        if (changed) {
+          renderSidebarTrees();
+          if (notesSearchText() && notesDataCache && currentTab === "notes") renderNotesPanesFromData(notesDataCache);
+        }
+        return next;
+      })
+      .catch(function () {
+        return userBundlesCache || [];
+      })
+      .then(function (x) {
+        if (userBundlesLoading === p) userBundlesLoading = null;
+        return x;
+      }));
+    return p;
+  }
+
+  function bundleListSig(b) {
+    return [b.id, b.title, (b.items || []).length];
+  }
+
+  function bundlesMatching(q) {
+    var words = String(q || "").toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    return (userBundlesCache || []).filter(function (b) {
+      var hay = [b.title].concat((b.items || []).map(function (it) { return it.title; })).join(" ").toLowerCase();
+      return words.every(function (w) { return hay.indexOf(w) >= 0; });
+    });
+  }
+
+  function bundleCountHint(b) {
+    var n = (b.items || []).length;
+    return n + " " + pluralRu(n, "элемент", "элемента", "элементов");
+  }
+
+  // Связки, подходящие под поиск, — строкой над найденными документами.
+  function notesBundleHitsEl(q) {
+    var hits = bundlesMatching(q).slice(0, 6);
+    if (!hits.length) return null;
+    var box = document.createElement("div");
+    box.className = "notes-bundle-hits";
+    var h = document.createElement("div");
+    h.className = "notes-bundle-hits-title";
+    h.textContent = "Связки";
+    box.appendChild(h);
+    hits.forEach(function (b) {
+      var row = document.createElement("button");
+      row.type = "button";
+      row.className = "notes-bundle-hit";
+      row.innerHTML = '<span class="link-ico">' + LINK_ICONS.stack + '</span><span class="link-pick-txt"><b></b><small></small></span>';
+      row.querySelector("b").textContent = b.title;
+      row.querySelector("small").textContent =
+        bundleCountHint(b) + " · " + (b.items || []).slice(0, 3).map(function (it) { return it.title; }).join(", ");
+      row.addEventListener("click", function () {
+        openBundlePage(b.id);
+      });
+      box.appendChild(row);
+    });
+    return box;
+  }
+
   function refreshLinkedBlocks() {
     linkedHosts = linkedHosts.filter(function (h) {
       return h.isConnected;
@@ -36546,6 +36650,7 @@
     });
     var page = document.getElementById("bundle-page-overlay");
     if (page && !page.classList.contains("hidden") && page._bundleId) loadBundlePage(page._bundleId);
+    loadUserBundles(true);
   }
 
   function paintLinkedItems(host, bundles) {
@@ -56727,6 +56832,7 @@
       if (tid != null) transIds[String(tid)] = true;
     });
     var searchQ = notesSearchText();
+    if (userBundlesCache === null && !userBundlesLoading) loadUserBundles();
     var serverHits = notesServerSearchHits("notes", searchQ);
     const local = (serverHits || localAll).filter(function (n) {
       var nid = localNoteIdFrom(n);
@@ -56758,6 +56864,13 @@
         return wrapNotesListCard(n, buildNotesListCard(n, { isLocal: true, highlight: searchQ }), id, false);
       }, searchQ);
       if (!searchQ && notesDataCache && notesDataCache.local_has_more) appendNotesLoadMore(pn);
+    }
+    if (searchQ) {
+      var bundleHits = notesBundleHitsEl(searchQ);
+      if (bundleHits) {
+        if (!local.length && !(errParts.length)) pn.innerHTML = "";
+        pn.insertBefore(bundleHits, pn.firstChild);
+      }
     }
 
     var transAll = (data && data.transcriptions) || [];
@@ -57354,6 +57467,13 @@
         var sep = document.createElement("div");
         sep.className = "nl-sheet-sep";
         sheet.appendChild(sep);
+        return;
+      }
+      if (it && it.section) {
+        var sect = document.createElement("div");
+        sect.className = "nl-sheet-sect";
+        sect.textContent = it.section;
+        sheet.appendChild(sect);
         return;
       }
       var b = document.createElement("button");
@@ -60826,9 +60946,14 @@
         if (counts.none) {
           items.push({ label: "Без проекта", hint: String(counts.none), icon: notesActiveProjectId === "none" ? "check" : "folder", active: notesActiveProjectId === "none", onClick: function () { pick("none"); } });
         }
+        (userBundlesCache || []).slice(0, 30).forEach(function (b, i) {
+          if (!i) items.push({ section: "Связки" });
+          items.push({ label: b.title, hint: String((b.items || []).length), icon: "link", onClick: function () { openBundlePage(b.id); } });
+        });
         items.push("-");
         items.push({ label: "Управление проектами", icon: "folder", onClick: function () { openTagsManageSheet(); } });
         openNotesActionSheet("", items, projectBtn);
+        if (!userBundlesCache) loadUserBundles();
       });
     }
     document.querySelectorAll("#notes-create-menu [data-notes-create]").forEach(function (b) {

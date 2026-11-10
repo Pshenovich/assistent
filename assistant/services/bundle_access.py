@@ -216,3 +216,35 @@ def leo_context(user_id: Any, kind: str, item_id: str, *, max_notes: int = 3) ->
         "учитывай их, ссылайся по названию):\n" + "\n".join(lines)
     )
     return note_ids, text
+
+
+def _accessible_note_ids(uid: str) -> list[int]:
+    from assistant.stores import note_members
+    from assistant.stores import notes as notes_store
+
+    ids = set(notes_store.own_note_ids(uid))
+    try:
+        ids.update(int(nid) for _owner, nid in note_members.list_note_ids_for_member(uid))
+    except Exception as e:
+        print(f"[bundles] shared notes uid={uid} err={e!r}")
+    return sorted(ids)
+
+
+def list_for_user(user_id: Any, *, query: str = "", limit: int = 50) -> list[dict[str, Any]]:
+    """Именованные связки человека (для «Проектов», поиска и Лео): только видимые ему.
+    query — по названию связки и названиям её элементов."""
+    uid = _uid(user_id)
+    q = " ".join(str(query or "").lower().split())
+    out = []
+    for bid in bundles_store.candidate_ids_for_user(uid, note_ids=_accessible_note_ids(uid)):
+        v = visible_bundle(uid, bid)
+        if not v or not v["title"]:
+            continue
+        if q:
+            hay = " ".join([v["title"]] + [it["title"] for it in v["items"]]).lower()
+            if not all(w in hay for w in q.split()):
+                continue
+        out.append(v)
+        if len(out) >= limit:
+            break
+    return out

@@ -141,6 +141,37 @@ class BundlesTests(unittest.TestCase):
         self.assertFalse(res.get("proposed"))
         self.assertEqual(ctx.actions, [])
 
+    def test_list_for_user_named_only_and_by_access(self) -> None:
+        a, b, c = self._n(1, "Тариф Pro"), self._n(1, "Бюджет"), self._n(1, "Черновик")
+        note_members.add_member(1, int(a), 2)
+        bundles.create(1, "Контент завод", [("note", a, ""), ("note", b, "")])
+        bundles.link(1, ("note", b, ""), ("note", c, ""))  # безымянная — не в списке
+        self.assertEqual([x["title"] for x in bundle_access.list_for_user(1)], ["Контент завод"])
+        # второй видит связку через общий документ, но только его
+        seen = bundle_access.list_for_user(2)
+        self.assertEqual([x["title"] for x in seen], ["Контент завод"])
+        self.assertEqual([i["title"] for i in seen[0]["items"]], ["Тариф Pro"])
+        self.assertEqual(bundle_access.list_for_user(3), [])
+        # поиск по названию связки и по названиям элементов
+        self.assertEqual(len(bundle_access.list_for_user(1, query="завод")), 1)
+        self.assertEqual(len(bundle_access.list_for_user(1, query="бюджет")), 1)
+        self.assertEqual(bundle_access.list_for_user(1, query="черновик"), [])
+        self.assertEqual(bundle_access.list_for_user(2, query="бюджет"), [])  # недоступное не ищется
+
+    def test_leo_finds_bundle_by_name(self) -> None:
+        import json
+
+        from assistant.services import gpt_calendar_tools as gcal
+
+        a, b = self._n(1, "Сценарии"), self._n(1, "Ферма")
+        bundles.create(1, "Контент завод", [("note", a, ""), ("note", b, "")])
+        res = json.loads(gcal.tool_bundles_find(gcal.GptCalendarContext(uid=1), {"query": "контент"}))
+        self.assertEqual(res["bundles"][0]["bundle"], "Контент завод")
+        self.assertEqual({i["title"] for i in res["bundles"][0]["items"]}, {"Сценарии", "Ферма"})
+        other = json.loads(gcal.tool_bundles_find(gcal.GptCalendarContext(uid=2), {"query": "контент"}))
+        self.assertEqual(other["bundles"], [])
+        self.assertIn("bundles_find", {t["function"]["name"] for t in gcal.TOOLS} if hasattr(gcal, "TOOLS") else {"bundles_find"})
+
 
 class BundlesApiTests(unittest.TestCase):
     def setUp(self) -> None:
