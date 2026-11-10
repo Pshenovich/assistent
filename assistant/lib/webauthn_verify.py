@@ -30,6 +30,33 @@ class WebAuthnError(ValueError):
     pass
 
 
+def allowed_rp_ids() -> set[str]:
+    """Адреса, к которым можно привязать passkey сейфов: из настроек, а не из заголовка запроса (аудит 2026-11-10).
+
+    ``VAULT_RP_IDS`` — через запятую; без него — адреса Орбиты и хост ``WEBAPP_PUBLIC_URL``. localhost и *.localhost —
+    только для локальной разработки.
+    """
+    import os
+
+    raw = os.getenv("VAULT_RP_IDS", "").strip()
+    out = {h.strip().lower() for h in raw.split(",") if h.strip()}
+    if not out:
+        out = {"getorbita.me", "vault.getorbita.me"}  # адреса Орбиты: основной и отдельный для сейфов
+        from assistant.lib.webapp_public import public_base_url
+
+        host = (urlparse(public_base_url() or "").hostname or "").lower()
+        if host:
+            out.add(host)
+    return out
+
+
+def rp_id_allowed(rp_id: str) -> bool:
+    h = str(rp_id or "").lower()
+    if h == "localhost" or h.endswith(".localhost"):
+        return True
+    return h in allowed_rp_ids()
+
+
 def b64u_decode(s: str) -> bytes:
     s = str(s or "").strip()
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))

@@ -8723,11 +8723,16 @@ class _VaultDeviceUnlock(BaseModel):
 
 
 def _vault_rp_id(request: Request) -> str:
-    """Сайт, к которому привязан passkey: из заголовка Origin (его ставит браузер), иначе из адреса запроса."""
+    """Сайт, к которому привязан passkey: хост страницы (Origin), но только из списка в настройках
+    (``VAULT_RP_IDS`` / хост ``WEBAPP_PUBLIC_URL``) — заголовку одному не верим (аудит 2026-11-10)."""
     from urllib.parse import urlparse
 
-    host = urlparse(request.headers.get("origin") or "").hostname or request.url.hostname or ""
-    return host.lower()
+    from assistant.lib import webauthn_verify as wa
+
+    host = (urlparse(request.headers.get("origin") or "").hostname or request.url.hostname or "").lower()
+    if not wa.rp_id_allowed(host):
+        raise HTTPException(status_code=400, detail="Сейфы на этом адресе не открываются")
+    return host
 
 
 def _vault_unlocker_in(u: "_VaultUnlocker", request: Request) -> dict[str, Any]:

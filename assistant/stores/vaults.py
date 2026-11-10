@@ -342,6 +342,8 @@ def unlock_device(user_id: int | str, unlocker_id: int, client_data_json: str, a
             age = CHALLENGE_TTL + 1
         if age > CHALLENGE_TTL:
             raise OrgError("Касание устарело — попробуйте ещё раз", 400)
+        if not wa.rp_id_allowed(row["rp_id"]):
+            raise OrgError("Этот способ входа привязан к другому адресу — добавьте Touch ID заново", 400)
         try:
             count = wa.verify_assertion(
                 public_key=row["public_key"], alg=int(row["alg"]), rp_id=row["rp_id"], challenge=ch,
@@ -723,9 +725,12 @@ def _vault_out(v: sqlite3.Row, role: str, uid: str) -> dict[str, Any]:
             "SELECT user_id, created_at FROM vault_requests WHERE vault_id = ? AND status = 'pending' ORDER BY id", (vid,)
         ).fetchall() if role == "owner" else []
     editor = role in ("editor", "owner")
-    pending = [{"user_id": u, "public_key": keys[u]} for u in sorted(members - have) if u in keys]
+    # ждут ключ — видит и выдаёт только владелец сейфа, кнопкой «Выдать»
+    pending = [{"user_id": u, "public_key": keys[u]} for u in sorted(members - have) if u in keys] if role == "owner" else []
     rotate = bool(v["needs_rotation"]) and editor and bool(mine)
-    names = _names([str(d["user_id"]) for d in deps] + [str(r["user_id"]) for r in reqs])
+    names = _names([str(d["user_id"]) for d in deps] + [str(r["user_id"]) for r in reqs] + [p["user_id"] for p in pending])
+    for p in pending:
+        p["name"] = names.get(p["user_id"], "")
     return {
         "id": vid,
         "org_id": v["org_id"],
@@ -745,7 +750,7 @@ def _vault_out(v: sqlite3.Row, role: str, uid: str) -> dict[str, Any]:
         "departures": [{"user_id": str(d["user_id"]), "name": names[str(d["user_id"])], "at": d["at"]} for d in deps],
         # сменить ключ: всем участникам с ключами — новые конверты
         "rotate": rotate,
-        "rotate_keys": [{"user_id": u, "public_key": keys[u]} for u in sorted(members) if u in keys] if rotate else [],
+        "rotate_keys": [{"user_id": u, "public_key": keys[u]} for u in sorted(members & have) if u in keys] if rotate else [],
         "requests": [{"user_id": str(r["user_id"]), "name": names[str(r["user_id"])], "at": r["created_at"]} for r in reqs],
         "access": _access_line(v["org_id"], acl),
     }
@@ -961,6 +966,18 @@ def set_access(user_id: int | str, vault_id: int, principal: str, role: str) -> 
     return access(vault_id, user_id)
 
 
+def _check_writable(vault_id: int) -> None:
+    """Пока ключ сейфа не сменён после ухода участника, старым ключом не шифруем (совет аудитора 2026-11-10).
+
+    Смену делает браузер редактора при открытии сейфов — клиент запускает её перед записью сам.
+    """
+    _sync_envelopes(vault_id)  # уход мог случиться только что
+    with _LOCK:
+        v = _vault(_conn(), vault_id)
+    if int(v["needs_rotation"] or 0):
+        raise OrgError("Сначала сменится ключ сейфа после ухода участника — откройте сейф заново", 400)
+
+
 def _check_version(conn: sqlite3.Connection, vault_id: int, key_version: Optional[int]) -> None:
     """Браузер шифрует ключом сейфа версии ``key_version``; если ключ уже сменили — пусть откроет заново."""
     if key_version is None:
@@ -972,9 +989,14 @@ def _check_version(conn: sqlite3.Connection, vault_id: int, key_version: Optiona
 
 def put_envelopes(user_id: int | str, vault_id: int, envelopes: list[dict[str, str]],
                   key_version: Optional[int] = None) -> dict[str, Any]:
-    """Положить конверты тем, кто ждёт. Класть может только тот, у кого конверт уже есть."""
+    """Положить конверты тем, кто ждёт. Только владелец сейфа и только по его решению («Выдать»).
+
+    Раньше ключ выдавал браузер любого участника сам — тогда админ, добавивший себя в команду,
+    получал ключ без ведома владельца (аудит 2026-11-10).
+    """
     uid = _uid(user_id)
-    _require(vault_id, uid, "viewer")
+    _require(vault_id, uid, "owner")
+    _check_writable(vault_id)
     members, have = _sync_envelopes(vault_id)
     if uid not in have:
         raise OrgError("Сначала откройте сейф у себя", 400)
@@ -1024,6 +1046,7 @@ def items(vault_id: int, user_id: int | str) -> list[dict[str, Any]]:
 
 def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional[int] = None) -> dict[str, Any]:
     _require(vault_id, user_id, "editor")
+    _check_writable(vault_id)
     uid = _uid(user_id)
     data = _blob(blob, "blob", BLOB_MAX)
     now = _now()
@@ -1051,6 +1074,7 @@ def _item(conn: sqlite3.Connection, vault_id: int, item_id: int) -> sqlite3.Row:
 def update_item(user_id: int | str, vault_id: int, item_id: int, blob: str,
                 key_version: Optional[int] = None) -> dict[str, Any]:
     _require(vault_id, user_id, "editor")
+    _check_writable(vault_id)
     data = _blob(blob, "blob", BLOB_MAX)
     now = _now()
     with _LOCK:
@@ -1143,7 +1167,7 @@ def rotate(user_id: int | str, vault_id: int, key_version: int, items_in: list[d
         ids = {int(r["id"]) for r in conn.execute("SELECT id FROM vault_items WHERE vault_id = ?", (int(vault_id),))}
         if ids != set(blobs):
             raise OrgError("Записи в сейфе только что изменились — попробуйте ещё раз", 400)
-        keys = _public_keys(conn, members)
+        keys = _public_keys(conn, members & have)  # новый ключ — только тем, у кого ключ уже был
         envs: dict[str, str] = {}
         for e in envelopes or []:
             target = _uid(e.get("user_id") or 0)

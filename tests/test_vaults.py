@@ -141,10 +141,14 @@ class VaultsTests(unittest.TestCase):
         ])
         self.assertEqual(r["put"], 1)
         self.assertEqual(vaults.get(self.vault, BACK)["envelope"], "ZW52LWJhY2s")
-        # BACK2 включил сейфы — теперь его конверт может положить BACK
+        # BACK2 включил сейфы — ключ ему выдаёт только владелец сейфа («Выдать»), не редактор BACK
         enable(BACK2)
-        self.assertEqual([p["user_id"] for p in vaults.get(self.vault, BACK)["pending"]], [str(BACK2)])
-        vaults.put_envelopes(BACK, self.vault, [{"user_id": str(BACK2), "envelope": "ZW52LTI"}])
+        self.assertEqual(vaults.get(self.vault, BACK)["pending"], [])
+        with self.assertRaises(OrgError):
+            vaults.put_envelopes(BACK, self.vault, [{"user_id": str(BACK2), "envelope": "ZW52LTI"}])
+        owner_view = vaults.get(self.vault, OWNER)["pending"]
+        self.assertEqual([(p["user_id"], bool(p["name"])) for p in owner_view], [(str(BACK2), True)])
+        vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK2), "envelope": "ZW52LTI"}])
         states = {p["user_id"]: p["state"] for p in vaults.access(self.vault, OWNER)["people"]}
         self.assertEqual(states, {str(OWNER): "ok", str(BACK): "ok", str(BACK2): "ok"})
 
@@ -152,9 +156,22 @@ class VaultsTests(unittest.TestCase):
         vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK), "envelope": "Z29vZA"}])
         enable(BACK2)
         vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK2), "envelope": "Yg"}])
-        # BACK2 пытается подменить конверт BACK — тот уже не «ждёт»
-        self.assertEqual(vaults.put_envelopes(BACK2, self.vault, [{"user_id": str(BACK), "envelope": "ZXZpbA"}])["put"], 0)
+        # владелец не может подменить уже выданный конверт BACK — тот уже не «ждёт»
+        self.assertEqual(vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK), "envelope": "ZXZpbA"}])["put"], 0)
         self.assertEqual(vaults.get(self.vault, BACK)["envelope"], "Z29vZA")
+
+    def test_admin_joining_group_gets_no_key_without_owner(self) -> None:
+        # Аудит 2026-11-10: админ добавил себя в команду с доступом — ключ ему никто не выдаёт сам
+        enable(ADMIN)
+        vaults.put_envelopes(OWNER, self.vault, [{"user_id": str(BACK), "envelope": "ZW52LWJhY2s"}])
+        org_groups.add_member(ADMIN, self.org, self.backend, ADMIN)
+        self.assertEqual(vaults.get(self.vault, ADMIN)["role"], "editor")
+        self.assertIsNone(vaults.get(self.vault, ADMIN)["envelope"])
+        for who in (BACK, ADMIN):  # участник с ключом и сам админ выдать не могут
+            self.assertEqual(vaults.get(self.vault, who)["pending"], [])
+            with self.assertRaises(OrgError):
+                vaults.put_envelopes(who, self.vault, [{"user_id": str(ADMIN), "envelope": "ZXZpbA"}])
+        self.assertIn(str(ADMIN), [p["user_id"] for p in vaults.get(self.vault, OWNER)["pending"]])
 
     def _backdate_items(self) -> None:
         with orgs_store._LOCK:
@@ -172,6 +189,11 @@ class VaultsTests(unittest.TestCase):
         self.assertEqual(v["departed"], 1)
         self.assertEqual([d["user_id"] for d in v["departures"]], [str(BACK)])
         self.assertTrue(v["rotate"])  # ушедший мог сохранить ключ — его надо сменить
+        # пока ключ не сменён, старым ключом не пишем
+        with self.assertRaises(OrgError):
+            vaults.update_item(OWNER, self.vault, iid, "bmV3")
+        vaults.rotate(OWNER, self.vault, v["key_version"], [{"id": iid, "blob": "cm90"}],
+                      [{"user_id": str(OWNER), "envelope": "bmV3LW93bmVy"}])
         # пароль сменили — список «смените пароли» пропал сам
         vaults.update_item(OWNER, self.vault, iid, "bmV3")
         self.assertEqual(vaults.get(self.vault, OWNER)["departed"], 0)
@@ -403,6 +425,9 @@ class DeviceUnlockTests(unittest.TestCase):
         os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
         os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmp.name, "reg.json")
         notes_store._CONN = None  # type: ignore[attr-defined]
+        self._env = mock.patch.dict(os.environ, {"VAULT_RP_IDS": "getorbita.me"})
+        self._env.start()
+        self.addCleanup(self._env.stop)
         self.b64 = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
         self.key = ec.generate_private_key(ec.SECP256R1())
         spki = self.key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
@@ -462,6 +487,18 @@ class DeviceUnlockTests(unittest.TestCase):
             vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch, count=5))
         with self.assertRaises(OrgError):
             vaults.remove_unlocker(OWNER, self.dev["id"])
+
+    def test_rp_id_only_from_settings(self) -> None:
+        # адрес passkey — из настроек; с другого адреса касание не принимается
+        ch = vaults.device_challenge(OWNER, self.dev["id"])["challenge"]
+        with mock.patch.dict(os.environ, {"VAULT_RP_IDS": "vault.getorbita.me"}):
+            with self.assertRaises(OrgError):
+                vaults.unlock_device(OWNER, self.dev["id"], *self.sign(ch))
+        from assistant.lib import webauthn_verify as wa
+
+        self.assertTrue(wa.rp_id_allowed("getorbita.me"))
+        self.assertFalse(wa.rp_id_allowed("evil.example"))
+        self.assertTrue(wa.rp_id_allowed("app.localhost"))
 
     def test_device_needs_valid_public_key(self) -> None:
         with self.assertRaises(OrgError):

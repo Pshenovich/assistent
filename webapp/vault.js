@@ -42,9 +42,9 @@
   };
 
   var TYPES = {
-    server: { label: "Сервер", fields: [["address", "Адрес", "161.104.35.44 или host:port"], ["login", "Логин", "root"], ["password", "Пароль", "", "secret"], ["note", "Заметка", "", "text"]] },
-    site: { label: "Сайт или админка", fields: [["address", "Ссылка", "https://"], ["login", "Логин", "name@company.ru"], ["password", "Пароль", "", "secret"], ["note", "Заметка", "", "text"]] },
-    api: { label: "API-ключ", fields: [["address", "Сервис", "openrouter.ai"], ["password", "Ключ", "", "secret"], ["expires", "Действует до", "", "date"], ["note", "Заметка", "", "text"]] },
+    server: { label: "Сервер", fields: [["address", "Адрес", "161.104.35.44 или host:port"], ["login", "Логин", "root"], ["password", "Пароль", "", "secret"], ["note", "Заметка", "", "text-secret"]] },
+    site: { label: "Сайт или админка", fields: [["address", "Ссылка", "https://"], ["login", "Логин", "name@company.ru"], ["password", "Пароль", "", "secret"], ["note", "Заметка", "", "text-secret"]] },
+    api: { label: "API-ключ", fields: [["address", "Сервис", "openrouter.ai"], ["password", "Ключ", "", "secret"], ["expires", "Действует до", "", "date"], ["note", "Заметка", "", "text-secret"]] },
     note: { label: "Заметка", fields: [["note", "Текст", "", "text-secret"]] },
   };
   var ROLE_LABEL = { viewer: "Смотрит", editor: "Правит", owner: "Владелец" };
@@ -305,18 +305,23 @@
       }
     }
     for (var k = 0; k < st.vaults.length; k++) if (st.vaults[k].rotate) await rotateVault(st.vaults[k]);
-    for (var j = 0; j < st.vaults.length; j++) await distribute(st.vaults[j]);
+    // Ключ новым людям сам не раздаём: только владелец сейфа кнопкой «Выдать» (аудит 2026-11-10)
   }
 
   // Конверты тем, кто ждёт ключ (новые участники и владельцы организации).
-  async function distribute(v) {
-    if (!v || !st.vk[v.id]) return;
+  // only — кому выдать (id); без него — всем, кто ждёт. Вызывается только по решению владельца.
+  async function distribute(v, only) {
+    if (!v || !st.vk[v.id] || v.role !== "owner") return;
     var vk = st.vk[v.id];
-    if (v.pending && v.pending.length) {
+    var list = (v.pending || []).filter(function (p) { return !only || only.indexOf(String(p.user_id)) >= 0; });
+    if (list.length) {
       try {
+        if (v.rotate) await rotateVault(v); // старым ключом после ухода участника не делимся
+        v = vaultOf(v.id) || v;
+        vk = st.vk[v.id];
         var envs = [];
-        for (var i = 0; i < v.pending.length; i++) {
-          envs.push({ user_id: v.pending[i].user_id, envelope: await CR.sealEnvelope(vk, v.pending[i].public_key) });
+        for (var i = 0; i < list.length; i++) {
+          envs.push({ user_id: list[i].user_id, envelope: await CR.sealEnvelope(vk, list[i].public_key) });
         }
         var r = await api("/" + v.id + "/envelopes", json("POST", { envelopes: envs, key_version: st.vkVer[v.id] }));
         if (r && r.vault) replaceVault(r.vault);
@@ -893,6 +898,12 @@
         var val = d.data[k];
         if (val != null && String(val) !== "") data[k] = typeof val === "string" ? val.trim() : val;
       });
+      if (v.rotate) {
+        // после ухода участника сервер не примет запись старым ключом — сначала сменить ключ
+        await rotateVault(v);
+        v = vaultOf(v.id) || v;
+        if (v.rotate) throw new Error("Не удалось сменить ключ сейфа — откройте сейф заново");
+      }
       var blob = await CR.sealItem(st.vk[v.id], v.id, data);
       var body = { blob: blob, key_version: st.vkVer[v.id] };
       var r = d.id
@@ -950,7 +961,7 @@
     } catch (_) {
       return toast("Браузер не дал скопировать — выделите и скопируйте вручную");
     }
-    var secret = field === "password" || (field === "note" && it.data.type === "note");
+    var secret = field === "password" || field === "note"; // в заметки кладут вторые пароли — тоже чистим (аудит)
     if (secret) {
       toast("Скопировано · очистится через 30 с");
       setTimeout(function () {
@@ -1022,6 +1033,16 @@
   }
 
   // Владелец сейфа отвечает на запрос: роль — открыть, пусто — отклонить. Ключ новому участнику кладёт этот браузер.
+  async function grantKey(uid) {
+    var v = vaultOf(st.vaultId);
+    if (!v || st.busy) return;
+    st.busy = true;
+    paint();
+    await distribute(v, uid ? [String(uid)] : null);
+    st.busy = false;
+    refresh();
+  }
+
   async function decideRequest(vid, uid, role) {
     try {
       var r = await api("/" + vid + "/request/decide", json("POST", { user_id: uid, role: role }));
@@ -1029,7 +1050,7 @@
       delete st.events[vid];
       var v = vaultOf(vid);
       if (role && v) {
-        await distribute(v);
+        await distribute(v, [String(uid)]); // решение владельца — ключ сразу этому человеку
         toast(unlocked() ? "Доступ открыт" : "Доступ открыт — ключ получит, когда вы откроете сейфы");
       } else {
         toast("Запрос отклонён");
@@ -1145,9 +1166,11 @@
         if (r.vault) {
           replaceVault(r.vault);
           v = vaultOf(vid);
-          await distribute(v);
-          if (r.vault.pending && r.vault.pending.length && !unlocked()) {
-            toast("Ключ получат, когда вы или коллеги откроете сейфы");
+          // человеку, добавленному лично, ключ сразу; участникам команды — после «Выдать» в сейфе
+          if (role && /^u:/.test(principal)) await distribute(v, [principal.slice(2)]);
+          v = vaultOf(vid) || v;
+          if (v.pending && v.pending.length) {
+            toast(unlocked() ? "Ключ участникам команд выдайте кнопкой «Выдать» в сейфе" : "Ключ выдадите, когда откроете сейфы");
           }
           data = await api("/" + vid + "/access");
         }
@@ -1409,10 +1432,11 @@
       }
       html += '<div class="kb-banner">' + IC.clock + "<span>" + (v.broken
         ? "Ключ этого сейфа выдан вашим старым ключам. Новый выдадут коллеги, как только откроют сейфы, — мы им напомним."
-        : "Вас добавили в этот сейф. Доступ появится, как только кто-то из участников откроет сейфы.") + "</span></div></div>";
+        : "Вас добавили в этот сейф. Доступ появится, когда владелец сейфа выдаст вам ключ.") + "</span></div></div>";
       return html;
     }
     if (items === "loading" || !items) return html + '<p class="pf-hint">Расшифровываю…</p></div>';
+    html += pendingHtml(v);
     html += departuresHtml(v, items);
     html += '<p class="kb-label">В сейфе · ' + items.length + "</p>";
     if (!items.length) {
@@ -1458,6 +1482,20 @@
   }
 
   // После ухода участника: что он мог видеть и ещё не сменили.
+  // Ждут ключ: добавлены в сейф (часто через команду), ключа ещё нет. Выдаёт только владелец.
+  function pendingHtml(v) {
+    var list = v.pending || [];
+    if (!list.length || v.role !== "owner" || !st.vk[v.id]) return "";
+    return '<div class="vlt-deps vlt-reqs vlt-pending">' +
+      '<p class="vlt-pending-head"><b>Ждут ключ</b> — у них есть доступ к сейфу (через команду или отдел), но ключ ещё не выдан. Выдавайте тем, кого знаете.</p>' +
+      list.map(function (p) {
+        return '<div class="vlt-req"><span class="pf-avatar" aria-hidden="true">' + esc(initials(p.name)) + '</span><span class="vlt-req-text"><b>' + esc(p.name || "Участник") + "</b></span>" +
+          '<span class="vlt-req-acts">' + btn("Выдать", 'data-v="grant" data-u="' + esc(p.user_id) + '"' + busyAttr(), "") + "</span></div>";
+      }).join("") +
+      (list.length > 1 ? '<div class="vlt-actions">' + btn("Выдать всем", 'data-v="grant-all"' + busyAttr(), "kb-btn--ghost") + "</div>" : "") +
+      "</div>";
+  }
+
   function departuresHtml(v, items) {
     var deps = v.departures || [];
     if (!deps.length || !canEdit(v)) return "";
@@ -1589,7 +1627,7 @@
       var key = f[0], kind = f[3] || "";
       var val = d.data[key] || "";
       if (kind.indexOf("text") === 0) {
-        html += '<label class="vlt-input"><span class="vlt-label">' + esc(f[1]) + '</span><textarea class="pf-input" name="' + key + '" rows="' + (kind === "text-secret" ? 8 : 3) + '">' + esc(val) + "</textarea></label>";
+        html += '<label class="vlt-input"><span class="vlt-label">' + esc(f[1]) + '</span><textarea class="pf-input" name="' + key + '" rows="' + (d.data.type === "note" ? 8 : 3) + '">' + esc(val) + "</textarea></label>";
       } else if (kind === "secret") {
         html += '<label class="vlt-input"><span class="vlt-label">' + esc(f[1]) + '</span><span class="vlt-pw"><input class="pf-input vlt-mono" name="' + key + '" value="' + esc(val) + '" spellcheck="false" autocomplete="new-password" />' +
           (key === "password" && d.data.type !== "api" ? '<button type="button" class="kb-btn" data-v="gen">' + IC.dice + "<span>Сгенерировать</span></button>" : "") + "</span></label>";
@@ -1648,6 +1686,8 @@
       case "unlock": unlockPasskey(); break;
       case "device": st.view = "device"; paint(); break;
       case "link-start": linkStart(); break;
+      case "grant": grantKey(b.getAttribute("data-u")); break;
+      case "grant-all": grantKey(null); break;
       case "link-cancel": linkCancel(); break;
       case "link-ok": linkDecide(Number(b.getAttribute("data-id")), true); break;
       case "link-no": linkDecide(Number(b.getAttribute("data-id")), false); break;

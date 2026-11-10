@@ -149,3 +149,8 @@
 .vlt-links .pf-hint { margin: 2px 0 10px 28px; }
 .vlt-links .vlt-req-acts { margin-left: 28px; }
 .vlt-link-big { font-size: 2rem; letter-spacing: 0.12em; text-align: center; user-select: none; }
+/* Ждут ключ — выдаёт владелец сейфа */
+.vlt-pending { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 6%, var(--surface)); }
+.vlt-pending-head { margin: 0 0 6px; font-size: 0.8125rem; line-height: 1.45; color: var(--text-secondary); }
+.vlt-pending-head b { color: var(--text); }
+.vlt-pending .vlt-actions { margin: 6px 0 8px; }
