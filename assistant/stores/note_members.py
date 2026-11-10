@@ -347,27 +347,50 @@ def is_member(owner_user_id: int | str, note_id: int, user_id: int | str) -> boo
     uid = _uid(user_id)
     if owner == uid:
         return True
+    ids = _member_keys(uid)
+    marks = ",".join("?" * len(ids))
     with _LOCK:
         cur = _conn().execute(
-            """
+            f"""
             SELECT 1 FROM note_members
-            WHERE owner_user_id = ? AND note_id = ? AND member_user_id = ?
+            WHERE owner_user_id = ? AND note_id = ? AND member_user_id IN ({marks})
             LIMIT 1
             """,
-            (owner, int(note_id), uid),
+            (owner, int(note_id), *ids),
         )
         return cur.fetchone() is not None
 
 
+def _member_keys(uid: str) -> list[str]:
+    """Под какими id в note_members может лежать доступ человека.
+
+    Аккаунт по почте (синтетический id) с привязанным Telegram: доступ могли выдать на сам
+    Telegram id — по контакту владельца или до привязки. Такие строки тоже его.
+    """
+    keys = [uid]
+    try:
+        from assistant.stores import accounts
+
+        if accounts.is_synthetic(uid):
+            acc = accounts.get(uid)
+            tg = (acc or {}).get("tg_user_id")
+            if tg and str(int(tg)) != uid:
+                keys.append(str(int(tg)))
+    except Exception as e:
+        print(f"[note_members] account keys failed uid={uid} err={e!r}")
+    return keys
+
+
 def list_note_ids_for_member(user_id: int | str) -> list[tuple[str, int]]:
-    uid = _uid(user_id)
+    ids = _member_keys(_uid(user_id))
+    marks = ",".join("?" * len(ids))
     with _LOCK:
         cur = _conn().execute(
-            """
-            SELECT owner_user_id, note_id FROM note_members
-            WHERE member_user_id = ?
+            f"""
+            SELECT DISTINCT owner_user_id, note_id FROM note_members
+            WHERE member_user_id IN ({marks})
             """,
-            (uid,),
+            tuple(ids),
         )
         return [(str(r["owner_user_id"]), int(r["note_id"])) for r in cur.fetchall()]
 
@@ -415,13 +438,15 @@ def remove_member(
     mid = _uid(member_user_id)
     if owner == mid:
         return False
+    ids = _member_keys(mid)
+    marks = ",".join("?" * len(ids))
     with _LOCK:
         cur = _conn().execute(
-            """
+            f"""
             DELETE FROM note_members
-            WHERE owner_user_id = ? AND note_id = ? AND member_user_id = ?
+            WHERE owner_user_id = ? AND note_id = ? AND member_user_id IN ({marks})
             """,
-            (owner, int(note_id), mid),
+            (owner, int(note_id), *ids),
         )
         _conn().commit()
         return cur.rowcount > 0
@@ -563,6 +588,10 @@ def resolve_contact_telegram_id(
             direct = orgs_store.user_by_member_nick(uname) or 0
         except Exception as e:
             print(f"[note_members] org nick lookup failed username={uname} err={e!r}")
+    if direct > 0:
+        # Telegram id из контакта, из запроса или из профиля → аккаунт Орбиты: у вошедшего по почте
+        # и привязавшего Telegram документы лежат под синтетическим id, а не под Telegram id.
+        direct = _account_for_tg(direct)
     if direct <= 0:
         who = f"@{uname}" if uname else "контакта"
         raise ValueError(
@@ -578,6 +607,67 @@ def resolve_contact_telegram_id(
     elif uname:
         upsert_profile(direct, username=uname)
     return direct, contact or {}
+
+
+def email_twin(member_id: int | str, username: str | None = None) -> int | None:
+    """Аккаунт по почте того же человека, к которому его Telegram не привязан.
+
+    Человек когда-то писал боту (аккаунт = Telegram id), а теперь входит по почте — это два
+    аккаунта. Владелец добавляет его из контактов, где записан Telegram, и доступ уходит не туда,
+    где человек работает. Ищем почтовый аккаунт по тому же @нику: ник из приглашения в
+    организацию или профиль, который владельцы заводили, добавляя его по нику.
+    Только аккаунты по почте без Telegram — привязанный Telegram уже переводится в аккаунт сам.
+    """
+    try:
+        mid = int(_uid(member_id))
+    except (TypeError, ValueError):
+        return None
+    try:
+        from assistant.stores import accounts
+
+        if accounts.is_synthetic(mid) or accounts.get_by_tg(mid) or accounts.get(mid):
+            return None
+    except Exception as e:
+        print(f"[note_members] twin account check failed uid={mid} err={e!r}")
+        return None
+    uname = normalize_telegram_username(username or "") or normalize_telegram_username(
+        str((get_profile(mid) or {}).get("username") or "")
+    )
+    if not uname:
+        return None
+    cands: list[int] = []
+    try:
+        from assistant.stores import orgs_store
+
+        found = orgs_store.user_by_member_nick(uname)
+        if found:
+            cands.append(int(found))
+    except Exception as e:
+        print(f"[note_members] twin org nick lookup failed username={uname} err={e!r}")
+    try:
+        from assistant.stores import telegram_registry
+
+        found = telegram_registry.lookup_user_id(uname)
+        if found:
+            cands.append(int(found))
+    except Exception:
+        pass
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT user_id FROM user_profiles WHERE lower(username) = ?", (uname,)
+        ).fetchall()
+    for r in rows:
+        try:
+            cands.append(int(r["user_id"]))
+        except (TypeError, ValueError):
+            continue
+    for cand in cands:
+        if cand == mid or not accounts.is_synthetic(cand):
+            continue
+        acc = accounts.get(cand)
+        if acc and not acc.get("tg_user_id"):
+            return cand
+    return None
 
 
 def _account_by_email(email: str) -> int | None:

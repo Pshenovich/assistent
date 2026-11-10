@@ -12352,6 +12352,10 @@ async def miniapp_chat_members_add(
             raise HTTPException(status_code=400, detail="Это владелец чата")
         was_member = chat_threads_store.is_member(owner, thread_id, member_id)
         member = chat_threads_store.add_member(owner, thread_id, member_id)
+        # Тот же человек входит по почте отдельным аккаунтом (Telegram не привязан) — и его туда.
+        twin = note_members.email_twin(member_id, body.telegram_username or _contact.get("telegram_username"))
+        if twin and int(twin) != int(owner):
+            chat_threads_store.add_member(owner, thread_id, twin)
         fresh = chat_threads_store.get_accessible_thread(uid, thread_id)
         return member, fresh or thread, was_member
 
@@ -15321,6 +15325,10 @@ async def miniapp_note_members_add(
         if int(member_id) == int(owner):
             raise HTTPException(status_code=400, detail="Это владелец документа")
         member = note_members.add_member(owner, note_id, member_id)
+        # Тот же человек входит по почте отдельным аккаунтом (Telegram не привязан) — доступ и туда.
+        twin = note_members.email_twin(member_id, body.telegram_username or _contact.get("telegram_username"))
+        if twin and int(twin) != int(owner):
+            note_members.add_member(owner, note_id, twin)
         fresh = notes_store.get_accessible_note(uid, note_id)
         return member, fresh or note
 

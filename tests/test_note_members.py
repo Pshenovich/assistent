@@ -181,6 +181,33 @@ class NoteMembersTests(unittest.TestCase):
         uid, _ = note_members.resolve_contact_telegram_id(owner_user_id=1, telegram_username="linked_user")
         self.assertEqual(uid, int(acc["user_id"]))
 
+    def test_contact_tg_id_maps_to_email_account(self) -> None:
+        # Вошёл по почте, привязал Telegram; владелец добавляет его из контактов (там Telegram id).
+        from assistant.stores import accounts
+
+        os.environ["TELEGRAM_REGISTRY_PATH"] = os.path.join(self._tmpdir.name, "reg4.json")
+        acc = accounts.create_email_account("art@obuchat.me", tg_user_id=4242)
+        uid, _ = note_members.resolve_contact_telegram_id(owner_user_id=1, telegram_user_id=4242)
+        self.assertEqual(uid, int(acc["user_id"]))
+
+    def test_member_by_linked_tg_id_sees_note(self) -> None:
+        # Доступ уже выдан на Telegram id, а человек входит аккаунтом по почте с этим Telegram.
+        from assistant.stores import accounts
+
+        acc = accounts.create_email_account("art2@obuchat.me", tg_user_id=4343)
+        uid = int(acc["user_id"])
+        note = notes_store.create_note(1, "Общая", "текст")
+        note_members.add_member(1, note["id"], 4343)
+        self.assertEqual([n["id"] for n in notes_store.list_notes(uid)], [note["id"]])
+        self.assertIsNotNone(notes_store.get_accessible_note(uid, note["id"]))
+        self.assertTrue(note_members.remove_member(1, note["id"], uid))
+        self.assertEqual(notes_store.list_notes(uid), [])
+        # Чужой аккаунт по почте без этого Telegram документ не видит.
+        other = accounts.create_email_account("other@obuchat.me")
+        note2 = notes_store.create_note(1, "Ещё", "x")
+        note_members.add_member(1, note2["id"], 4343)
+        self.assertEqual(notes_store.list_notes(int(other["user_id"])), [])
+
 
 if __name__ == "__main__":
     unittest.main()
