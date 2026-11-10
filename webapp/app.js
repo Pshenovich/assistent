@@ -36567,11 +36567,10 @@
       }
       return;
     }
+    // Одна строка на связку: название, чипы, «+» и «⋯» — переносятся, если не влезают.
     bundles.forEach(function (bd) {
       var box = document.createElement("div");
       box.className = "linked-box" + (bd.title ? " linked-box--named" : "");
-      var head = document.createElement("div");
-      head.className = "linked-head";
       var name = document.createElement(bd.title ? "button" : "span");
       name.className = "linked-name";
       if (bd.title) {
@@ -36586,37 +36585,11 @@
           openBundlePage(bd.id);
         });
       } else {
-        name.textContent = "Связанное";
+        name.innerHTML = LINK_ICONS.link;
+        name.title = "Связанное";
+        name.setAttribute("aria-label", "Связанное");
       }
-      head.appendChild(name);
-      var sp = document.createElement("span");
-      sp.className = "linked-sp";
-      head.appendChild(sp);
-      var add = document.createElement("button");
-      add.type = "button";
-      add.className = "linked-add";
-      add.textContent = "+ Связать";
-      add.addEventListener("click", function () {
-        openLinkPicker(
-          bd.title
-            ? { bundleId: bd.id, title: "Добавить в «" + bd.title + "»", exclude: bd.items.map(linkKey) }
-            : { source: item, exclude: bd.items.map(linkKey) }
-        );
-      });
-      head.appendChild(add);
-      var more = document.createElement("button");
-      more.type = "button";
-      more.className = "linked-more";
-      more.setAttribute("aria-label", "Ещё");
-      more.textContent = "⋯";
-      more.addEventListener("click", function (e) {
-        e.stopPropagation();
-        openLinkedBundleMenu(bd, item, more, opts);
-      });
-      head.appendChild(more);
-      box.appendChild(head);
-      var chips = document.createElement("div");
-      chips.className = "linked-chips";
+      box.appendChild(name);
       bd.items.forEach(function (it) {
         if (linkKey(it) === self) return;
         var c = document.createElement("button");
@@ -36630,19 +36603,32 @@
         c.addEventListener("click", function () {
           openLinkedItem(it, opts.closeCard);
         });
-        chips.appendChild(c);
+        box.appendChild(c);
       });
-      box.appendChild(chips);
-      if (!bd.title) {
-        var nm = document.createElement("button");
-        nm.type = "button";
-        nm.className = "linked-name-it";
-        nm.textContent = "Назвать связку";
-        nm.addEventListener("click", function () {
-          renameBundle(bd);
-        });
-        box.appendChild(nm);
-      }
+      var add = document.createElement("button");
+      add.type = "button";
+      add.className = "linked-add";
+      add.textContent = "+";
+      add.title = bd.title ? "Добавить в связку" : "Связать ещё";
+      add.setAttribute("aria-label", add.title);
+      add.addEventListener("click", function () {
+        openLinkPicker(
+          bd.title
+            ? { bundleId: bd.id, title: "Добавить в «" + bd.title + "»", exclude: bd.items.map(linkKey) }
+            : { source: item, exclude: bd.items.map(linkKey) }
+        );
+      });
+      box.appendChild(add);
+      var more = document.createElement("button");
+      more.type = "button";
+      more.className = "linked-more";
+      more.setAttribute("aria-label", "Ещё");
+      more.textContent = "⋯";
+      more.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openLinkedBundleMenu(bd, item, more, opts);
+      });
+      box.appendChild(more);
       host.appendChild(box);
     });
   }
