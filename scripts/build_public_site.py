@@ -110,7 +110,7 @@ def main() -> int:
     (out / "fonts").mkdir(exist_ok=True)
     shutil.copyfile(ROOT / "docs" / "fonts" / "unbounded-latin-wght.woff2", out / "fonts" / "unbounded-latin-wght.woff2")
     shutil.copyfile(ROOT / "docs" / "fonts" / "UNBOUNDED-LICENSE.txt", out / "fonts" / "UNBOUNDED-LICENSE.txt")
-    (out / "CNAME").write_text(DOMAIN + "\n", encoding="utf-8")
+    (out / "CNAME").write_text(DOMAIN, encoding="utf-8")  # как пишет сам GitHub — без перевода строки
     (out / ".nojekyll").write_text("", encoding="utf-8")
     print("\n".join(sorted(str(p.relative_to(out)) for p in out.rglob("*") if p.is_file() and ".git" not in p.parts)))
     return 0
