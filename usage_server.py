@@ -8861,6 +8861,14 @@ class _VaultSessionIn(BaseModel):
     code: str
 
 
+@miniapp_router.get("/vault-link")
+async def miniapp_vault_link(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Основной сайт: показывать ли строку «Сейфы» в Профиле (сами сейфы — на своём адресе)."""
+    from assistant.lib import vault_host
+
+    return {"ok": True, "enabled": _vaults_enabled(), "host": vault_host.vault_host()}
+
+
 @miniapp_router.post("/vault-handoff")
 async def miniapp_vault_handoff(request: Request, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """Основной сайт → адрес сейфов: одноразовый код на минуту (во фрагменте ссылки)."""

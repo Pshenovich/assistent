@@ -183,15 +183,15 @@
   function renderSide() {
     var side = document.getElementById("vh-side");
     if (!side || !V()) return;
-    var h = '<div class="vh-brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' +
-      "<span>Сейфы Орбиты</span></div>";
+    var h = '<a class="vh-back" href="' + esc(MAIN + "/webapp/?open=profile") + '"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg><span>Орбита</span></a>' +
+      '<div class="vh-brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>' +
+      "<span>Сейфы</span></div>";
     orgs.forEach(function (o) {
       h += '<div class="vh-org"><span>' + esc(o.org.name) + '</span><button type="button" class="kb-n-btn" data-v="new-vault" data-org="' + o.org.id +
         '" aria-label="Новый сейф" title="Новый сейф"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></div>' +
         V().treeHtml(o.org.id, current);
     });
     h += '<div class="vh-foot">' + V().footHtml(current) +
-      '<button type="button" class="kb-foot-row" data-vh="main"><span>Вернуться в Орбиту</span></button>' +
       '<button type="button" class="kb-foot-row" data-vh="logout"><span>Выйти из сейфов</span></button></div>';
     setHTML(side, h);
   }

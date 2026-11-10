@@ -35,3 +35,9 @@
   .vh-side { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .vh-body #kb-desk { padding: 16px 16px 40px; }
 }
+/* «← Орбита»: назад в Профиль основного приложения (та же вкладка) */
+.vh-back { display: inline-flex; align-items: center; gap: 4px; align-self: flex-start; margin: 0 0 10px; padding: 4px 8px 4px 4px; border-radius: 8px;
+  color: var(--accent); font-size: 0.875rem; text-decoration: none; }
+.vh-back:hover { background: var(--overlay-2); }
+.vh-back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.vh-side .vlt-tree { margin-top: 0; padding-top: 2px; border-top: 0; }
