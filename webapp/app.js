@@ -25037,7 +25037,10 @@
       it.who_company = (c && c.company) || "";
       it.who_saved = !!c;
       var ctl = team.filter(function (p) { return String(p.user_id) === String(it.controller); })[0];
-      it.controller_name = ctl ? ctl.name : String(it.controller) === String(me.user_id) ? me.name : "";
+      var full = ctl ? ctl.name : String(it.controller) === String(me.user_id) ? me.name : "";
+      // В узкой ячейке — коротко: «Владимир С.»
+      var w = String(full || "").trim().split(/\s+/);
+      it.controller_name = w.length > 1 ? w[0] + " " + w[1].charAt(0) + "." : w[0] || "";
     });
   }
 
