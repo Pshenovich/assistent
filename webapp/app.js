@@ -41053,20 +41053,8 @@
       quoteBuf = [];
       var targetId = comment ? findDiscussMessageByQuote(q, comment.id) : 0;
       var who = targetId ? discussReplyWhoLabel({ parent_id: targetId }) || "Цитата" : "Фрагмент";
-      appendDiscussReplyQuote(bubble, q, who, targetId);
-      if (targetId || !comment) return;
-      // Не из ленты — значит из заметки: нажатие показывает фрагмент в заметке.
-      var noteReply = bubble.lastElementChild;
-      if (!noteReply || !noteReply.classList.contains("note-discuss-reply")) return;
-      noteReply.classList.add("is-nav");
-      noteReply.setAttribute("role", "button");
-      noteReply.setAttribute("tabindex", "0");
-      noteReply.title = "Показать в документе";
-      noteReply.addEventListener("click", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        jumpToNoteQuote(comment, q);
-      });
+      // С comment клик ведёт к сообщению-источнику или (не из ленты) к фрагменту документа.
+      appendDiscussReplyQuote(bubble, q, who, targetId, comment || null);
     }
     function flushText() {
       var t = textBuf.join("\n").trim();
@@ -50476,19 +50464,54 @@
     return text.replace(re, "").replace(/^\s+/, "");
   }
 
-  function findDiscussReplyTargetId(comment) {
-    var pid = Number(comment && comment.parent_id) || 0;
-    if (pid > 0) return pid;
-    return findDiscussMessageByQuote(splitDiscussQuote((comment && comment.quote) || "").text, comment && comment.id);
+  // Цитата выделена в документе (у неё есть контекст вокруг), а не взята из сообщения ленты.
+  function isDocAnchoredQuote(comment, quoteText) {
+    if (!comment) return false;
+    var pre = String(comment.prefix || "");
+    var suf = String(comment.suffix || "");
+    if (/^__/.test(pre)) return false; // __gpt__ / __agent__:… — служебная метка, не контекст
+    if (!pre.trim() && !suf.trim()) return false;
+    var own = String(splitDiscussQuote(comment.quote || "").text || "").trim();
+    return !quoteText || String(quoteText).trim() === own;
   }
 
-  // Сообщение выше по ленте, где есть этот текст (откуда взята цитата); 0 — не нашли.
-  function findDiscussMessageByQuote(quoteText, beforeId) {
-    var quote = String(quoteText || "")
+  function findDiscussReplyTargetId(comment) {
+    var q = splitDiscussQuote((comment && comment.quote) || "").text;
+    // Комментарий к фрагменту документа ведёт в документ, даже если тот же текст есть в ответе Лео.
+    if (isDocAnchoredQuote(comment, q)) return 0;
+    var pid = Number(comment && comment.parent_id) || 0;
+    // parent_id — это ещё и «ветка» (тема Лео), а не всегда сообщение, откуда взята цитата.
+    if (pid > 0 && discussRowHasQuote(discussionCommentById(pid), q)) return pid;
+    var byText = findDiscussMessageByQuote(q, comment && comment.id);
+    if (byText) return byText;
+    // Старые ответы без текста в родителе: родитель в этом чате — тоже годится.
+    var parent = pid > 0 ? discussionCommentById(pid) : null;
+    return parent && inCurrentDiscussChat(parent) ? pid : 0;
+  }
+
+  function normDiscussText(s) {
+    return String(s || "")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();
-    if (!quote) return 0;
+  }
+
+  function discussRowHasQuote(row, quoteText) {
+    var quote = normDiscussText(quoteText);
+    if (!row || !quote || !inCurrentDiscussChat(row)) return false;
+    var body = normDiscussText(
+      discussDisplayBody(String(row.body || ""), String(row.quote || "").trim())
+    );
+    if (!body) return false;
+    if (body.indexOf(quote) >= 0) return true;
+    // Цитата чуть шире сообщения (пробелы, разметка) — только для не коротких сообщений,
+    // иначе «да»/«ок» находились внутри любой цитаты.
+    return body.length >= 24 && quote.indexOf(body) >= 0;
+  }
+
+  // Сообщение выше по ленте текущего чата, где есть этот текст (откуда взята цитата); 0 — не нашли.
+  function findDiscussMessageByQuote(quoteText, beforeId) {
+    if (!normDiscussText(quoteText)) return 0;
     var myId = Number(beforeId) || 0;
     var panel = document.getElementById("note-editor-comments");
     var rows = discussionComments((panel && panel._allComments) || []);
@@ -50497,14 +50520,21 @@
       var row = rows[i];
       var id = Number(row && row.id) || 0;
       if (!id || id === myId || (myId > 0 && id > myId)) continue;
-      var body = discussDisplayBody(String((row && row.body) || ""), String((row && row.quote) || "").trim())
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
-      if (!body) continue;
-      if (body.indexOf(quote) >= 0 || quote.indexOf(body) >= 0) best = id;
+      if (discussRowHasQuote(row, quoteText)) best = id;
     }
     return best;
+  }
+
+  // Нажатие на цитату в сообщении: к сообщению, откуда она, или к фрагменту документа;
+  // если не нашли ни там, ни там — говорим об этом, а не молчим.
+  function openDiscussQuote(comment, quote, replyToId) {
+    var q = String(quote || "").trim();
+    if (!q) return;
+    var docFirst = !replyToId || isDocAnchoredQuote(comment, q);
+    if (docFirst && jumpToNoteQuote(comment, q, { quiet: true })) return;
+    if (replyToId && jumpToDiscussReplyTarget(replyToId, q)) return;
+    if (!docFirst && jumpToNoteQuote(comment, q, { quiet: true })) return;
+    showNoteToast("Этого фрагмента в документе уже нет");
   }
 
   // Мигнуть конкретным фрагментом дважды (CSS Highlight API; без него — подсветка блока).
@@ -50533,7 +50563,9 @@
     var msg = document.querySelector(
       '#note-discussion-messages [data-comment-id="' + String(id) + '"]'
     );
-    var bubble = msg && msg.querySelector(".note-discuss-bubble");
+    // Сообщения нет в ленте (другой чат, удалено) — пусть вызывающий ищет в документе.
+    if (!msg) return false;
+    var bubble = msg.querySelector(".note-discuss-bubble");
     var q = String(quote || "").trim();
     if (!bubble || !q) return true;
     var api = window.NoteComments;
@@ -50560,27 +50592,62 @@
   }
 
   // Реплай на фрагмент заметки: прокрутить заметку к нему и мигнуть выделением.
-  function jumpToNoteQuote(comment, quote) {
-    var api = window.NoteComments;
-    var root = noteEditorCommentRoot();
+  // Лист у комментария не хранится (страница по ссылке склеивает листы в одну ленту), поэтому если
+  // на открытых листах цитаты нет — ищем её в тексте остальных листов и переключаемся на нужный.
+  function jumpToNoteQuote(comment, quote, opts) {
+    opts = opts || {};
     var q = String(quote || "").trim();
-    if (!api || !api.rangeForAnchor || !root || !q) return false;
-    var range = null;
-    try {
-      range = api.rangeForAnchor(root, q, (comment && comment.prefix) || "", (comment && comment.suffix) || "");
-    } catch (_) {}
-    if (!range) {
-      showNoteToast("Этого фрагмента в документе уже нет");
+    if (!q) return false;
+    var anchored = isDocAnchoredQuote(comment, q);
+    var frag = {
+      note: noteSheetsNoteId(),
+      sheet: "",
+      at: "",
+      el: "",
+      q: q,
+      qp: anchored ? String(comment.prefix || "") : "",
+      qs: anchored ? String(comment.suffix || "") : "",
+    };
+    var onOpen = !!findNoteFragment(frag);
+    var otherSheet = onOpen || !frag.note ? null : noteSheetIdWithQuote(frag);
+    if (!onOpen && otherSheet == null) {
+      if (!opts.quiet) showNoteToast("Этого фрагмента в документе уже нет");
       return false;
     }
     if (isMobileNoteLayout() && isNoteDiscussionOpen()) closeNoteDiscussion();
-    var node = range.startContainer;
-    var el = node && (node.nodeType === 1 ? node : node.parentElement);
-    if (el && el.scrollIntoView) el.scrollIntoView({ block: "center", behavior: "smooth" });
-    setTimeout(function () {
-      flashTextRange(range, el);
-    }, 350);
+    if (onOpen) {
+      jumpToNoteFragment(frag);
+    } else {
+      frag.sheet = otherSheet;
+      openNoteFragmentLink(frag);
+    }
     return true;
+  }
+
+  // Неоткрытый текстовый лист этой заметки, в тексте которого есть цитата; null — нет такого.
+  function noteSheetIdWithQuote(frag) {
+    var api = window.NoteComments;
+    if (!api || !api.rangeForAnchor) return null;
+    var open = [String(noteSheetState.leftId || NOTE_SHEET_MAIN)];
+    if (noteSheetState.rightMode === "sheet" && noteSheetState.rightId) open.push(String(noteSheetState.rightId));
+    var sheets = noteSheetState.sheets || [];
+    for (var i = 0; i < sheets.length; i++) {
+      var sh = sheets[i];
+      if (!sh || isBoardSheet(sh) || isWebSheet(sh)) continue;
+      var kind = String(sh.kind || "doc").toLowerCase();
+      if (kind && kind !== "doc") continue;
+      var id = sh.is_primary ? NOTE_SHEET_MAIN : String(sh.id);
+      if (open.indexOf(id) >= 0 || open.indexOf(String(sh.id)) >= 0) continue;
+      var html = String(sh.body || sh.description || "");
+      if (!html) continue;
+      // <template> — разметка инертна: картинки не грузятся, обработчики не выполняются.
+      var tpl = document.createElement("template");
+      tpl.innerHTML = html;
+      try {
+        if (api.rangeForAnchor(tpl.content, frag.q, frag.qp, frag.qs)) return id;
+      } catch (_) {}
+    }
+    return null;
   }
 
   // ---- Ссылка на фрагмент заметки: …/webapp/?note=N&sheet=S&at=<data-leo-item>&q=<цитата>&qp=&qs= ----
@@ -50837,17 +50904,19 @@
     openExternal(href);
   }
 
-  function appendDiscussReplyQuote(host, quote, who, replyToId) {
+  // comment — сохранённое сообщение: тогда цитата кликабельна всегда (к сообщению или в документ).
+  function appendDiscussReplyQuote(host, quote, who, replyToId, comment) {
     var q = String(quote || "").trim();
     if (!host || !q) return;
+    var nav = !!(replyToId || comment);
     var reply = document.createElement("div");
-    reply.className = "note-discuss-reply" + (replyToId ? " is-nav" : "");
+    reply.className = "note-discuss-reply" + (nav ? " is-nav" : "");
     reply.setAttribute("aria-label", "Ответ на цитату");
-    if (replyToId) {
+    if (nav) {
       reply.setAttribute("role", "button");
       reply.setAttribute("tabindex", "0");
-      reply.setAttribute("data-reply-to", String(replyToId));
-      reply.title = "Перейти к сообщению";
+      if (replyToId) reply.setAttribute("data-reply-to", String(replyToId));
+      reply.title = replyToId ? "Перейти к сообщению" : "Показать в документе";
     }
     var bar = document.createElement("span");
     bar.className = "note-discuss-reply-bar";
@@ -50864,11 +50933,12 @@
     copy.appendChild(quoteEl);
     reply.appendChild(bar);
     reply.appendChild(copy);
-    if (replyToId) {
+    if (nav) {
       function go(e) {
         e.preventDefault();
         e.stopPropagation();
-        jumpToDiscussReplyTarget(replyToId, q);
+        if (comment) openDiscussQuote(comment, q, replyToId);
+        else jumpToDiscussReplyTarget(replyToId, q);
       }
       reply.addEventListener("click", go);
       reply.addEventListener("keydown", function (e) {
@@ -50933,27 +51003,14 @@
       appendDiscussCanvasChips(bubble, quoteSplit.canvas);
       if (quoteText) {
         var replyTarget = findDiscussReplyTargetId(c);
+        // Нет сообщения-источника — цитата из документа: клик ведёт к фрагменту в нём.
         appendDiscussReplyQuote(
           bubble,
           quoteText,
-          discussReplyWhoLabel(c),
-          replyTarget
+          replyTarget ? discussReplyWhoLabel({ parent_id: replyTarget }) : "Фрагмент",
+          replyTarget,
+          c
         );
-        // Цитата из заметки (не из сообщения): клик ведёт к фрагменту в заметке.
-        if (!replyTarget) {
-          var noteReply = bubble.lastElementChild;
-          if (noteReply && noteReply.classList.contains("note-discuss-reply")) {
-            noteReply.classList.add("is-nav");
-            noteReply.setAttribute("role", "button");
-            noteReply.setAttribute("tabindex", "0");
-            noteReply.title = "Показать в документе";
-            noteReply.addEventListener("click", function (e) {
-              e.preventDefault();
-              e.stopPropagation();
-              jumpToNoteQuote(c, quoteText);
-            });
-          }
-        }
       }
     }
     if (assistant && bodyText.trim() && !hideClipBody) {
