@@ -201,8 +201,8 @@
     "/webapp/board-blocks.js?v=20261103-boardtpl",
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261105-design43",
-    "/webapp/board-figma.js?v=20261111-valign3",
-    "/webapp/board.js?v=20261111-valign3",
+    "/webapp/board-figma.js?v=20261111-comps1",
+    "/webapp/board.js?v=20261111-comps1",
   ];
   let boardScriptsPromise = null;
 
@@ -24425,9 +24425,10 @@
       var chev = tinboxEl("span", "focus-card-foot-chev");
       chev.innerHTML = DISCUSS_ICONS.right;
       f.appendChild(chev);
+      // Футер «от: …» — не стопка, а «Задачи», прокрученные к группе «Не разобрано».
       f.addEventListener("click", function (e) {
         e.preventDefault();
-        openTaskInbox();
+        openMyTasksInbox();
       });
       card.appendChild(f);
     } else {
@@ -30946,6 +30947,33 @@
   var myTasksDoneProbed = false; // пробуем загрузить выполненные один раз, чтобы ошибка не зациклила загрузку
   var myTasksInbox = 0;
   var myTasksInboxItems = []; // поручения мне, ещё не разобранные: в списке с пометкой «Не разобрано»
+  var myTasksScrollInbox = false; // после загрузки прокрутить «Задачи» к «Не разобрано» (из Фокуса)
+
+  // Фокус «Входящие задачи» → «от: …»: «Задачи», сразу у неразобранных.
+  function openMyTasksInbox() {
+    if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+    if (currentTab !== "actual") setTab("actual");
+    myTasksScrollInbox = true;
+    if (isMyTasksOpen()) {
+      if (myTasksTab !== "open") setMyTasksTab("open");
+      loadMyTasksList();
+    } else setMyTasksScreen(true);
+  }
+
+  function scrollMyTasksToInbox(force) {
+    if (!myTasksScrollInbox) return;
+    var target = document.querySelector("#my-tasks-list .mt-inbox-sec, #my-tasks-list .pt-kcol[data-col=\"inbox\"]");
+    if (!target) {
+      if (force) myTasksScrollInbox = false; // загрузили, а неразобранного уже нет — просто «Задачи»
+      return;
+    }
+    myTasksScrollInbox = false;
+    var board = target.closest(".pt-kanban");
+    if (board) board.scrollLeft = 0;
+    window.requestAnimationFrame(function () {
+      target.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  }
   var myTasksTab = "open"; // open | done («Выполненные»)
   var myTasksFrom = ""; // фильтр: "" — все, "self" — свои, иначе id постановщика
   var myTasksSelectedId = ""; // открытая справа задача (десктоп)
@@ -31011,6 +31039,7 @@
       showNoteToast((err && err.message) || "Не удалось загрузить задачи");
     }
     if (isMyTasksOpen()) renderMyTasksScreen();
+    scrollMyTasksToInbox(true);
     if (myTasksTab === "done" || (myKanbanOn() && !myTasksDoneLoaded)) loadMyTasksDone();
   }
 
@@ -31172,7 +31201,9 @@
     }
     // Неразобранные поручения — первой группой: видно сразу, разбирать можно прямо отсюда.
     if (inboxItems.length) {
-      listEl.appendChild(postedSection("Не разобрано", inboxItems.length, true));
+      var inboxSec = postedSection("Не разобрано", inboxItems.length, true);
+      inboxSec.classList.add("mt-inbox-sec");
+      listEl.appendChild(inboxSec);
       var inboxBox = document.createElement("div");
       inboxBox.className = "pt-rows";
       inboxItems.forEach(function (t) {
@@ -35473,6 +35504,30 @@
     showNoteToast(EMBED_KIND_RU[k] + " — в конце текста");
   }
 
+  function boardLibraries(sid) {
+    var nid = function () {
+      return noteSheetsNoteId() || "";
+    };
+    return {
+      load: function () {
+        var q = nid() ? "?note_id=" + encodeURIComponent(nid()) + "&sheet_id=" + encodeURIComponent(sid) : "";
+        return apiFetch("/design/libraries" + q, { method: "GET" });
+      },
+      publish: function (orgId) {
+        return apiFetch("/design/libraries", {
+          method: "POST",
+          body: JSON.stringify({ note_id: Number(nid()), sheet_id: String(sid), org_id: Number(orgId) }),
+        });
+      },
+      unpublish: function (libId) {
+        return apiFetch("/design/libraries/" + encodeURIComponent(libId), { method: "DELETE" });
+      },
+      open: function (lib) {
+        if (lib && lib.note_id) openNoteByIdInApp(lib.note_id);
+      },
+    };
+  }
+
   function boardSheetOptions(sheet) {
     var sid = String(sheet.id);
     return {
@@ -35487,6 +35542,8 @@
         sendBoardCursor(sid, x, y);
       },
       onNotify: showNoteToast,
+      // Библиотеки компонентов организации (макет): загрузка, публикация этого макета, переход к библиотеке.
+      libraries: boardLibraries(sid),
       blockActions: boardBlockActions(sid),
       // Панель заметки с «Обсуждением» на доске скрыта — кнопка чата в тулбаре доски.
       onOpenChat: openNoteDiscussionFromToolbar,

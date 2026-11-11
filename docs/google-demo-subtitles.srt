@@ -1,0 +1,63 @@
+1
+00:00:00,000 --> 00:00:18,800
+This is Orbita — an AI assistant for meetings, tasks and notes. Home page: getorbita.me, with links to our Privacy Policy and Terms.
+
+2
+00:00:19,000 --> 00:00:24,800
+The user is signed in to Orbita and opens Profile → Google Calendar to connect their Google account.
+
+3
+00:00:25,000 --> 00:00:28,800
+The user clicks Connect Google Calendar.
+
+4
+00:00:29,000 --> 00:00:36,800
+Google's consent screen. The OAuth client ID is visible in the address bar.
+
+5
+00:00:37,000 --> 00:00:43,800
+Orbita requests two scopes: Google Calendar and Google Tasks. The user grants access.
+
+6
+00:00:44,000 --> 00:00:47,800
+Access granted. The user returns to Orbita.
+
+7
+00:00:48,000 --> 00:01:20,800
+calendar scope: Orbita shows the user's schedule from Google Calendar.
+
+8
+00:01:21,000 --> 00:01:56,800
+calendar scope: at the user's request, Leo creates an event and invites the attendee.
+
+9
+00:01:57,000 --> 00:02:14,800
+The event appears in the user's Google Calendar.
+
+10
+00:02:15,000 --> 00:02:39,800
+calendar scope: rescheduling at the user's request.
+
+11
+00:02:40,000 --> 00:02:59,800
+calendar scope: finding free time across the user's calendars.
+
+12
+00:03:00,000 --> 00:03:45,800
+tasks scope: tasks created in Orbita appear in the user's Google Tasks.
+
+13
+00:03:46,000 --> 00:04:00,800
+Completing the task in Google Tasks marks it done in Orbita.
+
+14
+00:04:01,000 --> 00:04:25,800
+calendar scope: cancelling an event at the user's request.
+
+15
+00:04:26,000 --> 00:04:34,800
+The user can disconnect Google at any time; Orbita deletes the access tokens.
+
+16
+00:04:35,000 --> 00:04:50,000
+Access can also be revoked in the Google Account settings.

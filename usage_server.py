@@ -17590,6 +17590,111 @@ async def miniapp_design_link_revoke(
     return {"ok": ok}
 
 
+# ── Библиотеки компонентов организации ───────────────────────────────────────
+
+def _design_libraries_payload(uid: int, note_id: int, sheet_id: str) -> dict[str, Any]:
+    from assistant.lib import design_library
+    from assistant.stores import design_libraries
+    from assistant.stores import note_sheets as note_sheets_store
+    from assistant.stores import orgs_store
+
+    orgs = orgs_store.orgs_for_user(uid)
+    names = {int(o["id"]): str(o.get("name") or "") for o in orgs}
+    libs: list[dict[str, Any]] = []
+    seen: set[tuple[int, str]] = set()
+    for lib in design_libraries.for_orgs(list(names)):
+        key = (lib["note_id"], lib["sheet_id"])
+        if key in seen or (note_id and lib["note_id"] == note_id and lib["sheet_id"] == str(sheet_id)):
+            continue
+        try:
+            sheet = note_sheets_store.get_extra_sheet(lib["note_id"], int(lib["sheet_id"]))
+        except (TypeError, ValueError):
+            sheet = None
+        if not sheet or str(sheet.get("kind") or "") != "board":
+            continue
+        comps = design_library.components(str(sheet.get("body") or ""))
+        if not comps:
+            continue
+        seen.add(key)
+        libs.append({
+            "id": lib["id"], "name": lib["name"] or "Библиотека", "org_id": lib["org_id"], "org_name": names.get(lib["org_id"], ""),
+            "note_id": lib["note_id"], "sheet_id": lib["sheet_id"], "components": comps,
+        })
+    self_info: dict[str, Any] = {"published": [], "orgs": [{"id": o["id"], "name": o.get("name") or ""} for o in orgs]}
+    if note_id and sheet_id:
+        self_info["published"] = [
+            {"id": x["id"], "org_id": x["org_id"], "org_name": names.get(x["org_id"], ""), "name": x["name"]}
+            for x in design_libraries.for_sheet(note_id, sheet_id)
+            if x["org_id"] in names
+        ]
+    return {"libraries": libs, "self": self_info}
+
+
+@miniapp_router.get("/design/libraries")
+async def miniapp_design_libraries(
+    note_id: int = 0, sheet_id: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Библиотеки компонентов организаций пользователя (с компонентами) и публикации этого макета."""
+    uid = int(principal.telegram_user_id)
+    if note_id and sheet_id:
+        await run_in_threadpool(_load_board_sheet_for_read, uid, note_id, sheet_id)
+    return await run_in_threadpool(_design_libraries_payload, uid, int(note_id or 0), str(sheet_id or ""))
+
+
+class _DesignLibraryBody(BaseModel):
+    note_id: int
+    sheet_id: str
+    org_id: int
+    name: str = Field(default="", max_length=200)
+
+
+@miniapp_router.post("/design/libraries")
+async def miniapp_design_library_publish(
+    body: _DesignLibraryBody, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Опубликовать макет как библиотеку компонентов организации (кто правит документ и состоит в организации)."""
+    from assistant.lib import design_library
+    from assistant.stores import design_libraries
+    from assistant.stores import notes as notes_store
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    sheet = await run_in_threadpool(_load_board_sheet_for_read, uid, body.note_id, body.sheet_id)
+    if not await run_in_threadpool(orgs_store.role_of, body.org_id, uid):
+        raise HTTPException(status_code=400, detail="Вы не состоите в этой организации")
+    if not await run_in_threadpool(design_library.components, str(sheet.get("body") or "")):
+        raise HTTPException(status_code=400, detail="В макете пока нет компонентов: выделите фрейм и нажмите ⌥⌘K")
+    name = body.name.strip()
+    if not name:
+        note = await run_in_threadpool(notes_store.get_note_by_id, body.note_id)
+        name = str((note or {}).get("title") or "").strip() or str(sheet.get("title") or "") or "Библиотека"
+    lib = await run_in_threadpool(design_libraries.publish, uid, body.org_id, body.note_id, body.sheet_id, name)
+    _track(uid, "design.library", op="publish")
+    return {"library": lib, **(await run_in_threadpool(_design_libraries_payload, uid, body.note_id, body.sheet_id))["self"]}
+
+
+@miniapp_router.delete("/design/libraries/{lib_id}")
+async def miniapp_design_library_unpublish(
+    lib_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    """Снять с публикации: опубликовавший, кто правит документ, или админ/владелец организации."""
+    from assistant.stores import design_libraries
+    from assistant.stores import notes as notes_store
+    from assistant.stores import orgs_store
+
+    uid = int(principal.telegram_user_id)
+    lib = await run_in_threadpool(design_libraries.get, lib_id)
+    if not lib:
+        raise HTTPException(status_code=404, detail="Библиотека не найдена")
+    role = await run_in_threadpool(orgs_store.role_of, lib["org_id"], uid)
+    editor = await run_in_threadpool(notes_store.get_accessible_note, uid, lib["note_id"], with_sharing=False)
+    if not (lib["published_by"] == str(uid) or editor or role in ("owner", "admin")):
+        raise HTTPException(status_code=400, detail="Снять с публикации может автор, редактор макета или админ организации")
+    await run_in_threadpool(design_libraries.remove, lib_id)
+    _track(uid, "design.library", op="unpublish")
+    return {"ok": True}
+
+
 class _DesignPreviewBody(BaseModel):
     frame: str
     sig: str = ""

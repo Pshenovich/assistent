@@ -75,6 +75,8 @@ def _str(raw: Any, limit: int = 64) -> str:
     return str(raw if raw is not None else "")[:limit]
 
 
+_LV_RE = re.compile(r"^[0-9a-f]{6,40}$")
+_OVR_RE = re.compile(r"^(style\.)?[A-Za-z][A-Za-z0-9]{0,30}$")
 MAX_WAYPOINTS = 32  # точки излома стрелки
 
 
@@ -399,6 +401,23 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
         el["autoW"] = True  # текст «ширина по содержимому» — без переноса строк
     if raw.get("fixH") is True and etype == "text" and not el.get("autoW"):
         el["fixH"] = True  # текст фиксированной высоты — не подгоняется под содержимое
+    # Компоненты (макет): мастер (comp), экземпляр (inst — id мастера), часть экземпляра (msrc — id части
+    # мастера), свои правки экземпляра (ovr — имена полей: "text", "style.fill", "hidden", "geo").
+    if raw.get("comp") is True and etype == "frame":
+        el["comp"] = True
+    for k in ("inst", "msrc"):
+        if raw.get(k) and isinstance(raw.get(k), str) and raw.get(k) != eid:
+            el[k] = _str(raw.get(k))
+    # Экземпляр компонента из библиотеки организации: inst = "L<id библиотеки>:<id мастера>", lv — версия мастера,
+    # с которой экземпляр синхронизирован в последний раз (по ней видно «есть обновления»).
+    lv = raw.get("lv")
+    if el.get("inst") and isinstance(lv, str) and _LV_RE.match(lv):
+        el["lv"] = lv
+    ovr = raw.get("ovr")
+    if isinstance(ovr, list) and (el.get("msrc") or el.get("inst")):
+        keys = sorted({_str(k, 40) for k in ovr if isinstance(k, str) and _OVR_RE.match(k)})[:200]
+        if keys:
+            el["ovr"] = keys
     for k in ("minW", "maxW", "minH", "maxH"):
         v = _num(raw.get(k), 0, 0, 1e5)
         if v > 0:

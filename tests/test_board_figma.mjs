@@ -142,6 +142,51 @@ assert.deepEqual(net.paths, [{ d: "M0 0L20 10", stroke: "#1a2659", sw: 2, cap: "
   assert.deepEqual([rc.style.radii, rc.style.stroke, rc.style.strokeWidth, rc.style.strokeAlign, rc.style.fillGrad], ["8 8 0 0", "#0000ff", 2, "inside", "linear 0 #ff0000ff@0 #0000ffff@100"]);
   assert.equal(im.text || im.name, "Картинка из Figma"); // маленькая заглушка — без подписи, но узнаётся по имени
 }
+// Figma Design: компоненты. Мастер лежит во внутреннем холсте буфера, на странице — экземпляр со своим текстом
+// и скрытой иконкой; набор вариантов — целиком; связи inst/msrc и свои правки ovr.
+{
+  const G = (l) => ({ sessionID: 2, localID: l });
+  const P = (l, pos) => ({ guid: G(l), position: pos });
+  const T = (x, y) => ({ m00: 1, m01: 0, m02: x, m10: 0, m11: 1, m12: y });
+  const blue = [{ type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 } }];
+  const msg = {
+    pasteEditorType: "DESIGN",
+    nodeChanges: [
+      { guid: G(0), type: "DOCUMENT" },
+      { guid: G(1), type: "CANVAS", parentIndex: P(0, "a"), name: "Page 1" },
+      { guid: G(9), type: "CANVAS", parentIndex: P(0, "b"), name: "Internal Only Canvas", internalOnly: true },
+      { guid: G(30), type: "FRAME", parentIndex: P(9, "a"), name: "Buttons", isStateGroup: true, size: { x: 300, y: 120 }, transform: T(0, 0) },
+      { guid: G(10), type: "SYMBOL", parentIndex: P(30, "a"), name: "Button=Default", size: { x: 120, y: 40 }, transform: T(20, 20), fillPaints: blue },
+      { guid: G(11), type: "TEXT", parentIndex: P(10, "a"), overrideKey: G(11), size: { x: 80, y: 16 }, transform: T(10, 12),
+        textData: { characters: "Отправить" }, fontSize: 13, textAutoResize: "WIDTH_AND_HEIGHT" },
+      { guid: G(12), type: "RECTANGLE", parentIndex: P(10, "b"), overrideKey: G(12), size: { x: 16, y: 16 }, transform: T(96, 12), fillPaints: blue },
+      { guid: G(13), type: "SYMBOL", parentIndex: P(30, "b"), name: "Button=Disabled", size: { x: 120, y: 40 }, transform: T(160, 20), fillPaints: blue },
+      { guid: G(20), type: "INSTANCE", parentIndex: P(1, "a"), name: "Buttons", size: { x: 120, y: 40 }, transform: T(500, 300), fillPaints: blue,
+        symbolData: { symbolID: G(10), symbolOverrides: [
+          { guidPath: { guids: [G(11)] }, textData: { characters: "Купить" } },
+          { guidPath: { guids: [G(12)] }, visible: false },
+        ] } },
+    ],
+  };
+  let k = 0;
+  const d = F._fromFigma(msg, () => "c" + ++k);
+  const by = Object.fromEntries(d.elements.map((e) => [e.id, e]));
+  const inst = d.elements.find((e) => e.inst && !e.msrc);
+  const master = by[inst.inst];
+  assert.equal(master.comp, true);
+  assert.equal(master.name, "Button=Default");
+  assert.equal(by[master.frame].name, "Buttons"); // набор вариантов — фреймом
+  assert.ok(d.elements.some((e) => e.comp && e.name === "Button=Disabled")); // и второй вариант набора
+  assert.equal(d.elements.find((e) => e.type === "frame" && e.name === "Компоненты из Figma").id, by[master.frame].frame);
+  const parts = d.elements.filter((e) => e.msrc && e.frame === inst.id);
+  const txt = parts.find((e) => e.type === "text");
+  const ico = parts.find((e) => e.type === "rect");
+  assert.equal(by[txt.msrc].text, "Отправить");
+  assert.deepEqual([txt.text, txt.ovr], ["Купить", ["text"]]);
+  assert.deepEqual([ico.hidden, ico.ovr, by[ico.msrc].hidden], [true, ["hidden"], undefined]); // скрыта только в экземпляре
+  assert.equal(inst.ovr, undefined); // размер и цвет как у мастера — своих правок нет
+  assert.equal(d.elements.filter((e) => e._mkey || e._isym || e._nsym).length, 0);
+}
 assert.equal(F.isFigma("<p>нет</p>"), false);
 assert.equal(await F.fromHtml('<span data-buffer="<!--(figma)AAAA(/figma)-->">', () => "x"), null);
 console.log("board figma ok");

@@ -898,6 +898,7 @@ function fromFigma(msg, uid) {
     };
     var put = function (el, n, parentFrame, groupId) {
       if (parentFrame) el.frame = parentFrame;
+      if (n && n.__hide) el.hidden = true;
       if (groupId) el.group = groupId;
       if (n && n.proportionsConstrained) el.ratio = true;
       // Ограничения размера (мин./макс. ширина и высота) — для «заполнить» в автолэйауте.
@@ -925,9 +926,32 @@ function fromFigma(msg, uid) {
       var v = PIN_V[n.verticalConstraint] || "t";
       return h === "l" && v === "t" ? "" : h + " " + v;
     };
+    // ---- компоненты Figma → компоненты макета ----
+    // SYMBOL — мастер (comp); INSTANCE — экземпляр (inst → мастер); части экземпляра — msrc → часть мастера
+    // по пути от корня компонента (одинаковый у мастера и у экземпляра: guid узлов компонента).
+    // ctx.top — внешний экземпляр, который сейчас разворачиваем; ctx.mp — мастер, который строим.
+    var symEl = {}; // guid компонента → id мастера
+    var mParts = {}; // guid компонента → путь → id части мастера
+    var tagEl = function (el, n, ctx) {
+      var g = gid(n.guid);
+      if (ctx && ctx.mp) (mParts[ctx.mp.sym] = mParts[ctx.mp.sym] || {})[ctx.mp.path + "/" + g] = el.id;
+      if (ctx && ctx.top) el._mkey = ctx.top.sym + "|" + ctx.top.path + "/" + g;
+    };
+    var deeper = function (ctx, n) {
+      if (!ctx || (!ctx.top && !ctx.mp)) return ctx;
+      var g = gid(n.guid);
+      return Object.assign({}, ctx, {
+        top: ctx.top ? { sym: ctx.top.sym, path: ctx.top.path + "/" + g } : null,
+        mp: ctx.mp ? { sym: ctx.mp.sym, path: ctx.mp.path + "/" + g } : null,
+      });
+    };
     function walkD(n0, world, parentFrame, groupId, ctx, parentDir) {
       var n = merged(n0, ctx);
-      if (n.visible === false) return;
+      if (n.visible === false) {
+        // Часть экземпляра, скрытая только в нём (в мастере видна), — скрытым слоем: иначе мастер вернёт её при синхронизации.
+        if (!(ctx && ctx.top && n0.visible !== false)) return;
+        n = Object.assign({}, n, { visible: true, __hide: true });
+      }
       var type = n.type;
       var pos = box(n, world);
       var b = pos.b;
@@ -939,9 +963,13 @@ function fromFigma(msg, uid) {
         return el;
       };
       if (type === "FRAME" || type === "COMPONENT" || type === "COMPONENT_SET" || type === "SYMBOL" || type === "INSTANCE" || type === "SECTION") {
-        var ctx2 = ctx;
+        var ctx2 = deeper(ctx, n);
+        var symId = type === "INSTANCE" && n.symbolData ? gid(n.symbolData.symbolID) : "";
         if (type === "INSTANCE") {
-          ctx2 = { ovs: Object.assign({}, ctx ? ctx.ovs : {}, overridesOf(n)), der: Object.assign({}, ctx ? ctx.der : {}, derivedOf(n)) };
+          ctx2 = { ovs: Object.assign({}, ctx ? ctx.ovs : {}, overridesOf(n)), der: Object.assign({}, ctx ? ctx.der : {}, derivedOf(n)),
+            top: ctx && ctx.top ? ctx2.top : { sym: symId, path: "" }, mp: ctx2 ? ctx2.mp : null };
+        } else if (type === "SYMBOL") {
+          ctx2 = { ovs: {}, der: {}, top: null, mp: { sym: gid(n.guid), path: "" } };
         }
         var children = kidsOf(n).map(function (k) {
           return merged(k, ctx2);
@@ -955,6 +983,15 @@ function fromFigma(msg, uid) {
         if (lay) fr.layout = lay;
         if (n.frameMaskDisabled) fr.noclip = true;
         if (hasImage(n)) imageSlots++;
+        if (type === "SYMBOL") {
+          fr.comp = true;
+          symEl[gid(n.guid)] = fr.id;
+          (mParts[gid(n.guid)] = mParts[gid(n.guid)] || {})[""] = fr.id;
+        } else tagEl(fr, n, ctx);
+        if (type === "INSTANCE" && symId) {
+          if (ctx && ctx.top) fr._nsym = symId; // вложенный экземпляр — часть внешнего
+          else fr._isym = symId;
+        }
         put(fr, n, parentFrame, groupId);
         var dir = lay ? lay.split(" ")[0] : "";
         kidsOf(n).forEach(function (k) {
@@ -979,6 +1016,7 @@ function fromFigma(msg, uid) {
         if (n.textAutoResize === "WIDTH_AND_HEIGHT") tel.autoW = true;
         // Фиксированный блок Figma (NONE/TRUNCATE) держит высоту — иначе центр по вертикали теряется.
         else if (n.textAutoResize !== "HEIGHT") tel.fixH = true;
+        tagEl(tel, n, ctx);
         put(tel, n, parentFrame, groupId);
         return;
       }
@@ -991,6 +1029,7 @@ function fromFigma(msg, uid) {
         var el = withGrow(Object.assign({ id: uid(), type: kind, text: img && big ? "Картинка из Figma" : "" }, b, { style: styleOf(n, kind) }));
         if (img) Object.assign(el.style, { textColor: "#6b7280", fontSize: 12 });
         if (img && !big) el.name = "Картинка из Figma";
+        tagEl(el, n, ctx);
         put(el, n, parentFrame, groupId);
         return;
       }
@@ -1007,13 +1046,145 @@ function fromFigma(msg, uid) {
       var vel = vectorEl(n, b, paths);
       if (vel) {
         if (n.opacity != null && n.opacity < 0.999) vel.style = { opacity: Math.round(n.opacity * 1000) / 1000 };
+        tagEl(vel, n, ctx);
         put(withGrow(vel), n, parentFrame, groupId);
       } else skipped++;
     }
     (kids[gid(page.guid)] || []).forEach(function (n) {
       walkD(n, ID, "", "", null, "");
     });
+    if (els.length) componentsFromFigma();
     return els.length ? { source: "Figma", elements: els, skipped: skipped, imageSlots: imageSlots } : null;
+
+    /** Мастера для экземпляров из вставки (компоненты лежат во внутреннем холсте буфера): наборы вариантов —
+     * целиком, рядом со вставкой в рамке «Компоненты из Figma»; затем связи экземпляров и их свои правки. */
+    function componentsFromFigma() {
+      var need = {};
+      var queue = [];
+      var want = function (sid) {
+        if (!sid || need[sid] || !byId[sid] || byId[sid].type !== "SYMBOL") return;
+        need[sid] = 1;
+        queue.push(sid);
+      };
+      var scan = function (id, depth) {
+        if (depth > 30) return;
+        (kids[id] || []).forEach(function (k) {
+          if (k.type === "INSTANCE" && k.symbolData) want(gid(k.symbolData.symbolID));
+          scan(gid(k.guid), depth + 1);
+        });
+      };
+      scan(gid(page.guid), 0);
+      var roots = [];
+      var rootSeen = {};
+      for (var qi = 0; qi < queue.length && qi < 400; qi++) {
+        var sym = byId[queue[qi]];
+        var par = sym.parentIndex && byId[gid(sym.parentIndex.guid)];
+        var set = par && par.isStateGroup ? par : null;
+        var r = set || sym;
+        if (!rootSeen[gid(r.guid)] && !symEl[gid(sym.guid)]) {
+          rootSeen[gid(r.guid)] = 1;
+          roots.push(r);
+          // Набор вариантов — все варианты (переключение вариантов — дальше), и их вложенные компоненты.
+          (set ? (kids[gid(set.guid)] || []).filter(function (k) {
+            return k.type === "SYMBOL";
+          }) : [sym]).forEach(function (s0) {
+            want(gid(s0.guid));
+            scan(gid(s0.guid), 0);
+          });
+        }
+      }
+      if (roots.length) {
+        var bx = Infinity;
+        var by0 = Infinity;
+        var bx1 = -Infinity;
+        els.forEach(function (e) {
+          if (e.frame) return;
+          bx = Math.min(bx, e.x);
+          by0 = Math.min(by0, e.y);
+          bx1 = Math.max(bx1, e.x + e.w);
+        });
+        var box0 = { id: uid(), type: "frame", name: "Компоненты из Figma", x: r1(bx1 + 200), y: r1(by0), w: 400, h: 200,
+          style: { fill: "#f5f5f7" } };
+        add(box0, "");
+        var cy = box0.y + 60;
+        var maxW = 0;
+        roots.forEach(function (rn) {
+          var t = rn.transform || ID;
+          var w0 = (rn.size && rn.size.x) || 0;
+          var h0 = (rn.size && rn.size.y) || 0;
+          var world = { m00: 1, m01: 0, m02: box0.x + 40 - t.m02, m10: 0, m11: 1, m12: cy - t.m12 };
+          walkD(rn, world, box0.id, "", null, "");
+          cy += h0 + 48;
+          maxW = Math.max(maxW, w0);
+        });
+        box0.w = r1(maxW + 80);
+        box0.h = r1(cy - box0.y + 12);
+      }
+      linkComponents();
+    }
+
+    function linkComponents() {
+      var byEl = {};
+      els.forEach(function (e) {
+        byEl[e.id] = e;
+      });
+      var partOf = function (key) {
+        var i = key.indexOf("|");
+        var sym = key.slice(0, i);
+        return symEl[sym] && mParts[sym] ? mParts[sym][key.slice(i + 1)] : null;
+      };
+      els.forEach(function (e) {
+        if (e._isym) {
+          if (symEl[e._isym]) e.inst = symEl[e._isym];
+        } else if (e._nsym && symEl[e._nsym]) e.inst = symEl[e._nsym];
+      });
+      els.forEach(function (e) {
+        if (!e._mkey) return;
+        var src = partOf(e._mkey);
+        if (src) e.msrc = src;
+      });
+      // Корень экземпляра — без msrc с inst; части без связанного корня — обычные объекты.
+      var rootOf = function (e) {
+        var cur = e;
+        for (var i = 0; cur && cur.msrc && i < 40; i++) cur = byEl[cur.frame];
+        return cur && cur.inst && !cur.msrc ? cur : null;
+      };
+      els.forEach(function (e) {
+        if (e.msrc && !rootOf(e)) delete e.msrc;
+      });
+      // Свои правки экземпляра (текст, цвета, видимость, размер) — то, чем часть отличается от мастера.
+      var SKIP = { id: 1, x: 1, y: 1, w: 1, h: 1, z: 1, frame: 1, group: 1, msrc: 1, inst: 1, ovr: 1, comp: 1, style: 1,
+        grow: 1, pin: 1, _mkey: 1, _isym: 1, _nsym: 1 };
+      els.forEach(function (e) {
+        var isRoot = e.inst && !e.msrc;
+        var m = isRoot ? byEl[e.inst] : e.msrc ? byEl[e.msrc] : null;
+        if (!m || (isRoot && e.frame && rootOf(byEl[e.frame] || {}))) return;
+        var ov = {};
+        Object.keys(e).concat(Object.keys(m)).forEach(function (k) {
+          if (SKIP[k] || (isRoot && k === "name")) return;
+          if (JSON.stringify(e[k]) !== JSON.stringify(m[k])) ov[k] = 1;
+        });
+        var es = e.style || {};
+        var ms = m.style || {};
+        Object.keys(es).concat(Object.keys(ms)).forEach(function (k) {
+          if (JSON.stringify(es[k]) !== JSON.stringify(ms[k])) ov["style." + k] = 1;
+        });
+        var root = isRoot ? e : rootOf(e);
+        var mroot = root && byEl[root.inst];
+        var near = function (a, b) {
+          return Math.abs(a - b) <= 0.5;
+        };
+        if (!near(e.w, m.w) || !near(e.h, m.h)) ov.geo = 1;
+        else if (!isRoot && mroot && (!near(e.x - root.x, m.x - mroot.x) || !near(e.y - root.y, m.y - mroot.y))) ov.geo = 1;
+        var keys = Object.keys(ov).sort();
+        if (keys.length) e.ovr = keys;
+      });
+      els.forEach(function (e) {
+        delete e._mkey;
+        delete e._isym;
+        delete e._nsym;
+      });
+    }
   }
 
   function tableEl(n, b) {

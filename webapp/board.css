@@ -8,6 +8,9 @@
   --lb-muted: #9a9ca3;
   --lb-accent: #529ef4;
   --lb-accent-soft: rgba(82, 158, 244, 0.18);
+  /* Компоненты (мастер и экземпляры) — фиолетовым, как во Figma. */
+  --lb-comp: #b48cff;
+  --lb-comp-soft: rgba(180, 140, 255, 0.16);
   --lb-map-ink: #8a8d95;
   --lb-font: -apple-system, system-ui, "Helvetica Neue", Roboto, sans-serif;
   --lb-ink-ink: #e8e9ec;
@@ -74,6 +77,8 @@
 
 .leo-board.is-light,
 html[data-theme="light"] .leo-board {
+  --lb-comp: #8a3ffc;
+  --lb-comp-soft: rgba(138, 63, 252, 0.1);
   --lb-bg: #f7f7f8;
   --lb-dot: rgba(0, 0, 0, 0.12);
   --lb-panel: #ffffff;
@@ -2524,4 +2529,202 @@ html:has(.leo-board) body {
 .leo-board.is-embed .lb-open-btn svg {
   width: 16px;
   height: 16px;
+}
+
+/* ---- компоненты ---- */
+.lb-layer.is-comp .lb-licon,
+.lb-layer.is-comp .lb-lname,
+.lb-layer.is-inst .lb-licon,
+.lb-layer.is-inst .lb-lname,
+.lb-ihead.is-comp {
+  color: var(--lb-comp);
+}
+
+.lb-layer.is-part .lb-lname {
+  opacity: 0.85;
+}
+
+.lb-chead {
+  border-top: 1px solid var(--lb-panel-border);
+}
+
+.lb-clist {
+  flex: none;
+  overflow-y: auto;
+  max-height: 30vh;
+  padding: 0 4px 6px;
+  scrollbar-width: thin;
+}
+
+.lb-comp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.lb-comp:hover {
+  background: var(--lb-comp-soft);
+}
+
+.lb-comp .lb-licon {
+  color: var(--lb-comp);
+}
+
+.lb-icomp {
+  gap: 4px;
+}
+
+.lb-icomp-note {
+  color: var(--lb-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.lb-icomp .lb-ibtn.is-wide {
+  gap: 6px;
+}
+
+.lb-icomp .lb-ibtn svg {
+  color: var(--lb-comp);
+}
+
+.lb-csub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 4px;
+  color: var(--lb-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.lb-csub svg {
+  width: 14px;
+  height: 14px;
+}
+
+.lb-cupd {
+  margin-left: auto;
+  color: var(--lb-comp);
+  font-size: 10px;
+}
+
+.lb-cpub {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px 8px;
+  border-top: 1px solid var(--lb-panel-border);
+}
+
+.lb-cpub .lb-ibtn.is-wide {
+  gap: 6px;
+  justify-content: flex-start;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.lb-cpub .lb-ibtn svg,
+.lb-cpub-row svg {
+  width: 14px;
+  height: 14px;
+  color: var(--lb-comp);
+}
+
+.lb-cpub-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  font-size: 12px;
+}
+
+.lb-cpub-row span {
+  overflow: hidden;
+  flex: 1 1 auto;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-popt {
+  padding: 6px 10px 4px;
+  color: var(--lb-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* Плашка «Обновления библиотеки» — снизу по центру, над панелью инструментов. */
+.lb-libbar {
+  position: absolute;
+  z-index: 4;
+  bottom: 72px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 32px);
+  padding: 6px 6px 6px 12px;
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 12px;
+  background: var(--lb-panel);
+  color: var(--lb-text);
+  font-size: 13px;
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--shadow-color, #000) 20%, transparent);
+}
+
+.lb-libbar.hidden {
+  display: none;
+}
+
+.lb-libbar .lb-licon {
+  color: var(--lb-comp);
+}
+
+.lb-libbar [data-libapply] {
+  background: var(--lb-comp);
+  color: var(--lb-ink-white);
+  padding: 0 12px;
+}
+
+/* Свойства варианта у экземпляра. */
+.lb-ivars {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+
+.lb-ivar {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.4fr);
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.lb-ivar span {
+  overflow: hidden;
+  color: var(--lb-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lb-ivar select {
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+  color: inherit;
+  font: inherit;
 }

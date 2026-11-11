@@ -86,6 +86,7 @@
   var STROKED = Object.assign({ line: 1, pen: 1, vector: 1 }, SHAPES);
   var IMAGE_MAX_SIDE = 1400;
   var CLIP_MIME = "application/x-leo-board";
+  var COMP_MIME = "application/x-leo-component"; // перетаскивание компонента из панели на холст
   var CARD_PHOTO_SIDE = 400;
   // Заглушка картинки при вставке из Miro (файл картинки в буфер не попадает) — webapp/board-import.js.
   var IMAGE_SLOT_TEXT = "Картинка из Miro";
@@ -285,6 +286,12 @@
     flipV: '<path d="M3.5 10h13"/><path d="M6.5 7L10 3.5 13.5 7zM6.5 13l3.5 3.5 3.5-3.5z"/>',
     rot90: '<path d="M10 7.5l4 4-4 4-4-4z"/><path d="M6 6.5a5.5 5.5 0 018-.5"/><path d="M14.5 3.5v3h-3"/>',
     angle: '<path d="M4.5 15.5h11M4.5 15.5l8-8"/><path d="M9.5 15.5a5 5 0 00-1.5-3.5"/>',
+    comp: '<path d="M10 2.8l2.6 2.6L10 8 7.4 5.4zM10 12l2.6 2.6-2.6 2.6-2.6-2.6zM5.4 7.4L8 10l-2.6 2.6L2.8 10zM14.6 7.4l2.6 2.6-2.6 2.6L12 10z"/>',
+    inst: '<path d="M10 3.2l6.8 6.8-6.8 6.8L3.2 10z"/>',
+    close: '<path d="M5.5 5.5l9 9M14.5 5.5l-9 9"/>',
+    library: '<path d="M4 4h3v12H4zM8.5 4h3v12h-3zM13.2 5.2l2.7-.7 2.7 11-2.7.7z"/>',
+    detach: '<path d="M8 12l-2 2a2.5 2.5 0 01-3.5-3.5l2-2M12 8l2-2a2.5 2.5 0 013.5 3.5l-2 2M7 3v2M3 7h2M13 17v-2M17 13h-2"/>',
+    reset: '<path d="M4 10a6 6 0 106-6H7"/><path d="M8.5 1.8L6.2 4l2.3 2.3"/>',
   };
 
   function icon(name) {
@@ -626,6 +633,12 @@
     if (el.fixH && el.type === "text") o.fixH = true;
     if (el.hidden) o.hidden = true;
     if (el.locked) o.locked = true;
+    // Компоненты: мастер, экземпляр (id мастера), часть экземпляра (id части мастера), свои правки.
+    if (el.comp && el.type === "frame") o.comp = true;
+    if (el.inst) o.inst = String(el.inst);
+    if (el.inst && el.lv) o.lv = String(el.lv);
+    if (el.msrc) o.msrc = String(el.msrc);
+    if (el.ovr && el.ovr.length) o.ovr = el.ovr.slice(0, 200);
     ["minW", "maxW", "minH", "maxH"].forEach(function (k) {
       if (el[k] > 0) o[k] = r2(el[k]);
     });
@@ -961,9 +974,21 @@
       // Автолэйаут: перед закрытием шага — разложить затронутые экраны (тем же шагом отмены).
       if (tx.depth === 1 && !tx.laying) {
         tx.laying = true;
+        // Компоненты: сначала запомнить правки частей экземпляров, разложить мастера, потом экземпляры догоняют
+        // мастера и раскладываются сами (всё — тем же шагом отмены).
+        try {
+          recordOverrides();
+        } catch (_) {}
         try {
           relayout(Array.from(tx.before.keys()));
         } catch (_) {}
+        try {
+          var n0 = tx.before.size;
+          syncComponents(Array.from(tx.before.keys()));
+          if (tx.before.size !== n0) relayout(Array.from(tx.before.keys()));
+        } catch (err) {
+          if (window.console) console.warn("components sync", err);
+        }
       }
       tx.depth--;
       if (tx.depth > 0) return;
@@ -973,6 +998,7 @@
         if (!same(before, after)) entry.push({ id: id, before: before, after: after });
       });
       tx = null;
+      if (libs.length) renderLibBar();
       if (entry.length) {
         undoStack.push(entry);
         if (undoStack.length > 200) undoStack.shift();
@@ -1740,6 +1766,17 @@
       return r.height / z;
     }
 
+    /** Ширина набранного текста в единицах доски (для autoW). */
+    function textWidth(textEl) {
+      if (!textEl.isConnected || !root.offsetWidth || !textEl.textContent) return null;
+      var range = document.createRange();
+      range.selectNodeContents(textEl);
+      var r = range.getBoundingClientRect();
+      var host = textEl.parentElement;
+      var z = host && host.offsetWidth > 0 ? host.getBoundingClientRect().width / host.offsetWidth : view.z;
+      return r.width > 0 && z > 0 ? r.width / z : null;
+    }
+
     /** Текстовый блок растёт по высоте под текст (без отдельного шага отмены). */
     function fitTextHeight(el, textEl) {
       // Фиксированная высота (как «Fixed size» во Figma) — блок не подгоняется, текст выравнивается внутри.
@@ -1749,11 +1786,20 @@
       // Пустой блок — не меньше 20px (за него можно ухватиться); с текстом — ровно по строкам, как во Figma
       // (иначе мелкий текст 13px в 20px-блоке выглядит прижатым к верху, а кнопка центрирует раздутый блок).
       var h = String(el.text || "") ? Math.max(1, Math.ceil(th)) : Math.max(20, Math.ceil(th));
-      if (Math.abs(h - el.h) > 1) {
-        var next = Object.assign({}, el, { h: h });
+      // «Ширина по содержимому» (autoW) — ширина тоже по тексту: поменяли надпись на кнопке — кнопка растёт.
+      var w = el.w;
+      if (el.autoW && String(el.text || "")) {
+        var tw = textWidth(textEl);
+        if (tw != null && tw > 0) w = Math.ceil(tw);
+      }
+      if (Math.abs(h - el.h) > 1 || Math.abs(w - el.w) > 1) {
+        var next = Object.assign({}, el, { h: h, w: w });
         els.set(el.id, next);
         var n = nodes.get(el.id);
-        if (n) n.style.height = h + "px";
+        if (n) {
+          n.style.height = h + "px";
+          n.style.width = Math.max(1, w) + "px";
+        }
         localChanged(el.id);
         dirty.add(el.id);
         schedule();
@@ -3846,7 +3892,11 @@
       mode = m;
       root.classList.toggle("is-mode-design", m === "design");
       root.classList.toggle("is-mode-board", m !== "design");
-      if (m === "design") figmaWarmup();
+      if (m === "design") {
+        figmaWarmup();
+        loadLibraries(false);
+      }
+      renderLibBar();
       if (typeof o.onModeChange === "function") o.onModeChange(m);
       drawTools();
       renderEmptyHint();
@@ -4575,7 +4625,8 @@
       }
       var one = list.length === 1 ? list[0] : null;
       var key = JSON.stringify(list.map(function (e) {
-        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, e.grow, e.ratio, e.pin, padSplit];
+        return [e.id, e.type, r1(e.x), r1(e.y), r1(e.w), r1(e.h), e.rot, e.style, e.name, e.frame, e.layout, e.noclip, e.group, e.grow, e.ratio, e.pin, padSplit,
+          e.comp, e.inst, e.msrc, e.ovr, e.fixH, e.lv, libLoadedAt];
       })) + "|" + dev.tab + (codeTab ? "|" + dev.ver : "");
       inspector.classList.remove("hidden");
       // Пока человек вводит число — панель не перерисовываем (иначе курсор слетит).
@@ -4622,8 +4673,17 @@
         return e.group || "";
       });
       if (grp) title = "Группа";
+      if (one && one.comp) title = "Компонент";
+      else if (one && one.inst && !one.msrc) title = "Экземпляр";
       if (tabs) h.push(tabs);
-      h.push('<div class="lb-ihead">' + esc(title) + "</div>");
+      h.push('<div class="lb-ihead' + (one && (one.comp || one.inst || one.msrc) ? " is-comp" : "") + '">' + esc(title) + "</div>");
+      if (one) h.push(compSection(one));
+      else if (list.length > 1 && list.every(function (e) {
+        return e.comp && e.type === "frame" && !isLibId(e.id);
+      })) {
+        h.push('<div class="lb-isec lb-icomp"><button type="button" class="lb-ibtn is-wide" data-act="compCombine">' + icon("comp") +
+          "<span>Объединить в набор вариантов</span></button></div>");
+      }
       if (!one) {
         // Несколько объектов (или группа) — общая рамка: X/Y двигают всё, W/H растягивают.
         var gb = selBounds();
@@ -5824,8 +5884,8 @@
       }
       var kids = layerKids();
       var key = JSON.stringify([Array.from(els.values()).map(function (e) {
-        return [e.id, e.z, e.frame, e.group, e.name, e.type, e.type === "frame" ? 0 : String(e.text || "").slice(0, 48), e.hidden, e.locked];
-      }), Array.from(selected), layersFold, mode]);
+        return [e.id, e.z, e.frame, e.group, e.name, e.type, e.type === "frame" ? 0 : String(e.text || "").slice(0, 48), e.hidden, e.locked, e.comp, e.inst, e.lv];
+      }), Array.from(selected), layersFold, mode, libLoadedAt]);
       if (key === layersKey || (layersEl.contains(document.activeElement) && document.activeElement.isContentEditable)) return;
       layersKey = key;
       var rows = [];
@@ -5844,11 +5904,12 @@
         var lck = members.every(function (m) {
           return m.locked;
         });
-        rows.push('<div class="lb-layer' + (sel ? " is-sel" : "") + (el && el.type === "frame" ? " is-frame" : "") + (isGroup ? " is-group" : "") +
+        var compK = el && el.comp ? " is-comp" : el && el.inst ? " is-inst" : el && el.msrc ? " is-part" : "";
+        rows.push('<div class="lb-layer' + (sel ? " is-sel" : "") + (el && el.type === "frame" ? " is-frame" : "") + (isGroup ? " is-group" : "") + compK +
           (hid ? " is-hidden" : "") + (lck ? " is-locked" : "") + (!hid && members.every(isHidden) ? " is-dim" : "") +
           '" data-lid="' + esc(n.id) + '" draggable="true" style="--d:' + depth + '">' +
           '<span class="lb-lcaret' + (hasKids ? "" : " is-none") + (fold ? "" : " is-open") + '" data-caret="1">' + (hasKids ? icon("caret") : "") + "</span>" +
-          '<span class="lb-licon">' + icon(isGroup ? "group" : TYPE_ICON[el.type] || "rect") + "</span>" +
+          '<span class="lb-licon">' + icon(isGroup ? "group" : el.comp ? "comp" : el.inst ? "inst" : TYPE_ICON[el.type] || "rect") + "</span>" +
           '<span class="lb-lname"' + (el && el.type === "frame" ? ' data-rename="1"' : "") + ">" + esc(isGroup ? "Группа" : layerName(el)) + "</span>" +
           '<span class="lb-lacts"><button type="button" class="lb-lact' + (lck ? " is-on" : "") + '" data-lact="locked" title="' + (lck ? "Разблокировать" : "Заблокировать") + '">' + icon(lck ? "lock" : "unlock") + "</button>" +
           '<button type="button" class="lb-lact' + (hid ? " is-on" : "") + '" data-lact="hidden" title="' + (hid ? "Показать" : "Скрыть") + '">' + icon(hid ? "eyeOff" : "eye") + "</button></span></div>");
@@ -5863,7 +5924,42 @@
       layerNodes("", kids).forEach(function (n) {
         row(n, 0);
       });
-      layersEl.innerHTML = '<div class="lb-lhead">Слои</div><div class="lb-llist">' + (rows.join("") || '<div class="lb-lempty">Пока пусто</div>') + "</div>";
+      // Компоненты макета: щелчок — экземпляр в центр вида, перетаскивание на холст — в точку.
+      var comps = mode === "design" ? masterList() : [];
+      var compRow = function (id, label, upd) {
+        return '<div class="lb-comp" data-comp="' + esc(id) + '" draggable="true" title="Щелчок — вставить экземпляр, можно перетащить на холст">' +
+          '<span class="lb-licon">' + icon("comp") + '</span><span class="lb-lname">' + esc(label) + "</span>" + (upd ? '<span class="lb-cupd" title="Есть обновление">●</span>' : "") + "</div>";
+      };
+      var outd = {};
+      if (mode === "design") outdatedLibInstances().forEach(function (id) {
+        outd[(getEl(id) || {}).inst] = 1;
+      });
+      var compHtml = "";
+      if (mode === "design" && (comps.length || libs.length)) {
+        compHtml = '<div class="lb-lhead lb-chead">Компоненты</div><div class="lb-clist">' +
+          (comps.length && libs.length ? '<div class="lb-csub">В этом макете</div>' : "") + comps.map(function (m) {
+            return compRow(m.id, compLabels[m.id]);
+          }).join("") + libs.map(function (lib) {
+            return '<div class="lb-csub" title="' + esc(lib.org_name ? "Библиотека организации «" + lib.org_name + "»" : "") + '">' + icon("library") + esc(lib.name) + "</div>" +
+              lib.comps.map(function (c) {
+                return compRow(c.id, c.label, outd[c.id]);
+              }).join("");
+          }).join("") + "</div>";
+      }
+      // Публикация этого макета библиотекой организации.
+      if (mode === "design" && libSelf && comps.length && o.libraries && o.libraries.publish) {
+        var pub = libSelf.published || [];
+        compHtml += '<div class="lb-cpub">' + (pub.length ? pub.map(function (p0) {
+          return '<div class="lb-cpub-row">' + icon("library") + "<span>Библиотека «" + esc(p0.org_name || p0.name) + '»</span><button type="button" class="lb-lact" data-libunpub="' +
+            esc(p0.id) + '" title="Снять с публикации">' + icon("close") + "</button></div>";
+        }).join("") : "") + ((libSelf.orgs || []).filter(function (og) {
+          return !pub.some(function (p0) {
+            return p0.org_id === og.id;
+          });
+        }).length ? '<button type="button" class="lb-ibtn is-wide" data-libpub="1">' + icon("library") + "<span>" +
+          (pub.length ? "Опубликовать ещё в организации…" : "Сделать библиотекой организации") + "</span></button>" : "") + "</div>";
+      }
+      layersEl.innerHTML = '<div class="lb-lhead">Слои</div><div class="lb-llist">' + (rows.join("") || '<div class="lb-lempty">Пока пусто</div>') + "</div>" + compHtml;
       var s0 = layersEl.querySelector(".lb-layer.is-sel");
       if (s0 && typeof s0.scrollIntoView === "function") s0.scrollIntoView({ block: "nearest" });
     }
@@ -5964,6 +6060,26 @@
         e.stopPropagation();
       });
       layersEl.addEventListener("click", function (e) {
+        var pb = e.target.closest("[data-libpub]");
+        if (pb) {
+          openPublishMenu(pb);
+          return;
+        }
+        var up = e.target.closest("[data-libunpub]");
+        if (up && o.libraries && o.libraries.unpublish) {
+          Promise.resolve(o.libraries.unpublish(Number(up.getAttribute("data-libunpub")))).then(function () {
+            notify("Макет больше не библиотека организации");
+            loadLibraries(true);
+          }).catch(function (err) {
+            notify((err && err.message) || "Не получилось снять с публикации");
+          });
+          return;
+        }
+        var cp = e.target.closest("[data-comp]");
+        if (cp) {
+          if (!readOnly) insertInstance(cp.getAttribute("data-comp"));
+          return;
+        }
         var r = e.target.closest("[data-lid]");
         if (!r) return;
         var lid = r.getAttribute("data-lid");
@@ -6060,6 +6176,15 @@
         renderOverlay();
       });
       layersEl.addEventListener("dragstart", function (e) {
+        var cp = e.target.closest("[data-comp]");
+        if (cp && !readOnly) {
+          e.dataTransfer.effectAllowed = "copy";
+          try {
+            e.dataTransfer.setData(COMP_MIME, cp.getAttribute("data-comp"));
+            e.dataTransfer.setData("text/plain", "");
+          } catch (_) {}
+          return;
+        }
         var r = e.target.closest("[data-lid]");
         if (!r || readOnly) return;
         layerDrag = r.getAttribute("data-lid");
@@ -6553,7 +6678,8 @@
           else expScale = Number(t.value) || 1;
           return;
         }
-        if (t.getAttribute("data-k")) applyInspector(t.getAttribute("data-k"), t.type === "checkbox" ? t.checked : t.value);
+        if (t.getAttribute("data-vprop") != null) chooseVariant(t.getAttribute("data-vprop"), t.value);
+        else if (t.getAttribute("data-k")) applyInspector(t.getAttribute("data-k"), t.type === "checkbox" ? t.checked : t.value);
         else if (t.getAttribute("data-hex")) {
           var v = String(t.value).trim().toLowerCase();
           if (/^[0-9a-f]{6}$/.test(v)) v = "#" + v;
@@ -6633,6 +6759,7 @@
           if (r0) applyInspector("rot", String((r0.rot || 0) + 90));
         }
         else if (a === "group") groupSel();
+        else if (/^comp/.test(a)) compAct(a);
         else if (a === "fxAdd") openFxMenu(b);
         else if (/^(alAdd|alDel|alDir|alCell|alBetween|alWrap|hugW|hugH|padSplit)$/.test(a)) layoutAct(a, b);
         else if (a === "ratio") applyFields(function () {
@@ -7073,13 +7200,31 @@
 
     // ---- действия с выделением ----
     function deleteSel() {
-      var ids = withFrameKids(Array.from(selected));
-      if (!ids.length) return;
+      // Часть экземпляра не удаляется, а скрывается (как во Figma): иначе мастер вернул бы её при следующей правке.
+      var hideOnly = Array.from(selected).filter(function (id) {
+        var e = getEl(id);
+        var r = e && e.msrc ? instRootOf(e) : null;
+        return r && !selected.has(r.id);
+      });
+      var ids = withFrameKids(Array.from(selected).filter(function (id) {
+        return hideOnly.indexOf(id) < 0;
+      }));
+      if (!ids.length && !hideOnly.length) return;
       var gone = {};
       ids.forEach(function (id) {
         gone[id] = 1;
       });
       begin();
+      hideOnly.forEach(function (id) {
+        patch(id, { hidden: true });
+      });
+      // Удалили мастер — его экземпляры остаются обычными фреймами (отмена вернёт всё как было).
+      ids.forEach(function (id) {
+        var e = getEl(id);
+        if (e && e.comp) instancesOf(id).forEach(function (rid) {
+          if (!gone[rid]) detachInstance(rid);
+        });
+      });
       // Стрелки, прилипшие к удаляемым блокам, удаляются вместе с ними.
       els.forEach(function (el) {
         if (el.type === "line" && ((el.start && gone[el.start.el]) || (el.end && gone[el.end.el]))) gone[el.id] = 1;
@@ -7091,16 +7236,17 @@
       schedule();
     }
 
-    function copyEls(list, dx, dy) {
+    function copyEls(list, dx, dy, raw) {
       var map = {};
       var groups = {};
       list.forEach(function (el) {
         map[el.id] = uid();
       });
       var z = topZ();
-      var out = list.slice().sort(function (a, b) {
+      var sorted = list.slice().sort(function (a, b) {
         return (a.z || 0) - (b.z || 0);
-      }).map(function (el, i) {
+      });
+      var out = sorted.map(function (el, i) {
         var c = clone(el);
         c.id = map[el.id];
         c.z = z + i * 0.001;
@@ -7124,7 +7270,74 @@
         }
         return c;
       });
+      if (!raw) compCopies(sorted, out, map);
       return out;
+    }
+
+    /** Компоненты при копировании (как во Figma): копия мастера с этой доски — экземпляр; часть экземпляра
+     * без его корня — обычный объект (вложенный экземпляр — сам по себе); мастер с другой доски — новый мастер,
+     * его экземпляры из той же вставки — к нему. */
+    function compCopies(src, out, map) {
+      var byId = {};
+      src.forEach(function (e, i) {
+        byId[e.id] = i;
+      });
+      var up = function (e) {
+        return e && e.frame != null && byId[e.frame] != null ? src[byId[e.frame]] : null;
+      };
+      var toInst = {};
+      var keepMaster = {};
+      src.forEach(function (e) {
+        if (!e.comp) return;
+        var real = els.get(e.id);
+        if (real && real.comp) toInst[e.id] = 1;
+        else keepMaster[e.id] = 1;
+      });
+      src.forEach(function (e, i) {
+        var c = out[i];
+        if (toInst[e.id]) {
+          delete c.comp;
+          delete c.ovr;
+          delete c.msrc;
+          c.inst = e.id;
+          return;
+        }
+        // Внутри копии мастера, который стал экземпляром, — части экземпляра.
+        for (var a = up(e), k = 0; a && k < 40; a = up(a), k++) {
+          if (toInst[a.id]) {
+            c.msrc = e.id;
+            delete c.ovr;
+            if (c.comp) delete c.comp;
+            return;
+          }
+        }
+        if (c.inst && keepMaster[c.inst]) c.inst = map[c.inst];
+        if (c.msrc) {
+          // Корень экземпляра (элемент без msrc с inst) — в копии?
+          var r = e;
+          var nested = null;
+          for (k = 0; r && r.msrc && k < 40; k++) {
+            if (r.inst && !nested) nested = r;
+            r = up(r);
+          }
+          if (r && r.inst) {
+            if (keepMaster[r.inst] && map[c.msrc]) c.msrc = map[c.msrc];
+            return;
+          }
+          // Корня нет: вложенный экземпляр становится самостоятельным, остальное — обычные объекты.
+          if (nested && nested.id === e.id) {
+            delete c.msrc;
+            delete c.ovr;
+            return;
+          }
+          var me = nested ? els.get(e.msrc) : null;
+          if (me && me.msrc) c.msrc = me.msrc;
+          else {
+            delete c.msrc;
+            delete c.ovr;
+          }
+        }
+      });
     }
 
     function duplicateSel() {
@@ -7328,6 +7541,19 @@
     }
 
     function onPaste(e) {
+      // LOCAL-PASTE-DUMP (не коммитить): что Miro / FigJam кладут в буфер.
+      try {
+        if (location.hostname === "app.localhost" && e.clipboardData) {
+          var dump = { at: new Date().toISOString(), types: Array.from(e.clipboardData.types || []), data: {}, files: [] };
+          dump.types.forEach(function (t) {
+            if (t !== "Files") dump.data[t] = e.clipboardData.getData(t);
+          });
+          Array.from(e.clipboardData.files || []).forEach(function (f) {
+            dump.files.push({ name: f.name, type: f.type, size: f.size });
+          });
+          fetch("/debug/paste", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dump) });
+        }
+      } catch (_) {}
       if (readOnly || editing) return;
       var cd = e.clipboardData;
       if (!cd) return;
@@ -7738,7 +7964,8 @@
         var f = null;
         frames.forEach(function (fr0) {
           var fr = getEl(fr0.id);
-          if (!fr || mine[fr.id]) return;
+          // В экземпляр компонента чужое не кладём (как во Figma): его содержимое — из мастера.
+          if (!fr || mine[fr.id] || ((fr.inst || fr.msrc) && !(el.msrc && instRootOf(el) === instRootOf(fr)))) return;
           if (el.type === "frame" && fr.w * fr.h <= el.w * el.h) return;
           if (cx >= fr.x && cx <= fr.x + fr.w && cy >= fr.y && cy <= fr.y + fr.h && (!f || fr.w * fr.h < f.w * f.h)) f = fr;
         });
@@ -7755,6 +7982,859 @@
           });
         }
       });
+    }
+
+    // ---- компоненты (как во Figma) ----
+    // Мастер — фрейм с comp: true. Экземпляр — копия его содержимого: корень с inst = id мастера, части —
+    // с msrc = id части мастера. ovr — что человек поменял в экземпляре сам ("text", "style.fill", "hidden",
+    // "geo" — положение и размер): при правке мастера эти поля остаются, остальное приходит из мастера.
+    // Вложенный экземпляр внутри мастера синхронизируется со своим мастером; копии внутри экземпляров
+    // внешнего мастера — уже как его части (у них msrc), отдельно не синхронизируются.
+    // Библиотеки организации (этап 2): мастера из других макетов, id с префиксом "L<id библиотеки>:".
+    // Их содержимое — только в памяти (libEls), в документ попадают экземпляры: inst = "L1:…", lv — версия мастера.
+    var libs = []; // [{id, name, org_name, note_id, sheet_id, comps: [{id (с префиксом), label, ver}]}]
+    var libEls = new Map();
+    var libKids = {};
+    var libVer = {}; // id мастера с префиксом → версия
+    var libSet = {}; // id мастера с префиксом → id набора вариантов (с префиксом)
+    var libSelf = null; // публикации этого макета: {published: [...], orgs: [...]}
+    var libLoadedAt = 0;
+
+    function anyEl(id) {
+      return els.get(id) || libEls.get(id) || null;
+    }
+
+    function isLibId(id) {
+      return /^L\d+:/.test(String(id || ""));
+    }
+
+    function setLibraries(data) {
+      libs = [];
+      libEls = new Map();
+      libKids = {};
+      libVer = {};
+      libSet = {};
+      libSelf = (data && data.self) || null;
+      ((data && data.libraries) || []).forEach(function (lib) {
+        var ns = "L" + lib.id + ":";
+        var inLib = {};
+        (lib.components || []).forEach(function (c) {
+          (c.elements || []).forEach(function (e) {
+            inLib[e.id] = 1;
+          });
+        });
+        var comps = [];
+        (lib.components || []).forEach(function (c) {
+          (c.elements || []).forEach(function (e) {
+            var x = clone(e);
+            x.id = ns + e.id;
+            if (e.id === c.id) delete x.frame;
+            else if (x.frame) x.frame = inLib[x.frame] ? ns + x.frame : undefined;
+            if (x.inst && inLib[x.inst]) x.inst = ns + x.inst;
+            if (x.msrc && inLib[x.msrc]) x.msrc = ns + x.msrc;
+            if (x.type === "line") {
+              ["start", "end"].forEach(function (k) {
+                if (x[k] && x[k].el) x[k] = Object.assign({}, x[k], { el: ns + x[k].el });
+              });
+            }
+            if (!libEls.has(x.id)) libEls.set(x.id, x);
+            if (x.frame) (libKids[x.frame] = libKids[x.frame] || []).push(x.id);
+          });
+          libVer[ns + c.id] = c.ver;
+          if (c.set_id) libSet[ns + c.id] = ns + c.set_id;
+          comps.push({ id: ns + c.id, label: c.label, ver: c.ver });
+        });
+        libs.push({ id: lib.id, name: lib.name, org_name: lib.org_name, note_id: lib.note_id, sheet_id: lib.sheet_id, comps: comps });
+      });
+      libLoadedAt = Date.now();
+      layersKey = "";
+      inspKey = "";
+      renderProps();
+      renderLibBar();
+    }
+
+    function loadLibraries(force) {
+      if (readOnly || mode !== "design" || !o.libraries || typeof o.libraries.load !== "function") return;
+      if (!force && Date.now() - libLoadedAt < 30000) return;
+      libLoadedAt = Date.now();
+      Promise.resolve(o.libraries.load()).then(function (data) {
+        if (!destroyed && data) setLibraries(data);
+      }).catch(function (err) {
+        if (window.console) console.warn("design libraries", err);
+      });
+    }
+
+    function libOf(id) {
+      var m = /^L(\d+):/.exec(String(id || ""));
+      if (!m) return null;
+      for (var i = 0; i < libs.length; i++) if (String(libs[i].id) === m[1]) return libs[i];
+      return null;
+    }
+
+    /** Экземпляры библиотечных компонентов, отставшие от библиотеки. */
+    function outdatedLibInstances() {
+      var out = [];
+      els.forEach(function (e) {
+        if (e.inst && !e.msrc && isLibId(e.inst) && libVer[e.inst] && e.lv !== libVer[e.inst]) out.push(e.id);
+      });
+      return out;
+    }
+
+    function applyLibUpdates(ids) {
+      var list = (ids || outdatedLibInstances()).filter(function (id) {
+        return getEl(id);
+      });
+      if (!list.length || readOnly) return;
+      begin();
+      tx.noOvr = true;
+      list.forEach(syncInstance);
+      commit();
+      notify("Компоненты обновлены из библиотеки");
+    }
+
+    var libBar = null;
+    function renderLibBar() {
+      if (readOnly) return;
+      var n = mode === "design" ? outdatedLibInstances().length : 0;
+      if (!n) {
+        if (libBar) libBar.classList.add("hidden");
+        return;
+      }
+      if (!libBar) {
+        libBar = document.createElement("div");
+        libBar.className = "lb-libbar";
+        root.appendChild(libBar);
+        libBar.addEventListener("pointerdown", function (e) {
+          e.stopPropagation();
+        });
+        libBar.addEventListener("click", function (e) {
+          if (e.target.closest("[data-libapply]")) applyLibUpdates();
+          else if (e.target.closest("[data-libhide]")) libBar.classList.add("hidden");
+        });
+      }
+      libBar.innerHTML = '<span class="lb-licon">' + icon("comp") + "</span><span>Обновления библиотеки: " + n + " " +
+        plural(n, "экземпляр", "экземпляра", "экземпляров") + '</span><button type="button" class="lb-ibtn" data-libapply="1">Применить</button>' +
+        '<button type="button" class="lb-ibtn" data-libhide="1" title="Позже">' + icon("close") + "</button>";
+      libBar.classList.remove("hidden");
+    }
+
+    var COMP_OWN = { id: 1, x: 1, y: 1, w: 1, h: 1, z: 1, frame: 1, group: 1, msrc: 1, inst: 1, ovr: 1, comp: 1, points: 1, waypoints: 1,
+      start: 1, end: 1, style: 1 };
+
+    var compLabels = {}; // id мастера → подпись в панели «Компоненты»
+    var ROOT_OWN = { name: 1, grow: 1, pin: 1, hidden: 1, locked: 1, rot: 1, ratio: 1, minW: 1, maxW: 1, minH: 1, maxH: 1 };
+
+    /** Корень экземпляра верхнего уровня, которому принадлежит элемент (сам корень — тоже). */
+    function instRootOf(el) {
+      var cur = el;
+      for (var i = 0; cur && cur.msrc && i < 40; i++) cur = frameOf(cur);
+      return cur && cur.inst && !cur.msrc ? cur : null;
+    }
+
+    /** Мастер, внутри которого лежит элемент (сам мастер — тоже). */
+    function masterOf(el) {
+      for (var cur = el, i = 0; cur && i < 40; cur = frameOf(cur), i++) if (cur.comp && cur.type === "frame") return cur;
+      return null;
+    }
+
+    /** Сравнение без учёта порядка ключей (стиль собирается заново). */
+    function sameEl(a, b) {
+      var norm = function (v) {
+        if (Array.isArray(v)) return v.map(norm);
+        if (v && typeof v === "object") {
+          var o = {};
+          Object.keys(v).sort().forEach(function (k) {
+            if (v[k] !== undefined) o[k] = norm(v[k]);
+          });
+          return o;
+        }
+        return v;
+      };
+      return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
+    }
+
+    function ovrSet(el) {
+      var s = {};
+      ((el && el.ovr) || []).forEach(function (k) {
+        s[k] = 1;
+      });
+      return s;
+    }
+
+    function masterParts(mid) {
+      var ids;
+      if (isLibId(mid)) {
+        ids = [];
+        var st = [mid];
+        while (st.length) {
+          (libKids[st.pop()] || []).forEach(function (k) {
+            ids.push(k);
+            st.push(k);
+          });
+        }
+      } else ids = withFrameKids([mid]).filter(function (id) {
+        return id !== mid;
+      });
+      return ids.map(anyEl).filter(Boolean).sort(function (a, b) {
+        return (a.z || 0) - (b.z || 0) || (a.id < b.id ? -1 : 1);
+      });
+    }
+
+    /** Поля части экземпляра из мастера me поверх текущей cur (её правки ovr остаются). */
+    function mergedPart(me, cur, ov) {
+      var next = cur ? Object.assign({}, cur) : {};
+      var keys = {};
+      Object.keys(me).concat(Object.keys(cur || {})).forEach(function (k) {
+        keys[k] = 1;
+      });
+      Object.keys(keys).forEach(function (k) {
+        if (COMP_OWN[k] || ov[k]) return;
+        if (me[k] === undefined) delete next[k];
+        else next[k] = clone(me[k]);
+      });
+      var st = {};
+      var ms = me.style || {};
+      var cs = (cur && cur.style) || {};
+      Object.keys(ms).concat(Object.keys(cs)).forEach(function (k) {
+        var v = ov["style." + k] ? cs[k] : ms[k];
+        if (v != null) st[k] = clone(v);
+      });
+      if (Object.keys(st).length) next.style = st;
+      else delete next.style;
+      next.type = me.type;
+      return next;
+    }
+
+    /** Экземпляр догоняет мастер. Возвращает false, если мастера нет (экземпляр «осиротел»). */
+    function syncInstance(rootId) {
+      var r = getEl(rootId);
+      var m = r && anyEl(r.inst);
+      if (!r || !m || !m.comp || m.type !== "frame") return false;
+      // Экземпляр внутри своего же мастера — цикл; не трогаем.
+      if (!isLibId(m.id) && masterOf(r) && withFrameKids([m.id]).indexOf(r.id) >= 0) return false;
+      var parts = masterParts(m.id);
+      var have = {};
+      var dups = [];
+      withFrameKids([rootId]).forEach(function (id) {
+        var e = getEl(id);
+        if (!e || id === rootId || !e.msrc) return;
+        if (have[e.msrc]) dups.push(id);
+        else have[e.msrc] = e;
+      });
+      var map = {};
+      map[m.id] = rootId;
+      parts.forEach(function (me) {
+        map[me.id] = have[me.id] ? have[me.id].id : uid();
+      });
+      // Корень: оформление, автолэйаут и название — из мастера; размер — свой, если его меняли.
+      var rov = ovrSet(r);
+      var rn = mergedPart(m, r, rov);
+      delete rn.comp;
+      rn.inst = m.id;
+      // Место экземпляра в макете — его собственное: название, «заполнить», привязки, видимость, поворот.
+      ["name", "grow", "pin", "hidden", "locked", "rot", "ratio", "minW", "maxW", "minH", "maxH"].forEach(function (k) {
+        if (r[k] === undefined) delete rn[k];
+        else rn[k] = r[k];
+      });
+      if (!rn.name) rn.name = m.name;
+      if (isLibId(m.id) && libVer[m.id]) rn.lv = libVer[m.id];
+      if (!rov.geo) {
+        rn.w = m.w;
+        rn.h = m.h;
+      }
+      if (!sameEl(rn, r)) put(rn);
+      var dx = rn.x - m.x;
+      var dy = rn.y - m.y;
+      var groups = {};
+      parts.forEach(function (me) {
+        if (me.group && have[me.id] && have[me.id].group && !groups[me.group]) groups[me.group] = have[me.id].group;
+      });
+      var slots = [];
+      parts.forEach(function (me) {
+        if (have[me.id]) slots.push(have[me.id].z || 0);
+      });
+      slots.sort(function (a, b) {
+        return a - b;
+      });
+      var zTop = slots.length ? slots[slots.length - 1] : (rn.z || 0);
+      var extra = 0;
+      parts.forEach(function (me, i) {
+        var cur = have[me.id] || null;
+        var ov = ovrSet(cur);
+        var next = mergedPart(me, cur, ov);
+        next.id = map[me.id];
+        next.msrc = me.id;
+        if (me.inst) next.inst = me.inst;
+        else delete next.inst;
+        delete next.comp;
+        if (cur && cur.ovr) next.ovr = cur.ovr.slice();
+        next.frame = map[me.frame] || rootId;
+        if (me.group) next.group = groups[me.group] || (groups[me.group] = uid());
+        else delete next.group;
+        if (!ov.geo || !cur) {
+          next.x = me.x + dx;
+          next.y = me.y + dy;
+          next.w = me.w;
+          next.h = me.h;
+          if (me.type === "line") {
+            var res = G.resolveLine(me, anyEl);
+            next.points = [[res.p0.x + dx, res.p0.y + dy], [res.p1.x + dx, res.p1.y + dy]];
+            if (me.waypoints) next.waypoints = shiftWaypoints(me.waypoints, dx, dy);
+            else delete next.waypoints;
+            ["start", "end"].forEach(function (k) {
+              if (me[k] && map[me[k].el]) next[k] = Object.assign({}, me[k], { el: map[me[k].el] });
+              else delete next[k];
+            });
+          } else if (me.type === "pen") next.points = clone(me.points);
+        }
+        // Порядок слоёв — как у мастера: прежние места z по порядку, новым — сверху.
+        next.z = i < slots.length ? slots[i] : r2(Math.max(zTop, rn.z || 0) + 0.01 * ++extra);
+        if (!cur || !sameEl(next, cur)) put(next);
+      });
+      // Части, которых в мастере больше нет, — убрать.
+      Object.keys(have).forEach(function (src) {
+        if (!map[src] || map[src] !== have[src].id) remove(have[src].id);
+      });
+      dups.forEach(remove);
+      // Экземпляр другого размера (без автолэйаута) — содержимое по привязкам, как при растягивании фрейма.
+      if (!rn.layout && (Math.abs(rn.w - m.w) > 0.5 || Math.abs(rn.h - m.h) > 0.5)) {
+        // Снимок «как у мастера» (части со своим положением — не двигаем).
+        var fresh = new Map();
+        pinSnap(rootId).forEach(function (k0, id) {
+          if (!ovrSet(k0).geo) fresh.set(id, k0);
+        });
+        applyPins(rootId, { x: rn.x, y: rn.y, w: m.w, h: m.h }, rn, fresh);
+      }
+      return true;
+    }
+
+    /** Экземпляры верхнего уровня этого мастера. */
+    function instancesOf(mid) {
+      var out = [];
+      els.forEach(function (e) {
+        if (e.inst === mid && !e.msrc) out.push(e.id);
+      });
+      return out;
+    }
+
+    /** Правка затронула мастера — все их экземпляры догоняют (и экземпляры внутри других мастеров — дальше по цепочке). */
+    function syncComponents(ids) {
+      var queue = [];
+      var seen = {};
+      var addMaster = function (el) {
+        var m = masterOf(el);
+        if (m && !seen[m.id]) {
+          seen[m.id] = 1;
+          queue.push(m.id);
+        }
+      };
+      ids.forEach(function (id) {
+        var cur = getEl(id);
+        var before = tx && tx.before.get(id);
+        if (cur) addMaster(cur);
+        if (before && before.frame) addMaster(getEl(before.frame));
+      });
+      for (var i = 0; i < queue.length && i < 200; i++) {
+        instancesOf(queue[i]).forEach(function (rid) {
+          if (syncInstance(rid)) addMaster(getEl(rid));
+        });
+      }
+    }
+
+    /** Что человек поменял в частях экземпляра в этом шаге — запомнить как свои правки (ovr). */
+    function recordOverrides() {
+      // Сброс / отвязка — правки сделал не человек, а команда: свои правки не записываем.
+      if (!tx || tx.noOvr) return;
+      var rootGeo = function (r, useBefore) {
+        var b = useBefore && tx.before.has(r.id) ? tx.before.get(r.id) : r;
+        return b || r;
+      };
+      tx.before.forEach(function (before, id) {
+        var cur = getEl(id);
+        if (!cur || !before) return;
+        var isRoot = cur.inst && !cur.msrc;
+        if (!cur.msrc && !isRoot) return;
+        var root = isRoot ? cur : instRootOf(cur);
+        if (!root) {
+          // Часть вытащили из экземпляра — дальше это обычный объект.
+          if (cur.msrc) patch(id, { msrc: undefined, ovr: undefined, inst: cur.type === "frame" ? undefined : cur.inst });
+          return;
+        }
+        var keys = ovrSet(cur);
+        var n0 = Object.keys(keys).length;
+        Object.keys(before).concat(Object.keys(cur)).forEach(function (k) {
+          if (COMP_OWN[k] || (isRoot && ROOT_OWN[k])) return;
+          if (!same(before[k], cur[k])) keys[k] = 1;
+        });
+        var bs = before.style || {};
+        var cs = cur.style || {};
+        Object.keys(bs).concat(Object.keys(cs)).forEach(function (k) {
+          if (!same(bs[k], cs[k])) keys["style." + k] = 1;
+        });
+        var rb = rootGeo(root, true);
+        if (isRoot) {
+          if (Math.abs(before.w - cur.w) > 0.5 || Math.abs(before.h - cur.h) > 0.5) keys.geo = 1;
+        } else if (Math.abs(before.w - cur.w) > 0.5 || Math.abs(before.h - cur.h) > 0.5 ||
+          Math.abs((before.x - rb.x) - (cur.x - root.x)) > 0.5 || Math.abs((before.y - rb.y) - (cur.y - root.y)) > 0.5) keys.geo = 1;
+        if (Object.keys(keys).length !== n0) patch(id, { ovr: Object.keys(keys).sort() });
+      });
+    }
+
+    /** Отвязать экземпляр: остаётся обычным фреймом с содержимым. */
+    function detachInstance(rootId) {
+      withFrameKids([rootId]).forEach(function (id) {
+        var e = getEl(id);
+        if (!e) return;
+        if (id === rootId) patch(id, { inst: undefined, ovr: undefined, lv: undefined });
+        else if (e.msrc) patch(id, { msrc: undefined, ovr: undefined });
+      });
+      // Вложенные экземпляры внутри отвязанного становятся самостоятельными: их части — к своим мастерам.
+      withFrameKids([rootId]).forEach(function (id) {
+        var e = getEl(id);
+        if (e && id !== rootId && e.inst && !e.msrc && !instRootOf(frameOf(e) || {})) relinkNested(id);
+      });
+    }
+
+    /** Копия вложенного экземпляра стала самостоятельной: части ссылались на мастер внешнего — переводим на свой. */
+    function relinkNested(rootId) {
+      withFrameKids([rootId]).forEach(function (id) {
+        var e = getEl(id);
+        if (!e || id === rootId) return;
+        var me = e.msrc ? anyEl(e.msrc) : null;
+        if (me && me.msrc) patch(id, { msrc: me.msrc });
+      });
+    }
+
+    function resetInstance(rootId) {
+      withFrameKids([rootId]).forEach(function (id) {
+        var e = getEl(id);
+        if (e && (e.ovr || []).length) patch(id, { ovr: undefined });
+      });
+      syncInstance(rootId);
+    }
+
+    /** Новый экземпляр мастера mid в точке at (левый верхний угол) — внутри фрейма parentId, если задан. */
+    function makeInstance(mid, at, parentId) {
+      var m = anyEl(mid);
+      if (!m || !m.comp) return null;
+      var list = [m].concat(masterParts(mid));
+      var sorted = list.slice().sort(function (a, b) {
+        return (a.z || 0) - (b.z || 0);
+      });
+      var copies = copyEls(sorted, Math.round(at.x - m.x), Math.round(at.y - m.y), true);
+      var z0 = topZ();
+      copies.forEach(function (c, i) {
+        var src = sorted[i];
+        // Целые z: дробные шаги copyEls при сохранении (2 знака) слипаются, и корень мог оказаться над частями.
+        c.z = z0 + i;
+        delete c.ovr;
+        if (src.id === mid) {
+          delete c.comp;
+          c.inst = mid;
+          if (isLibId(mid) && libVer[mid]) c.lv = libVer[mid];
+          if (parentId) c.frame = parentId;
+          else delete c.frame;
+        } else {
+          c.msrc = src.id;
+          delete c.comp;
+        }
+      });
+      copies.forEach(put);
+      return copies.filter(function (c) {
+        return c.inst === mid && !c.msrc;
+      })[0] || null;
+    }
+
+    /** Выделенное → компонент: фрейм помечаем мастером; иначе оборачиваем во фрейм. */
+    function createComponent() {
+      var list = selList().filter(function (e) {
+        return !e.msrc;
+      });
+      if (!list.length || readOnly) return;
+      begin();
+      var target = null;
+      if (list.length === 1 && list[0].type === "frame" && !list[0].inst && !list[0].comp) target = list[0];
+      else if (list.length === 1 && list[0].comp) target = list[0];
+      else {
+        var b = G.unionBounds(list.map(function (e) {
+          return G.elBounds(e, getEl);
+        }));
+        if (!b) {
+          commit();
+          return;
+        }
+        var parent = common(list, function (e) {
+          return e.frame || "";
+        }) || undefined;
+        var minZ = Math.min.apply(null, list.map(function (e) {
+          return e.z || 0;
+        }));
+        target = { id: uid(), type: "frame", name: list.length === 1 ? layerName(list[0]) : "Компонент", x: r1(b.x), y: r1(b.y), w: r1(b.w), h: r1(b.h),
+          z: r2(minZ - 0.01), style: { fill: "#ffffff", fillOff: true } };
+        if (parent) target.frame = parent;
+        put(target);
+        list.forEach(function (e) {
+          patch(e.id, { frame: target.id, group: undefined });
+        });
+      }
+      if (!target.comp) patch(target.id, { comp: true, name: target.name && !/^Фрейм \d+$/.test(target.name) ? target.name : "Компонент " + (masterList().length + 1) });
+      commit();
+      setSelection([target.id]);
+      notify("Компонент создан: перетащите его из панели «Компоненты», чтобы вставить экземпляр");
+    }
+
+    /** Мастер перестаёт быть компонентом: экземпляры отвязываются. */
+    function dropComponent(mid) {
+      begin();
+      instancesOf(mid).forEach(detachInstance);
+      patch(mid, { comp: undefined });
+      commit();
+    }
+
+    function masterList() {
+      var out = [];
+      var perFrame = {};
+      var mixed = {};
+      els.forEach(function (e) {
+        if (e.comp && e.type === "frame") {
+          out.push(e);
+          if (e.frame) perFrame[e.frame] = (perFrame[e.frame] || 0) + 1;
+        } else if (e.frame) mixed[e.frame] = 1;
+      });
+      Object.keys(mixed).forEach(function (f) {
+        delete perFrame[f];
+      });
+      // Набор вариантов (как во Figma: несколько мастеров в одном фрейме) — «Набор · Вариант».
+      compLabels = {};
+      out.forEach(function (e) {
+        var f = e.frame && perFrame[e.frame] > 1 ? getEl(e.frame) : null;
+        compLabels[e.id] = (f && f.name ? f.name + " · " : "") + (e.name || "Компонент");
+      });
+      return out.sort(function (a, b) {
+        return compLabels[a.id].localeCompare(compLabels[b.id], "ru");
+      });
+    }
+
+    /** Вставить экземпляр: в точку (из панели перетаскиванием) или в центр вида. */
+    function insertInstance(mid, pt) {
+      var m = anyEl(mid);
+      if (!m || readOnly) return;
+      finishEdit();
+      var at = pt;
+      if (!at) {
+        var r = stageRect();
+        var c = toWorld(r.left + r.width / 2, r.top + r.height / 2, r);
+        at = G.pt(c.x - m.w / 2, c.y - m.h / 2);
+      }
+      begin();
+      var root = makeInstance(mid, G.pt(Math.round(at.x), Math.round(at.y)));
+      syncFrames();
+      // Попал внутрь своего же мастера — нельзя (цикл): кладём рядом с мастером.
+      var cur = root && getEl(root.id);
+      if (cur && !isLibId(mid) && masterOf(frameOf(cur) || {}) && withFrameKids([mid]).indexOf(cur.id) >= 0) {
+        moveBy(withFrameKids([cur.id]), m.x + m.w + 40 - cur.x, m.y - cur.y);
+        patch(cur.id, { frame: m.frame || undefined });
+      }
+      commit();
+      if (root) setSelection([root.id]);
+    }
+
+    // ---- варианты (этап 3) ----
+    // Набор вариантов — фрейм, в котором только мастера (их больше одного); свойства — из названий
+    // «Свойство=Значение, Свойство2=Значение» (как во Figma); без «=» — одно свойство «Вариант».
+    function variantProps(name) {
+      var out = {};
+      var any = false;
+      String(name || "").split(",").forEach(function (part) {
+        var i = part.indexOf("=");
+        if (i > 0) {
+          out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+          any = true;
+        }
+      });
+      if (!any) out["Вариант"] = String(name || "").trim() || "—";
+      return out;
+    }
+
+    /** Набор вариантов мастера: {id, masters: [{id, props}], names: [свойства по порядку]} или null. */
+    function variantSet(mid) {
+      var m = anyEl(mid);
+      if (!m || !m.comp) return null;
+      var ids = [];
+      var setId = "";
+      if (isLibId(mid)) {
+        setId = libSet[mid] || "";
+        if (!setId) return null;
+        Object.keys(libSet).forEach(function (k) {
+          if (libSet[k] === setId) ids.push(k);
+        });
+      } else {
+        var f = frameOf(m);
+        if (!f || f.comp) return null;
+        var pure = true;
+        els.forEach(function (e) {
+          if (e.frame !== f.id) return;
+          if (e.comp && e.type === "frame") ids.push(e.id);
+          else pure = false;
+        });
+        if (!pure) return null;
+        setId = f.id;
+      }
+      if (ids.length < 2) return null;
+      var names = [];
+      var masters = ids.map(anyEl).filter(Boolean).sort(function (a, b) {
+        return (a.y - b.y) || (a.x - b.x);
+      }).map(function (e) {
+        var pr = variantProps(e.name);
+        Object.keys(pr).forEach(function (k) {
+          if (names.indexOf(k) < 0) names.push(k);
+        });
+        return { id: e.id, props: pr };
+      });
+      return { id: setId, masters: masters, names: names };
+    }
+
+    /** Выбрали значение свойства у экземпляра — переключаем на подходящий вариант (остальные свойства — как были). */
+    function chooseVariant(prop, value) {
+      var one = selList().length === 1 ? selList()[0] : null;
+      var root = one && one.inst && !one.msrc ? one : null;
+      var vs = root && variantSet(root.inst);
+      if (!vs || readOnly) return;
+      var cur = (vs.masters.filter(function (x) {
+        return x.id === root.inst;
+      })[0] || {}).props || {};
+      var best = null;
+      var bestScore = -1;
+      vs.masters.forEach(function (x) {
+        if (x.props[prop] !== value) return;
+        var sc = 0;
+        vs.names.forEach(function (k) {
+          if (k !== prop && x.props[k] === cur[k]) sc++;
+        });
+        if (sc > bestScore) {
+          best = x;
+          bestScore = sc;
+        }
+      });
+      if (!best || best.id === root.inst) return;
+      begin();
+      tx.noOvr = true;
+      swapInstance(root.id, best.id);
+      commit();
+    }
+
+    /** Путь слоя внутри мастера по названиям (тип и номер среди одноимённых соседей) — чтобы найти
+     * «тот же» слой в другом варианте и перенести на него свои правки. */
+    function partKeys(mid) {
+      var parts = masterParts(mid);
+      var byParent = {};
+      parts.forEach(function (e) {
+        var pk = e.frame || mid;
+        (byParent[pk] = byParent[pk] || []).push(e);
+      });
+      var seg = {};
+      Object.keys(byParent).forEach(function (pk) {
+        var cnt = {};
+        byParent[pk].forEach(function (e) {
+          var base = (e.name || e.type) + "";
+          cnt[base] = (cnt[base] || 0) + 1;
+          seg[e.id] = base + "#" + cnt[base];
+        });
+      });
+      var key = {};
+      parts.forEach(function (e) {
+        var path = [];
+        for (var cur = e, i = 0; cur && cur.id !== mid && i < 40; cur = anyEl(cur.frame), i++) path.unshift(seg[cur.id] || cur.id);
+        key[e.id] = path.join("/");
+      });
+      return key;
+    }
+
+    /** Экземпляр → другой мастер (вариант): части с тем же путём сохраняют свои правки. */
+    function swapInstance(rootId, newMid) {
+      var r = getEl(rootId);
+      if (!r || !anyEl(newMid)) return;
+      var oldKey = partKeys(r.inst);
+      var newKey = partKeys(newMid);
+      var byKey = {};
+      Object.keys(newKey).forEach(function (id) {
+        byKey[newKey[id]] = id;
+      });
+      withFrameKids([rootId]).forEach(function (id) {
+        var e = getEl(id);
+        if (!e || id === rootId || !e.msrc || oldKey[e.msrc] == null) return;
+        var to = byKey[oldKey[e.msrc]];
+        if (to) patch(id, { msrc: to });
+      });
+      // Размер — от нового варианта (свой размер корня сбрасывается, как во Figma при смене варианта).
+      var rov = (r.ovr || []).filter(function (k) {
+        return k !== "geo";
+      });
+      patch(rootId, { inst: newMid, ovr: rov.length ? rov : undefined, lv: undefined });
+      syncInstance(rootId);
+    }
+
+    /** Несколько мастеров → набор вариантов: общий фрейм, названия «Вариант=…», если свойств ещё нет. */
+    function combineVariants() {
+      var list = selList().filter(function (e) {
+        return e.comp && e.type === "frame";
+      });
+      if (list.length < 2 || readOnly) return;
+      var b = G.unionBounds(list.map(function (e) {
+        return G.elBounds(e, getEl);
+      }));
+      if (!b) return;
+      begin();
+      var minZ = Math.min.apply(null, list.map(function (e) {
+        return e.z || 0;
+      }));
+      var parent = common(list, function (e) {
+        return e.frame || "";
+      }) || undefined;
+      var setEl = { id: uid(), type: "frame", name: "Набор вариантов", x: r1(b.x - 20), y: r1(b.y - 20), w: r1(b.w + 40), h: r1(b.h + 40),
+        z: r2(minZ - 0.01), style: { fill: "#ffffff", fillOff: true, stroke: "#9747ff", strokeWidth: 1, dash: "dashed", radius: 6 } };
+      if (parent) setEl.frame = parent;
+      put(setEl);
+      list.forEach(function (e) {
+        var f = { frame: setEl.id, group: undefined };
+        if (String(e.name || "").indexOf("=") < 0) f.name = "Вариант=" + (e.name || "Компонент");
+        patch(e.id, f);
+      });
+      commit();
+      setSelection([setEl.id]);
+      notify("Набор вариантов: свойства задаются названиями мастеров — «Свойство=Значение, Свойство2=Значение»");
+    }
+
+    /** Выбор организации для публикации библиотеки (если организация одна — сразу). */
+    function openPublishMenu(anchor) {
+      var pub = (libSelf && libSelf.published) || [];
+      var orgs = ((libSelf && libSelf.orgs) || []).filter(function (og) {
+        return !pub.some(function (p0) {
+          return p0.org_id === og.id;
+        });
+      });
+      var go = function (org) {
+        Promise.resolve(o.libraries.publish(org.id)).then(function () {
+          notify("Готово: компоненты этого макета видны в организации «" + (org.name || "") + "» — в панели «Компоненты» других макетов");
+          loadLibraries(true);
+        }).catch(function (err) {
+          notify((err && err.message) || "Не получилось опубликовать");
+        });
+      };
+      if (orgs.length === 1) {
+        go(orgs[0]);
+        return;
+      }
+      openPop(anchor, function (box) {
+        box.innerHTML = '<div class="lb-popt">Опубликовать для организации</div>' + orgs.map(function (og, i) {
+          return '<button type="button" class="lb-menu-item" data-org="' + i + '">' + esc(og.name || "Организация") + "</button>";
+        }).join("");
+        box.onclick = function (ev) {
+          var b = ev.target.closest("[data-org]");
+          if (!b) return;
+          closePop();
+          go(orgs[Number(b.getAttribute("data-org"))]);
+        };
+      });
+    }
+
+    /** Блок «Компонент» в панели свойств. */
+    function compSection(one) {
+      var btn = function (act, ic, label) {
+        return '<button type="button" class="lb-ibtn is-wide" data-act="' + act + '">' + icon(ic) + "<span>" + label + "</span></button>";
+      };
+      if (one.comp) {
+        var mvs = variantSet(one.id);
+        return '<div class="lb-isec lb-icomp"><div class="lb-icomp-note">' + instancesOf(one.id).length + " " + plural(instancesOf(one.id).length, "экземпляр", "экземпляра", "экземпляров") +
+          " · правки здесь видны во всех" + (mvs ? "<br>Вариант набора: свойства — в названии, «" + esc(vs0(mvs)) + "»" : "") + "</div>" + btn("compInsert", "inst", "Вставить экземпляр") + btn("compDrop", "detach", "Перестать быть компонентом") + "</div>";
+      }
+      var root = one.inst && !one.msrc ? one : one.msrc ? instRootOf(one) : null;
+      if (!root) return "";
+      var m = anyEl(root.inst);
+      var lib = libOf(root.inst);
+      var own = 0;
+      withFrameKids([root.id]).forEach(function (id) {
+        var e = getEl(id);
+        if (e && (e.ovr || []).length) own++;
+      });
+      var name = m && m.comp ? esc(m.name || "Компонент") : isLibId(root.inst) ? "библиотека недоступна" : "мастер не найден";
+      var outdated = lib && libVer[root.inst] && root.lv !== libVer[root.inst];
+      var h = '<div class="lb-isec lb-icomp"><div class="lb-icomp-note">' + (one === root ? "Экземпляр" : "Часть экземпляра") + " «" + name + "»" +
+        (lib ? " из библиотеки «" + esc(lib.name) + "»" : "") + (own ? " · свои правки: " + own : "") + (outdated ? " · <b>есть обновление</b>" : "") + "</div>";
+      var vs = one === root ? variantSet(root.inst) : null;
+      if (vs) {
+        var curP = (vs.masters.filter(function (x) {
+          return x.id === root.inst;
+        })[0] || {}).props || {};
+        h += '<div class="lb-ivars">' + vs.names.map(function (k) {
+          var vals = [];
+          vs.masters.forEach(function (x) {
+            if (x.props[k] != null && vals.indexOf(x.props[k]) < 0) vals.push(x.props[k]);
+          });
+          return '<label class="lb-ivar"><span title="' + esc(k) + '">' + esc(k) + '</span><select data-vprop="' + esc(k) + '">' + vals.map(function (v) {
+            return '<option value="' + esc(v) + '"' + (curP[k] === v ? " selected" : "") + ">" + esc(v) + "</option>";
+          }).join("") + "</select></label>";
+        }).join("") + "</div>";
+      }
+      if (one !== root) h += btn("compSelRoot", "inst", "Выбрать экземпляр");
+      if (outdated) h += btn("compLibUpdate", "reset", "Обновить из библиотеки");
+      if (m && m.comp && !lib) h += btn("compMaster", "comp", "Перейти к мастеру");
+      if (lib && o.libraries && o.libraries.open) h += btn("compLibOpen", "library", "Открыть библиотеку");
+      if (one !== root && (one.ovr || []).length) h += btn("compResetPart", "reset", "Вернуть как у мастера");
+      if (own && one === root) h += btn("compReset", "reset", "Сбросить свои правки");
+      if (one === root) h += btn("compDetach", "detach", "Отвязать от компонента");
+      return h + "</div>";
+    }
+
+    function vs0(vs) {
+      return vs.names.map(function (k) {
+        return k + "=…";
+      }).join(", ");
+    }
+
+    function plural(n, one, few, many) {
+      var a = Math.abs(n) % 100;
+      var b = a % 10;
+      return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
+    }
+
+    function compAct(a) {
+      if (a === "compCombine") {
+        combineVariants();
+        return;
+      }
+      var one = selList().length === 1 ? selList()[0] : null;
+      if (!one || readOnly) return;
+      var root = one.inst && !one.msrc ? one : one.msrc ? instRootOf(one) : null;
+      if (a === "compInsert" && one.comp) {
+        insertInstance(one.id, G.pt(one.x + one.w + 40, one.y));
+      } else if (a === "compDrop" && one.comp) {
+        dropComponent(one.id);
+      } else if (a === "compLibUpdate" && root) {
+        applyLibUpdates([root.id]);
+      } else if (a === "compLibOpen" && root && libOf(root.inst)) {
+        o.libraries.open(libOf(root.inst));
+      } else if (a === "compSelRoot" && root) {
+        setSelection([root.id]);
+      } else if (a === "compMaster" && root && getEl(root.inst) && !isLibId(root.inst)) {
+        setSelection([root.inst]);
+        revealElement(root.inst);
+      } else if (a === "compResetPart" && root) {
+        begin();
+        tx.noOvr = true;
+        patch(one.id, { ovr: undefined });
+        syncInstance(root.id);
+        commit();
+      } else if (a === "compReset" && root) {
+        begin();
+        tx.noOvr = true;
+        resetInstance(root.id);
+        commit();
+      } else if (a === "compDetach" && root) {
+        begin();
+        detachInstance(root.id);
+        commit();
+      }
     }
 
     function nextFrameName() {
@@ -8877,6 +9957,16 @@
         setSelection(Array.from(els.keys()));
       } else if (mod && e.shiftKey && !e.altKey && e.code === "KeyC" && mode === "design") {
         copyForFigma();
+      } else if (mod && e.altKey && e.code === "KeyK" && mode === "design") {
+        // ⌥⌘K — создать компонент (как во Figma); ⌥⌘B — отвязать экземпляр.
+        if (!readOnly) createComponent();
+      } else if (mod && e.altKey && e.code === "KeyB" && mode === "design") {
+        var r0 = selList()[0];
+        if (!readOnly && r0 && r0.inst && !r0.msrc) {
+          begin();
+          detachInstance(r0.id);
+          commit();
+        }
       } else if (mod && (k === "d" || k === "в")) {
         if (!readOnly) duplicateSel();
       } else if (mod && (k === "g" || k === "п" || k === "G" || k === "П" || e.code === "KeyG")) {
@@ -8951,6 +10041,17 @@
 
     function onDrop(e) {
       if (readOnly) return;
+      var cid = "";
+      try {
+        cid = (e.dataTransfer && e.dataTransfer.getData(COMP_MIME)) || "";
+      } catch (_) {}
+      if (cid && getEl(cid)) {
+        e.preventDefault();
+        var m0 = getEl(cid);
+        var pd = toWorld(e.clientX, e.clientY);
+        insertInstance(cid, G.pt(pd.x - m0.w / 2, pd.y - m0.h / 2));
+        return;
+      }
       var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []).filter(function (f) {
         return /^image\//i.test(f.type || "");
       });
@@ -10122,6 +11223,14 @@
       if (!readOnly) e.preventDefault();
     });
     stage.addEventListener("drop", onDrop);
+    // Библиотеки организации: при открытии макета и при возвращении во вкладку (не чаще раза в 30 с).
+    var onLibFocus = function () {
+      loadLibraries(false);
+    };
+    window.addEventListener("focus", onLibFocus);
+    setTimeout(function () {
+      loadLibraries(true);
+    }, 0);
     // Мышь по доске не выделяет текст страницы (иначе двойной клик выделял слово и уводил курсор
     // из только что созданного блока); внутри правки — как обычно.
     function keepNativeSelection(e) {
@@ -10295,6 +11404,7 @@
         }
         flushY();
         destroyed = true;
+        window.removeEventListener("focus", onLibFocus);
         detachYjs();
         if (frame) cancelAnimationFrame(frame);
         if (mapTimer) clearTimeout(mapTimer);

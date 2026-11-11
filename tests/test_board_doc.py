@@ -320,6 +320,27 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         els = board_doc.parse_board(body)["elements"]
         self.assertEqual([els[k].get("fixH") for k in ("t", "a", "r")], [True, None, None])
 
+    def test_components_fields(self) -> None:
+        els = {
+            "m": {"id": "m", "type": "frame", "x": 0, "y": 0, "w": 100, "h": 40, "comp": True, "name": "Кнопка"},
+            "t": {"id": "t", "type": "text", "x": 0, "y": 0, "w": 50, "h": 20, "frame": "m", "text": "a", "comp": True},
+            "i": {"id": "i", "type": "frame", "x": 200, "y": 0, "w": 100, "h": 40, "inst": "m", "ovr": ["geo", "style.fill", "bad key", 5]},
+            "p": {"id": "p", "type": "text", "x": 200, "y": 0, "w": 50, "h": 20, "frame": "i", "msrc": "t", "ovr": ["text", "text"]},
+            "q": {"id": "q", "type": "rect", "x": 0, "y": 0, "w": 5, "h": 5, "ovr": ["text"], "msrc": "q"},
+        }
+        out = board_doc.parse_board(json.dumps({"v": 1, "elements": els}))["elements"]
+        self.assertTrue(out["m"]["comp"])
+        self.assertNotIn("comp", out["t"])  # мастер — только фрейм
+        self.assertEqual((out["i"]["inst"], out["i"]["ovr"]), ("m", ["geo", "style.fill"]))
+        self.assertEqual((out["p"]["msrc"], out["p"]["ovr"]), ("t", ["text"]))
+        self.assertNotIn("msrc", out["q"])  # ссылка на себя
+        self.assertNotIn("ovr", out["q"])  # правки — только у экземпляра и его частей
+        lib = {"id": "l", "type": "frame", "x": 0, "y": 0, "w": 1, "h": 1, "inst": "L7:emwc3gac6", "lv": "0a1b2c3d4e5f6789"}
+        bad = dict(lib, id="k", lv="<script>")
+        out = board_doc.parse_board(json.dumps({"v": 1, "elements": {"l": lib, "k": bad}}))["elements"]
+        self.assertEqual((out["l"]["inst"], out["l"]["lv"]), ("L7:emwc3gac6", "0a1b2c3d4e5f6789"))
+        self.assertNotIn("lv", out["k"])
+
     def test_frame_layout(self) -> None:
         good = {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 100, "h": 100, "layout": "v 12 16 16 16 16 center start wh"}
         bad = dict(good, id="g", layout="v 12 16 left")
