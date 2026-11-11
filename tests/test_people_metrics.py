@@ -407,3 +407,28 @@ def test_calendar_load_signals() -> None:
     assert [s["text"] for s in pm.signals(m)] == ["мало времени без встреч", "вне рабочих часов: 5,5 ч"]
     m["calendar"] = {"enough_data": False, "workdays": 2, "low_focus_days": 2, "after_hours": 9}
     assert pm.signals(m) == []
+
+
+def test_chat_unanswered_items_show_where_without_text(chat_db) -> None:
+    db = chat_db
+    chat = -1001234567
+    db.upsert_chat(chat, title="Продажи", chat_type="supergroup")
+    db.upsert_topic(chat, 7, "Сделки")
+    db.insert_message(chat_id=chat, message_id=41, user_id=30, username="anna", display_name="Анна",
+                      text="@ivan секретный вопрос", ts_utc=MON - timedelta(days=14), mentions=["@ivan"], thread_id=7)
+    db.insert_message(chat_id=chat, message_id=42, user_id=31, username="petr", display_name=None,
+                      text="глянь", ts_utc=MON - timedelta(days=10), reply_to_user_id=20)
+    db.insert_message(chat_id=chat, message_id=43, user_id=31, username="petr", display_name=None,
+                      text="свежий", ts_utc=MON - timedelta(hours=2), reply_to_user_id=20)  # ещё рано судить
+    c = pm.chat_metrics("20", start=MON - timedelta(days=28), end=MON, now=MON)
+    assert c["unanswered"] == 2
+    items = c["unanswered_items"]
+    assert [i["from"] for i in items] == ["@petr", "Анна"]  # сначала новые
+    assert items[0] == {"chat": "Продажи", "topic": "", "from": "@petr", "asked_at": items[0]["asked_at"],
+                        "url": "https://t.me/c/1234567/42"}
+    assert items[1]["topic"] == "Сделки" and items[1]["url"] == "https://t.me/c/1234567/7/41"
+    assert "секретный" not in str(items)
+    assert "unanswered_items" not in pm.summary_facts({
+        "days": 28, "absent_days": 0, "assignee": pm.assignee_metrics("20", [], {}, start=MON, end=MON, now=MON),
+        "trend": {}, "setter": pm.setter_metrics("20", [], {}, start=MON, end=MON, now=MON), "chats": c,
+    })

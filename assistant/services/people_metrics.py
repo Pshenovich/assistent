@@ -504,6 +504,7 @@ def chat_metrics(
     )
     first_for_reply: dict[tuple[int, int], dict[str, Any]] = {}
     unanswered = 0
+    silent_rows: list[dict[str, Any]] = []
     durations: list[float] = []
     for r in rows:
         asked = _dt(r["ts_utc"])
@@ -513,6 +514,7 @@ def chat_metrics(
         if reply_at is None:
             if work_hours_between(asked, now, tz) >= CHAT_NO_REPLY_WORK_HOURS:
                 unanswered += 1
+                silent_rows.append(r)
             continue
         key = (int(r["chat_id"]), int(r["reply_message_id"]))
         if key not in first_for_reply or asked < _dt(first_for_reply[key]["ts_utc"]):
@@ -529,7 +531,39 @@ def chat_metrics(
         "reply_hours": _median_hours(durations) if answered >= MIN_SAMPLE else None,
         "chats": len({int(r["chat_id"]) for r in rows}),
         "enough_data": answered >= MIN_SAMPLE,
+        "unanswered_items": _unanswered_items(silent_rows),
     }
+
+
+CHAT_UNANSWERED_LIST_LIMIT = 30
+
+
+def _unanswered_items(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Где именно не ответил: чат, тема, кто и когда спросил, ссылка на сообщение. Без текста сообщения —
+    его видит в Telegram только тот, кто сам в этом чате."""
+    from assistant.services.chat_alerts import message_url
+    from assistant.stores import chat_digest
+
+    titles: dict[int, str] = {}
+    topics: dict[int, dict[int, str]] = {}
+    out: list[dict[str, Any]] = []
+    for r in sorted(rows, key=lambda x: str(x["ts_utc"]), reverse=True)[:CHAT_UNANSWERED_LIST_LIMIT]:
+        cid = int(r["chat_id"])
+        if cid not in titles:
+            titles[cid] = (chat_digest.get_chat(cid) or {}).get("title") or "Чат"
+            topics[cid] = chat_digest.topic_names(cid)
+        thread = r.get("thread_id")
+        who = str(r.get("from_name") or "").strip()
+        if not who and r.get("from_username"):
+            who = "@" + str(r["from_username"]).lstrip("@")
+        out.append({
+            "chat": titles[cid],
+            "topic": chat_digest.topic_label(topics[cid], thread) if thread else "",
+            "from": who or "Участник",
+            "asked_at": str(r["ts_utc"]),
+            "url": message_url(cid, thread, int(r["message_id"])),
+        })
+    return out
 
 
 # ---------- вклад: база знаний ----------

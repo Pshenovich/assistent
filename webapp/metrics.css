@@ -106,3 +106,12 @@
   .people-signals:has(> .people-none) { display: none; }
 }
 
+
+/* «Без ответа три рабочих дня» — раскрывающийся список обращений */
+.metrics-silent > summary { list-style: none; cursor: pointer; }
+.metrics-silent > summary::-webkit-details-marker { display: none; }
+.metrics-silent-chev { display: inline-block; margin-left: 0.25rem; color: var(--text-secondary); transition: transform 0.15s; }
+.metrics-silent[open] .metrics-silent-chev { transform: rotate(90deg); }
+.metrics-silent-list { border-top: 1px solid var(--border); background: var(--surface-muted); }
+.metrics-silent-list .pf-row { padding-left: 1.5rem; }
+.metrics-silent-list .pf-hint { margin: 0.5rem 1rem; }

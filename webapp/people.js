@@ -174,6 +174,8 @@
       if (sc) sc.scrollTop = 0;
     } else if (b.dataset.task) {
       if (app().openTaskById) app().openTaskById(Number(b.dataset.task));
+    } else if (b.dataset.tgUrl) {
+      if (M().openChatLink) M().openChatLink(b);
     }
   }
   function onChange(e) {

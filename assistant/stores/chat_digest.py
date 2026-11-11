@@ -673,7 +673,7 @@ def addressed_requests(
     marks = [f"%,id:{uid},%"] + ([f"%,@{nick.lower().lstrip('@')},%"] if nick else [])
     mention_sql = " OR ".join("(',' || m.mentions || ',') LIKE ?" for _ in marks)
     sql = f"""
-        SELECT m.chat_id, m.message_id, m.ts_utc,
+        SELECT m.chat_id, m.message_id, m.ts_utc, m.thread_id, m.user_id, m.username, m.display_name,
                (SELECT r.message_id FROM leo_chat_messages r
                  WHERE r.chat_id = m.chat_id AND r.user_id = ? AND IFNULL(r.thread_id, 0) = IFNULL(m.thread_id, 0)
                    AND r.ts_utc > m.ts_utc AND r.ts_utc <= strftime('%Y-%m-%dT%H:%M:%S', m.ts_utc, '+{int(window_days)} days')
@@ -691,12 +691,15 @@ def addressed_requests(
         out: list[dict[str, Any]] = []
         for r in rows:
             item = {"chat_id": int(r[0]), "message_id": int(r[1]), "ts_utc": str(r[2]),
+                    "thread_id": int(r[3]) if r[3] is not None else None,
+                    "from_user_id": int(r[4]) if r[4] is not None else None,
+                    "from_username": str(r[5] or ""), "from_name": str(r[6] or ""),
                     "reply_message_id": None, "reply_ts_utc": None}
-            if r[3] is not None:
+            if r[7] is not None:
                 rep = conn.execute(
-                    "SELECT ts_utc FROM leo_chat_messages WHERE chat_id = ? AND message_id = ?", (int(r[0]), int(r[3]))
+                    "SELECT ts_utc FROM leo_chat_messages WHERE chat_id = ? AND message_id = ?", (int(r[0]), int(r[7]))
                 ).fetchone()
-                item["reply_message_id"] = int(r[3])
+                item["reply_message_id"] = int(r[7])
                 item["reply_ts_utc"] = str(rep[0]) if rep else None
             out.append(item)
     return out

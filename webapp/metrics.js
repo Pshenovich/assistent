@@ -179,14 +179,49 @@
       hint);
   }
 
+  // «Без ответа три рабочих дня» — раскрывается списком: чат, тема, кто и когда спросил, ссылка в Telegram.
+  // Текста сообщения нет: его видит по ссылке только тот, кто сам состоит в чате.
+  function fmtWhen(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return "";
+    return d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) + ", " +
+      d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  }
+  function silentHtml(c) {
+    var items = c.unanswered_items || [];
+    if (!c.unanswered || !items.length) return row("Без ответа три рабочих дня", String(c.unanswered || 0));
+    var list = items.map(function (it) {
+      var place = it.chat + (it.topic ? " · " + it.topic : "");
+      var sub = it.from + " · " + fmtWhen(it.asked_at);
+      var body = '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(place) +
+        '</span><span class="pf-row-sub">' + esc(sub) + "</span></span>" +
+        (it.url ? '<span class="metrics-tag">Открыть</span>' : "") + "</span>";
+      return it.url
+        ? '<button type="button" class="pf-row metrics-silent-item" data-tg-url="' + esc(it.url) + '" title="Открыть сообщение в Telegram">' + body + "</button>"
+        : '<div class="pf-row pf-row--static metrics-silent-item">' + body + "</div>";
+    }).join("");
+    var more = c.unanswered > items.length ? '<p class="pf-hint">Показаны последние ' + items.length + " из " + c.unanswered + "</p>" : "";
+    return '<details class="metrics-silent"><summary class="pf-row"><span class="pf-row-body"><span class="pf-row-text">' +
+      '<span class="pf-row-title">Без ответа три рабочих дня</span><span class="pf-row-sub">где именно — нажмите</span></span>' +
+      '<span class="pf-row-val">' + esc(String(c.unanswered)) + ' <span class="metrics-silent-chev" aria-hidden="true">›</span></span></span></summary>' +
+      '<div class="metrics-silent-list">' + list + more + "</div></details>";
+  }
+  function openChatLink(b) {
+    var url = b && b.getAttribute("data-tg-url");
+    if (!url) return false;
+    if (app().openLink) app().openLink(url);
+    else window.open(url, "_blank");
+    return true;
+  }
+
   function chatsHtml(c, self) {
     if (!c || !c.requests) return "";
     return group("Ответы в рабочих чатах",
       row(self ? "Обращались к вам" : "Обращений", String(c.requests), c.chats ? "в " + c.chats + " " + plural(c.chats, "чате", "чатах", "чатах") : "") +
       row("Ответ, обычно", c.reply_hours == null ? "мало данных" : hours(c.reply_hours)) +
-      row("Без ответа три рабочих дня", String(c.unanswered)) +
+      silentHtml(c) +
       (c.late_replies ? row("Ответ позже трёх рабочих дней", String(c.late_replies)) : ""),
-      "Считаются только ответ на сообщение и @упоминание в рабочих группах, где есть Лео. Тексты сообщений не показываются.");
+      "Считаются только ответ на сообщение и @упоминание в рабочих группах, где есть Лео. Тексты сообщений не показываются: по ссылке их видит только тот, кто сам состоит в чате.");
   }
 
   function contributionHtml(c, s) {
@@ -320,6 +355,8 @@
       load();
     } else if (b.dataset.task) {
       if (app().openTaskById) app().openTaskById(Number(b.dataset.task));
+    } else if (b.dataset.tgUrl) {
+      openChatLink(b);
     } else if (b.dataset.absenceDel != null) {
       var items = (state.data.absences || []).slice();
       items.splice(Number(b.dataset.absenceDel), 1);
@@ -353,7 +390,7 @@
     if (el) el.addEventListener("click", onClick);
   }
 
-  window.LeoMetrics = { open: open, cardHtml: cardHtml, loadLead: loadLead, segHtml: segHtml, esc: esc, plural: plural, hours: hours, trend: trend };
+  window.LeoMetrics = { open: open, cardHtml: cardHtml, openChatLink: openChatLink, loadLead: loadLead, segHtml: segHtml, esc: esc, plural: plural, hours: hours, trend: trend };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 })();
