@@ -7220,12 +7220,49 @@
     }
   }
 
-  /** "send" | "newline" | "" (не Enter или набор через IME — не трогаем). */
+  // Поля сообщений (Профиль → «Сообщения»): голосовое сразу в чат или в поле; отправка по Enter
+  // или по Cmd/Ctrl+Enter. Хранится на сервере (общая для веба, PWA и миниаппа), приходит в /me;
+  // копия в localStorage — чтобы до ответа /me поведение было уже своё.
+  var COMPOSE_LS = "leo_compose_prefs";
+  var composePrefs = { voice_send: true, enter: "enter" };
+  try {
+    var cpRaw = JSON.parse(localStorage.getItem(COMPOSE_LS) || "null");
+    if (cpRaw && typeof cpRaw === "object") {
+      composePrefs = { voice_send: cpRaw.voice_send !== false, enter: cpRaw.enter === "mod_enter" ? "mod_enter" : "enter" };
+    }
+  } catch (_) {}
+
+  function applyComposePrefs(p) {
+    if (!p || typeof p !== "object") return;
+    composePrefs = { voice_send: p.voice_send !== false, enter: p.enter === "mod_enter" ? "mod_enter" : "enter" };
+    try {
+      localStorage.setItem(COMPOSE_LS, JSON.stringify(composePrefs));
+    } catch (_) {}
+    if (typeof renderComposePrefs === "function") renderComposePrefs();
+  }
+
+  /** Голосовое в обсуждении — сразу отправить сообщением (иначе — подставить в поле). */
+  function composeVoiceSends() {
+    return composePrefs.voice_send !== false;
+  }
+
+  /** Отправка по Cmd/Ctrl+Enter, а Enter — перенос строки. */
+  function composeEnterNeedsMod() {
+    return composePrefs.enter === "mod_enter";
+  }
+
+  /** "send" | "newline" | "" (не Enter, набор через IME или обычный перенос — не трогаем). */
   function messageEnterAction(e) {
     if (!e || e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.altKey) return "";
+    if (composeEnterNeedsMod()) {
+      // Cmd/Ctrl+Enter — отправить; Enter — перенос, его делает само поле (в списке — новый пункт).
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey) return "send";
+      return e.shiftKey ? "newline" : "";
+    }
     if (e.shiftKey || e.metaKey || e.ctrlKey) return "newline";
     return enterSendsMessage() ? "send" : "";
   }
+  window.leoMessageEnterAction = messageEnterAction;
 
   /** Cmd/Ctrl+Enter в textarea сам строку не переносит — вставляем перенос с сохранением «отменить». */
   function insertTextareaNewline(ta) {
@@ -9798,6 +9835,7 @@
   var themeChoiceEnabled = false;
 
   function applyServerTheme(me) {
+    if (me && me.compose) applyComposePrefs(me.compose);
     var api = window.OrbitaTheme;
     var t = me && me.ui_theme;
     if (!api || !t) return;
@@ -9818,6 +9856,54 @@
     if (sel) sel.value = cur;
     var val = document.getElementById("profile-theme-value");
     if (val) val.textContent = THEME_LABELS[cur] || "";
+  }
+
+  function renderComposePrefs() {
+    var vSel = document.getElementById("profile-compose-voice");
+    var vVal = document.getElementById("profile-compose-voice-value");
+    var voice = composeVoiceSends() ? "send" : "insert";
+    if (vSel) vSel.value = voice;
+    if (vVal) vVal.textContent = voice === "send" ? "Сразу" : "В поле";
+    var eSel = document.getElementById("profile-compose-enter");
+    var eVal = document.getElementById("profile-compose-enter-value");
+    var eSub = document.getElementById("profile-compose-enter-sub");
+    var mod = composeEnterNeedsMod();
+    var isMac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || "");
+    var modKey = isMac ? "⌘" : "Ctrl";
+    if (eSel) eSel.value = mod ? "mod_enter" : "enter";
+    if (eVal) eVal.textContent = mod ? modKey + " + Enter" : "Enter";
+    if (eSub) eSub.textContent = mod ? "Enter — новая строка" : "Shift + Enter — новая строка";
+  }
+
+  function saveComposePrefs(patch) {
+    var prev = { voice_send: composePrefs.voice_send, enter: composePrefs.enter };
+    applyComposePrefs(Object.assign({}, composePrefs, patch));
+    apiFetch("/profile/compose", { method: "PUT", body: JSON.stringify(patch) })
+      .then(function (r) {
+        if (r && r.compose) applyComposePrefs(r.compose);
+      })
+      .catch(function (err) {
+        applyComposePrefs(prev);
+        showNoteToast("Не удалось сохранить: " + (err && err.message ? err.message : String(err)));
+      });
+  }
+
+  function bindComposePrefs() {
+    var vSel = document.getElementById("profile-compose-voice");
+    if (vSel && !vSel._bound) {
+      vSel._bound = true;
+      vSel.addEventListener("change", function () {
+        saveComposePrefs({ voice_send: vSel.value !== "insert" });
+      });
+    }
+    var eSel = document.getElementById("profile-compose-enter");
+    if (eSel && !eSel._bound) {
+      eSel._bound = true;
+      eSel.addEventListener("change", function () {
+        saveComposePrefs({ enter: eSel.value === "mod_enter" ? "mod_enter" : "enter" });
+      });
+    }
+    renderComposePrefs();
   }
 
   function bindThemeSeg() {
@@ -15384,30 +15470,50 @@
 
   // Диктовка в поле обсуждения: текст — в конец сообщения, курсор после него.
   function insertDictationIntoComposer(editor, text) {
-    if (!editor || !document.body.contains(editor)) {
+    var form = document.getElementById("note-paie-reply-form");
+    // В режиме PAIE поле — textarea, а не редактор: текст туда, где человек пишет.
+    var ta = document.getElementById("note-paie-reply-input");
+    var useTa = !!(ta && form && form.contains(ta) && !noteAskUsesComposerEditor(noteAskMode()));
+    if (!useTa && (!editor || !document.body.contains(editor))) {
       try {
         if (navigator.clipboard) navigator.clipboard.writeText(text);
       } catch (_) {}
       showNoteToast("Обсуждение закрыто — текст диктовки скопирован в буфер");
       return;
     }
-    var cur = String(editor.textContent || "");
-    var piece = (cur && !/\s$/.test(cur) ? " " : "") + text;
-    editor.appendChild(document.createTextNode(piece));
-    try {
-      editor.focus();
-      var sel = window.getSelection();
-      var range = document.createRange();
-      range.selectNodeContents(editor);
-      range.collapse(false);
-      sel.removeAllRanges();
-      sel.addRange(range);
-    } catch (_) {}
-    try {
-      syncGptEditorEmpty(editor);
-      autosizeNoteComposer(editor);
-    } catch (_) {}
+    if (useTa) {
+      var curTa = String(ta.value || "");
+      ta.value = curTa + (curTa && !/\s$/.test(curTa) ? " " : "") + text;
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      try {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = ta.value.length;
+      } catch (_) {}
+    } else {
+      var cur = String(editor.textContent || "");
+      var piece = (cur && !/\s$/.test(cur) ? " " : "") + text;
+      editor.appendChild(document.createTextNode(piece));
+      try {
+        editor.focus();
+        var sel = window.getSelection();
+        var range = document.createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } catch (_) {}
+      try {
+        syncGptEditorEmpty(editor);
+        autosizeNoteComposer(editor);
+      } catch (_) {}
+    }
     syncNotePaieReplyForm();
+    if (!composeVoiceSends() || !form) return;
+    // Пока Лео отвечает, кнопка отправки = «Стоп»: текст остаётся в поле, отправит человек.
+    var busy = document.getElementById("note-editor-more-wrap");
+    if (busy && busy._gptBusy) return;
+    if (typeof form.requestSubmit === "function") form.requestSubmit();
+    else form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
   }
 
   function bindComposerDictation(form) {
@@ -30355,6 +30461,8 @@
           grow();
           syncSend();
           ta.focus();
+          // Сразу в чат — только обычное сообщение; «Вернуть» и «Сдать» человек отправляет сам.
+          if (composeVoiceSends() && !mode) submit();
         },
       });
     });
@@ -30471,6 +30579,15 @@
         return;
       }
       var enterAct = messageEnterAction(e);
+      // Enter в открытом списке упоминаний выбирает человека при любом способе отправки.
+      if (enterAct === "" && e.key === "Enter" && !e.shiftKey && !e.isComposing && menu._mode === "mention") {
+        var pick = menu.querySelector(".note-paie-menu-item");
+        if (pick) {
+          e.preventDefault();
+          pick.click();
+          return;
+        }
+      }
       if (enterAct === "newline" && !e.shiftKey) {
         e.preventDefault();
         insertTextareaNewline(ta);
@@ -40878,6 +40995,7 @@
         window.OrbitaTheme.set(ev.ui_theme);
         renderThemeSeg();
       }
+      if (ev.compose) applyComposePrefs(ev.compose);
       if (ev.onboarding && window.LeoOnboarding) window.LeoOnboarding.applyState(ev.onboarding);
       return;
     }
@@ -45486,6 +45604,16 @@
           }
         }
         var enterAct = messageEnterAction(e);
+        if (enterAct === "" && e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+          // Отправка по Cmd/Ctrl+Enter: обычный Enter в открытом списке упоминаний выбирает человека.
+          var mm0 = document.getElementById("note-discuss-mention-menu");
+          var pick0 = mm0 && !mm0.classList.contains("hidden") && mm0.querySelector(".note-discuss-mention-item");
+          if (pick0) {
+            e.preventDefault();
+            pick0.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+            return;
+          }
+        }
         if (enterAct === "send") {
           e.preventDefault();
           var mentionMenu = document.getElementById("note-discuss-mention-menu");
@@ -63113,9 +63241,13 @@
       gptSendMessage();
     });
     onId("gpt-input", "keydown", function (e) {
-      if (e.key === "Enter" && !e.shiftKey) {
+      var act = messageEnterAction(e);
+      if (act === "send") {
         e.preventDefault();
         gptSendMessage();
+      } else if (act === "newline" && !e.shiftKey) {
+        e.preventDefault();
+        insertTextareaNewline(e.target);
       }
     });
 
@@ -63266,6 +63398,7 @@
     }
     bindVoiceSettingsScreen();
     bindThemeSeg();
+    bindComposePrefs();
     var digestToggle = document.getElementById("digest-enabled-toggle");
     if (digestToggle) {
       digestToggle.addEventListener("click", function () {

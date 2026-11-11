@@ -1626,6 +1626,18 @@
           // Как в Claude: Enter — отправить, Shift+Enter и Cmd/Ctrl+Enter — новая строка
           // (на сенсорном экране без мыши Enter — перенос, отправка кнопкой).
           if (e.key !== "Enter" || e.isComposing || e.keyCode === 229 || e.altKey || e.shiftKey) return;
+          // Профиль → «Отправка сообщения» = Cmd/Ctrl+Enter: Enter — перенос, Cmd/Ctrl+Enter — отправить.
+          var modSend = false;
+          try {
+            modSend = (JSON.parse(localStorage.getItem("leo_compose_prefs") || "null") || {}).enter === "mod_enter";
+          } catch (_) {}
+          if (modSend) {
+            if (e.metaKey || e.ctrlKey) {
+              e.preventDefault();
+              sendThis();
+            }
+            return;
+          }
           if (e.metaKey || e.ctrlKey) {
             e.preventDefault();
             var s0 = ta.selectionStart;

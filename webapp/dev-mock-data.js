@@ -1025,7 +1025,18 @@
       var mailRes = mailMockResponse(basePath, method, opts);
       if (mailRes) return mailRes;
     }
-    if (basePath === "/me" && method === "GET") return Object.assign({}, mockProfile.me, { onboarding: JSON.parse(JSON.stringify(mockOnboarding)) });
+    if (basePath === "/me" && method === "GET") {
+      return Object.assign({}, mockProfile.me, {
+        onboarding: JSON.parse(JSON.stringify(mockOnboarding)),
+        compose: Object.assign({}, mockCompose),
+      });
+    }
+    if (basePath === "/profile/compose" && method === "PUT") {
+      var cb = typeof opts.body === "string" ? JSON.parse(opts.body || "{}") : opts.body || {};
+      if (typeof cb.voice_send === "boolean") mockCompose.voice_send = cb.voice_send;
+      if (cb.enter === "enter" || cb.enter === "mod_enter") mockCompose.enter = cb.enter;
+      return { ok: true, compose: Object.assign({}, mockCompose) };
+    }
     if (basePath === "/billing" && method === "GET") return mockProfile.billing;
     if (basePath === "/usage/expenses" && method === "GET") {
       var m = /days=(\d+)/.exec(String((opts && opts._path) || ""));
@@ -1148,6 +1159,7 @@
   }
 
   // Онбординг: состояние в памяти (новичок — интро, команда, тур), каталог — тот же файл, что у сервера.
+  var mockCompose = { voice_send: true, enter: "enter" };
   var mockOnboarding = { used: {}, hint_shown: {}, snoozed: {}, screens_seen: {}, can_reset: true };
   var mockOrg = null;
   function onboardingMock(basePath, method, opts) {

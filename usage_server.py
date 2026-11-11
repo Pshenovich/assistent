@@ -2629,6 +2629,11 @@ class _MiniappThemeBody(BaseModel):
     theme: str
 
 
+class _MiniappComposeBody(BaseModel):
+    voice_send: Optional[bool] = None
+    enter: Optional[str] = None
+
+
 class _MiniappOnboardingEventBody(BaseModel):
     kind: str
     feature: str = ""
@@ -5967,6 +5972,7 @@ async def miniapp_me(principal: _MiniappPrincipal = Depends(require_miniapp_user
         "bot_username": _miniapp_resolve_bot_username(),
         "has_custom_avatar": await run_in_threadpool(_user_has_custom_avatar, int(principal.telegram_user_id)),
         "ui_theme": await run_in_threadpool(_ui_theme_state, principal),
+        "compose": await run_in_threadpool(_compose_prefs_state, principal),
         "onboarding": await run_in_threadpool(_onboarding_state, principal),
     }
 
@@ -6107,6 +6113,32 @@ async def miniapp_profile_theme_put(
         raise HTTPException(status_code=400, detail="Неизвестная тема") from e
     rt_notify.prefs_changed(uid, ui_theme=pref)
     return {"ok": True, "pref": pref}
+
+
+def _compose_prefs_state(principal: _MiniappPrincipal) -> dict[str, Any]:
+    from assistant.stores import user_prefs
+
+    return user_prefs.get_compose_prefs(int(principal.telegram_user_id))
+
+
+@miniapp_router.put("/profile/compose")
+async def miniapp_profile_compose_put(
+    body: _MiniappComposeBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Поля сообщений: голосовое сразу в чат или в поле; отправка по Enter или по Cmd/Ctrl+Enter."""
+    from assistant.realtime import notify as rt_notify
+    from assistant.stores import user_prefs
+
+    uid = int(principal.telegram_user_id)
+    try:
+        prefs = await run_in_threadpool(
+            partial(user_prefs.set_compose_prefs, uid, voice_send=body.voice_send, enter=body.enter)
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Неизвестный способ отправки") from e
+    rt_notify.prefs_changed(uid, compose=prefs)
+    return {"ok": True, "compose": prefs}
 
 
 def _user_has_custom_avatar(user_id: int) -> bool:

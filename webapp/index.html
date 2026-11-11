@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261111-blocked" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261111-compose" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261107-embed1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -790,6 +790,34 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
+                <div class="pf-row pf-row--select" id="profile-compose-voice-row">
+                  <span class="pf-ico pf-ico--red" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Голосовое в чате</span><span class="pf-row-sub">После записи в обсуждении</span></span>
+                    <span class="pf-row-val" id="profile-compose-voice-value"></span>
+                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                  </span>
+                  <select id="profile-compose-voice" class="pf-row-select" aria-label="Что делать с расшифровкой голосового">
+                    <option value="send">Сразу отправлять</option>
+                    <option value="insert">Подставлять в поле</option>
+                  </select>
+                </div>
+                <div class="pf-row pf-row--select" id="profile-compose-enter-row">
+                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4" /><path d="m9 10-5 5 5 5" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Отправка сообщения</span><span class="pf-row-sub" id="profile-compose-enter-sub">Другое сочетание — новая строка</span></span>
+                    <span class="pf-row-val" id="profile-compose-enter-value"></span>
+                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                  </span>
+                  <select id="profile-compose-enter" class="pf-row-select" aria-label="Чем отправлять сообщение">
+                    <option value="enter">Enter</option>
+                    <option value="mod_enter">⌘/Ctrl + Enter</option>
+                  </select>
+                </div>
                 <button type="button" class="pf-row" id="profile-agents-open" data-tour="profile-agents">
                   <span class="pf-ico pf-ico--gray" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg>
@@ -2672,14 +2700,14 @@
     })();
   </script>
   <script src="/webapp/note-drafts.js?v=20261005-heading-pdf" defer></script>
-  <script src="/webapp/web-canvas.js?v=20261110-enter" defer></script>
+  <script src="/webapp/web-canvas.js?v=20261111-compose" defer></script>
   <!-- Запасной адрес для VPN: оборачивает fetch/WebSocket — до realtime.js и app.js. -->
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261111-blocked" defer></script>
+  <script src="/webapp/app.js?v=20261111-compose" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
-  <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
+  <script src="/webapp/mail-inbox.js?v=20261111-compose" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261111-orgviews2" defer></script>

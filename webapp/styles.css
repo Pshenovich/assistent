@@ -16993,7 +16993,8 @@ mark.note-highlight { background: color-mix(in srgb, var(--warning) 32%, transpa
 .note-tg-btn--mic { flex-shrink: 0; }
 .note-editor-toolbar-row.is-selection .note-tg-btn--mic { display: none; }
 .note-dictation-bar { display: none; align-items: center; gap: 10px; min-height: 44px; }
-.note-editor-toolbar-wrap.is-dictating .note-dictation-bar { display: flex; }
+/* В заметке — не во всю ширину, а как плашка записи итогов встречи (.ev-rec): до 520px, по центру. */
+.note-editor-toolbar-wrap.is-dictating .note-dictation-bar { display: flex; width: min(520px, 100%); margin: 0 auto; box-sizing: border-box; }
 .note-editor-toolbar-wrap.is-dictating .note-editor-toolbar-row { display: none !important; }
 .note-dict-btn { flex-shrink: 0; width: 44px; height: 44px; border: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .note-dict-cancel { background: var(--overlay-3); color: var(--text-soft); }

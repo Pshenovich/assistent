@@ -814,9 +814,21 @@
   function onKey(e) {
     var t = e.target;
     if (!t || !t.hasAttribute || !t.hasAttribute("data-mi-input")) return;
-    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    // Способ отправки — из Профиля («Отправка сообщения»): Enter или Cmd/Ctrl+Enter.
+    var act = window.leoMessageEnterAction
+      ? window.leoMessageEnterAction(e)
+      : e.key === "Enter" && !e.shiftKey && !e.isComposing
+      ? "send"
+      : "";
+    if (act === "send") {
       e.preventDefault();
       sendFromInput();
+    } else if (act === "newline" && !e.shiftKey) {
+      e.preventDefault();
+      var s0 = t.selectionStart;
+      t.value = t.value.slice(0, s0) + "\n" + t.value.slice(t.selectionEnd);
+      t.selectionStart = t.selectionEnd = s0 + 1;
+      t.dispatchEvent(new Event("input", { bubbles: true }));
     }
   }
 

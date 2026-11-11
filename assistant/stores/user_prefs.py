@@ -129,6 +129,43 @@ def set_ui_theme(user_id: int, theme: str) -> str:
     return value
 
 
+COMPOSE_ENTER_MODES = ("enter", "mod_enter")
+
+
+def get_compose_prefs(user_id: int) -> dict:
+    """Поля сообщений в обсуждениях (общие для веба, PWA и миниаппа).
+
+    voice_send — расшифровку голосового сразу отправить в чат (True, по умолчанию) или подставить
+    в поле ввода (False). enter — «enter»: Enter отправляет, Shift+Enter — перенос (по умолчанию);
+    «mod_enter»: Cmd/Ctrl+Enter отправляет, Enter — перенос строки.
+    """
+    raw = load_prefs(user_id).get("compose")
+    raw = raw if isinstance(raw, dict) else {}
+    enter = str(raw.get("enter") or "").strip().lower()
+    return {
+        "voice_send": raw.get("voice_send") is not False,
+        "enter": enter if enter in COMPOSE_ENTER_MODES else "enter",
+    }
+
+
+def set_compose_prefs(user_id: int, *, voice_send: bool | None = None, enter: str | None = None) -> dict:
+    if enter is not None:
+        enter = str(enter).strip().lower()
+        if enter not in COMPOSE_ENTER_MODES:
+            raise ValueError(f"unknown enter mode: {enter!r}")
+    with _lock:
+        prefs = load_prefs(user_id)
+        cur = prefs.get("compose") if isinstance(prefs.get("compose"), dict) else {}
+        cur = dict(cur)
+        if voice_send is not None:
+            cur["voice_send"] = bool(voice_send)
+        if enter is not None:
+            cur["enter"] = enter
+        prefs["compose"] = cur
+        save_prefs(user_id, prefs)
+    return get_compose_prefs(user_id)
+
+
 def meeting_reminders_enabled(user_id: int) -> bool:
     """По умолчанию напоминания о встречах включены."""
     prefs = load_prefs(user_id)
