@@ -6650,7 +6650,9 @@ async def miniapp_calendar_tasks_mine(
                     it["meeting_title"] = titles[nid]
             items.append(it)
         inbox = calendar_tasks_store.list_inbox(uid) if not done else {"items": []}
-        return {"items": items, "inbox": len(inbox["items"])}
+        # Неразобранные поручения — тоже в списке, с пометкой «Не разобрано»: отсюда их и разбирают.
+        inbox_items = [_inbox_item_api(t, tz=tz, viewer_id=uid) for t in inbox["items"]]
+        return {"items": items, "inbox": len(inbox_items), "inbox_items": inbox_items}
 
     res = await run_in_threadpool(_run)
     return {"ok": True, "done": bool(done), **res}

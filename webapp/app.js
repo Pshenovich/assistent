@@ -22992,7 +22992,9 @@
     return String(name || "").trim().split(/\s+/)[0] || "постановщику";
   }
 
-  async function openTaskInbox() {
+  // opts.startId — начать с этой задачи (из списка «Задачи»), opts.menu = "decline" — сразу окно с причиной.
+  async function openTaskInbox(opts) {
+    opts = opts && !opts.type ? opts : {}; // из addEventListener прилетает событие — это не настройки
     if (tinbox) {
       tinboxReturn();
       return;
@@ -23022,6 +23024,14 @@
       if (!tinbox) return;
       tinbox.items = (res && res.items) || [];
       tinbox.snoozed = (res && res.snoozed) || 0;
+      if (opts.startId) {
+        var sid = String(opts.startId);
+        var at = tinbox.items.findIndex(function (t) {
+          return String(t.id) === sid || (t.bundle_ids || []).some(function (x) { return String(x) === sid; });
+        });
+        if (at > 0) tinbox.items.unshift(tinbox.items.splice(at, 1)[0]);
+        if (at >= 0 && opts.menu === "decline") tinbox.menu = "decline";
+      }
     } catch (e) {
       showNoteToast((e && e.message) || "Не удалось загрузить задачи");
       closeTaskInbox();
@@ -28354,7 +28364,27 @@
         b.classList.toggle("is-on", b.getAttribute("data-col") === cur);
       });
     }
-    board.addEventListener("scroll", syncJump, { passive: true });
+    // Доска пересобирается после каждого действия с задачей (и после закрытия карточки),
+    // а новая лента всегда стоит в начале. Помним, докуда её прокрутили, и возвращаем туда же;
+    // если доска сейчас скрыта (ширина 0) — вернём, как только снова станет видна.
+    var savedLeft = listEl._ptKanbanLeft || 0;
+    var wasHidden = true;
+    function restoreLeft() {
+      if (!board.isConnected) {
+        if (ro) ro.disconnect();
+        return;
+      }
+      var visible = board.clientWidth > 0;
+      if (visible && wasHidden && savedLeft) board.scrollLeft = savedLeft;
+      wasHidden = !visible;
+    }
+    var ro = typeof ResizeObserver === "function" ? new ResizeObserver(restoreLeft) : null;
+    if (ro) ro.observe(board);
+    restoreLeft();
+    board.addEventListener("scroll", function () {
+      if (board.clientWidth > 0) savedLeft = listEl._ptKanbanLeft = board.scrollLeft;
+      syncJump();
+    }, { passive: true });
     syncJump();
     return board;
   }
@@ -30915,6 +30945,7 @@
   var myTasksDoneLoaded = false;
   var myTasksDoneProbed = false; // пробуем загрузить выполненные один раз, чтобы ошибка не зациклила загрузку
   var myTasksInbox = 0;
+  var myTasksInboxItems = []; // поручения мне, ещё не разобранные: в списке с пометкой «Не разобрано»
   var myTasksTab = "open"; // open | done («Выполненные»)
   var myTasksFrom = ""; // фильтр: "" — все, "self" — свои, иначе id постановщика
   var myTasksSelectedId = ""; // открытая справа задача (десктоп)
@@ -30975,6 +31006,7 @@
       var data = await apiFetch("/calendar/tasks/mine", { method: "GET" });
       myTasksItems = (data && data.items) || [];
       myTasksInbox = Number((data && data.inbox) || 0);
+      myTasksInboxItems = (data && Array.isArray(data.inbox_items)) ? data.inbox_items : [];
     } catch (err) {
       showNoteToast((err && err.message) || "Не удалось загрузить задачи");
     }
@@ -31089,28 +31121,22 @@
         var late = all.filter(function (t) {
           return postedTaskIsOverdue(t) && !postedTaskIsDone(t);
         }).length;
-        sub.textContent = all.length
-          ? all.length + " " + pluralRu(all.length, "открытая", "открытые", "открытых") + (late ? " · " + late + " просрочено" : "")
-          : "";
+        var nIn = myTasksInboxItems.length;
+        sub.textContent = [
+          all.length ? all.length + " " + pluralRu(all.length, "открытая", "открытые", "открытых") : "",
+          nIn ? nIn + " не " + pluralRu(nIn, "разобрана", "разобраны", "разобрано") : "",
+          late ? late + " просрочено" : "",
+        ].filter(Boolean).join(" · ");
       }
     }
-    renderMyTasksTeam(all);
+    renderMyTasksTeam(done ? all : all.concat(myTasksInboxItems));
     listEl.innerHTML = "";
-    if (!done && myTasksInbox) {
-      var inbox = document.createElement("button");
-      inbox.type = "button";
-      inbox.className = "mt-inbox";
-      inbox.innerHTML = "<span></span><span aria-hidden=\"true\">›</span>";
-      inbox.firstChild.textContent =
-        myTasksInbox + " " + pluralRu(myTasksInbox, "новая задача ждёт", "новые задачи ждут", "новых задач ждут") + " разбора";
-      inbox.addEventListener("click", openTaskInbox);
-      listEl.appendChild(inbox);
-    }
+    var inboxItems = done ? [] : myTasksVisible(myTasksInboxItems);
     var items = myTasksVisible(all);
     var emptyEl = document.getElementById("my-tasks-empty");
     if (emptyEl) {
       emptyEl.innerHTML = "";
-      var showEmpty = done ? myTasksDoneLoaded && !all.length : !all.length;
+      var showEmpty = done ? myTasksDoneLoaded && !all.length : !all.length && !myTasksInboxItems.length;
       if (showEmpty) {
         var hasDone = myTasksDoneLoaded && myTasksDoneItems.length > 0;
         if (done) ptEmptyFill(emptyEl, "", "Здесь будут задачи, которые вы выполнили.");
@@ -31137,12 +31163,22 @@
       setHidden(emptyEl, !showEmpty);
     }
     syncMyTasksViewUi();
-    if (myKanbanOn() && all.length) {
-      renderMyTasksKanban(listEl, items);
+    if (myKanbanOn() && (all.length || inboxItems.length)) {
+      renderMyTasksKanban(listEl, items, inboxItems);
       var sideK = document.getElementById("my-tasks-side");
       if (sideK) sideK.innerHTML = "";
       postedCardHosts.side = null;
       return;
+    }
+    // Неразобранные поручения — первой группой: видно сразу, разбирать можно прямо отсюда.
+    if (inboxItems.length) {
+      listEl.appendChild(postedSection("Не разобрано", inboxItems.length, true));
+      var inboxBox = document.createElement("div");
+      inboxBox.className = "pt-rows";
+      inboxItems.forEach(function (t) {
+        inboxBox.appendChild(renderMyInboxRow(t));
+      });
+      listEl.appendChild(inboxBox);
     }
     // Как в «Поставленных»: «Просрочено» и «Предстоящие» — заголовки групп, сроки — подзаголовки внутри.
     var groups = myTasksGroups(items);
@@ -31170,7 +31206,7 @@
       });
       listEl.appendChild(box);
     });
-    if (!done && !isDesktopLayout() && all.length) {
+    if (!done && !isDesktopLayout() && (all.length || inboxItems.length)) {
       var foot = document.createElement("button");
       foot.type = "button";
       foot.className = "pt-foot";
@@ -31289,11 +31325,13 @@
     return null;
   }
 
-  function renderMyTasksKanban(listEl, items) {
+  function renderMyTasksKanban(listEl, items, inboxItems) {
     var groups = {};
-    MY_KANBAN_COLS.forEach(function (c) {
+    var cols = (inboxItems && inboxItems.length ? [["inbox", "Не разобрано"]] : []).concat(MY_KANBAN_COLS);
+    cols.forEach(function (c) {
       groups[c[0]] = [];
     });
+    if (inboxItems && inboxItems.length) groups.inbox = inboxItems.slice();
     items.forEach(function (t) {
       var k = myKanbanColumn(t);
       if (groups[k]) groups[k].push(t);
@@ -31304,12 +31342,17 @@
     var seen = {};
     groups.done.forEach(function (t) { seen[String(t.id)] = 1; });
     groups.done = groups.done.concat(myKanbanDoneRecent().filter(function (t) { return !seen[String(t.id)]; }));
-    buildKanbanBoard(listEl, MY_KANBAN_COLS, groups, {
+    buildKanbanBoard(listEl, cols, groups, {
       row: function (t, key) {
+        if (key === "inbox") return renderMyInboxRow(t);
         return renderMyTaskRow(t, { late: key !== "done" && postedTaskIsOverdue(t) });
       },
+      // Неразобранное не тянется: сначала «Беру» или «Не моё» — так постановщик узнает о решении.
+      draggable: function (key) {
+        return key !== "inbox";
+      },
       strong: function (key, n) {
-        return n > 0 && (key === "blocked" || key === "question");
+        return n > 0 && (key === "inbox" || key === "blocked" || key === "question");
       },
       move: myKanbanMove,
       deny: "Сюда перенести нельзя",
@@ -31731,6 +31774,119 @@
       });
     }
     return acts;
+  }
+
+  // Поручение мне, которое ещё не разобрано: «Не разобрано», кто поставил, срок; «Не моё» / «Разобрать» / «Беру».
+  // Клик по строке — стопка разбора, начиная с этой задачи (там же «Позже», «Сделано», «Изменить»).
+  function renderMyInboxRow(task) {
+    var row = document.createElement("div");
+    row.className = "pt-row pt-row--inbox";
+    row.dataset.taskId = String(task.id);
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    var main = document.createElement("div");
+    main.className = "pt-row-main";
+    var t = document.createElement("p");
+    t.className = "pt-row-title";
+    t.textContent = String(task.title || "Задача");
+    main.appendChild(t);
+    var line = document.createElement("p");
+    line.className = "pt-row-line";
+    function part(text, cls) {
+      if (!text) return;
+      if (line.childNodes.length) {
+        var sep = document.createElement("span");
+        sep.className = "pt-sep";
+        sep.textContent = " · ";
+        line.appendChild(sep);
+      }
+      var s = document.createElement("span");
+      if (cls) s.className = cls;
+      s.textContent = text;
+      line.appendChild(s);
+    }
+    part("не разобрано", "mt-untriaged");
+    if (task.owner_name && !myTasksFrom) part("поставил(а) " + postedFirstName(task.owner_name), "mt-from");
+    var nSub = (task.bundle_ids || []).length;
+    if (nSub) part("+ " + nSub + " " + pluralRu(nSub, "подзадача", "подзадачи", "подзадач"), "");
+    var ds = postedDueShort(task);
+    part(ds.day === "без срока" ? "без срока" : "срок " + ds.day + (ds.time ? ", " + ds.time : ""), "pt-due-inline");
+    if (task.source && task.source.kind === "transcription" && task.source.title) part("из «" + task.source.title + "»", "pt-meeting");
+    main.appendChild(line);
+    row.appendChild(main);
+    var acts = document.createElement("div");
+    acts.className = "pt-row-acts";
+    acts.appendChild(postedBtn("Не моё", "", function () {
+      openTaskInbox({ startId: task.id, menu: "decline" });
+    }));
+    acts.appendChild(postedBtn("Разобрать", "", function () {
+      openTaskInbox({ startId: task.id });
+    }));
+    acts.appendChild(postedBtn("Беру", "pt-btn--primary", function (b) {
+      myInboxAccept(task, b, row);
+    }));
+    row.appendChild(acts);
+    function open() {
+      openTaskInbox({ startId: task.id });
+    }
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", function (e) {
+      if (e.target === row && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        open();
+      }
+    });
+    return row;
+  }
+
+  // «Беру» прямо из списка — как свайп вправо в стопке: задача как есть уходит в календарь.
+  async function myInboxAccept(task, btn, row) {
+    if (btn) btn.disabled = true;
+    if (row) row.classList.add("is-busy");
+    try {
+      await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/triage", {
+        method: "POST",
+        body: JSON.stringify({ action: "accept", with_ids: task.bundle_ids || [] }),
+      });
+    } catch (e) {
+      if (btn) btn.disabled = false;
+      if (row) row.classList.remove("is-busy");
+      showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+      return;
+    }
+    myTasksInboxItems = myTasksInboxItems.filter(function (x) { return String(x.id) !== String(task.id); });
+    myTasksInbox = myTasksInboxItems.length;
+    if (isMyTasksOpen()) renderMyTasksScreen();
+    var node = document.createElement("span");
+    node.appendChild(tinboxEl("span", "note-toast-copy", "Задача в календаре"));
+    var undo = tinboxEl("button", "note-toast-link", "Вернуть");
+    undo.type = "button";
+    undo.addEventListener("click", async function () {
+      undo.disabled = true;
+      try {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/triage", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "undo",
+            state: task.assignee_triage || "inbox",
+            snoozed_until: task.assignee_snoozed_until || "",
+            with_ids: task.bundle_ids || [],
+          }),
+        });
+        var el = document.getElementById("note-toast");
+        if (el) el.classList.add("hidden");
+      } catch (e) {
+        showNoteToast((e && e.message) || "Не удалось вернуть");
+      }
+      loadMyTasksList();
+      loadFocus(true);
+      loadActual({ silent: true, skipCachePaint: true });
+    });
+    node.appendChild(undo);
+    showNoteToast("", { node: node, actionable: true, duration: 5000 });
+    loadMyTasksList();
+    loadFocus(true);
+    loadActual({ silent: true, skipCachePaint: true });
   }
 
   function renderMyTaskRow(task, opts) {

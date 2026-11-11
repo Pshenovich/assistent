@@ -361,12 +361,15 @@ def test_my_tasks_endpoint(client, store):
     own = store.create_task(ASSIGNEE, title="Себе", start_at=datetime.now(TZ), tz=TZ)
     taken = _delegated(store, title="Взятое")
     store.triage_accept(ASSIGNEE, taken["id"])
-    _delegated(store, title="Во входящих")
+    fresh = _delegated(store, title="Во входящих")
     r = client.get("/api/miniapp/calendar/tasks/mine", headers=_headers(ASSIGNEE))
     assert r.status_code == 200, r.text
     body = r.json()
     assert {t["id"] for t in body["items"]} == {own["id"], taken["id"]}
     assert body["inbox"] == 1
+    # Неразобранное — отдельным списком, с постановщиком: «Задачи» показывают его с пометкой «Не разобрано».
+    [ib] = body["inbox_items"]
+    assert ib["id"] == fresh["id"] and ib["title"] == "Во входящих" and ib["owner_name"]
     got = {t["id"]: t for t in body["items"]}
     assert got[taken["id"]]["owner_name"]
     assert "owner_name" not in got[own["id"]]

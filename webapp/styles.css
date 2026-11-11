@@ -15887,23 +15887,6 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 .mt-check:disabled { opacity: 0.6; }
 .pt-row.is-done .pt-row-title { text-decoration: line-through; color: var(--text-secondary); }
 .pt-row-line .mt-from { color: var(--text-secondary); }
-.mt-inbox {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  margin: 14px 0 0;
-  padding: 12px 14px;
-  border: 1px solid var(--accent);
-  border-radius: var(--radius-card);
-  background: var(--accent-subtle);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.92rem;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-}
 .pt-row-main { flex: 1; min-width: 0; }
 .pt-row-title {
   margin: 0;
@@ -15924,6 +15907,9 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 }
 .pt-row-line .pt-sep { color: var(--text-tertiary); }
 .pt-row-line .is-work { color: var(--accent); }
+/* «Задачи»: поручение мне, ещё не разобранное — пометка и кнопки разбора прямо в строке */
+.pt-row-line .mt-untriaged { color: var(--accent); font-weight: 600; }
+.pt-row--inbox.is-busy { opacity: 0.55; pointer-events: none; }
 .pt-row-line .is-unseen { color: var(--text-tertiary); }
 .pt-row-line .is-question { color: var(--pt-q); font-weight: 600; }
 .pt-row-line .is-late { color: var(--pt-late); }
