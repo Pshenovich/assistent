@@ -246,8 +246,10 @@ def kinds_for_events(owner_user_id: Any, keys: list[str]) -> dict[str, dict[str,
 
 
 def _start_dt(v: Any) -> Optional[datetime]:
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
     s = _time_str(v)
-    if not s or "T" not in s:
+    if len(s) < 16:  # только дата (встреча на весь день) — по времени не сравниваем
         return None
     try:
         d = datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -256,27 +258,19 @@ def _start_dt(v: Any) -> Optional[datetime]:
     return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
 
 
-def shared_kinds_for_events(user_id: Any, events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
-    """Материалы встреч, которыми поделились с пользователем: {event_key пользователя: {kind: n}}.
-
-    Привязку к встрече делает владелец документа (owner_user_id = он), поэтому kinds_for_events
-    у участника её не видит. Здесь — документы из note_members, привязанные владельцем к той же
-    встрече: тот же event_id (у участника своя копия события — calendar_id может отличаться)
-    или то же начало (±5 мин) и та же тема (у владельца событие Орбиты, у участника — Google)."""
+def _shared_link_rows(user_id: Any) -> list[dict[str, Any]]:
+    """Привязки к встречам у чужих документов, открытых пользователю (note_members)."""
     from assistant.stores import note_members
 
-    evs = [e for e in events or [] if isinstance(e, dict) and e.get("id")]
-    if not evs:
-        return {}
     try:
         pairs = note_members.list_note_ids_for_member(user_id)
     except Exception as e:
         print(f"[meeting_links] shared notes failed uid={user_id} err={e!r}")
-        return {}
+        return []
     pairs = [(o, n) for o, n in pairs if str(o) != str(user_id)][:500]
+    rows: list[dict[str, Any]] = []
     if not pairs:
-        return {}
-    rows: list[sqlite3.Row] = []
+        return rows
     with _LOCK:
         conn = _conn()
         for i in range(0, len(pairs), 200):
@@ -285,31 +279,88 @@ def shared_kinds_for_events(user_id: Any, events: list[dict[str, Any]]) -> dict[
             args: list[Any] = []
             for o, n in part:
                 args += [str(o), int(n)]
-            rows += conn.execute(
-                f"""
-                SELECT l.event_id, l.summary, l.start_iso, n.role
-                FROM meeting_links l JOIN local_notes n ON n.id = l.note_id
-                WHERE {where}
-                """,
-                args,
-            ).fetchall()
-    if not rows:
+            rows += [
+                dict(r)
+                for r in conn.execute(
+                    f"""
+                    SELECT l.owner_user_id, l.note_id, l.event_id, l.summary, l.start_iso, l.created_at AS linked_at, n.role
+                    FROM meeting_links l JOIN local_notes n ON n.id = l.note_id
+                    WHERE {where}
+                    """,
+                    args,
+                ).fetchall()
+            ]
+    return rows
+
+
+def _same_meeting(ev: dict[str, Any], row: dict[str, Any]) -> bool:
+    """Тот же event_id или то же начало (±5 мин) и та же тема (у владельца событие Орбиты, у участника — Google)."""
+    m = meeting_from_event(ev)
+    if m["event_id"] and str(row.get("event_id") or "") == m["event_id"]:
+        return True
+    title = m["summary"].lower()
+    st = _start_dt(m["start_iso"])
+    if not st or not title or str(row.get("summary") or "").strip().lower() != title:
+        return False
+    rst = _start_dt(row.get("start_iso"))
+    return bool(rst) and abs((rst - st).total_seconds()) <= 300
+
+
+def shared_kinds_for_events(user_id: Any, events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Материалы встреч, которыми поделились с пользователем: {event_key пользователя: {kind: n}}.
+
+    Привязку к встрече делает владелец документа (owner_user_id = он), поэтому kinds_for_events
+    у участника её не видит. Здесь — документы из note_members, привязанные владельцем к той же
+    встрече (_same_meeting; у участника своя копия события — calendar_id может отличаться).
+    Событие — как в календаре миниаппа (id/start) или как в инструментах Лео (event_id/start_iso)."""
+    evs = [e for e in events or [] if isinstance(e, dict) and (e.get("id") or e.get("event_id"))]
+    if not evs:
         return {}
+    rows = _shared_link_rows(user_id)
     out: dict[str, dict[str, int]] = {}
     for ev in evs:
-        eid = str(ev.get("id") or "").strip()
-        st = _start_dt(ev.get("start"))
-        title = str(ev.get("summary") or "").strip().lower()
+        m = meeting_from_event(ev)
         for r in rows:
-            same = str(r["event_id"] or "") == eid
-            if not same and st and title and str(r["summary"] or "").strip().lower() == title:
-                rst = _start_dt(r["start_iso"])
-                same = bool(rst) and abs((rst - st).total_seconds()) <= 300
-            if not same:
+            if not _same_meeting(ev, r):
                 continue
             kind = "transcription" if str(r["role"] or "") == "transcription" else "note"
-            slot = out.setdefault(event_key(ev.get("calendar_id"), eid), {"transcription": 0, "note": 0})
+            slot = out.setdefault(event_key(m["calendar_id"], m["event_id"]), {"transcription": 0, "note": 0})
             slot[kind] += 1
+    return out
+
+
+def kinds_with_shared(user_id: Any, events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Значки встреч: свои привязки + документы, которыми поделились (общая встреча)."""
+    evs = [e for e in events or [] if isinstance(e, dict) and (e.get("id") or e.get("event_id"))]
+    keys = [event_key(m["calendar_id"], m["event_id"]) for m in map(meeting_from_event, evs)]
+    out = kinds_for_events(user_id, keys)
+    try:
+        for k, v in shared_kinds_for_events(user_id, evs).items():
+            slot = out.setdefault(k, {"transcription": 0, "note": 0})
+            for kind, n in v.items():
+                slot[kind] = slot.get(kind, 0) + n
+    except Exception as e:
+        print(f"[meeting_links] shared kinds failed uid={user_id} err={e!r}")
+    return out
+
+
+def notes_for_event_with_shared(user_id: Any, ev: dict[str, Any]) -> list[dict[str, Any]]:
+    """Материалы встречи: свои привязки (notes_for_event) + чужие документы той же встречи, открытые пользователю.
+
+    Строка: note_id, owner_user_id, linked_at. Привязку у общего документа читать по owner_user_id."""
+    m = meeting_from_event(ev)
+    out = [dict(r, owner_user_id=str(user_id)) for r in notes_for_event(user_id, event_key(m["calendar_id"], m["event_id"]))]
+    seen = {int(r["note_id"]) for r in out}
+    try:
+        shared = [r for r in _shared_link_rows(user_id) if _same_meeting(ev, r)]
+    except Exception as e:
+        print(f"[meeting_links] shared notes for event failed uid={user_id} err={e!r}")
+        shared = []
+    for r in sorted(shared, key=lambda r: str(r.get("linked_at") or "")):
+        if int(r["note_id"]) in seen:
+            continue
+        seen.add(int(r["note_id"]))
+        out.append({"note_id": int(r["note_id"]), "owner_user_id": str(r["owner_user_id"]), "linked_at": r.get("linked_at")})
     return out
 
 

@@ -831,19 +831,11 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         print(f"[proactive] overdue failed uid={uid} err={e!r}")
     evs = [e for e in events if isinstance(e, dict) and e.get("id") and not str(e.get("id")).startswith("task-")]
     try:
-        keys = [meeting_links.event_key(e.get("calendar_id"), e.get("id")) for e in evs]
-        kinds = meeting_links.kinds_for_events(uid, keys)
+        # Свои привязки + общая встреча: запись и саммари у владельца, участнику документ открыт.
+        kinds = meeting_links.kinds_with_shared(uid, evs)
     except Exception as e:
         print(f"[proactive] kinds failed uid={uid} err={e!r}")
         kinds = {}
-    try:
-        # Общая встреча: запись и саммари у владельца, участнику документ открыт — итоги есть и у него.
-        for k, v in meeting_links.shared_kinds_for_events(uid, evs).items():
-            slot = kinds.setdefault(k, {"transcription": 0, "note": 0})
-            for kind, n in v.items():
-                slot[kind] = slot.get(kind, 0) + n
-    except Exception as e:
-        print(f"[proactive] shared kinds failed uid={uid} err={e!r}")
     if prefs.get("before_meetings"):
         items += rule_prep([{**e, "_owner_uid": uid} for e in evs], kinds, now, tz)
         try:

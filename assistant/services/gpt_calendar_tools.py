@@ -597,7 +597,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
     t0, t1 = _window(ctx.uid, args.get("start_date"), args.get("end_date"))
     names = _email_names(ctx)
     out: list[dict[str, Any]] = []
-    meeting_keys: list[tuple[dict[str, Any], str]] = []
+    meeting_keys: list[tuple[dict[str, Any], dict[str, Any]]] = []
     # встречи: Google (если подключён) + Орбиты
     for ev in _events_in_window(ctx, t0, t1, str(args.get("query") or "")):
         raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
@@ -620,7 +620,7 @@ def tool_calendar_events(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         if raw.get("location"):
             item["location"] = str(raw.get("location"))[:120]
         out.append(item)
-        meeting_keys.append((item, f"{item['calendar_id'] or 'primary'}:{item['id']}"))
+        meeting_keys.append((item, ev))
         ctx.seen_items.append({"type": "event", "id": item["id"], "calendar_id": item["calendar_id"], "title": item["title"]})
     try:
         from assistant.stores import calendar_tasks
@@ -1640,18 +1640,19 @@ def actions_by_ids(ids: list[str]) -> list[dict[str, Any]]:
 
 # ---------------------------------------------------------------- материалы встреч
 
-def _mark_materials(ctx: GptCalendarContext, pairs: list[tuple[dict[str, Any], str]]) -> None:
+def _mark_materials(ctx: GptCalendarContext, pairs: list[tuple[dict[str, Any], dict[str, Any]]]) -> None:
+    """Пометка «есть материалы»: свои привязки и документы общей встречи, открытые пользователю."""
     if not pairs:
         return
     try:
         from assistant.stores import meeting_links
 
-        kinds = meeting_links.kinds_for_events(ctx.uid, [k for _, k in pairs])
+        kinds = meeting_links.kinds_with_shared(ctx.uid, [ev for _, ev in pairs])
     except Exception as e:
         print(f"[gpt_calendar] materials mark err={e!r}")
         return
-    for item, key in pairs:
-        k = kinds.get(key)
+    for item, ev in pairs:
+        k = kinds.get(meeting_links.event_key(ev.get("calendar_id"), ev.get("event_id") or ev.get("id")))
         if k:
             item["materials"] = {"transcriptions": k.get("transcription", 0), "notes": k.get("note", 0)}
 
@@ -1747,7 +1748,12 @@ def tool_meeting_materials(ctx: GptCalendarContext, args: dict[str, Any]) -> str
             return _err("Встреча не найдена — уточни дату или посмотри calendar_events")
         ev = cands[-1]
         eid, cal = str(ev.get("event_id") or ""), str(ev.get("calendar_id") or "primary")
-    rows = meeting_links.notes_for_event(ctx.uid, meeting_links.event_key(cal, eid))
+    else:
+        ev = {"event_id": eid, "calendar_id": cal}
+        if args.get("title"):
+            ev["summary"] = str(args.get("title"))
+    # Свои привязки + документы общей встречи (запись загрузил другой участник и открыл доступ).
+    rows = meeting_links.notes_for_event_with_shared(ctx.uid, ev)
     if not rows:
         return _ok({"event_id": eid, "materials": [], "note": "К этой встрече ничего не привязано (нет записи и заметок)."})
     mats = []
@@ -1757,12 +1763,13 @@ def tool_meeting_materials(ctx: GptCalendarContext, args: dict[str, Any]) -> str
         if d:
             mats.append(d)
         if meeting is None:
-            link = meeting_links.get_for_note(ctx.uid, int(r["note_id"]))
+            owner = r.get("owner_user_id") or ctx.uid  # у общего документа привязка — владельца
+            link = meeting_links.get_for_note(owner, int(r["note_id"]))
             if link:
                 meeting = {
                     "title": link.get("summary"),
                     "when": human_when(_iso_local(ctx.uid, link.get("start_iso")), _iso_local(ctx.uid, link.get("end_iso")), ctx.uid),
-                    "people": _meeting_people(link, meeting_links.people_for_note(ctx.uid, int(r["note_id"]))),
+                    "people": _meeting_people(link, meeting_links.people_for_note(owner, int(r["note_id"]))),
                 }
     return _ok({"meeting": meeting, "materials": mats})
 

@@ -5174,13 +5174,13 @@ def _link_events_to_google_tasks(
 
 
 def _attach_meeting_material_kinds(payload: dict[str, Any], uid: int) -> dict[str, Any]:
-    """Значки «Транскрипция / Заметка» у встреч, к которым пользователь привязал материалы."""
+    """Значки «Транскрипция / Заметка» у встреч с материалами: свои привязки и общие документы встречи."""
     try:
         from assistant.stores import meeting_links
 
         evs = [e for e in (payload.get("events") or []) if isinstance(e, dict) and e.get("id")]
         keys = [meeting_links.event_key(e.get("calendar_id"), e.get("id")) for e in evs]
-        kinds = meeting_links.kinds_for_events(uid, keys)
+        kinds = meeting_links.kinds_with_shared(uid, evs)  # и документы общей встречи, открытые участнику
         for e, k in zip(evs, keys):
             if k in kinds:
                 e["materials"] = kinds[k]
@@ -13200,17 +13200,22 @@ def _meeting_material_item(note: dict[str, Any]) -> dict[str, Any]:
 async def miniapp_calendar_event_materials(
     event_id: str,
     calendar_id: str = "primary",
+    summary: str = "",
+    start: str = "",
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    """Материалы встречи: привязанные транскрипции и заметки (только свои)."""
+    """Материалы встречи: свои привязанные транскрипции и заметки + документы общей встречи,
+    которые другой участник привязал к ней и открыл пользователю (summary/start — чтобы узнать
+    ту же встречу, если у участника своя копия события с другим id)."""
     from assistant.stores import meeting_links
     from assistant.stores import notes as notes_store
 
     uid = int(principal.telegram_user_id)
+    ev = {"id": event_id, "calendar_id": calendar_id, "summary": summary[:300], "start": start[:40]}
 
     def _run() -> list[dict[str, Any]]:
         out = []
-        for row in meeting_links.notes_for_event(uid, meeting_links.event_key(calendar_id, event_id)):
+        for row in meeting_links.notes_for_event_with_shared(uid, ev):
             note = notes_store.get_accessible_note(uid, int(row["note_id"]), with_sharing=False)
             if note:
                 out.append(_meeting_material_item(note))

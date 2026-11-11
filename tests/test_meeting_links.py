@@ -261,6 +261,24 @@ class SharedMeetingResultsTests(unittest.TestCase):
         # Обычные значки участника (только свои привязки) по-прежнему пусты — отсюда и была ошибка.
         self.assertEqual(meeting_links.kinds_for_events(2, ["andrey@x.ru:orb-7"]), {})
 
+    def test_kinds_and_materials_with_shared(self) -> None:
+        # Значки календаря и материалы встречи у участника: его копия события с другим id.
+        ev = self._member_ev(id="g123")
+        own = notes_store.create_note(2, "Мои заметки", "<p>z</p>")
+        meeting_links.link(2, own["id"], ev)
+        self.assertEqual(meeting_links.kinds_with_shared(2, [ev]), {"andrey@x.ru:g123": {"transcription": 1, "note": 1}})
+        rows = meeting_links.notes_for_event_with_shared(2, ev)
+        self.assertEqual([(r["owner_user_id"], r["note_id"]) for r in rows][0], ("2", own["id"]))
+        self.assertEqual(rows[1]["owner_user_id"], "1")  # общий документ — привязка владельца
+        self.assertEqual(notes_store.get_accessible_note(2, rows[1]["note_id"], with_sharing=False)["title"], "Ферма")
+        # Инструменты Лео: событие с event_id и start как datetime.
+        leo_ev = {"event_id": "g123", "calendar_id": "andrey@x.ru", "summary": "Ферма", "start": self.start}
+        self.assertIn("andrey@x.ru:g123", meeting_links.kinds_with_shared(2, [leo_ev]))
+        # По одному id без темы и времени чужую встречу не угадываем.
+        self.assertEqual(len(meeting_links.notes_for_event_with_shared(2, {"id": "g123", "calendar_id": "x"})), 0)
+        self.assertEqual(len(meeting_links.notes_for_event_with_shared(2, {"id": "orb-7", "calendar_id": "x"})), 1)
+        self.assertEqual(meeting_links.notes_for_event_with_shared(3, ev), [])
+
     def test_member_gets_no_no_results_hint(self) -> None:
         from assistant.services import proactive
 

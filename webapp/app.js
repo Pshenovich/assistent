@@ -21443,7 +21443,10 @@
     var items = [];
     try {
       var data = await apiFetch(
-        "/calendar/events/" + encodeURIComponent(String(ev.id)) + "/materials?calendar_id=" + encodeURIComponent(String(ev.calendar_id || "primary")),
+        "/calendar/events/" + encodeURIComponent(String(ev.id)) + "/materials?calendar_id=" + encodeURIComponent(String(ev.calendar_id || "primary")) +
+          // тема и начало — чтобы найти документы общей встречи, если у нас своя копия события с другим id
+          "&summary=" + encodeURIComponent(String(ev.summary || "").slice(0, 300)) +
+          "&start=" + encodeURIComponent(String((ev.start && typeof ev.start === "object" ? ev.start.dateTime || ev.start.date : ev.start) || "")),
         { method: "GET" }
       );
       items = (data && data.items) || [];
