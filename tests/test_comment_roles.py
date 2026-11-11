@@ -33,3 +33,23 @@ def test_human_with_ai_like_name_is_not_ai(first, username):
 def test_regular_human_name_unchanged():
     p = SimpleNamespace(user={"first_name": "Вова", "username": "pshenovich"}, telegram_user_id=1)
     assert usage_server._comment_author_from_principal(p) == ("1", "Вова", "pshenovich")
+
+
+def test_name_from_orbita_profile_beats_empty_session():
+    """Вошёл по почте без имени, имя указал позже — в документе и обсуждении имя из профиля."""
+    from assistant.stores import note_members
+
+    uid = 5_000_000_000_000_123
+    note_members.set_custom_name(uid, "Андрей", "Мыздриков")
+    p = SimpleNamespace(user={"id": uid, "email": "a@example.com"}, telegram_user_id=uid)
+    assert usage_server._comment_author_from_principal(p) == (str(uid), "Андрей Мыздриков", None)
+
+
+def test_custom_orbita_name_beats_telegram_name():
+    from assistant.stores import note_members
+
+    uid = 777001
+    note_members.upsert_profile(uid, username="andrey", first_name="Andy")
+    note_members.set_custom_name(uid, "Андрей")
+    p = SimpleNamespace(user={"first_name": "Andy", "username": "andrey"}, telegram_user_id=uid)
+    assert usage_server._comment_author_from_principal(p) == (str(uid), "Андрей", "andrey")

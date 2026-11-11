@@ -3217,10 +3217,22 @@ def _share_response(link: dict[str, Any]) -> dict[str, Any]:
 
 def _comment_author_from_principal(principal: _MiniappPrincipal) -> tuple[str, str, str | None]:
     u = principal.user or {}
-    first = str(u.get("first_name") or "").strip()
-    last = str(u.get("last_name") or "").strip()
+    # Имя — из профиля Орбиты (там и своё имя из «Аккаунта»): в сессии лежит снимок на момент
+    # входа, и у вошедшего по почте до того, как он указал имя, он пустой → «Пользователь».
+    prof: dict[str, Any] = {}
+    try:
+        from assistant.stores import note_members
+
+        prof = note_members.get_profile(int(principal.telegram_user_id)) or {}
+    except Exception:
+        prof = {}
+    first = str(prof.get("first_name") or "").strip()
+    last = str(prof.get("last_name") or "").strip() if first else ""
+    if not first:
+        first = str(u.get("first_name") or "").strip()
+        last = str(u.get("last_name") or "").strip()
     name = " ".join(p for p in (first, last) if p).strip()
-    username = str(u.get("username") or "").strip() or None
+    username = str(prof.get("username") or u.get("username") or "").strip() or None
     if not name:
         name = f"@{username}" if username else "Пользователь"
     # Имя «GPT» / «CHAIR» / «Research» или ник @research у живого человека не делают его реплику
