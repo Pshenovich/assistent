@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261111-compose" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261111-pfgroups" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261107-embed1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -740,37 +740,6 @@
             <div class="pf-group pf-group--leo">
               <p class="pf-group-title">Лео</p>
               <div class="pf-list">
-                <div class="pf-row pf-row--select" id="profile-tg-leo" data-tour="profile-telegram">
-                  <span class="pf-ico pf-ico--blue" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
-                  </span>
-                  <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Модель в Telegram</span></span>
-                    <span class="pf-row-val" id="profile-tg-leo-value"></span>
-                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
-                  </span>
-                  <select id="profile-tg-leo-model" class="pf-row-select" aria-label="Модель Лео в Telegram"></select>
-                </div>
-                <div class="pf-row pf-row--select hidden" id="profile-tg-leo-effort-row">
-                  <span class="pf-ico pf-ico--violet" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M12 3v3" /><path d="M5.6 5.6l2.1 2.1" /><path d="M3 12h3" /><path d="M18 12h3" /><path d="M16.3 7.7l2.1-2.1" /><circle cx="12" cy="14" r="5" /></svg>
-                  </span>
-                  <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Усилие</span><span class="pf-row-sub">Сколько модель думает: выше — точнее, но дольше и дороже</span></span>
-                    <span class="pf-row-val" id="profile-tg-leo-effort-value"></span>
-                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
-                  </span>
-                  <select id="profile-tg-leo-effort" class="pf-row-select" aria-label="Уровень усилия Лео в Telegram"></select>
-                </div>
-                <button type="button" class="pf-row" id="profile-tg-leo-history">
-                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 2" /></svg>
-                  </span>
-                  <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">История в Telegram</span><span class="pf-row-sub">Вопросы и ответы Лео в боте</span></span>
-                    <span class="pf-chev" aria-hidden="true">›</span>
-                  </span>
-                </button>
                 <button type="button" class="pf-row" id="profile-proactive-open" data-tour="profile-proactive">
                   <span class="pf-ico pf-ico--violet" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" /></svg>
@@ -781,49 +750,27 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-voice-open" data-tour="profile-voice">
-                  <span class="pf-ico pf-ico--red" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v4" /></svg>
-                  </span>
-                  <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Голосовой ввод</span><span class="pf-row-sub" id="profile-voice-hint">Паразиты, словарь, сниппеты</span></span>
-                    <span class="pf-chev" aria-hidden="true">›</span>
-                  </span>
-                </button>
-                <div class="pf-row pf-row--select" id="profile-compose-voice-row">
-                  <span class="pf-ico pf-ico--red" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4z" /></svg>
-                  </span>
-                  <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Голосовое в чате</span><span class="pf-row-sub">После записи в обсуждении</span></span>
-                    <span class="pf-row-val" id="profile-compose-voice-value"></span>
-                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
-                  </span>
-                  <select id="profile-compose-voice" class="pf-row-select" aria-label="Что делать с расшифровкой голосового">
-                    <option value="send">Сразу отправлять</option>
-                    <option value="insert">Подставлять в поле</option>
-                  </select>
-                </div>
-                <div class="pf-row pf-row--select" id="profile-compose-enter-row">
-                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4" /><path d="m9 10-5 5 5 5" /></svg>
-                  </span>
-                  <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Отправка сообщения</span><span class="pf-row-sub" id="profile-compose-enter-sub">Другое сочетание — новая строка</span></span>
-                    <span class="pf-row-val" id="profile-compose-enter-value"></span>
-                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
-                  </span>
-                  <select id="profile-compose-enter" class="pf-row-select" aria-label="Чем отправлять сообщение">
-                    <option value="enter">Enter</option>
-                    <option value="mod_enter">⌘/Ctrl + Enter</option>
-                  </select>
-                </div>
                 <button type="button" class="pf-row" id="profile-agents-open" data-tour="profile-agents">
                   <span class="pf-ico pf-ico--gray" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><path d="M12 8V4H8" /><rect width="16" height="12" x="4" y="8" rx="2" /><path d="M2 14h2M20 14h2M15 13v2M9 13v2" /></svg>
                   </span>
                   <span class="pf-row-body">
                     <span class="pf-row-text"><span class="pf-row-title">Агенты</span><span class="pf-row-sub" id="profile-agents-hint">Лео, PAIE, Research и свои</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div class="pf-group pf-group--orbita">
+              <p class="pf-group-title">Орбита</p>
+              <div class="pf-list">
+                <button type="button" class="pf-row" id="profile-digest-open" data-tour="profile-digest">
+                  <span class="pf-ico pf-ico--teal" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M4 4h13v16H6a2 2 0 0 1-2-2z" /><path d="M17 8h3v10a2 2 0 0 1-2 2" /><path d="M8 8h5M8 12h5M8 16h3" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Дайджест</span><span class="pf-row-sub" id="profile-digest-hint">Внешние чаты, обзор рынка</span></span>
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
@@ -836,21 +783,15 @@
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-                <button type="button" class="pf-row" id="profile-chats-open">
-                  <span class="pf-ico pf-ico--teal" aria-hidden="true">
-                    <svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg>
+                <button type="button" class="pf-row" id="profile-discuss-open" data-tour="profile-discuss">
+                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M14 9a2 2 0 0 1-2 2H6l-3 3V4a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2z" /><path d="M18 9h2a2 2 0 0 1 2 2v11l-3-3h-6a2 2 0 0 1-2-2v-1" /></svg>
                   </span>
                   <span class="pf-row-body">
-                    <span class="pf-row-text"><span class="pf-row-title">Чаты</span><span class="pf-row-sub" id="profile-chats-hint">Дайджест выбранных чатов</span></span>
+                    <span class="pf-row-text"><span class="pf-row-title">Обсуждения</span><span class="pf-row-sub">Голосовой ввод и отправка сообщений</span></span>
                     <span class="pf-chev" aria-hidden="true">›</span>
                   </span>
                 </button>
-              </div>
-            </div>
-
-            <div class="pf-group pf-group--orbita">
-              <p class="pf-group-title">Орбита</p>
-              <div class="pf-list">
                 <div class="pf-row pf-row--select hidden" id="profile-theme-row" data-tour="profile-theme">
                   <span class="pf-ico pf-ico--gray" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18Z" fill="currentColor" /></svg>
@@ -961,6 +902,18 @@
             <div class="pf-group pf-group--svc">
               <p class="pf-group-title">Сервисы</p>
               <div class="pf-list pf-svc-list" id="profile-svc-list">
+                <div class="pf-row pf-svc pf-svc--setup" id="profile-tg-svc" data-tour="profile-telegram">
+                  <span class="pf-ico pf-ico--blue" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Telegram</span><span class="pf-row-sub svc-desc" id="profile-tg-svc-line">Лео в боте и уведомления</span></span>
+                    <span class="pf-svc-actions">
+                      <button type="button" class="pf-link hidden" id="profile-tg-svc-link">Привязать</button>
+                    </span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </div>
                 <div class="pf-row pf-svc pf-svc--setup" data-svc="google" data-tour="svc-google">
                   <span class="pf-ico pf-ico--blue" aria-hidden="true">
                     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" /><path d="M16 2v4M8 2v4M3 10h18" /></svg>
@@ -1265,10 +1218,160 @@
           </div>
         </div>
 
+        <div id="profile-digest" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-digest-back">← Назад</button>
+            <span class="detail-title">Дайджест</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pf-screen-body">
+              <div>
+                <div class="pf-list">
+                  <button type="button" class="pf-row" id="profile-chats-open">
+                    <span class="pf-ico pf-ico--teal" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Внешние чаты</span><span class="pf-row-sub" id="profile-chats-hint">Дайджест выбранных чатов</span></span>
+                      <span class="pf-chev" aria-hidden="true">›</span>
+                    </span>
+                  </button>
+                  <button type="button" class="pf-row" id="profile-market-open">
+                    <span class="pf-ico pf-ico--green" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8" /><path d="M14 7h7v7" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Обзор рынка</span><span class="pf-row-sub" id="profile-market-hint">Новости о конкурентах и темах компании</span></span>
+                      <span class="pf-row-val" id="profile-market-val"></span>
+                      <span class="pf-chev" aria-hidden="true">›</span>
+                    </span>
+                  </button>
+                </div>
+                <p class="pf-hint">Отчёты — во вкладке «Дайджест»: разбор рабочих чатов и утренний выпуск новостей рынка.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="profile-discuss" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-discuss-back">← Назад</button>
+            <span class="detail-title">Обсуждения</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pf-screen-body">
+              <div class="pf-list">
+                <button type="button" class="pf-row" id="profile-voice-open" data-tour="profile-voice">
+                  <span class="pf-ico pf-ico--red" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10a7 7 0 0 0 14 0" /><path d="M12 17v4" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Голосовой ввод</span><span class="pf-row-sub" id="profile-voice-hint">Паразиты, словарь, сниппеты</span></span>
+                    <span class="pf-chev" aria-hidden="true">›</span>
+                  </span>
+                </button>
+                <div class="pf-row pf-row--select" id="profile-compose-voice-row">
+                  <span class="pf-ico pf-ico--red" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4z" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Голосовое в чате</span><span class="pf-row-sub">После записи в обсуждении</span></span>
+                    <span class="pf-row-val" id="profile-compose-voice-value"></span>
+                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                  </span>
+                  <select id="profile-compose-voice" class="pf-row-select" aria-label="Что делать с расшифровкой голосового">
+                    <option value="send">Сразу отправлять</option>
+                    <option value="insert">Подставлять в поле</option>
+                  </select>
+                </div>
+                <div class="pf-row pf-row--select" id="profile-compose-enter-row">
+                  <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                    <svg viewBox="0 0 24 24"><path d="M20 4v7a4 4 0 0 1-4 4H4" /><path d="m9 10-5 5 5 5" /></svg>
+                  </span>
+                  <span class="pf-row-body">
+                    <span class="pf-row-text"><span class="pf-row-title">Отправка сообщения</span><span class="pf-row-sub" id="profile-compose-enter-sub">Другое сочетание — новая строка</span></span>
+                    <span class="pf-row-val" id="profile-compose-enter-value"></span>
+                    <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                  </span>
+                  <select id="profile-compose-enter" class="pf-row-select" aria-label="Чем отправлять сообщение">
+                    <option value="enter">Enter</option>
+                    <option value="mod_enter">⌘/Ctrl + Enter</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="profile-telegram" class="profile-subscreen hidden">
+          <div class="detail-toolbar detail-toolbar--subscreen">
+            <button type="button" class="btn-text" id="profile-telegram-back">← Назад</button>
+            <span class="detail-title">Telegram</span>
+            <span class="detail-toolbar-spacer"></span>
+          </div>
+          <div class="subscreen-body">
+            <div class="pf-screen-body">
+              <div>
+                <div class="pf-list">
+                  <button type="button" class="pf-row" id="profile-tg-account">
+                    <span class="pf-ico pf-ico--violet" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Аккаунт</span><span class="pf-row-sub" id="profile-tg-account-val">—</span></span>
+                      <span class="pf-row-val" id="profile-tg-account-action"></span>
+                      <span class="pf-chev" aria-hidden="true" id="profile-tg-account-chev">›</span>
+                    </span>
+                  </button>
+                </div>
+                <p class="pf-hint">Пишите и говорите Лео в боте — задачи и встречи появятся в Орбите. Туда же приходят уведомления.</p>
+              </div>
+              <div class="pf-group">
+                <p class="pf-group-title">Лео в боте</p>
+                <div class="pf-list">
+                  <div class="pf-row pf-row--select" id="profile-tg-leo">
+                    <span class="pf-ico pf-ico--blue" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Модель в Telegram</span></span>
+                      <span class="pf-row-val" id="profile-tg-leo-value"></span>
+                      <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                    </span>
+                    <select id="profile-tg-leo-model" class="pf-row-select" aria-label="Модель Лео в Telegram"></select>
+                  </div>
+                  <div class="pf-row pf-row--select hidden" id="profile-tg-leo-effort-row">
+                    <span class="pf-ico pf-ico--violet" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M12 3v3" /><path d="M5.6 5.6l2.1 2.1" /><path d="M3 12h3" /><path d="M18 12h3" /><path d="M16.3 7.7l2.1-2.1" /><circle cx="12" cy="14" r="5" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">Усилие</span><span class="pf-row-sub">Сколько модель думает: выше — точнее, но дольше и дороже</span></span>
+                      <span class="pf-row-val" id="profile-tg-leo-effort-value"></span>
+                      <span class="pf-chev pf-chev--down" aria-hidden="true">›</span>
+                    </span>
+                    <select id="profile-tg-leo-effort" class="pf-row-select" aria-label="Уровень усилия Лео в Telegram"></select>
+                  </div>
+                  <button type="button" class="pf-row" id="profile-tg-leo-history">
+                    <span class="pf-ico pf-ico--sky" aria-hidden="true">
+                      <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 2" /></svg>
+                    </span>
+                    <span class="pf-row-body">
+                      <span class="pf-row-text"><span class="pf-row-title">История в Telegram</span><span class="pf-row-sub">Вопросы и ответы Лео в боте</span></span>
+                      <span class="pf-chev" aria-hidden="true">›</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div id="profile-chats" class="profile-subscreen hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
             <button type="button" class="btn-text" id="profile-chats-back">← Назад</button>
-            <span class="detail-title">Чаты</span>
+            <span class="detail-title">Внешние чаты</span>
             <span class="detail-toolbar-spacer"></span>
           </div>
           <div class="subscreen-body">
@@ -2705,12 +2808,12 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261111-sharedmats" defer></script>
+  <script src="/webapp/app.js?v=20261111-pfgroups" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261111-compose" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
-  <script src="/webapp/org.js?v=20261111-orgviews2" defer></script>
+  <script src="/webapp/org.js?v=20261111-pfgroups" defer></script>
   <script src="/webapp/metrics.js?v=20261107-people5" defer></script>
   <script src="/webapp/people.js?v=20261107-profile1" defer></script>
   <script src="/webapp/org-kb.js?v=20261109-guest1" defer></script>

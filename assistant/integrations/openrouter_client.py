@@ -242,7 +242,7 @@ def picker_registry() -> list[dict[str, Any]]:
 
 
 def tg_leo_models() -> list[dict[str, str]]:
-    """Модели, которые можно выбрать для Лео в Telegram (Профиль → «Лео в Telegram»). «Авто» — первым."""
+    """Модели, которые можно выбрать для Лео в Telegram (Профиль → Сервисы → «Telegram»). «Авто» — первым."""
     return [_auto_row("label"), *({"id": r["id"], "label": r["label"], "reasoning": bool(r["efforts"])}
                                   for r in picker_registry())]
 

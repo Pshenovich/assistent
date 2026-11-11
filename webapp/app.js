@@ -9255,7 +9255,7 @@
       if (err && updated === 0 && skipped > 0) {
         err.className = "error";
         err.textContent =
-          "Нет новых сообщений с последнего анализа в выбранных чатах. Дождитесь переписки или проверьте Профиль → Чаты.";
+          "Нет новых сообщений с последнего анализа в выбранных чатах. Дождитесь переписки или проверьте Профиль → Дайджест → Внешние чаты.";
         err.classList.remove("hidden");
       }
     } catch (e) {
@@ -9937,7 +9937,7 @@
     var back = document.getElementById("profile-voice-back");
     if (back) {
       back.addEventListener("click", function () {
-        profileScreen("main");
+        profileScreen("discuss");
       });
     }
     ["dictionary", "snippets", "history"].forEach(function (key) {
@@ -32048,6 +32048,9 @@
       "profile-agents",
       "profile-chats",
       "profile-voice",
+      "profile-digest",
+      "profile-discuss",
+      "profile-telegram",
     ];
     for (var i = 0; i < profileIds.length; i++) {
       var el = document.getElementById(profileIds[i]);
@@ -62496,10 +62499,48 @@
       ? (me.username ? "@" + me.username : "привязан") + (changeable ? "" : " · основной, сменить нельзя")
       : "не привязан";
     // У старых аккаунтов id = Telegram id — сменить его нельзя.
-    if (tgAct) tgAct.textContent = changeable ? (linked ? "Сменить" : "Привязать") : "";
+    if (tgAct) {
+      tgAct.textContent = changeable ? (linked ? "Сменить" : "Привязать") : "";
+      setHidden(tgAct, !changeable); // пустое значение рисуется как «загрузка»
+    }
     if (tgChev) setHidden(tgChev, !changeable);
     tgRow.disabled = !changeable;
     tgRow.classList.toggle("pf-row--static", !changeable);
+    syncProfileTelegramService(me, tgVal.textContent, tgAct ? tgAct.textContent : "", changeable);
+  }
+
+  // Сервисы → «Telegram»: карточка на главном экране профиля и строка «Аккаунт» на его экране.
+  function syncProfileTelegramService(me, valText, actText, changeable) {
+    var linked = !!(me && me.tg_linked);
+    var card = document.getElementById("profile-tg-svc");
+    if (card) card.classList.toggle("is-on", linked);
+    var line = document.getElementById("profile-tg-svc-line");
+    if (line) {
+      line.textContent = linked ? (me.username ? "@" + me.username : "Привязан") : "Лео в боте и уведомления";
+      line.classList.toggle("svc-desc--connected", linked);
+    }
+    var link = document.getElementById("profile-tg-svc-link");
+    if (link) setHidden(link, linked || !changeable);
+    var row = document.getElementById("profile-tg-account");
+    if (!row) return;
+    var val = document.getElementById("profile-tg-account-val");
+    if (val) val.textContent = valText;
+    var act = document.getElementById("profile-tg-account-action");
+    if (act) {
+      act.textContent = actText;
+      setHidden(act, !actText);
+    }
+    setHidden(document.getElementById("profile-tg-account-chev"), !changeable);
+    row.disabled = !changeable;
+    row.classList.toggle("pf-row--static", !changeable);
+  }
+
+  // «Дайджест» → «Обзор рынка»: выпуск настраивается в организации, без неё — подсказка.
+  function syncProfileMarketRow() {
+    var val = document.getElementById("profile-market-val");
+    if (!val) return;
+    val.textContent = marketAvailable ? "" : "Нужна организация";
+    setHidden(val, marketAvailable);
   }
 
   function openChangeEmail() {
@@ -63396,9 +63437,35 @@
     var chatsBack = document.getElementById("profile-chats-back");
     if (chatsBack) {
       chatsBack.addEventListener("click", function () {
-        profileScreen("main");
+        profileScreen("digest");
       });
     }
+    // Профиль → «Дайджест» (внешние чаты, обзор рынка), «Обсуждения» (голос, отправка), Сервисы → «Telegram».
+    onId("profile-digest-open", "click", function () {
+      syncProfileMarketRow();
+      profileScreen("digest");
+    });
+    onId("profile-market-open", "click", function () {
+      if (window.LeoOrg && window.LeoOrg.openMarket) window.LeoOrg.openMarket("digest");
+    });
+    onId("profile-discuss-open", "click", function () {
+      profileScreen("discuss");
+    });
+    onId("profile-tg-svc", "click", function (e) {
+      if (e.target.closest("#profile-tg-svc-link")) return;
+      profileScreen("telegram");
+    });
+    onId("profile-tg-svc-link", "click", function (e) {
+      openTelegramLink(e.currentTarget);
+    });
+    onId("profile-tg-account", "click", function (e) {
+      if (!e.currentTarget.disabled) openTelegramLink(document.getElementById("profile-tg-account-action") || e.currentTarget);
+    });
+    ["digest", "discuss", "telegram"].forEach(function (name) {
+      onId("profile-" + name + "-back", "click", function () {
+        profileScreen("main");
+      });
+    });
     bindVoiceSettingsScreen();
     bindThemeSeg();
     bindComposePrefs();
@@ -64275,6 +64342,7 @@
       on = !!on;
       if (on === marketAvailable) return;
       marketAvailable = on;
+      syncProfileMarketRow();
       if (on && !digestChatsEnabled && !mailAvailable) digestSubTab = "market";
       setDigestTabVisible(digestChatsEnabled);
     },

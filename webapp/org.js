@@ -81,8 +81,20 @@
   async function open() {
     if (app().profileScreen) app().profileScreen("org");
     state.view = null;
+    state.returnTo = null;
     var el = root();
     if (el && !el.innerHTML) el.innerHTML = '<p class="pf-hint">Загружаю…</p>';
+    await reload();
+  }
+
+  // Профиль → «Дайджест» → «Обзор рынка»: сразу экран выпуска; «Назад» — туда, откуда пришли.
+  // Организации нет — экран создания (render сам покажет его вместо выпуска).
+  async function openMarket(returnTo) {
+    if (app().profileScreen) app().profileScreen("org");
+    state.view = { name: "market" };
+    state.returnTo = returnTo || null;
+    var el = root();
+    if (el) el.innerHTML = '<p class="pf-hint">Загружаю…</p>';
     await reload();
   }
 
@@ -208,6 +220,7 @@
   }
 
   function go(name, id) {
+    if (name !== "market") state.returnTo = null;
     state.view = { name: name, id: id == null ? null : String(id) };
     render();
     var body = root() && root().closest(".subscreen-body");
@@ -216,6 +229,13 @@
 
   function goBack() {
     var v = view();
+    if (state.returnTo && (v.name === "market" || !state.detail)) {
+      var to = state.returnTo;
+      state.returnTo = null;
+      state.view = null;
+      app().profileScreen(to);
+      return;
+    }
     if (v.name === "home" || !state.detail && v.name !== "create") {
       state.view = null;
       app().profileScreen("main");
@@ -1553,6 +1573,7 @@
   // Для онбординга (экран «С кем вы работаете?»): те же вызовы, что и в Профиле → «Организация».
   window.LeoOrg = {
     open: open,
+    openMarket: openMarket,
     syncPeopleRow: function () {
       return api("").then(function (ov) {
         state.overview = ov;

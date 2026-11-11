@@ -10155,7 +10155,7 @@ async def miniapp_digest_refresh(
     selected = await run_in_threadpool(user_prefs.digest_chat_ids, uid)
     if not selected:
         raise HTTPException(
-            status_code=400, detail="Выберите хотя бы один чат в Профиль → Чаты"
+            status_code=400, detail="Выберите хотя бы один чат в Профиль → Дайджест → Внешние чаты"
         )
     if not digest_svc.try_begin_refresh(uid):
         raise HTTPException(status_code=409, detail="Обновление уже выполняется")
@@ -10180,7 +10180,7 @@ async def miniapp_digest_refresh(
             raise HTTPException(status_code=400, detail="Включите Дайджест в профиле")
         if err == "no_chats_selected":
             raise HTTPException(
-                status_code=400, detail="Выберите хотя бы один чат в Профиль → Чаты"
+                status_code=400, detail="Выберите хотя бы один чат в Профиль → Дайджест → Внешние чаты"
             )
         raise HTTPException(status_code=500, detail=err)
     return result
