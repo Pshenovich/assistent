@@ -260,6 +260,26 @@ class _StreamingMultipart:
         yield self.tail
 
 
+def _log_job_timing(job_id: str, data: dict[str, Any]) -> None:
+    """Сколько задача ждала в очереди Obuchat и сколько обрабатывалась — по их же отметкам времени."""
+    from datetime import datetime
+
+    def _t(key: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat(str(data.get(key) or ""))
+        except ValueError:
+            return None
+
+    q, st, fin = _t("queued_at"), _t("started_at"), _t("finished_at")
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    queue = f"{(st - q).total_seconds():.2f}s" if q and st else "?"
+    work = f"{(fin - st).total_seconds():.2f}s" if st and fin else "?"
+    print(
+        f"[obuchat] job={job_id} status={data.get('status')} queue={queue} work={work} "
+        f"audio={meta.get('duration_seconds')}s speakers={meta.get('speakers_mode')} llm={meta.get('llm_enabled')}"
+    )
+
+
 # Опрос /jobs у Obuchat: чаще раза в секунду nginx отвечает 503 через раз.
 _QUICK_FIRST_POLL_SEC = 0.6
 _QUICK_POLL_SEC = 1.0
@@ -332,6 +352,8 @@ def _transcribe(
         except ValueError:
             continue
         if isinstance(data2, dict) and data2.get("status") in ("done", "failed"):
+            if quick:
+                _log_job_timing(job_id, data2)
             out = _result_from_body(data2, job_id=job_id)
             if out:
                 return out

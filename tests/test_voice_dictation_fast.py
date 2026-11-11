@@ -123,3 +123,21 @@ def test_default_mode_keeps_wait(monkeypatch):
     monkeypatch.setattr(obu.requests, "post", fake_post)
     assert obu.transcribe_bytes(b"x", "a.ogg").plain_text == "ok"
     assert posted["url"].endswith("?wait=true")
+
+
+def test_quick_mode_logs_queue_and_work(monkeypatch, capsys):
+    monkeypatch.setenv("OBUCHAT_TRANSCRIBE", "k")
+    monkeypatch.setattr(obu.time, "sleep", lambda s: None)
+    monkeypatch.setattr(obu.requests, "post", lambda url, **kw: _Resp(202, {"job_id": "j9", "status": "queued"}))
+    done = {
+        "status": "done",
+        "transcript": [{"text": "Ок"}],
+        "queued_at": "2026-11-11T07:55:00+00:00",
+        "started_at": "2026-11-11T07:55:30+00:00",
+        "finished_at": "2026-11-11T07:55:31.500000+00:00",
+        "meta": {"duration_seconds": 6.3, "speakers_mode": "none", "llm_enabled": False},
+    }
+    monkeypatch.setattr(obu.requests, "get", lambda url, **kw: _Resp(200, done))
+    obu.transcribe_bytes(b"x", "voice.ogg", quick=True)
+    out = capsys.readouterr().out
+    assert "queue=30.00s" in out and "work=1.50s" in out
