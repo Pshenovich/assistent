@@ -204,3 +204,71 @@ class AssistantToolsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SharedMeetingResultsTests(unittest.TestCase):
+    """Общая встреча: запись загрузил владелец, участнику документ открыт — у участника итоги тоже есть."""
+
+    def setUp(self) -> None:
+        from assistant.stores import note_members
+
+        self._tmp = tempfile.TemporaryDirectory()
+        os.environ["NOTES_DB_PATH"] = os.path.join(self._tmp.name, "notes.sqlite")
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        meeting_links._CONN = None  # type: ignore[attr-defined]
+        note_members._CONN = None  # type: ignore[attr-defined]
+        # Владелец 1 загрузил запись «Фермы» и привязал её к своей встрече; участник 2 получил доступ.
+        self.start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=2)
+        self.owner_ev = {
+            "id": "orb-7",
+            "calendar_id": "orbita",
+            "summary": "Ферма",
+            "start": {"dateTime": self.start.isoformat()},
+            "end": {"dateTime": (self.start + timedelta(minutes=45)).isoformat()},
+            "attendees": [{"email": "andrey@x.ru", "name": "Андрей"}],
+        }
+        t = notes_store.create_note(1, "Ферма", "<p>саммари</p>", role="transcription")
+        meeting_links.link(1, t["id"], self.owner_ev)
+        note_members.add_member(1, t["id"], 2)
+
+    def tearDown(self) -> None:
+        from assistant.stores import note_members
+
+        notes_store._CONN = None  # type: ignore[attr-defined]
+        meeting_links._CONN = None  # type: ignore[attr-defined]
+        note_members._CONN = None  # type: ignore[attr-defined]
+        self._tmp.cleanup()
+
+    def _member_ev(self, **kw) -> dict:
+        return dict(
+            self.owner_ev,
+            calendar_id="andrey@x.ru",
+            attendees=[{"email": "vova@x.ru", "name": "Вова"}],
+            **kw,
+        )
+
+    def test_shared_kinds_match_by_id_or_time_and_title(self) -> None:
+        same_id = self._member_ev()
+        google_copy = self._member_ev(id="g123")  # у владельца встреча Орбиты, у участника — Google
+        other = self._member_ev(id="g999", summary="Другая")
+        got = meeting_links.shared_kinds_for_events(2, [same_id, google_copy, other])
+        self.assertEqual(got.get("andrey@x.ru:orb-7"), {"transcription": 1, "note": 0})
+        self.assertEqual(got.get("andrey@x.ru:g123"), {"transcription": 1, "note": 0})
+        self.assertNotIn("andrey@x.ru:g999", got)
+        # Без доступа к документу — ничего; у самого владельца свои привязки идут через kinds_for_events.
+        self.assertEqual(meeting_links.shared_kinds_for_events(3, [same_id]), {})
+        self.assertEqual(meeting_links.shared_kinds_for_events(1, [same_id]), {})
+        # Обычные значки участника (только свои привязки) по-прежнему пусты — отсюда и была ошибка.
+        self.assertEqual(meeting_links.kinds_for_events(2, ["andrey@x.ru:orb-7"]), {})
+
+    def test_member_gets_no_no_results_hint(self) -> None:
+        from assistant.services import proactive
+
+        evs = [self._member_ev(id="g123")]
+        with mock.patch("assistant.stores.user_prefs.proactive_prefs", return_value={"after_meetings": True}), \
+                mock.patch("assistant.services.calendar._tz_for", return_value=timezone.utc):
+            member = proactive.build_feed(2, evs)
+            stranger = proactive.build_feed(3, evs)
+        self.assertFalse([i for i in member if i.get("type") == "no_results"])
+        # Тот, кому документ не открыт, подсказку по-прежнему получает.
+        self.assertTrue([i for i in stranger if i.get("type") == "no_results"])

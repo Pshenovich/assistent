@@ -245,6 +245,74 @@ def kinds_for_events(owner_user_id: Any, keys: list[str]) -> dict[str, dict[str,
     return out
 
 
+def _start_dt(v: Any) -> Optional[datetime]:
+    s = _time_str(v)
+    if not s or "T" not in s:
+        return None
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+
+
+def shared_kinds_for_events(user_id: Any, events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
+    """Материалы встреч, которыми поделились с пользователем: {event_key пользователя: {kind: n}}.
+
+    Привязку к встрече делает владелец документа (owner_user_id = он), поэтому kinds_for_events
+    у участника её не видит. Здесь — документы из note_members, привязанные владельцем к той же
+    встрече: тот же event_id (у участника своя копия события — calendar_id может отличаться)
+    или то же начало (±5 мин) и та же тема (у владельца событие Орбиты, у участника — Google)."""
+    from assistant.stores import note_members
+
+    evs = [e for e in events or [] if isinstance(e, dict) and e.get("id")]
+    if not evs:
+        return {}
+    try:
+        pairs = note_members.list_note_ids_for_member(user_id)
+    except Exception as e:
+        print(f"[meeting_links] shared notes failed uid={user_id} err={e!r}")
+        return {}
+    pairs = [(o, n) for o, n in pairs if str(o) != str(user_id)][:500]
+    if not pairs:
+        return {}
+    rows: list[sqlite3.Row] = []
+    with _LOCK:
+        conn = _conn()
+        for i in range(0, len(pairs), 200):
+            part = pairs[i : i + 200]
+            where = " OR ".join("(l.owner_user_id = ? AND l.note_id = ?)" for _ in part)
+            args: list[Any] = []
+            for o, n in part:
+                args += [str(o), int(n)]
+            rows += conn.execute(
+                f"""
+                SELECT l.event_id, l.summary, l.start_iso, n.role
+                FROM meeting_links l JOIN local_notes n ON n.id = l.note_id
+                WHERE {where}
+                """,
+                args,
+            ).fetchall()
+    if not rows:
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for ev in evs:
+        eid = str(ev.get("id") or "").strip()
+        st = _start_dt(ev.get("start"))
+        title = str(ev.get("summary") or "").strip().lower()
+        for r in rows:
+            same = str(r["event_id"] or "") == eid
+            if not same and st and title and str(r["summary"] or "").strip().lower() == title:
+                rst = _start_dt(r["start_iso"])
+                same = bool(rst) and abs((rst - st).total_seconds()) <= 300
+            if not same:
+                continue
+            kind = "transcription" if str(r["role"] or "") == "transcription" else "note"
+            slot = out.setdefault(event_key(ev.get("calendar_id"), eid), {"transcription": 0, "note": 0})
+            slot[kind] += 1
+    return out
+
+
 def _person_key(email: str, name: str, contact_key: str = "") -> str:
     return (contact_key or email or name).strip().lower()
 
