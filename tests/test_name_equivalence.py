@@ -77,6 +77,24 @@ class TestNameEquivalence(unittest.TestCase):
         self.assertEqual(att, [{"email": "vova@gmail.com"}])
         self.assertEqual(missing, [])
 
+    def test_contact_without_google_invited_by_team_email(self) -> None:
+        """Артём в контактах только по Telegram, Google не подключал — почта из команды."""
+        from assistant.lib.calendar_attendees import resolve_attendee_names
+
+        contact = {"name": "Артем Данилин", "email": "", "aliases": [], "telegram_user_id": 871, "telegram_username": "artem"}
+        with patch(
+            "assistant.stores.contacts_store.load_contacts", return_value=[contact]
+        ), patch(
+            "assistant.lib.calendar_user_lookup.account_email_for_user", return_value=None
+        ), patch(
+            "assistant.stores.accounts.email_of", return_value=None
+        ), patch(
+            "assistant.stores.orgs_store.member_email_of", return_value="Artem@Team.ru"
+        ):
+            att, missing = resolve_attendee_names(377, ["Артёма"])
+        self.assertEqual(att, [{"email": "artem@team.ru"}])
+        self.assertEqual(missing, [])
+
 
 if __name__ == "__main__":
     unittest.main()

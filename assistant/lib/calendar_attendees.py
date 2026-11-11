@@ -285,7 +285,7 @@ def find_contact_by_telegram_user(
 
 
 def _orbita_account_email(contact: dict[str, Any]) -> str:
-    """Контакт без почты, но он пользователь Орбиты с Google Календарём — почта его аккаунта."""
+    """Контакт без почты, но он пользователь Орбиты: почта его Google, входа или из команды."""
     try:
         uid = int(contact.get("telegram_user_id") or 0)
         tg = normalize_telegram_username(
@@ -297,7 +297,21 @@ def _orbita_account_email(contact: dict[str, Any]) -> str:
             return ""
         from assistant.lib.calendar_user_lookup import account_email_for_user
 
-        return str(account_email_for_user(uid) or "").strip().lower()
+        em = str(account_email_for_user(uid) or "").strip().lower()
+        if em:
+            return em
+        # Без Google: почта входа в Орбиту, иначе — под которой его добавили в команду.
+        from assistant.stores import accounts, orgs_store
+
+        for src in (accounts.email_of, orgs_store.member_email_of):
+            try:
+                em = str(src(uid) or "").strip().lower()
+            except Exception as e:  # noqa: BLE001
+                print(f"[calendar_attendees] {src.__name__} failed err={e!r}")
+                em = ""
+            if "@" in em:
+                return em
+        return ""
     except Exception as e:  # noqa: BLE001
         print(f"[calendar_attendees] account email failed err={e!r}")
         return ""
