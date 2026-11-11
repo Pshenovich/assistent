@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261110-ptcard" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261111-blocked" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261107-embed1" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261031-onb6" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -201,6 +201,7 @@
             <button type="button" class="btn-text" id="my-tasks-back">← Назад</button>
             <h2 class="detail-title pt-bar-title" id="my-tasks-bar-title">Задачи</h2>
             <div class="pt-bar-actions">
+              <button type="button" class="pt-btn pt-bar-new pt-view-btn" id="my-tasks-view-bar" data-my-tasks-view-toggle="1" aria-label="Вид Канбан" title="Вид Канбан"></button>
               <button type="button" class="pt-btn pt-btn--primary pt-bar-new" id="my-tasks-new-bar" aria-label="Новая задача" title="Новая задача">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
               </button>
@@ -213,6 +214,7 @@
                 <p class="pt-sub" id="my-tasks-sub"></p>
               </div>
               <div class="pt-head-actions">
+                <button type="button" class="pt-btn pt-view-btn" id="my-tasks-view" data-my-tasks-view-toggle="1" title="Вид Канбан"></button>
                 <button type="button" class="pt-btn pt-only-desktop" id="my-tasks-done-tab">Выполненные</button>
                 <button type="button" class="pt-btn pt-btn--primary" id="my-tasks-new" aria-label="Новая задача" title="Новая задача">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="pt-only-desktop">Новая задача</span>
@@ -2675,7 +2677,7 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261111-composer" defer></script>
+  <script src="/webapp/app.js?v=20261111-blocked" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261104-xss1" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>

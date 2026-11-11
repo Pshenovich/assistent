@@ -66,6 +66,22 @@ class CreatedTask:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class TaskRef:
+    """Задача трекера для ссылки из Орбиты (блокер): название, ссылка, стадия/статус."""
+    external_id: str
+    title: str
+    url: str
+    status: str = ""
+    stage: str = ""
+    closed: bool = False
+    responsible: str = ""
+    deadline: str = ""
+
+    def public(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class TrackerProvider(Protocol):
     id: str
     title: str
@@ -82,6 +98,10 @@ class TrackerProvider(Protocol):
     def search_users(self, uid: int, query: str) -> list[Person]: ...
 
     def create_task(self, uid: int, draft: TaskDraft) -> CreatedTask: ...
+
+    # Задача трекера по номеру и поиск (для блокеров). Не умеет — нет методов.
+    # def get_task(self, uid: int, external_id: str) -> TaskRef: ...
+    # def search_tasks(self, uid: int, query: str, limit: int = 20) -> list[TaskRef]: ...
 
     # Сделать задачу подзадачей другой ("" — самостоятельной). Не умеет — нет метода.
     # def set_parent(self, uid: int, external_id: str, parent_id: str) -> None: ...

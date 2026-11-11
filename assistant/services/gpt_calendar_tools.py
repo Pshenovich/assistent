@@ -1925,6 +1925,8 @@ def _task_brief(ctx: GptCalendarContext, t: dict[str, Any]) -> dict[str, Any]:
         item["checklist"] = [("✓ " if c.get("done") else "· ") + str(c.get("text"))[:120] for c in cl[:12]]
     if t.get("assignee_status_note") and t.get("assignee_status") in ("question", "in_progress"):
         item["assignee_note"] = str(t.get("assignee_status_note"))[:300]
+    if t.get("assignee_status") == "blocked" and not t.get("done"):
+        item["blocked"] = "заблокировано: " + (str(t.get("assignee_status_note") or "").strip()[:300] or "без пояснения")
     if t.get("owner_archived"):
         item["archived"] = True
     if t.get("recurrence"):

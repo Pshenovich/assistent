@@ -22601,6 +22601,7 @@
     summary_tasks: ["taskBox", "green"],
     weekly: ["sum", "violet"],
     discussion: ["chat", "blue"],
+    task_unblocked: ["taskBox", "green"],
   };
 
   var FOCUS_SHORT_LABEL = {
@@ -22654,6 +22655,7 @@
 
   function focusCard(it, inPanel) {
     if (it && it.type === "task_inbox") return focusInboxCard(it, inPanel);
+    if (it && it.type === "task_blocking") return focusBlockingCard(it, inPanel);
     if (it && it.type === "topic_link") return focusTopicCard(it, inPanel);
     var card = document.createElement("div");
     card.className = "focus-card" + (it.urgency >= 3 ? " is-urgent" : "") + (inPanel ? " is-wide" : "");
@@ -24312,6 +24314,72 @@
     } else {
       card.classList.add("no-foot");
     }
+    return card;
+  }
+
+  // «Вы блокируете N задач»: кто-то указал вас блокером. «Готово» — своё сделал, «Не я» — ошибка; оба снимают блокер.
+  function focusBlockingCard(it, inPanel) {
+    var card = tinboxEl("div", "focus-card focus-blocking-card no-foot" + (inPanel ? " is-wide" : ""));
+    var head = tinboxEl("div", "focus-card-head");
+    var ico = tinboxEl("span", "focus-card-ico is-red");
+    ico.innerHTML = tbSvg("lock", 16);
+    head.appendChild(ico);
+    var kind = tinboxEl("span", "focus-card-kind");
+    kind.appendChild(tinboxEl("span", "focus-card-kind-label", "Вас ждут"));
+    if (it.source) kind.appendChild(tinboxEl("span", "focus-card-kind-due", it.source));
+    head.appendChild(kind);
+    card.appendChild(head);
+    card.appendChild(tinboxEl("b", "focus-card-title", it.title || "Вы блокируете задачи"));
+    var list = tinboxEl("div", "fb-list");
+    var blocks = it.blocks || [];
+    var shown = blocks.slice(0, inPanel ? 6 : 2);
+    shown.forEach(function (b) {
+      var row = tinboxEl("div", "fb-item");
+      row.appendChild(tinboxEl("span", "fb-title", b.title || "Задача"));
+      row.appendChild(tinboxEl("span", "fb-meta", (b.who ? "ждёт " + postedFirstName(b.who) : "") + (b.note ? " · «" + b.note + "»" : "")));
+      var acts = tinboxEl("div", "fb-acts");
+      function act(label, how, primary) {
+        var btn = tinboxEl("button", "focus-card-btn" + (primary ? " is-primary" : ""), label);
+        btn.type = "button";
+        btn.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          btn.disabled = true;
+          apiFetch("/proactive/blocking/" + encodeURIComponent(String(b.blocker_id)), {
+            method: "POST",
+            body: JSON.stringify({ how: how }),
+          })
+            .then(function () {
+              postedHaptic();
+              showNoteToast(how === "done" ? "Отметили: вы больше не блокируете" : "Сообщили, что это не вы");
+              loadFocus(true);
+            })
+            .catch(function (err) {
+              btn.disabled = false;
+              showNoteToast((err && err.message) || "Не получилось");
+            });
+        });
+        acts.appendChild(btn);
+      }
+      act("Готово", "done", true);
+      act("Не я", "not_me", false);
+      if (b.accessible && b.task_id) {
+        var open = tinboxEl("button", "focus-card-btn", "Открыть");
+        open.type = "button";
+        open.addEventListener("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          openEntityRefFromChip("task", b.task_id, b.title);
+        });
+        acts.appendChild(open);
+      }
+      row.appendChild(acts);
+      list.appendChild(row);
+    });
+    if (blocks.length > shown.length) {
+      list.appendChild(tinboxEl("span", "fb-more", "и ещё " + (blocks.length - shown.length)));
+    }
+    card.appendChild(list);
     return card;
   }
 
@@ -27313,11 +27381,12 @@
     if (task && task.assignee_external) return postedTaskIsOverdue(task) ? "late" : null;
     if (postedAssigneeState(task).triage === "declined") return "declined";
     if (postedAssigneeState(task).status === "question") return "question";
+    if (postedAssigneeState(task).status === "blocked") return "blocked";
     if (postedTaskIsOverdue(task)) return "late";
     return null;
   }
 
-  var POSTED_ATTN_ORDER = { declined: 0, question: 1, late: 2, done: 3 };
+  var POSTED_ATTN_ORDER = { declined: 0, question: 1, blocked: 2, late: 3, done: 4 };
 
   function postedActiveCountFromItems(items) {
     return (Array.isArray(items) ? items : []).filter(function (t) {
@@ -27964,6 +28033,7 @@
   var POSTED_KANBAN_COLS = [
     ["backlog", "Бэклог"],
     ["waiting", "Ждёт ответа"],
+    ["blocked", "Заблокировано"],
     ["work", "В работе"],
     ["done", "Выполнено"],
     ["accepted", "Принято"],
@@ -28015,6 +28085,7 @@
     if (postedTaskIsDone(task)) return "done";
     var st = postedAssigneeState(task);
     if (st.triage === "declined" || st.status === "question") return "waiting";
+    if (st.status === "blocked") return "blocked";
     if (st.status === "in_progress" || st.triage === "accepted") return "work";
     return "backlog";
   }
@@ -28050,6 +28121,17 @@
         insistPostedTask(task);
       };
     }
+    // «Заблокировано» ставит и постановщик: окно «Чем заблокировано?»; обратно в работу — снять блокировку.
+    if (to === "blocked" && from !== "done" && postedAssigneeState(task).triage !== "declined") {
+      return function () {
+        openTaskBlockerDialog(task);
+      };
+    }
+    if (from === "blocked" && to === "work") {
+      return function () {
+        unblockTask(task);
+      };
+    }
     return null;
   }
 
@@ -28076,47 +28158,66 @@
       var d = (POSTED_ATTN_ORDER[postedAttention(a)] || 0) - (POSTED_ATTN_ORDER[postedAttention(b)] || 0);
       return d || postedTaskDueMs(a) - postedTaskDueMs(b);
     });
-    ["backlog", "work", "done"].forEach(function (k) {
+    ["backlog", "blocked", "work", "done"].forEach(function (k) {
       groups[k] = sortByDue(groups[k]);
     });
     groups.accepted = accepted;
 
+    buildKanbanBoard(listEl, POSTED_KANBAN_COLS, groups, {
+      row: function (t, key) {
+        return key === "accepted" ? renderPostedArchiveRow(t) : renderPostedRow(t, { attention: true });
+      },
+      draggable: function (key) {
+        return key !== "accepted";
+      },
+      strong: function (key, n) {
+        return n > 0 && (key === "waiting" || key === "blocked");
+      },
+      after: function (key, col) {
+        if (key !== "accepted") return;
+        col.appendChild(postedBtn("Все принятые", "pt-btn--link pt-kcol-more", function () {
+          setPostedTasksTab("archive");
+        }));
+      },
+      move: postedKanbanMove,
+      deny: "Эту колонку меняет исполнитель",
+    });
+  }
+
+  // Доска колонками (общая для «Поставленных» и «Моих задач»): на телефоне лента колонок с чипами-переходами.
+  function buildKanbanBoard(listEl, cols, groups, o) {
     var board = document.createElement("div");
     board.className = "pt-kanban";
     // Телефон: колонки листаются вбок — сверху быстрые переходы к колонке.
     var jump = document.createElement("div");
     jump.className = "pt-kjump";
-    POSTED_KANBAN_COLS.forEach(function (c) {
+    cols.forEach(function (c) {
+      var list = groups[c[0]] || [];
       var col = document.createElement("section");
       col.className = "pt-kcol";
       col.setAttribute("data-col", c[0]);
       col.setAttribute("aria-label", c[1]);
-      var head = postedSection(c[1], groups[c[0]].length, groups[c[0]].length > 0 && c[0] === "waiting");
+      var head = postedSection(c[1], list.length, o.strong ? o.strong(c[0], list.length) : false);
       head.classList.add("pt-kcol-head");
       col.appendChild(head);
       var box = document.createElement("div");
       box.className = "pt-rows pt-kcol-rows";
-      groups[c[0]].forEach(function (t) {
-        var row = c[0] === "accepted" ? renderPostedArchiveRow(t) : renderPostedRow(t, { attention: true });
+      list.forEach(function (t) {
+        var row = o.row(t, c[0]);
         row.setAttribute("data-task-id", String(t.id));
-        if (c[0] !== "accepted") postedKanbanDraggable(row, t, c[0], board);
+        if (!o.draggable || o.draggable(c[0], t)) postedKanbanDraggable(row, t, c[0], board, o);
         box.appendChild(row);
       });
-      if (!groups[c[0]].length) {
+      if (!list.length) {
         var empty = document.createElement("p");
         empty.className = "pt-muted-note pt-kcol-empty";
         empty.textContent = "Пусто";
         box.appendChild(empty);
       }
       col.appendChild(box);
-      if (c[0] === "accepted") {
-        var more = postedBtn("Все принятые", "pt-btn--link pt-kcol-more", function () {
-          setPostedTasksTab("archive");
-        });
-        col.appendChild(more);
-      }
+      if (o.after) o.after(c[0], col);
       board.appendChild(col);
-      var j = postedBtn(c[1] + " · " + groups[c[0]].length, "", function () {
+      var j = postedBtn(c[1] + " · " + list.length, "", function () {
         board.scrollTo({ left: col.offsetLeft - board.firstChild.offsetLeft, behavior: "smooth" });
       });
       j.setAttribute("data-col", c[0]);
@@ -28141,15 +28242,17 @@
     }
     board.addEventListener("scroll", syncJump, { passive: true });
     syncJump();
+    return board;
   }
 
   // Перетаскивание карточки: мышью — сразу, пальцем — после долгого нажатия (иначе это прокрутка).
   var postedDrag = null;
-  function postedKanbanDraggable(row, task, from, board) {
+  function postedKanbanDraggable(row, task, from, board, o) {
     row.addEventListener("pointerdown", function (e) {
       if (postedDrag || e.button > 0 || e.target.closest("button")) return;
       var touch = e.pointerType !== "mouse";
-      var d = { row: row, task: task, from: from, board: board, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, id: e.pointerId, on: false, timer: 0 };
+      var d = { row: row, task: task, from: from, board: board, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, id: e.pointerId, on: false, timer: 0,
+        move: (o && o.move) || postedKanbanMove, deny: (o && o.deny) || "Эту колонку меняет исполнитель" };
       postedDrag = d;
       if (touch) d.timer = setTimeout(function () { postedKanbanDragStart(d); }, 380);
       document.addEventListener("pointermove", postedKanbanDragMove, true);
@@ -28174,7 +28277,7 @@
     d.board.classList.add("is-dragging");
     d.board.querySelectorAll(".pt-kcol").forEach(function (col) {
       var to = col.getAttribute("data-col");
-      if (to !== d.from) col.classList.add(postedKanbanMove(d.task, d.from, to) ? "is-target" : "is-blocked");
+      if (to !== d.from) col.classList.add(d.move(d.task, d.from, to) ? "is-target" : "is-blocked");
     });
     document.addEventListener("touchmove", postedKanbanNoScroll, { passive: false });
     postedHaptic();
@@ -28245,9 +28348,9 @@
     }, 60);
     postedKanbanDragCleanup();
     if (!to || to === d.from) return;
-    var act = postedKanbanMove(d.task, d.from, to);
+    var act = d.move(d.task, d.from, to);
     if (act) act();
-    else showNoteToast("Эту колонку меняет исполнитель");
+    else showNoteToast(d.deny);
   }
 
   function postedKanbanDragCleanup() {
@@ -28301,6 +28404,7 @@
     if (!postedPerson) part(postedFirstName(postedTaskAssigneeLabel(task)), "");
     if (kind === "question") part("вопрос", "is-question");
     else if (kind === "declined") part("не моё", "is-question");
+    else if (kind === "blocked") part(tbRowLine(task), "is-blocked");
     else if (kind === "late") part(postedLateLabel(task).toLowerCase(), "is-late");
     else if (kind === "done") part("сделано, проверьте", "is-done");
     else {
@@ -28310,6 +28414,7 @@
     var ds = postedDueShort(task);
     part(ds.day === "без срока" ? "без срока" : "срок " + ds.day + (ds.time ? ", " + ds.time : ""), postedTaskIsOverdue(task) ? "is-late pt-due-inline" : "pt-due-inline");
     if (task.meeting_title) part("из «" + task.meeting_title + "»", "pt-meeting"); // поручение из встречи
+    part(tbHoldsLine(task), "is-holds");
     main.appendChild(line);
     if ((kind === "question" || kind === "declined") && st.status_note) {
       var q = document.createElement("p");
@@ -28331,6 +28436,10 @@
     if (kind === "question") {
       act("Ответить", true, function () {
         openPostedCard(task.id, { focus: "reply" });
+      });
+    } else if (kind === "blocked") {
+      act("Разблокировать", false, function (b) {
+        unblockTask(task, null, b);
       });
     } else if (kind === "declined") {
       act("Оставить за исполнителем", true, function (b) {
@@ -28825,6 +28934,9 @@
     } else if (attn === "question" || (!isOwner && st.status === "question")) {
       pill.className = "pt-pill pt-pill--question";
       pill.textContent = isOwner ? "Вопрос" : "Ждёт ответа";
+    } else if (st.status === "blocked") {
+      pill.className = "pt-pill pt-pill--blocked";
+      pill.textContent = "Заблокировано";
     } else if (postedTaskIsOverdue(task)) {
       late = true;
     } else if (st.status === "in_progress") {
@@ -28936,6 +29048,14 @@
     srcHost.className = "pt-c-sources pt-c-row hidden";
     rows.appendChild(srcHost);
     block.appendChild(rows);
+    var tbBox = renderTaskBlockers(task, {
+      canEdit: !archived && !done,
+      onChange: function (t) {
+        state.task = Object.assign({}, state.task, t);
+        refreshPostedCard(state);
+      },
+    });
+    if (tbBox) block.appendChild(tbBox);
     body.appendChild(block);
     mountPostedSources(srcHost, task, srcTitle, state);
     var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
@@ -29032,6 +29152,7 @@
           if (r) refreshPostedCard(state);
         }));
       } else {
+        bar.appendChild(tbCardButton(task, state));
         // Срок переносится нажатием на строку «Срок» в блоке — внизу одна кнопка.
         bar.appendChild(postedActBtn("bell", postedDativeName(otherName) ? "Напомнить " + postedDativeName(otherName) : "Напомнить", false, async function (b) {
           b.disabled = true;
@@ -29044,7 +29165,8 @@
       bar.appendChild(postedActBtn("check", "Сдать результат", true, function () {
         setPostedCardMode(state, "result");
       }));
-      if (st.status !== "in_progress" && st.status !== "question") {
+      bar.appendChild(tbCardButton(task, state));
+      if (st.status !== "in_progress" && st.status !== "question" && st.status !== "blocked") {
         bar.appendChild(postedActBtn("play", "Взять в работу", false, async function (b) {
           b.disabled = true;
           try {
@@ -29091,6 +29213,554 @@
     play: '<path d="M7 5v14l11-7z"/>',
     people: '<path d="M16 20v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1"/><circle cx="9" cy="8" r="3.5"/><path d="M22 20v-1a4 4 0 0 0-3-3.9M16 4.1a4 4 0 0 1 0 7.8"/>',
   };
+
+  // ——— «Заблокировано»: чем стоит задача — задача Орбиты, человек (из Орбиты или нет), Битрикс24, текст ———
+  // Ставят исполнитель и постановщик; человеку из Орбиты — карточка в Фокусе, задаче-блокеру — метка «Блокирует».
+  var TB_ICONS = {
+    lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    unlock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/>',
+    task: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    external: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    bitrix: '<path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/>',
+    text: '<path d="M4 6h16M4 12h16M4 18h10"/>',
+  };
+  POSTED_ACT_ICONS.lock = TB_ICONS.lock;
+  POSTED_ACT_ICONS.unlock = TB_ICONS.unlock;
+  POSTED_EVENT_TEXT.blocked = "Заблокировано";
+  POSTED_EVENT_TEXT.unblocked = "Разблокировано";
+  POSTED_EVENT_TEXT.blocker_resolved = "Блокер снят";
+
+  function taskIsBlocked(task) {
+    return postedAssigneeState(task).status === "blocked" && !postedTaskIsDone(task);
+  }
+
+  function tbSvg(kind, size) {
+    var n = size || 14;
+    return '<svg width="' + n + '" height="' + n + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (TB_ICONS[kind] || "") + "</svg>";
+  }
+
+  function tbLabel(b) {
+    if (!b) return "";
+    if (b.kind === "task") return "«" + (b.title || "Задача") + "»";
+    if (b.kind === "user") return b.name || b.email || "Коллега";
+    if (b.kind === "external") return b.name || b.email || "Человек";
+    if (b.kind === "bitrix") return (b.title ? b.title : "Задача") + " · #" + b.external_id;
+    return b.text || "";
+  }
+
+  function tbHint(b) {
+    if (b.kind === "task") return b.accessible === false ? "задача" : b.done ? "задача · сдана" : "задача";
+    if (b.kind === "user") return "в Орбите";
+    if (b.kind === "external") return b.company ? b.company + " · не из команды" : "не из команды";
+    if (b.kind === "bitrix") return "Битрикс24";
+    return "";
+  }
+
+  // Актуальная стадия задачи Битрикса — с сервера (там кэш 5 минут); не подключён Битрикс — без стадии.
+  var tbBitrixCache = {};
+  function tbBitrixLive(extId) {
+    var k = String(extId || "");
+    if (!k) return Promise.resolve(null);
+    var hit = tbBitrixCache[k];
+    if (hit && Date.now() - hit.at < 120000) return hit.p;
+    var p = apiFetch("/trackers/bitrix24/tasks/" + encodeURIComponent(k), { method: "GET" })
+      .then(function (r) {
+        return (r && r.task) || null;
+      })
+      .catch(function () {
+        return null;
+      });
+    tbBitrixCache[k] = { at: Date.now(), p: p };
+    return p;
+  }
+
+  function tbChip(b, onRemove) {
+    var chip = document.createElement("span");
+    chip.className = "tb-chip tb-chip--" + b.kind + (b.kind === "task" && b.done ? " is-done" : "");
+    var main = document.createElement(b.kind === "text" || b.kind === "user" || b.kind === "external" ? "span" : "button");
+    main.className = "tb-chip-main";
+    if (main.tagName === "BUTTON") main.type = "button";
+    main.innerHTML = tbSvg(b.kind) + '<span class="tb-chip-text"></span><span class="tb-chip-hint"></span>';
+    main.querySelector(".tb-chip-text").textContent = tbLabel(b);
+    var hint = main.querySelector(".tb-chip-hint");
+    hint.textContent = tbHint(b);
+    if (!hint.textContent) hint.remove();
+    if (b.kind === "user" || b.kind === "external") {
+      var av = postedAvatar(b.kind === "user" ? String(b.user_id || "") : "", b.name || b.email || "?", "xs");
+      main.replaceChild(av, main.firstChild);
+    }
+    if (b.kind === "task" && b.task_id) {
+      main.title = "Открыть задачу";
+      main.addEventListener("click", function (e) {
+        e.stopPropagation();
+        openEntityRefFromChip("task", b.task_id, b.title);
+      });
+    } else if (b.kind === "task") {
+      main.disabled = true;
+      main.title = "Задача недоступна вам";
+    }
+    if (b.kind === "bitrix") {
+      main.title = "Открыть в Битрикс24";
+      main.addEventListener("click", function (e) {
+        e.stopPropagation();
+        tbBitrixLive(b.external_id).then(function (live) {
+          var url = b.url || (live && live.url);
+          if (url) openExternal(url);
+          else showNoteToast("Ссылки нет — подключите Битрикс24 в профиле");
+        });
+      });
+      tbBitrixLive(b.external_id).then(function (live) {
+        if (!live) return;
+        var txt = main.querySelector(".tb-chip-text");
+        if (txt && live.title) txt.textContent = live.title + " · #" + b.external_id;
+        var h = main.querySelector(".tb-chip-hint") || document.createElement("span");
+        h.className = "tb-chip-hint" + (live.closed ? " is-done" : "");
+        h.textContent = live.stage || live.status || "Битрикс24";
+        if (!h.parentNode) main.appendChild(h);
+      });
+    }
+    chip.appendChild(main);
+    if (onRemove) {
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "tb-chip-x";
+      x.setAttribute("aria-label", "Убрать блокер");
+      x.title = "Убрать блокер";
+      x.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      x.addEventListener("click", function (e) {
+        e.stopPropagation();
+        onRemove(b, x);
+      });
+      chip.appendChild(x);
+    }
+    return chip;
+  }
+
+  // Ответ сервера по задаче — во все списки, где она есть.
+  function tbApplyTask(task) {
+    if (!task || !task.id) return;
+    if ((postedCardIsOwner(task) && isDelegatedTaskEvent(task)) || task.assignee_external) upsertPostedTask(task);
+    syncMyTask(task);
+    if (isPostedTasksOpen()) renderPostedScreen();
+  }
+
+  function tbCanEdit(task) {
+    return !!task && !postedTaskIsDone(task) && !postedTaskIsArchived(task);
+  }
+
+  async function unblockTask(task, blockerId, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      var r = await postedApi(task.id, "unblock", blockerId ? { blocker_id: Number(blockerId) } : {});
+      if (r && r.task) tbApplyTask(r.task);
+      if (!blockerId) {
+        postedHaptic();
+        showNoteToast("Разблокировано — задача снова в работе");
+      }
+      return (r && r.task) || null;
+    } catch (err) {
+      showNoteToast((err && err.message) || "Не получилось");
+      return null;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // Блок в карточке: «Заблокировано» с чипами (× — снять один) и «Блокирует» у задачи-блокера.
+  function renderTaskBlockers(task, opts) {
+    opts = opts || {};
+    var blockers = (task && task.blockers) || [];
+    var blocking = (task && task.blocking) || [];
+    var blocked = taskIsBlocked(task);
+    if (!blockers.length && !blocking.length && !blocked) return null;
+    var wrap = document.createElement("div");
+    wrap.className = "tb-block";
+    var canEdit = opts.canEdit !== false && tbCanEdit(task);
+    if (blocked || blockers.length) {
+      var sec = document.createElement("div");
+      sec.className = "tb-sec tb-sec--blocked";
+      var head = document.createElement("p");
+      head.className = "tb-sec-title";
+      head.innerHTML = tbSvg("lock", 13) + "<span>Заблокировано</span>";
+      sec.appendChild(head);
+      var note = postedAssigneeState(task).status_note || "";
+      var chips = document.createElement("div");
+      chips.className = "tb-chips";
+      blockers.forEach(function (b) {
+        chips.appendChild(tbChip(b, canEdit ? function (bb, x) {
+          unblockTask(task, bb.id, x).then(function (t) {
+            if (t && opts.onChange) opts.onChange(t);
+          });
+        } : null));
+      });
+      if (canEdit) {
+        var add = document.createElement("button");
+        add.type = "button";
+        add.className = "tb-add";
+        add.textContent = "+ ещё";
+        add.addEventListener("click", function (e) {
+          e.stopPropagation();
+          openTaskBlockerDialog(task).then(function (t) {
+            if (t && opts.onChange) opts.onChange(t);
+          });
+        });
+        chips.appendChild(add);
+      }
+      sec.appendChild(chips);
+      // Комментарий, если он не повторяет список блокеров.
+      var auto = blockers.map(function (b) { return b.kind === "task" ? "задача «" + (b.title || "") + "»" : ""; }).join("");
+      if (note && blockers.every(function (b) { return note.indexOf(b.text || b.name || b.title || b.external_id || "") < 0; }) && note !== auto) {
+        var q = document.createElement("p");
+        q.className = "pt-quote tb-note";
+        q.textContent = note;
+        sec.appendChild(q);
+      }
+      wrap.appendChild(sec);
+    }
+    if (blocking.length) {
+      var hs = document.createElement("div");
+      hs.className = "tb-sec tb-sec--holds";
+      var hh = document.createElement("p");
+      hh.className = "tb-sec-title";
+      hh.innerHTML = tbSvg("lock", 13) + "<span></span>";
+      hh.querySelector("span").textContent = "Блокирует " + (blocking.length > 1 ? blocking.length + " " + pluralRu(blocking.length, "задачу", "задачи", "задач") : "задачу");
+      hs.appendChild(hh);
+      var hc = document.createElement("div");
+      hc.className = "tb-chips";
+      blocking.forEach(function (x) {
+        var b = { kind: "task", task_id: x.task_id, title: x.title, accessible: x.accessible };
+        var chip = tbChip(b, null);
+        if (!x.accessible) chip.querySelector(".tb-chip-text").textContent = x.title || "чужая задача";
+        if (x.by_name) {
+          var hint = chip.querySelector(".tb-chip-hint");
+          if (hint) hint.textContent = "ждёт " + postedFirstName(x.by_name);
+        }
+        hc.appendChild(chip);
+      });
+      hs.appendChild(hc);
+      wrap.appendChild(hs);
+    }
+    return wrap;
+  }
+
+  // Кнопка в карточке: «Заблокировано…» или «Разблокировать».
+  function tbCardButton(task, state) {
+    if (taskIsBlocked(task)) {
+      return postedActBtn("unlock", "Разблокировать", false, async function (b) {
+        var t = await unblockTask(task, null, b);
+        if (t && state) {
+          state.task = Object.assign({}, state.task, t);
+          refreshPostedCard(state);
+        }
+      });
+    }
+    return postedActBtn("lock", "Заблокировано…", false, async function () {
+      var t = await openTaskBlockerDialog(task);
+      if (t && state) {
+        state.task = Object.assign({}, state.task, t);
+        refreshPostedCard(state);
+      }
+    });
+  }
+
+  // Короткая пометка в строке списка / канбана.
+  function tbRowLine(task) {
+    var blockers = (task && task.blockers) || [];
+    if (!taskIsBlocked(task)) return "";
+    if (!blockers.length) return "заблокировано";
+    var b = blockers[0];
+    var what = b.kind === "task" ? "задачей" : b.kind === "bitrix" ? "Битрикс24 #" + b.external_id : b.kind === "text" ? b.text : postedFirstName(b.name || b.email || "");
+    return "заблокировано: " + what + (blockers.length > 1 ? " и ещё " + (blockers.length - 1) : "");
+  }
+
+  function tbHoldsLine(task) {
+    var n = ((task && task.blocking) || []).length;
+    return n ? "блокирует " + (n > 1 ? n + " " + pluralRu(n, "задачу", "задачи", "задач") : "задачу") : "";
+  }
+
+  // Окно «Чем заблокировано?»: вкладки Задача / Человек / Битрикс24 / Другое, можно несколько, плюс комментарий.
+  function openTaskBlockerDialog(task) {
+    return new Promise(function (resolve) {
+      var picked = [];
+      var tab = "task";
+      var ov = document.createElement("div");
+      ov.className = "leo-prompt-overlay";
+      ov.innerHTML =
+        '<div class="leo-prompt-sheet tb-sheet" role="dialog" aria-modal="true" aria-label="Чем заблокировано">' +
+        '<p class="leo-prompt-message">Чем заблокировано?</p>' +
+        '<p class="tb-sub"></p>' +
+        '<div class="tb-tabs" role="tablist"></div>' +
+        '<div class="tb-pane"></div>' +
+        '<div class="tb-picked tb-chips"></div>' +
+        '<textarea class="field-input tb-comment" rows="2" maxlength="500" placeholder="Комментарий (необязательно): чего именно ждём"></textarea>' +
+        '<div class="leo-prompt-actions">' +
+        '<button type="button" class="btn-text leo-prompt-cancel">Отмена</button>' +
+        '<button type="button" class="btn leo-prompt-ok">Заблокировать</button>' +
+        "</div></div>";
+      ov.querySelector(".tb-sub").textContent = "«" + String(task.title || "Задача") + "»";
+      document.body.appendChild(ov);
+      var tabsEl = ov.querySelector(".tb-tabs");
+      var pane = ov.querySelector(".tb-pane");
+      var pickedEl = ov.querySelector(".tb-picked");
+      var okBtn = ov.querySelector(".leo-prompt-ok");
+      var TABS = [["task", "Задача"], ["person", "Человек"], ["bitrix", "Битрикс24"], ["text", "Другое"]];
+      TABS.forEach(function (t) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-tab";
+        b.setAttribute("role", "tab");
+        b.setAttribute("data-tab", t[0]);
+        b.textContent = t[1];
+        b.addEventListener("click", function () {
+          tab = t[0];
+          paintTabs();
+          paintPane();
+        });
+        tabsEl.appendChild(b);
+      });
+      function paintTabs() {
+        tabsEl.querySelectorAll(".tb-tab").forEach(function (b) {
+          var on = b.getAttribute("data-tab") === tab;
+          b.classList.toggle("is-on", on);
+          b.setAttribute("aria-selected", on ? "true" : "false");
+        });
+      }
+      function same(a, b) {
+        if (a.kind !== b.kind) return false;
+        if (a.kind === "task") return String(a.task_id) === String(b.task_id);
+        if (a.kind === "user") return String(a.user_id) === String(b.user_id);
+        if (a.kind === "bitrix") return String(a.external_id || a.ref) === String(b.external_id || b.ref);
+        return String(a.name || a.text || "").toLowerCase() === String(b.name || b.text || "").toLowerCase();
+      }
+      function addPicked(b) {
+        var dup = picked.some(function (p) { return same(p, b); }) ||
+          (task.blockers || []).some(function (p) { return same(p, b); });
+        if (dup) {
+          showNoteToast("Уже в списке");
+          return;
+        }
+        picked.push(b);
+        paintPicked();
+      }
+      function paintPicked() {
+        pickedEl.innerHTML = "";
+        picked.forEach(function (b, i) {
+          pickedEl.appendChild(tbChip(b, function () {
+            picked.splice(i, 1);
+            paintPicked();
+          }));
+        });
+        setHidden(pickedEl, !picked.length);
+        okBtn.disabled = !picked.length;
+      }
+      var searchSeq = 0;
+      function inputRow(placeholder, onInput, onEnter) {
+        var inp = document.createElement("input");
+        inp.type = "text";
+        inp.className = "field-input tb-input";
+        inp.placeholder = placeholder;
+        inp.autocomplete = "off";
+        var t = null;
+        inp.addEventListener("input", function () {
+          if (t) clearTimeout(t);
+          t = setTimeout(function () { onInput(inp.value); }, 220);
+        });
+        inp.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && onEnter) {
+            e.preventDefault();
+            onEnter(inp.value, inp);
+          }
+        });
+        pane.appendChild(inp);
+        setTimeout(function () { inp.focus(); }, 30);
+        return inp;
+      }
+      function resultsBox() {
+        var box = document.createElement("div");
+        box.className = "tb-results";
+        pane.appendChild(box);
+        return box;
+      }
+      function resultBtn(box, title, hint, onPick) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-result";
+        b.innerHTML = '<span class="tb-result-title"></span><span class="tb-result-hint"></span>';
+        b.querySelector(".tb-result-title").textContent = title;
+        b.querySelector(".tb-result-hint").textContent = hint || "";
+        b.addEventListener("click", function () { onPick(); });
+        box.appendChild(b);
+        return b;
+      }
+      function hintText(box, text) {
+        var p = document.createElement("p");
+        p.className = "tb-hint";
+        p.textContent = text;
+        box.appendChild(p);
+      }
+      function paintPane() {
+        pane.innerHTML = "";
+        var box;
+        if (tab === "task") {
+          var run = function (q) {
+            var seq = ++searchSeq;
+            searchTaskRefItems(q).then(function (items) {
+              if (seq !== searchSeq) return;
+              box.innerHTML = "";
+              items = items.filter(function (it) { return String(it.refId) !== String(task.id); }).slice(0, 8);
+              if (!items.length) hintText(box, q ? "Ничего не нашлось" : "Начните вводить название задачи");
+              items.forEach(function (it) {
+                resultBtn(box, it.label, it.hint, function () {
+                  addPicked({ kind: "task", task_id: Number(it.refId), title: it.label });
+                });
+              });
+            });
+          };
+          inputRow("Название задачи в Орбите", run);
+          box = resultsBox();
+          run("");
+        } else if (tab === "person") {
+          var paintPeople = function (q) {
+            box.innerHTML = "";
+            q = String(q || "").trim();
+            var ql = q.toLowerCase();
+            var me = postedMeUid();
+            var rows = (calendarContactsAll || []).filter(function (c) {
+              if (!c || String(c.telegram_user_id || "") === me) return false;
+              var hay = [c.name, c.email, c.telegram_username, c.company].join(" ").toLowerCase();
+              return !ql || hay.indexOf(ql) >= 0;
+            });
+            rows.sort(function (a, b) {
+              return (b.telegram_user_id ? 1 : 0) - (a.telegram_user_id ? 1 : 0) || String(a.name || "").localeCompare(String(b.name || ""), "ru");
+            });
+            rows.slice(0, 8).forEach(function (c) {
+              var inOrbita = !!c.telegram_user_id;
+              resultBtn(box, c.name || c.email, inOrbita ? "в Орбите" : (c.company ? c.company + " · " : "") + "не из команды", function () {
+                if (inOrbita) addPicked({ kind: "user", user_id: String(c.telegram_user_id), name: c.name || c.email || "", email: c.email || "" });
+                else addPicked({ kind: "external", name: c.name || c.email || "", email: c.email || "", company: c.company || "" });
+              });
+            });
+            if (q) {
+              resultBtn(box, "«" + q + "»", "добавить как человека не из команды", function () {
+                addPicked({ kind: "external", name: q });
+              });
+            } else if (!rows.length) hintText(box, "Напишите имя — можно указать любого человека, даже не из Орбиты");
+          };
+          inputRow("Имя, почта или компания", paintPeople, function (v) {
+            if (String(v || "").trim()) addPicked({ kind: "external", name: String(v).trim() });
+          });
+          box = resultsBox();
+          paintPeople("");
+          refreshCalendarContacts().then(function () {
+            var inp = pane.querySelector(".tb-input");
+            if (inp && tab === "person") paintPeople(inp.value);
+          });
+        } else if (tab === "bitrix") {
+          var connected = false;
+          var runB = function (q) {
+            q = String(q || "").trim();
+            var seq = ++searchSeq;
+            box.innerHTML = "";
+            var m = q.match(/\/tasks\/task\/view\/(\d+)/) || q.match(/^#?(\d{1,12})$/);
+            if (m) {
+              resultBtn(box, "Задача #" + m[1], /^https?:/i.test(q) ? "по ссылке" : "по номеру", function () {
+                addPicked({ kind: "bitrix", ref: q, external_id: m[1], url: /^https?:/i.test(q) ? q : "" });
+              });
+            }
+            if (!connected) {
+              if (!m) hintText(box, "Вставьте ссылку на задачу Битрикс24 или её номер. Чтобы искать по названию и видеть стадию, подключите Битрикс24 в профиле.");
+              return;
+            }
+            apiFetch("/trackers/bitrix24/tasks?q=" + encodeURIComponent(q), { method: "GET" })
+              .then(function (r) {
+                if (seq !== searchSeq) return;
+                var list = (r && r.tasks) || [];
+                if (!list.length && !m) hintText(box, q ? "Ничего не нашлось" : "Ваших открытых задач в Битрикс24 нет");
+                list.forEach(function (t) {
+                  if (m && String(t.external_id) === m[1]) box.firstChild && box.firstChild.remove();
+                  resultBtn(box, t.title + " · #" + t.external_id, [t.stage || t.status, t.responsible].filter(Boolean).join(" · "), function () {
+                    addPicked({ kind: "bitrix", external_id: String(t.external_id), url: t.url || "", title: t.title || "" });
+                  });
+                });
+              })
+              .catch(function (err) {
+                if (seq !== searchSeq) return;
+                hintText(box, (err && err.message) || "Битрикс24 не ответил");
+              });
+          };
+          inputRow("Ссылка, номер или название задачи", runB, function (v) {
+            var s = String(v || "").trim();
+            var m = s.match(/\/tasks\/task\/view\/(\d+)/) || s.match(/^#?(\d{1,12})$/);
+            if (m) addPicked({ kind: "bitrix", ref: s, external_id: m[1], url: /^https?:/i.test(s) ? s : "" });
+          });
+          box = resultsBox();
+          loadTrackers().then(function (list) {
+            connected = (list || []).some(function (t) { return t.id === "bitrix24" && t.connected; });
+            var inp = pane.querySelector(".tb-input");
+            if (tab === "bitrix") runB(inp ? inp.value : "");
+          });
+        } else {
+          var ta = document.createElement("textarea");
+          ta.className = "field-input tb-input";
+          ta.rows = 2;
+          ta.maxLength = 300;
+          ta.placeholder = "Например: ждём ответа банка";
+          pane.appendChild(ta);
+          var addB = postedBtn("Добавить", "pt-btn--primary tb-add-text", function () {
+            var v = String(ta.value || "").trim();
+            if (!v) return;
+            addPicked({ kind: "text", text: v });
+            ta.value = "";
+          });
+          pane.appendChild(addB);
+          setTimeout(function () { ta.focus(); }, 30);
+        }
+      }
+      paintTabs();
+      paintPane();
+      paintPicked();
+      function finish(v) {
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(v);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          finish(null);
+        }
+      }
+      document.addEventListener("keydown", onKey, true);
+      ov.querySelector(".leo-prompt-cancel").addEventListener("click", function () { finish(null); });
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) finish(null);
+      });
+      okBtn.addEventListener("click", async function () {
+        if (!picked.length) return;
+        okBtn.disabled = true;
+        try {
+          var body = {
+            blockers: picked.map(function (b) {
+              var o = Object.assign({}, b);
+              delete o.accessible;
+              return o;
+            }),
+            note: String(ov.querySelector(".tb-comment").value || "").trim(),
+          };
+          var r = await postedApi(task.id, "block", body);
+          if (r && r.task) tbApplyTask(r.task);
+          postedHaptic();
+          showNoteToast("Задача заблокирована");
+          finish((r && r.task) || null);
+        } catch (err) {
+          okBtn.disabled = false;
+          showNoteToast((err && err.message) || "Не получилось заблокировать");
+        }
+      });
+    });
+  }
 
   // Кнопки действий карточки — как внизу окна задачи (плашки с иконкой); главная — зелёная.
   function postedActBtn(icon, label, primary, onClick) {
@@ -29300,6 +29970,9 @@
       sys.className = "pt-sys";
       var label = POSTED_EVENT_TEXT[e.kind] || "";
       if (e.kind === "seen") label = "Открыто · " + postedFirstName(e.actor_name || assigneeName);
+      if ((e.kind === "blocked" || e.kind === "unblocked") && e.actor_name) label += " · " + postedFirstName(e.actor_name);
+      if (e.kind === "blocked" && e.text) label += ": " + e.text;
+      if (e.kind === "blocker_resolved" && e.text) label = e.text;
       sys.textContent = label + " · " + postedTimeShort(e.at);
       // Одна и та же системная строка подряд (например, «Задача поставлена» дважды) — показываем один раз.
       var prev = feed.lastChild;
@@ -30174,7 +30847,7 @@
       showNoteToast((err && err.message) || "Не удалось загрузить задачи");
     }
     if (isMyTasksOpen()) renderMyTasksScreen();
-    if (myTasksTab === "done") loadMyTasksDone();
+    if (myTasksTab === "done" || (myKanbanOn() && !myTasksDoneLoaded)) loadMyTasksDone();
   }
 
   async function loadMyTasksDone() {
@@ -30199,6 +30872,12 @@
 
   function openMyTask(task, opts) {
     opts = opts || {};
+    // Канбан: правой панели нет — поручение открывается окном с обсуждением, своя задача — своей карточкой.
+    if (myKanbanOn() && isMyTasksOpen()) {
+      if (isDelegatedTaskEvent(task)) openPostedCard(task.id, opts.focus ? { focus: opts.focus, myTasks: true } : { myTasks: true });
+      else openMyOwnSheet(task);
+      return;
+    }
     // Компьютер: задача открывается справа, как в «Поставленных».
     if (isDesktopLayout()) {
       myTasksSelectedId = String(task.id);
@@ -30325,6 +31004,14 @@
       }
       setHidden(emptyEl, !showEmpty);
     }
+    syncMyTasksViewUi();
+    if (myKanbanOn() && all.length) {
+      renderMyTasksKanban(listEl, items);
+      var sideK = document.getElementById("my-tasks-side");
+      if (sideK) sideK.innerHTML = "";
+      postedCardHosts.side = null;
+      return;
+    }
     // Как в «Поставленных»: «Просрочено» и «Предстоящие» — заголовки групп, сроки — подзаголовки внутри.
     var groups = myTasksGroups(items);
     var hasLate = groups.some(function (g) { return g.late; });
@@ -30362,6 +31049,150 @@
       listEl.appendChild(foot);
     }
     renderMyTasksSide(myTasksGroups(items));
+  }
+
+  // ——— «Мои задачи» Канбаном: К работе · В работе · Заблокировано · Вопрос · Сделано. Тянет исполнитель. ———
+  var MY_TASKS_VIEW_KEY = "orbita.myTasksView";
+  var myTasksView = (function () {
+    try {
+      return localStorage.getItem(MY_TASKS_VIEW_KEY) === "kanban" ? "kanban" : "list";
+    } catch (_) {
+      return "list";
+    }
+  })();
+  var MY_KANBAN_COLS = [
+    ["todo", "К работе"],
+    ["work", "В работе"],
+    ["blocked", "Заблокировано"],
+    ["question", "Вопрос"],
+    ["done", "Сделано"],
+  ];
+  var MY_KANBAN_DONE_DAYS = 14;
+
+  function myKanbanOn() {
+    return myTasksView === "kanban" && myTasksTab !== "done";
+  }
+
+  function setMyTasksView(view) {
+    myTasksView = view === "kanban" ? "kanban" : "list";
+    try {
+      localStorage.setItem(MY_TASKS_VIEW_KEY, myTasksView);
+    } catch (_) {}
+    myTasksSelectedId = "";
+    postedCardHosts.side = null;
+    if (myTasksView === "kanban" && !myTasksDoneLoaded) loadMyTasksDone();
+    renderMyTasksScreen();
+  }
+
+  function syncMyTasksViewUi() {
+    var sub = document.getElementById("actual-my-tasks");
+    if (sub) sub.classList.toggle("pt-is-kanban", myKanbanOn());
+    var toKanban = myTasksView !== "kanban";
+    var label = toKanban ? "Канбан" : "Список";
+    document.querySelectorAll("[data-my-tasks-view-toggle]").forEach(function (b) {
+      setHidden(b, myTasksTab === "done");
+      var compact = b.id === "my-tasks-view-bar";
+      if (b.getAttribute("data-view") !== label) {
+        b.innerHTML = (toKanban ? POSTED_ICON_KANBAN : POSTED_ICON_LIST) + (compact ? "" : "<span>" + label + "</span>");
+        b.setAttribute("data-view", label);
+      }
+      b.title = toKanban ? "Вид Канбан" : "Вид списком";
+      b.setAttribute("aria-label", b.title);
+    });
+  }
+
+  function myKanbanColumn(task) {
+    if (postedTaskIsDone(task)) return "done";
+    var st = postedAssigneeState(task).status;
+    if (st === "blocked") return "blocked";
+    if (st === "question") return "question";
+    if (st === "in_progress") return "work";
+    return "todo";
+  }
+
+  function myKanbanDoneRecent() {
+    var since = Date.now() - MY_KANBAN_DONE_DAYS * DAY_MS;
+    return myTasksVisible(myTasksDoneItems).filter(function (t) {
+      var at = new Date(t.done_at || (t.event && t.event.done_at) || t.updated_at || "").getTime();
+      return isNaN(at) || at >= since;
+    }).sort(function (a, b) {
+      return String(b.done_at || b.updated_at || "").localeCompare(String(a.done_at || a.updated_at || ""));
+    });
+  }
+
+  // Перетаскивание исполнителя: то же, что кнопки в карточке.
+  function myKanbanMove(task, from, to) {
+    var delegated = isDelegatedTaskEvent(task);
+    if (from === "done") {
+      if (delegated || to !== "todo") return null; // сданное поручение возвращает постановщик
+      return function () { setMyTaskDone(task, false); };
+    }
+    if (to === "done") {
+      return delegated
+        ? function () { openMyTask(task, { focus: "result" }); }
+        : function () { setMyTaskDone(task, true); };
+    }
+    if (to === "blocked") {
+      return function () { openTaskBlockerDialog(task); };
+    }
+    if (to === "question") {
+      if (!delegated) return null; // вопрос задают постановщику
+      return function () { openMyTask(task, { focus: "reply" }); };
+    }
+    if (to === "work") {
+      if (from === "blocked") return function () { unblockTask(task); };
+      return function () { setMyTaskStatus(task, "in_progress"); };
+    }
+    if (to === "todo") {
+      if (from === "blocked") {
+        return function () {
+          unblockTask(task).then(function (t) {
+            if (t) setMyTaskStatus(t, "");
+          });
+        };
+      }
+      if (from === "question") return null; // вопрос снимает ответ постановщика
+      return function () { setMyTaskStatus(task, ""); };
+    }
+    return null;
+  }
+
+  function renderMyTasksKanban(listEl, items) {
+    var groups = {};
+    MY_KANBAN_COLS.forEach(function (c) {
+      groups[c[0]] = [];
+    });
+    items.forEach(function (t) {
+      var k = myKanbanColumn(t);
+      if (groups[k]) groups[k].push(t);
+    });
+    ["todo", "work", "blocked", "question"].forEach(function (k) {
+      groups[k] = sortByDue(groups[k]);
+    });
+    var seen = {};
+    groups.done.forEach(function (t) { seen[String(t.id)] = 1; });
+    groups.done = groups.done.concat(myKanbanDoneRecent().filter(function (t) { return !seen[String(t.id)]; }));
+    buildKanbanBoard(listEl, MY_KANBAN_COLS, groups, {
+      row: function (t, key) {
+        return renderMyTaskRow(t, { late: key !== "done" && postedTaskIsOverdue(t) });
+      },
+      strong: function (key, n) {
+        return n > 0 && (key === "blocked" || key === "question");
+      },
+      move: myKanbanMove,
+      deny: "Сюда перенести нельзя",
+    });
+  }
+
+  // Своя задача окном (Канбан: правой панели нет) — та же карточка, что справа в списке.
+  function openMyOwnSheet(task) {
+    var ov = postedSheetEl();
+    ov.classList.remove("hidden");
+    document.documentElement.classList.add("pt-sheet-open");
+    syncAppOverlay();
+    postedCardHosts.sheet = null;
+    paintMyOwnCard(ov.querySelector(".pt-sheet"), task, { sheet: true });
+    pinPostedSheetToViewport();
   }
 
   // Группы списка: «Просрочено», потом по сроку; у «Выполненных» — одна группа без заголовка.
@@ -30444,6 +31275,7 @@
 
   function myTaskPill(task) {
     if (postedTaskIsDone(task)) return { cls: "pt-pill--done", text: "Выполнено" };
+    if (taskIsBlocked(task)) return { cls: "pt-pill--blocked", text: "Заблокировано" };
     if (postedTaskIsOverdue(task)) return { cls: "pt-pill--late", text: postedLateLabel(task) };
     if (postedAssigneeState(task).status === "in_progress") return { cls: "pt-pill--work", text: "В работе" };
     return { cls: "pt-pill--muted", text: "Своя задача" };
@@ -30505,6 +31337,13 @@
       d.textContent = descText;
       body.appendChild(d);
     }
+    var tbOwn = renderTaskBlockers(task, {
+      canEdit: !done,
+      onChange: function (t) {
+        paintMyOwnCard(host, Object.assign({}, task, t), opts);
+      },
+    });
+    if (tbOwn) body.appendChild(tbOwn);
     var srcHost = document.createElement("div");
     srcHost.className = "pt-c-sources hidden";
     body.appendChild(srcHost);
@@ -30546,9 +31385,12 @@
         setMyTaskDone(task, true, b);
       }));
       var inWork = postedAssigneeState(task).status === "in_progress";
-      bar.appendChild(postedActBtn(inWork ? "undo" : "play", inWork ? "Не в работе" : "Взять в работу", false, function (b) {
-        setMyTaskStatus(task, inWork ? "" : "in_progress", b);
-      }));
+      if (!taskIsBlocked(task)) {
+        bar.appendChild(postedActBtn(inWork ? "undo" : "play", inWork ? "Не в работе" : "Взять в работу", false, function (b) {
+          setMyTaskStatus(task, inWork ? "" : "in_progress", b);
+        }));
+      }
+      bar.appendChild(tbOwnButton(task, host, opts));
       if (!task.recurrence) {
         bar.appendChild(postedActBtn("cal", postedTaskIsOverdue(task) ? "На сегодня" : "На завтра", false, function (b) {
           moveMyTask(task, postedTaskIsOverdue(task) ? 0 : 1, b);
@@ -30570,6 +31412,20 @@
     }));
     foot.appendChild(bar);
     host.appendChild(foot);
+  }
+
+  function tbOwnButton(task, host, opts) {
+    function repaint(t) {
+      if (t && document.body.contains(host)) paintMyOwnCard(host, Object.assign({}, task, t), opts);
+    }
+    if (taskIsBlocked(task)) {
+      return postedActBtn("unlock", "Разблокировать", false, function (b) {
+        unblockTask(task, null, b).then(repaint);
+      });
+    }
+    return postedActBtn("lock", "Заблокировано…", false, function () {
+      openTaskBlockerDialog(task).then(repaint);
+    });
   }
 
   async function setMyTaskDone(task, next, btn) {
@@ -30731,6 +31587,12 @@
         moveMyTask(task, 1, b);
       });
     }
+    if (taskIsBlocked(task)) {
+      act("Разблокировать", false, function (b) {
+        unblockTask(task, null, b);
+      });
+      return acts;
+    }
     if (!late && postedAssigneeState(task).status !== "in_progress") {
       act("В работу", false, function (b) {
         setMyTaskStatus(task, "in_progress", b);
@@ -30784,6 +31646,9 @@
     if (done) {
       var at = task.done_at || (task.event && task.event.done_at) || "";
       part(at ? "выполнено " + postedDayWord(at) : "выполнено", "is-done");
+    } else if (taskIsBlocked(task)) {
+      part(tbRowLine(task), "is-blocked");
+      if (opts.late) part(postedLateLabel(task).toLowerCase(), "is-late");
     } else if (opts.late) {
       part(postedLateLabel(task).toLowerCase(), "is-late");
     } else if (postedAssigneeState(task).status === "in_progress") {
@@ -30793,6 +31658,7 @@
     part(ds.day === "без срока" ? "без срока" : "срок " + ds.day + (ds.time ? ", " + ds.time : ""), opts.late ? "is-late pt-due-inline" : "pt-due-inline");
     if (task.recurrence) part("повторяется", "");
     if (task.meeting_title) part("из «" + task.meeting_title + "»", "pt-meeting");
+    part(tbHoldsLine(task), "is-holds");
     main.appendChild(line);
     row.appendChild(main);
     if (!done) row.appendChild(renderMyTaskActs(task, !!opts.late));
@@ -61926,6 +62792,11 @@
     ["my-tasks-new", "my-tasks-new-bar"].forEach(function (id) {
       var b = document.getElementById(id);
       if (b) b.addEventListener("click", openNewMyTask);
+    });
+    document.querySelectorAll("[data-my-tasks-view-toggle]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        setMyTasksView(myTasksView === "kanban" ? "list" : "kanban");
+      });
     });
     var postedNew = document.getElementById("posted-tasks-new");
     if (postedNew) postedNew.addEventListener("click", openNewPostedTask);

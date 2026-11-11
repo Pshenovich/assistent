@@ -45,6 +45,7 @@ LABELS = {
     "skipped": "Не разбираем",
     "nested": "Подзадача",
     "waiting": "Ждём",
+    "blocked": "Заблокировано",
 }
 
 _DOUBT_KIND = {"decision": "это решение", "question": "это вопрос", "not_task": "не похоже на задачу", "duplicate": "похоже на дубль"}
@@ -172,6 +173,9 @@ def status_of(t: dict[str, Any], task: Optional[dict[str, Any]] = None) -> dict[
             out["who_email"] = str(task.get("assignee_email") or "").strip().lower()
         if task.get("done"):
             out["code"] = "done"
+        elif astat == "blocked":
+            out["code"] = "blocked"
+            out["note"] = str(task.get("assignee_status_note") or "").strip()
         elif external:
             out["code"] = "waiting"
         elif delegated and triage == "declined":
@@ -203,6 +207,8 @@ def label_for(s: dict[str, Any]) -> str:
     code = s.get("code") or "open"
     if code == "taken":
         return f"Взял {s['by']}" if s.get("by") else "Взято"
+    if code == "blocked" and s.get("note"):
+        return f"Заблокировано: {s['note']}"[:120]
     if code == "declined" and s.get("note"):
         return f"Отказ: {s['note']}"
     if code == "tracker" and s.get("stage"):

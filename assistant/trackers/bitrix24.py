@@ -22,6 +22,7 @@ from assistant.trackers.base import (
     Person,
     Stage,
     TaskDraft,
+    TaskRef,
     TrackerError,
     TrackerNotConnected,
 )
@@ -306,6 +307,88 @@ class Bitrix24Tracker:
         else:
             url = f"{portal}/company/personal/user/{creds.get('account_id') or 0}/tasks/task/view/{task_id}/"
         return CreatedTask(external_id=task_id, url=url, title=title, extra={"responsible_name": responsible_name})
+
+
+    # ——— Задача Битрикса как блокер задачи Орбиты: поиск и актуальная стадия ———
+
+    def _task_url(self, creds: dict[str, str], task_id: str, group_id: str) -> str:
+        portal = creds.get("portal") or ""
+        if group_id and group_id != "0":
+            return f"{portal}/workgroups/group/{group_id}/tasks/task/view/{task_id}/"
+        return f"{portal}/company/personal/user/{creds.get('account_id') or 0}/tasks/task/view/{task_id}/"
+
+    def _ref(self, uid: int, creds: dict[str, str], t: dict[str, Any], *, with_stage: bool) -> TaskRef:
+        tid = str(t.get("id") or t.get("ID") or "").strip()
+        gid = str(t.get("groupId") or t.get("GROUP_ID") or "").strip()
+        status = str(t.get("status") or t.get("STATUS") or t.get("realStatus") or "").strip()
+        stage_id = str(t.get("stageId") or t.get("STAGE_ID") or "").strip()
+        stage = ""
+        if with_stage and stage_id and stage_id != "0":
+            try:
+                board = gid if gid and gid != "0" else PERSONAL_BOARD_ID
+                stage = next((st.name for st in self.list_stages(uid, board) if st.id == stage_id), "")
+            except TrackerError:
+                stage = ""
+        resp = t.get("responsible") if isinstance(t.get("responsible"), dict) else {}
+        return TaskRef(
+            external_id=tid,
+            title=str(t.get("title") or t.get("TITLE") or "").strip() or f"Задача #{tid}",
+            url=self._task_url(creds, tid, gid),
+            status=BITRIX_STATUS.get(status, ""),
+            stage=stage,
+            closed=status in ("5", "7"),
+            responsible=str(resp.get("name") or "").strip(),
+            deadline=str(t.get("deadline") or t.get("DEADLINE") or "")[:10],
+        )
+
+    def get_task(self, uid: int, external_id: str) -> TaskRef:
+        creds = self._creds(uid)
+        tid = str(external_id or "").strip()
+        if not tid.isdigit():
+            raise TrackerError("Номер задачи Битрикс24 — число")
+        try:
+            result = call(creds["secret"], "tasks.task.get", {
+                "taskId": int(tid),
+                "select": ["ID", "TITLE", "STATUS", "STAGE_ID", "GROUP_ID", "RESPONSIBLE_ID", "DEADLINE"],
+            })
+        except TrackerError as e:
+            raise TrackerError(f"Задача #{tid} в Битрикс24 не найдена или нет доступа") from e
+        task = (result or {}).get("task") if isinstance(result, dict) else None
+        if not isinstance(task, dict) or not (task.get("id") or task.get("ID")):
+            raise TrackerError(f"Задача #{tid} в Битрикс24 не найдена или нет доступа")
+        return self._ref(uid, creds, task, with_stage=True)
+
+    def search_tasks(self, uid: int, query: str, limit: int = 20) -> list[TaskRef]:
+        """Задачи портала, видимые владельцу вебхука: по номеру или части названия, свежие сверху."""
+        creds = self._creds(uid)
+        q = str(query or "").strip()
+        if q.lstrip("#").isdigit():
+            try:
+                return [self.get_task(uid, q.lstrip("#"))]
+            except TrackerError:
+                return []
+        params: dict[str, Any] = {
+            "order": {"CHANGED_DATE": "desc"},
+            "select": ["ID", "TITLE", "STATUS", "STAGE_ID", "GROUP_ID", "RESPONSIBLE_ID", "DEADLINE"],
+            "filter": {"%TITLE": q} if q else {"MEMBER": creds.get("account_id") or 0, "!STATUS": 5},
+            "start": 0,
+        }
+        result = call(creds["secret"], "tasks.task.list", params)
+        tasks = (result or {}).get("tasks") if isinstance(result, dict) else result
+        out = []
+        for t in tasks or []:
+            if isinstance(t, dict) and (t.get("id") or t.get("ID")):
+                out.append(self._ref(uid, creds, t, with_stage=False))
+            if len(out) >= limit:
+                break
+        return out
+
+
+# Статусы задачи Битрикс24 (STATUS) — подпись, если стадии канбана нет.
+BITRIX_STATUS = {
+    "1": "Новая", "2": "Ждёт выполнения", "3": "Выполняется", "4": "Ждёт контроля",
+    "5": "Завершена", "6": "Отложена", "7": "Отклонена",
+}
 
 
 def _drop_stage_cache(uid: int) -> None:

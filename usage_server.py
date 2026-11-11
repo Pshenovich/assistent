@@ -6368,6 +6368,12 @@ def _task_api(task: dict[str, Any], *, tz: Any, viewer_id: int | str | None = No
         item["subtasks"] = subs
         item["subtasks_total"] = len(subs)
         item["subtasks_done"] = sum(1 for s in subs if s.get("done"))
+        try:  # «Заблокировано»: чем стоит задача и какие задачи держит она сама
+            from assistant.stores import task_blockers
+
+            task_blockers.enrich(viewer_id if viewer_id not in (None, "") else item.get("owner_user_id"), [item])
+        except Exception as e:
+            print(f"[task_api] blockers failed task={item.get('id')} err={e!r}")
     if item.get("parent_id"):
         chain = calendar_tasks_store.ancestors(task)
         item["parents"] = [
@@ -6853,6 +6859,58 @@ async def miniapp_calendar_tasks_status(
     if cur["status_note"]:
         _memory_task_changed(row)
     return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
+
+
+class _MiniappTaskBlockBody(BaseModel):
+    blockers: list[dict[str, Any]] = Field(default_factory=list)
+    note: str = ""
+
+
+class _MiniappTaskUnblockBody(BaseModel):
+    blocker_id: Optional[int] = None
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/block")
+async def miniapp_calendar_tasks_block(
+    task_id: int,
+    body: _MiniappTaskBlockBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Заблокировано»: исполнитель или постановщик указывает, чем стоит задача (можно несколько)."""
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import task_blockers
+
+    uid = int(principal.telegram_user_id)
+    try:
+        row = await run_in_threadpool(
+            partial(task_blockers.set_blocked, uid, task_id, body.blockers, body.note,
+                    actor_name=_principal_display_name(principal))
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not row:
+        raise HTTPException(status_code=400, detail="Блокировку ставят исполнитель или постановщик задачи")
+    _memory_task_changed(row)
+    return {"ok": True, "task": _task_api(row, tz=_tz_for(uid), viewer_id=uid)}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/unblock")
+async def miniapp_calendar_tasks_unblock(
+    task_id: int,
+    body: _MiniappTaskUnblockBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Снять блокировку целиком или один блокер (blocker_id)."""
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import task_blockers
+
+    uid = int(principal.telegram_user_id)
+    row = await run_in_threadpool(
+        partial(task_blockers.unblock, uid, task_id, body.blocker_id, actor_name=_principal_display_name(principal))
+    )
+    if not row:
+        raise HTTPException(status_code=400, detail="Блокировку снимают исполнитель или постановщик задачи")
+    return {"ok": True, "task": _task_api(row, tz=_tz_for(uid), viewer_id=uid)}
 
 
 @miniapp_router.post("/calendar/tasks/{task_id}/nudge")
@@ -13411,6 +13469,10 @@ def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
         # Фокус выключен, но входящие поручения и новое в обсуждениях показать всё равно надо.
         out = proactive.rule_task_inbox(uid, proactive._now())
         try:
+            out = proactive.rule_task_blocking(uid, proactive._now()) + out
+        except Exception as e:
+            print(f"[proactive] task blocking failed uid={uid} err={e!r}")
+        try:
             out += proactive.rule_discussions(uid)
         except Exception as e:
             print(f"[proactive] discussions failed uid={uid} err={e!r}")
@@ -13423,6 +13485,33 @@ def _focus_feed_items(uid: int) -> list[dict[str, Any]]:
         print(f"[proactive] calendar failed uid={uid} err={e!r}")
         events = []
     return proactive.build_feed(uid, events)
+
+
+class _MiniappBlockerResolveBody(BaseModel):
+    how: str = "done"  # done — «Готово, своё сделал»; not_me — «Не я»
+
+
+@miniapp_router.post("/proactive/blocking/{blocker_id}")
+async def miniapp_proactive_blocking_resolve(
+    blocker_id: int,
+    body: _MiniappBlockerResolveBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Человек-блокер из карточки Фокуса снимает с себя блокер задачи."""
+    from assistant.stores import task_blockers
+
+    uid = int(principal.telegram_user_id)
+    try:
+        ok = await run_in_threadpool(
+            partial(task_blockers.resolve_by_user, uid, blocker_id, body.how,
+                    actor_name=_principal_display_name(principal))
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not ok:
+        raise HTTPException(status_code=400, detail="Этот блокер уже снят")
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True}
 
 
 @miniapp_router.get("/proactive/feed")
@@ -19101,6 +19190,53 @@ async def miniapp_tracker_users(
     p = _tracker_or_404(provider)
     people = await run_in_threadpool(_tracker_call, p.search_users, int(principal.telegram_user_id), q[:80])
     return {"users": [x.public() for x in people]}
+
+
+# Стадия задачи трекера в чипе блокера: не дёргаем трекер на каждое открытие карточки.
+_TRACKER_TASK_CACHE: dict[tuple[int, str, str], tuple[float, dict[str, Any]]] = {}
+_TRACKER_TASK_TTL = 300.0
+
+
+@miniapp_router.get("/trackers/{provider}/tasks")
+async def miniapp_tracker_tasks_search(
+    provider: str,
+    q: str = "",
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    """Поиск задач трекера по номеру, ссылке или части названия (выбор блокера)."""
+    from assistant.stores.task_blockers import parse_bitrix_ref
+
+    p = _tracker_or_404(provider)
+    if not hasattr(p, "search_tasks"):
+        raise HTTPException(status_code=400, detail="Этот трекер не умеет искать задачи")
+    raw = q.strip()[:300]
+    ext_id, _url = parse_bitrix_ref(raw) if raw.lower().startswith("http") else ("", "")
+    found = await run_in_threadpool(_tracker_call, p.search_tasks, int(principal.telegram_user_id),
+                                    ext_id or raw[:120])
+    return {"tasks": [x.public() for x in found]}
+
+
+@miniapp_router.get("/trackers/{provider}/tasks/{external_id}")
+async def miniapp_tracker_task_get(
+    provider: str,
+    external_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    """Задача трекера с актуальной стадией — для чипа блокера (кэш 5 минут)."""
+    p = _tracker_or_404(provider)
+    if not hasattr(p, "get_task"):
+        raise HTTPException(status_code=400, detail="Этот трекер не отдаёт задачи")
+    uid = int(principal.telegram_user_id)
+    key = (uid, p.id, str(external_id))
+    hit = _TRACKER_TASK_CACHE.get(key)
+    if hit and time.time() - hit[0] < _TRACKER_TASK_TTL:
+        return {"task": hit[1]}
+    ref = await run_in_threadpool(_tracker_call, p.get_task, uid, str(external_id)[:20])
+    data = ref.public()
+    if len(_TRACKER_TASK_CACHE) > 2000:
+        _TRACKER_TASK_CACHE.clear()
+    _TRACKER_TASK_CACHE[key] = (time.time(), data)
+    return {"task": data}
 
 
 @miniapp_router.put("/trackers/{provider}/settings")

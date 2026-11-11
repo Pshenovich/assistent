@@ -64,7 +64,7 @@ def _collect(uid: int) -> tuple[str, bool] | None:
     start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     today = [e for e in events if (lambda s: s is not None and start <= s.astimezone(tz) < start + timedelta(days=1))(proactive._parse(e.get("start")))]
     proactive.mark_brief_sent(uid, day)
-    if any(it.get("type") == "task_inbox" for it in items):
+    if any(it.get("type") in ("task_inbox", "task_blocking") for it in items):
         proactive.mark_brief_sent(uid, _INBOX_DAY + day)  # входящие уже в брифе — отдельно не шлём
     if not items and not today:
         return ("", False)
@@ -88,6 +88,17 @@ def _inbox_digest(uid: int) -> str | None:
     if not proactive.brief_due(local_now, user_prefs.proactive_prefs(uid).get("brief_time")):
         return None
     line = inbox_digest_line(uid)
+    try:  # «Вы блокируете N задач» — тем, у кого Фокус/бриф выключены, тоже раз в день
+        block = proactive.rule_task_blocking(uid, proactive._now())
+        if block:
+            import html as _h
+
+            it = block[0]
+            src = str(it.get("source") or "")
+            extra = f'⛔ {_h.escape(str(it["title"]))}' + (f" ({_h.escape(src)})" if src else "") + ". Подробности — в Фокусе."
+            line = f"{line}\n{extra}" if line else extra
+    except Exception as e:
+        print(f"[brief] blocking line uid={uid} err={e!r}")
     proactive.mark_brief_sent(uid, _INBOX_DAY + day)
     return line or None
 

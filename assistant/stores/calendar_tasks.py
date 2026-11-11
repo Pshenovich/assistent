@@ -126,7 +126,8 @@ def _ensure_result_column(conn: sqlite3.Connection) -> None:
 
 
 # Обратная связь исполнителя по поручению: видел, взял в работу / есть вопрос; когда автор напомнил.
-ASSIGNEE_STATUSES = ("", "in_progress", "question")
+# blocked — «Заблокировано»: чем именно, хранится в task_blockers (assistant/stores/task_blockers.py).
+ASSIGNEE_STATUSES = ("", "in_progress", "question", "blocked")
 ASSIGNEE_STATE_COLUMNS = (
     "assignee_seen_at",
     "assignee_status",
@@ -894,12 +895,12 @@ def subtask_state(t: dict[str, Any]) -> str:
         triage = str(t.get("assignee_triage") or "")
         if triage == "declined":
             return "declined"
-        if str(t.get("assignee_status") or "") in ("in_progress", "question"):
+        if str(t.get("assignee_status") or "") in ("in_progress", "question", "blocked"):
             return str(t["assignee_status"])
         if triage in ("inbox", "snoozed"):
             return "assigned"
-    elif str(t.get("assignee_status") or "") == "in_progress":
-        return "in_progress"
+    elif str(t.get("assignee_status") or "") in ("in_progress", "blocked"):
+        return str(t["assignee_status"])
     return "open"
 
 
@@ -1614,6 +1615,8 @@ def update_task(
         # Пишется только здесь — обработчики запросов своё «Сдано» больше не добавляют (было по два).
         add_event(existing["id"], "done", actor_user_id=uid, actor_name=actor_name, at=done_at,
                   text=str(fields["result"] or ""))
+    if fields["done"] and not existing["done"]:
+        _blockers_task_closed(int(existing["id"]), "done")
     if bool(fields["done"]) != bool(existing["done"]):
         try:  # задача из пункта встречи — в саммари «Выполнено» / снова «поставлена»
             from assistant.services import focus_items
@@ -1688,7 +1691,7 @@ def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[st
 # ——— Лента поручения: события и переписка постановщика с исполнителем ———
 EVENT_KINDS = (
     "created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled",
-    "taken", "snoozed", "declined", "insisted", "rated",
+    "taken", "snoozed", "declined", "insisted", "rated", "blocked", "unblocked", "blocker_resolved",
 )
 RATINGS = ("good", "ok", "bad")
 RATING_LABEL = {"good": "Хорошо", "ok": "Нормально", "bad": "Плохо"}
@@ -1741,6 +1744,23 @@ def _meeting_task_changed(note_id: int) -> None:
             print(f"[calendar_tasks] meeting refresh failed note={note_id} err={e!r}")
 
     threading.Thread(target=run, name=f"meeting-tasks-{note_id}", daemon=True).start()
+
+
+def _blockers_task_closed(task_id: int, how: str) -> None:
+    """Задача сдана/отменена — снять блокеры, которые она держит, и её собственные."""
+    from assistant.stores import task_blockers
+
+    task_blockers.on_task_closed(task_id, how=how)
+
+
+def _blockers_status_changed(task: dict[str, Any], status: str) -> None:
+    """Из «Заблокировано» в другой статус — блокеры этой задачи сняты."""
+    try:
+        from assistant.stores import task_blockers
+
+        task_blockers.on_status_changed(task, status)
+    except Exception as e:
+        print(f"[calendar_tasks] blockers status sync failed task={task.get('id')} err={e!r}")
 
 
 def _drop_double_done(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1914,6 +1934,8 @@ def post_message(
                       at=str(task.get("assignee_status_at") or ""))
     add_event(tid, "message", actor_user_id=viewer, actor_name=actor_name, text=body, meta=meta)
     now = _now_iso()
+    if task.get("assignee_status") == "blocked":
+        return _get_task_row(tid)  # переписка не снимает «Заблокировано»
     if viewer == str(task.get("assignee_user_id") or ""):
         return _set_columns(tid, {
             "assignee_status": "question",
@@ -1940,6 +1962,8 @@ def accept_task(owner_id: int | str, task_id: int | str, *, actor_name: str = ""
         )
         _conn().commit()
     add_event(task["id"], "accepted", actor_user_id=owner_id, actor_name=actor_name)
+    if not task.get("done"):
+        _blockers_task_closed(int(task["id"]), "done")
     return _get_task_row(int(task["id"]))
 
 
@@ -1988,6 +2012,7 @@ def cancel_task(owner_id: int | str, task_id: int | str, *, actor_name: str = ""
         )
         _conn().commit()
     add_event(task["id"], "cancelled", actor_user_id=owner_id, actor_name=actor_name)
+    _blockers_task_closed(int(task["id"]), "cancelled")
     return _get_task_row(int(task["id"]))
 
 
@@ -2011,6 +2036,8 @@ def set_assignee_status(
     status = str(status or "").strip()
     if status not in ASSIGNEE_STATUSES:
         raise ValueError("Неизвестный статус")
+    if status == "blocked":
+        raise ValueError("Укажите, чем заблокировано")  # ставится через task_blockers.set_blocked
     task = _assignee_task(viewer_id, task_id)
     if not task:
         own = get_task_for_user(viewer_id, task_id)
@@ -2018,6 +2045,7 @@ def set_assignee_status(
             return None
         if status == "question":
             raise ValueError("Вопрос задаётся по поручению")
+        _blockers_status_changed(own, status)
         return _set_columns(int(own["id"]), {"assignee_status": status, "assignee_status_note": "",
                                              "assignee_status_at": _now_iso() if status else ""})
     note = _clip(note, MAX_STATUS_NOTE_LEN) if status == "question" else ""
@@ -2029,6 +2057,7 @@ def set_assignee_status(
         add_event(task["id"], "in_progress", actor_user_id=viewer_id, actor_name=str(task.get("assignee_name") or ""))
     if status == "in_progress":
         mark_triaged(task)
+    _blockers_status_changed(task, status)
     now = _now_iso()
     return _set_columns(
         int(task["id"]),

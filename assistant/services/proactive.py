@@ -387,6 +387,69 @@ def rule_task_inbox(uid: int, now: datetime) -> list[dict[str, Any]]:
     ]
 
 
+def rule_task_blocking(uid: int, now: datetime) -> list[dict[str, Any]]:
+    """«Вы блокируете N задач»: кто-то поставил задаче «Заблокировано» и указал этого человека.
+
+    Вне ранжирования и «скрыть» (как входящие): пропадает, когда блокер сняли — «Готово» / «Не я»
+    прямо в карточке, или постановщик/исполнитель сами разблокировали задачу."""
+    from assistant.lib.task_notify import _tasks_word, owner_short_name
+    from assistant.stores import calendar_tasks, task_blockers
+
+    rows = task_blockers.active_for_user(uid)
+    if not rows:
+        return []
+    items = []
+    for b in rows[:20]:
+        task = calendar_tasks._get_task_row(int(b["task_id"]))
+        if not task:
+            continue
+        waiting = str(b.get("created_by_name") or "").strip() or owner_short_name(b.get("created_by"))
+        items.append({
+            "blocker_id": int(b["id"]),
+            "task_id": int(task["id"]),
+            "title": str(task.get("title") or ""),
+            "who": waiting,
+            "note": str(task.get("assignee_status_note") or "") if task.get("assignee_status") == "blocked" else "",
+            "accessible": calendar_tasks.user_can_access_task(uid, task),
+            "since": str(b.get("created_at") or ""),
+        })
+    if not items:
+        return []
+    names = sorted({i["who"] for i in items if i["who"]})
+    return [
+        {
+            "key": "task_blocking",
+            "type": "task_blocking",
+            "tag": "⛔ блокер",
+            "urgency": 9,
+            "title": f"Вы блокируете {_tasks_word(len(items))}",
+            "source": ("Ждут: " + ", ".join(names)) if names else "",
+            "count": len(items),
+            "blocks": items,  # не "items": так Фокус не считает её карточкой с пунктами для разбора
+            "actions": [],
+        }
+    ]
+
+
+def rule_task_unblocked(uid: int, now: datetime) -> list[dict[str, Any]]:
+    """«Можно продолжать»: задача-блокер сдана, у задачи исполнителя больше нет блокеров (3 дня)."""
+    from assistant.stores import task_blockers
+
+    out = []
+    for it in task_blockers.recently_unblocked(uid):
+        task = it["task"]
+        out.append({
+            "key": f"unblocked:{task['id']}",
+            "type": "task_unblocked",
+            "tag": "✅ разблокировано",
+            "urgency": 8,
+            "title": f"Можно продолжать: {task.get('title') or 'задача'}",
+            "source": f"Сдана задача «{it['blocker_title']}»" if it["blocker_title"] else "Блокер снят",
+            "actions": [{"label": "Открыть", "act": "open_task", "primary": True, "payload": {"task_id": task["id"]}}],
+        })
+    return out
+
+
 def discussion_key(kind: str, item_id: Any) -> str:
     return f"discuss:{kind}:{item_id}"
 
@@ -841,6 +904,10 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
         items += risk_rules.risk_cards(uid, now=now)  # B7: риски по реестру
     except Exception as e:
         print(f"[proactive] risks failed uid={uid} err={e!r}")
+    try:
+        items += rule_task_unblocked(uid, now)
+    except Exception as e:
+        print(f"[proactive] unblocked failed uid={uid} err={e!r}")
     out = rank(items, dismissed_keys(uid))
     try:
         # Новое в обсуждениях — тоже вне ранжирования: пропадает, когда обсуждение открыли или скрыли.
@@ -856,6 +923,13 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
             out = inbox + out[: MAX_ITEMS - 1]
     except Exception as e:
         print(f"[proactive] task inbox failed uid={uid} err={e!r}")
+    try:
+        # «Вы блокируете» — тоже вне ранжирования: пропадает, когда блокер снят.
+        blocking = rule_task_blocking(uid, now)
+        if blocking:
+            out = blocking + out[: MAX_ITEMS - 1]
+    except Exception as e:
+        print(f"[proactive] task blocking failed uid={uid} err={e!r}")
     return out
 
 
@@ -952,6 +1026,14 @@ def brief_message(items: list[dict[str, Any]], today_events: list[dict[str, Any]
         url = _h.escape(inbox_webapp_url(), quote=True)
         lines.append("")
         lines.append(f'📥 {_h.escape(str(it.get("title") or ""))} ({_h.escape(str(it.get("source") or ""))}). <a href="{url}">Разобрать</a>')
+    blocking = [it for it in items if it.get("type") == "task_blocking"]
+    items = [it for it in items if it.get("type") != "task_blocking"]
+    if blocking:
+        it = blocking[0]
+        src = str(it.get("source") or "")
+        lines.append("")
+        lines.append(f'⛔ {_h.escape(str(it.get("title") or ""))}' + (f" ({_h.escape(src)})" if src else "")
+                     + ". Подробности — в Фокусе.")
     # Задачи встреч, которые ждут решения больше суток, — отдельной строкой на встречу, со ссылкой на таблицу.
     stale = [
         it for it in items
