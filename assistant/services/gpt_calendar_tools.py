@@ -291,6 +291,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Если в контексте уже есть id задач («task id N», например из карточки Фокуса) — передай их все в show_calendar_cards, не ищи задачи заново и не ограничивайся одной.
 - Когда подбираешь время встречи — найди окна (calendar_free_slots) и вызови offer_slots с 3–6 лучшими вариантами (и участниками): пользователь выберет карточку, встреча создастся сама.
 - Карточка Фокуса в истории («пункт Фокуса … (focus key: …)») — пользователь разбирает этот пункт. Правки («исполнитель не Иван, а Дима», «срок пятница», «это решение», «напомни завтра», «уже сделано», ссылка на задачу) применяй инструментом focus_item_update с этим key — не создавай новую задачу и не переспрашивай.
+- Задача без времени («на завтра», «в пятницу», «на весь день») — task_create с all_day=true на эту дату; не растягивай её на 24 часа через duration_min.
 - После действий коротко напиши, что сделал (время в формате «чт 16 окт, 15:00–15:30»). Кнопки «Отменить»/«Удалить» пользователь увидит сам под ответом."""
 
 
@@ -363,7 +364,8 @@ TOOLS: list[dict[str, Any]] = [
         ["event_id"]),
     _fn("task_create", "Поставить задачу (себе или контакту) на дату/время — сразу. Серию — с recurrence одним вызовом.",
         {"title": {"type": "string"}, "start": _DT, "duration_min": {"type": "integer", "default": 30},
-         "all_day": {"type": "boolean"}, "assignee": {"type": "string", "description": "Имя/ник из контактов; пусто — себе"},
+         "all_day": {"type": "boolean", "description": "true — задача на день без времени («на завтра», «в пятницу»): start = YYYY-MM-DDT00:00, duration_min не нужен"},
+         "assignee": {"type": "string", "description": "Имя/ник из контактов; пусто — себе"},
          "description": {"type": "string"}, "recurrence": _RECURRENCE},
         ["title", "start"]),
     _fn("reminder_create", "Создать напоминание в Telegram — сразу. Серию — с recurrence одним вызовом.",
@@ -1003,6 +1005,9 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         return _err(who)
     a_uid, a_email, a_name = who
     dur = max(15, int(args.get("duration_min") or 30))
+    # «На завтра» без времени модель иногда ставит как 00:00 на сутки — такая задача в другом
+    # часовом поясе расползается на два дня. Полночь или полсуток и больше — это задача на весь день.
+    all_day = bool(args.get("all_day")) or dur >= 12 * 60 or (start.hour == 0 and start.minute == 0)
     rrule = recur.build_rrule_from_args(args)
     if rrule:
         rrule = recur.ensure_until_or_count(rrule, start=start)
@@ -1015,7 +1020,7 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         assignee_user_id=a_uid,
         assignee_email=a_email,
         assignee_name=a_name,
-        all_day=bool(args.get("all_day")),
+        all_day=all_day,
         tz=_tz(ctx.uid),
         recurrence=rrule or "",
     )
@@ -1031,7 +1036,7 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
             ctx.notify_task_assignee(assignee_user_id=a_uid, task=row, assigner_name=ctx.display_name or "Участник")
         except Exception as e:
             print(f"[gpt_calendar] task_notify err={e!r}")
-    when = human_when(start, None if args.get("all_day") else start + timedelta(minutes=dur), ctx.uid)
+    when = human_when(start, None if all_day else start + timedelta(minutes=dur), ctx.uid)
     recur_h = recur.human_recurrence(rrule)
     detail = " · ".join(
         x for x in [(("для " + a_name) if delegated else "себе"), recur_h] if x

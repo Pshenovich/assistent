@@ -368,3 +368,28 @@ def test_all_day_same_date_for_assignee_in_other_tz(tasks_db):
     # Исполнитель западнее UTC тоже видит 11-е.
     west = store.as_calendar_event(row, tz=ZoneInfo("America/New_York"), viewer_id=22)
     assert west["start"] == {"date": "2026-11-11"}
+
+
+def test_leo_task_without_time_becomes_all_day(tasks_db, monkeypatch):
+    """«Поставь задачу на завтра»: модель шлёт 00:00 на сутки — это задача на весь день, один день."""
+    from assistant.services import gpt_calendar_tools as g
+
+    tz = ZoneInfo("Asia/Novosibirsk")
+    monkeypatch.setattr(g, "_tz", lambda uid: tz)
+    monkeypatch.setattr(g, "record_action", lambda *a, **k: "a1")
+    for args in (
+        {"title": "Счёт", "start": "2026-11-12T00:00", "duration_min": 1440},
+        {"title": "Счёт", "start": "2026-11-12T00:00"},
+        {"title": "Счёт", "start": "2026-11-12T00:00", "all_day": True},
+    ):
+        g.tool_task_create(g.GptCalendarContext(uid=11), args)
+    rows = tasks_db.list_tasks_in_window(11, datetime(2026, 11, 1, tzinfo=tz), datetime(2026, 11, 30, tzinfo=tz))
+    assert len(rows) == 3
+    for row in rows:
+        assert row["all_day"] is True
+        ev = tasks_db.as_calendar_event(row, tz=ZoneInfo("Europe/Moscow"), viewer_id=11)
+        assert ev["start"] == {"date": "2026-11-12"} and ev["end"] == {"date": "2026-11-13"}
+    # Задача со временем остаётся по времени.
+    g.tool_task_create(g.GptCalendarContext(uid=11), {"title": "Звонок", "start": "2026-11-12T15:00"})
+    timed = [r for r in tasks_db.list_tasks_in_window(11, datetime(2026, 11, 1, tzinfo=tz), datetime(2026, 11, 30, tzinfo=tz)) if r["title"] == "Звонок"]
+    assert timed and timed[0]["all_day"] is False
