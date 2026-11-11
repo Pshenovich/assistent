@@ -37942,6 +37942,7 @@
   };
   var LINK_KIND_TAB = [
     ["", "Всё"],
+    ["bundle", "Связки"],
     ["note", "Документы"],
     ["meeting", "Встречи"],
     ["task", "Задачи"],
@@ -37952,6 +37953,7 @@
   function linkItemIcon(it) {
     if (it.kind === "note") return it.is_transcription ? WAVE_ICON : NOTE_ICON;
     if (it.kind === "event") return MEET_ICON;
+    if (it.kind === "bundle") return LINK_ICONS.stack;
     return LINK_ICONS[it.kind] || NOTE_ICON;
   }
 
@@ -37969,9 +37971,28 @@
   }
 
   // Поиск для «Связать с…»: документы и саммари встреч, задачи, чаты, люди, напоминания.
-  function searchLinkItems(query, tab) {
+  // withBundles — ещё и готовые именованные связки (в них добавляем сам элемент), они первыми.
+  function searchLinkItems(query, tab, withBundles) {
     var q = String(query || "").trim().toLowerCase();
     var jobs = [];
+    if (withBundles && (!tab || tab === "bundle")) {
+      jobs.push(
+        loadUserBundles().then(function (all) {
+          var xs = q ? bundlesMatching(q) : (all || []).slice();
+          return xs.slice(0, tab ? 30 : 3).map(function (b) {
+            var names = (b.items || []).slice(0, 3).map(function (it) { return it.title; }).filter(Boolean);
+            return {
+              kind: "bundle",
+              id: String(b.id),
+              title: b.title,
+              subtitle: "Связка · " + bundleCountHint(b) + (names.length ? " · " + names.join(", ") : ""),
+              items: b.items || [],
+            };
+          });
+        })
+      );
+    }
+    if (tab === "bundle") return jobs.length ? jobs[0] : Promise.resolve([]);
     var wantNote = !tab || tab === "note" || tab === "meeting";
     if (wantNote) {
       jobs.push(
@@ -38163,6 +38184,13 @@
     ov._busy = false;
     ov.querySelector(".link-pick-title").textContent = opts.title || (opts.bundleId ? "Добавить в связку" : "Связать с…");
     ov.querySelector(".link-pick-search").value = "";
+    // Вкладка «Связки» — только когда связываем элемент и у человека есть именованные связки.
+    var bundleTab = ov.querySelector('.link-pick-tab[data-tab="bundle"]');
+    var paintBundleTab = function () {
+      if (bundleTab) bundleTab.classList.toggle("hidden", !(linkPickerWantsBundles(opts) && (userBundlesCache || []).length));
+    };
+    paintBundleTab();
+    if (linkPickerWantsBundles(opts)) loadUserBundles().then(paintBundleTab);
     ov.classList.remove("hidden");
     ov.setAttribute("aria-hidden", "false");
     onModalSheetOpen();
@@ -38180,12 +38208,24 @@
     syncAppOverlay();
   }
 
+  function linkPickerWantsBundles(o) {
+    return !!(o && o.source && !o.bundleId);
+  }
+
   function paintLinkPickerFoot() {
     var ov = document.getElementById("link-pick-overlay");
     if (!ov) return;
-    var n = Object.keys(ov._picked || {}).length;
+    var keys = Object.keys(ov._picked || {});
+    var n = keys.length;
     var go = ov.querySelector(".link-pick-go");
-    go.textContent = ov._busy ? "Связываю…" : n ? "Связать (" + n + ")" : "Выберите, что связать";
+    var only = n === 1 ? ov._picked[keys[0]] : null;
+    go.textContent = ov._busy
+      ? "Связываю…"
+      : only && only.kind === "bundle"
+        ? "Добавить в «" + only.title + "»"
+        : n
+          ? "Связать (" + n + ")"
+          : "Выберите, что связать";
     go.classList.toggle("is-empty", !n);
   }
 
@@ -38199,16 +38239,23 @@
     var gen = (ov._gen = (ov._gen || 0) + 1);
     var list = ov.querySelector(".link-pick-list");
     if (!list.children.length) list.innerHTML = '<p class="ev-materials-empty">Ищу…</p>';
-    searchLinkItems(ov.querySelector(".link-pick-search").value, tab).then(function (items) {
+    var o0 = ov._opts || {};
+    searchLinkItems(ov.querySelector(".link-pick-search").value, tab, linkPickerWantsBundles(o0)).then(function (items) {
       if (gen !== ov._gen) return;
       var o = ov._opts || {};
       var skip = {};
       (o.exclude || []).forEach(function (k) {
         skip[k] = true;
       });
-      if (o.source) skip[linkKey(o.source)] = true;
+      var selfKey = o.source ? linkKey(o.source) : "";
+      if (selfKey) skip[selfKey] = true;
       items = items.filter(function (x) {
-        return !skip[linkKey(x)];
+        if (skip[linkKey(x)]) return false;
+        // Связка, где этот элемент уже есть, — не предлагаем.
+        if (x.kind === "bundle" && selfKey) {
+          return !(x.items || []).some(function (it) { return linkKey(it) === selfKey; });
+        }
+        return true;
       });
       list.innerHTML = "";
       if (!items.length) {
@@ -38255,6 +38302,30 @@
     try {
       await flushOpenNoteForShare().catch(function () {});
       var r;
+      var toBundles = picked.filter(function (x) { return x.kind === "bundle"; });
+      var toLink = picked.filter(function (x) { return x.kind !== "bundle"; });
+      if (o.source && !o.bundleId && toBundles.length) {
+        for (var bi = 0; bi < toBundles.length; bi++) {
+          r = await apiFetch("/bundles/" + encodeURIComponent(toBundles[bi].id) + "/items", {
+            method: "POST",
+            body: JSON.stringify({ items: [linkBodyItem(o.source)] }),
+          });
+        }
+        if (toLink.length) {
+          r = await apiFetch("/links", {
+            method: "POST",
+            body: JSON.stringify({ a: linkBodyItem(o.source), b: toLink.map(linkBodyItem) }),
+          });
+        }
+        ov._busy = false;
+        closeLinkPicker();
+        showNoteToast(
+          picked.length === 1 ? "Добавлено в «" + toBundles[0].title + "»" : "Связано: " + picked.length
+        );
+        refreshLinkedBlocks();
+        if (typeof o.onDone === "function") o.onDone((r && r.bundle) || null);
+        return;
+      }
       if (o.bundleId) {
         r = await apiFetch("/bundles/" + encodeURIComponent(o.bundleId) + "/items", {
           method: "POST",
