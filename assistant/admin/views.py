@@ -268,7 +268,15 @@ def _acc_label(names: dict[str, str], uid: int, acc: dict[str, Any] | None) -> s
     return f'{esc(nm)} <span class="muted small">({kind}, id {esc(uid)}{em})</span>'
 
 
-def twins_page(ctx: Ctx, pairs: list[dict[str, Any]], names: dict[str, str], **flash: str) -> str:
+def twins_page(
+    ctx: Ctx, pairs: list[dict[str, Any]], names: dict[str, str], tails: list[dict[str, Any]] | None = None, **flash: str
+) -> str:
+    trows = [
+        f'<tr><td>{esc(names.get(str(t["new"])) or "ID " + str(t["new"]))}<div class="muted small">старый id {esc(t["old"])}'
+        f' → основной {esc(t["new"])}</div></td><td class="n">{num(t["rows"])}</td><td class="n">{num(t["files"])}</td>'
+        f'<td><a class="btn" href="{esc(ctx.url("/merge", a=t["old"], b=t["new"]))}">Проверить и дочистить…</a></td></tr>'
+        for t in (tails or [])
+    ]
     rows = []
     for p in pairs:
         src, dst = str(p["src"]), str(p["dst"])
@@ -295,6 +303,13 @@ def twins_page(ctx: Ctx, pairs: list[dict[str, Any]], names: dict[str, str], **f
         "аккаунта по почте (документы, задачи, доступы, кредиты, подключения) переезжает в основной, почта "
         "продолжает работать для входа. «Похоже» — только подсказка по имени или @нику: проверьте, что это один человек.</p>"
         + table((("Аккаунт по почте", ""), ("Основной", ""), ("Почему пара", ""), ("", "")), rows, "Похожих пар не нашли")
+        + (
+            "<h2>Хвосты старых склеек</h2>"
+            '<p class="muted">Аккаунты уже склеены, но под старым id остались данные: задачи, календарь, подключения. '
+            "Из-за этого человек может быть виден дважды. Дочистка переносит их в основной аккаунт.</p>"
+            + table((("Человек", ""), ("Записей", "n"), ("Файлов", "n"), ("", "")), trows, "")
+            if trows else ""
+        )
         + "<h2>Склеить вручную</h2>" + manual
     )
     return page(ctx, active="twins", title="Двойники", body=body, **flash)
@@ -316,13 +331,15 @@ def merge_page(ctx: Ctx, plan: dict[str, Any], names: dict[str, str], **flash: s
             f'<form method="post" action="{esc(ctx.prefix + "/merge")}" onsubmit="return confirm(\'Склеить? '
             'Отменить кнопкой нельзя (резервная копия сохранится на сервере).\')">'
             f'<input type="hidden" name="src" value="{esc(src)}"><input type="hidden" name="dst" value="{esc(dst)}">'
-            '<button class="pri">Склеить аккаунты</button></form>'
+            + ('<button class="pri">Дочистить</button></form>' if plan.get("tail") else '<button class="pri">Склеить аккаунты</button></form>')
         )
     else:
         action = ""
     body = (
-        f'<p class="small"><a href="{esc(ctx.url("/twins"))}">← Двойники</a></p><h1>Склейка аккаунтов</h1>'
-        f'<div class="kv"><div>Присоединяем</div><div>{_acc_label(names, src, plan.get("src_account"))}</div>'
+        f'<p class="small"><a href="{esc(ctx.url("/twins"))}">← Двойники</a></p>'
+        + ("<h1>Дочистка старой склейки</h1><p class=\"muted\">Аккаунты уже склеены, вход ведёт в основной. "
+           "Перенесём то, что осталось под старым id.</p>" if plan.get("tail") else "<h1>Склейка аккаунтов</h1>")
+        + f'<div class="kv"><div>Присоединяем</div><div>{_acc_label(names, src, plan.get("src_account"))}</div>'
         f'<div>Основной</div><div>{_acc_label(names, dst, plan.get("dst_account"))}</div>'
         f'<div>Переедет</div><div>{num(plan["total_rows"])} записей, {num(len(plan["files"]))} файлов</div></div>'
         + action

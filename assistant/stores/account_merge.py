@@ -221,6 +221,12 @@ def has_own_data(uid: int) -> bool:
     return False
 
 
+def _tail_problems(src: int) -> list[str]:
+    if _has_vault(src):
+        return ["Под старым id остались сейфы: ключи шифрования переносим вручную, напишите разработчику."]
+    return []
+
+
 def problems(src: int, dst: int) -> list[str]:
     """Почему эту пару нельзя склеить (пусто — можно)."""
     out: list[str] = []
@@ -411,6 +417,8 @@ _FIXES: dict[str, Callable[[sqlite3.Connection, int, int], None]] = {
     "tags": _fix_tags("tags", "tag_links", "tag_id"),
     "hashtags": _fix_tags("hashtags", "hashtag_links", "hashtag_id"),
 }
+# Номер внутри этих колонок не меняем: channel_id Google присылает обратно, строка с новым id не найдётся.
+_NO_TEXT_COLS = {("gcal_channels", "channel_id")}
 # После переноса человек может оказаться «участником собственного»: такие строки убираем.
 _SELF_ROWS = {
     "note_members": ("owner_user_id", "member_user_id"),
@@ -439,6 +447,8 @@ def _move_db(c: sqlite3.Connection, src: int, dst: int, found: dict[str, dict[st
                 dropped += max(cur.rowcount, 0)
             if info["text"] and info["rowid"] and not info["virtual"]:
                 for col in info["text"]:
+                    if (t, col) in _NO_TEXT_COLS:
+                        continue
                     rows = c.execute(
                         f"SELECT rowid AS _rid, {_q(col)} AS v FROM {_q(t)} WHERE typeof({_q(col)}) = 'text' "
                         f"AND {_q(col)} != ? AND instr({_q(col)}, ?) > 0", (s, s)
@@ -639,9 +649,51 @@ def _switch_account(src: int, dst: int) -> dict[str, Any]:
 # ---------------------------------------------------------------- план и склейка
 
 
+def _tail(a: int | str, b: int | str) -> Optional[tuple[int, int]]:
+    """(старый id, основной), если пара уже склеена, но под старым id что-то осталось
+    (склейки до 2026-11-11 переносили только доступы к документам)."""
+    try:
+        a, b = int(a), int(b)
+    except (TypeError, ValueError):
+        return None
+    for old, other in ((a, b), (b, a)):
+        new = _live(old)
+        if new != old and new == _live(other) and not accounts.get(old):
+            return old, new
+    return None
+
+
+def tails() -> list[dict[str, Any]]:
+    """Старые склейки, после которых под старым id остались данные."""
+    with accounts._LOCK:  # type: ignore[attr-defined]
+        olds = [int(r[0]) for r in accounts._conn().execute("SELECT old_user_id FROM account_aliases").fetchall()]  # type: ignore[attr-defined]
+    out = []
+    for old in olds:
+        if accounts.get(old):
+            continue
+        new = _live(old)
+        if new == old:
+            continue
+        rows = 0
+        for path in db_paths():
+            try:
+                c = _connect(path)
+                try:
+                    rows += sum(len(i["rows"]) for i in _scan(c, old).values())
+                finally:
+                    c.close()
+            except sqlite3.Error:
+                continue
+        files = len(_file_plan(old, new))
+        if rows or files:
+            out.append({"old": old, "new": new, "rows": rows, "files": files})
+    return out
+
+
 def plan(a: int | str, b: int | str) -> dict[str, Any]:
     """Пробный прогон: что и куда переедет. Ничего не меняет."""
-    src, dst = direction(a, b)
+    tail = _tail(a, b)
+    src, dst = tail or direction(a, b)
     tables: list[dict[str, Any]] = []
     for path in db_paths():
         try:
@@ -662,7 +714,8 @@ def plan(a: int | str, b: int | str) -> dict[str, Any]:
     files += [("ids", str(p), str(p)) for p in _json_files_mentioning(src)]
     return {
         "src": src, "dst": dst, "src_account": accounts.get(src), "dst_account": accounts.get(dst),
-        "problems": problems(src, dst), "tables": tables, "files": files,
+        "problems": _tail_problems(src) if tail else problems(src, dst), "tail": bool(tail),
+        "tables": tables, "files": files,
         "total_rows": sum(int(t.get("rows") or 0) for t in tables),
     }
 
@@ -670,8 +723,9 @@ def plan(a: int | str, b: int | str) -> dict[str, Any]:
 def merge(a: int | str, b: int | str, *, reason: str = "", actor: str = "") -> dict[str, Any]:
     """Склеить два аккаунта одного человека. Возвращает отчёт; при отказе — MergeError."""
     with _MERGE_LOCK:
-        src, dst = direction(a, b)
-        bad = problems(src, dst)
+        tail = _tail(a, b)
+        src, dst = tail or direction(a, b)
+        bad = _tail_problems(src) if tail else problems(src, dst)
         if bad:
             raise MergeError(" ".join(bad))
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -703,16 +757,20 @@ def merge(a: int | str, b: int | str, *, reason: str = "", actor: str = "") -> d
         accounts_before = {"src": accounts.get(src), "dst": accounts.get(dst)}
         (backup / "accounts.json").write_text(json.dumps(accounts_before, ensure_ascii=False, default=str), encoding="utf-8")
         sweep("pass1")
-        if errors:
+        if tail:
+            # Вход уже переключён прошлой склейкой — дочищаем данные и файлы.
+            acc = accounts.get(dst) or {}
+        elif errors:
             # Почту не переключаем: перенесённое уже лежит на основном, повторная склейка доделает остальное.
             raise MergeError("Склейка остановлена на ошибке, вход пока не переключён: " + "; ".join(errors)[:500])
-        acc = _switch_account(src, dst)
-        sweep("pass2")  # то, что успели записать на старый id, пока шла склейка
+        else:
+            acc = _switch_account(src, dst)
+            sweep("pass2")  # то, что успели записать на старый id, пока шла склейка
         files: list[str] = []
         _apply_files(src, dst, backup, files)
         report = {
             "src": src, "dst": dst, "account": acc, "reason": reason, "actor": actor,
-            "tables": stats, "files": files, "errors": errors, "backup": str(backup),
+            "tables": stats, "files": files, "errors": errors, "backup": str(backup), "tail": bool(tail),
             "at": stamp,
         }
         (backup / "report.json").write_text(json.dumps(report, ensure_ascii=False, default=str, indent=2), encoding="utf-8")

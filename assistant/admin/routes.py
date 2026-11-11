@@ -209,8 +209,11 @@ def make_router(
         from assistant.stores import account_merge
 
         pairs = await run_in_threadpool(account_merge.candidates)
-        names = await run_in_threadpool(data.names_for, [p["src"] for p in pairs] + [p["dst"] for p in pairs])
-        return _html(views.twins_page(_ctx(actor), pairs, names, **_flash(request)))
+        tails = await run_in_threadpool(account_merge.tails)
+        names = await run_in_threadpool(
+            data.names_for, [p["src"] for p in pairs] + [p["dst"] for p in pairs] + [t["new"] for t in tails]
+        )
+        return _html(views.twins_page(_ctx(actor), pairs, names, tails, **_flash(request)))
 
     @r.get("/merge", response_class=HTMLResponse)
     async def admin_merge_preview(request: Request) -> Response:
@@ -246,7 +249,8 @@ def make_router(
         moved = sum(v["moved"] + v["text"] for db in rep["tables"].values() for v in db.values())
         await run_in_threadpool(lambda: audit.log(actor.label, "account.merge", f"user:{rep['dst']}",
                                                   merged=str(rep["src"]), rows=str(moved)))
-        msg = f"Аккаунты склеены: перенесено {moved} записей, вход по почте ведёт сюда"
+        msg = (f"Старая склейка дочищена: перенесено {moved} записей" if rep.get("tail")
+               else f"Аккаунты склеены: перенесено {moved} записей, вход по почте ведёт сюда")
         if rep["errors"]:
             return _back("/user/" + str(rep["dst"]), err=msg + ". Ошибки: " + "; ".join(rep["errors"])[:400])
         return _back("/user/" + str(rep["dst"]), msg=msg)

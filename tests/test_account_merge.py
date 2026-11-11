@@ -225,6 +225,11 @@ def test_admin_pages_render():
     assert "Склеить аккаунты" in html and "пробный прогон" in html
     html = views.twins_page(ctx, account_merge.candidates(), {})
     assert "Двойники" in html
+    html = views.twins_page(ctx, [], {str(tg): "Артем"}, [{"old": syn, "new": tg, "rows": 2, "files": 1}])
+    assert "Хвосты старых склеек" in html and "Проверить и дочистить" in html
+    _old_style_merge(syn, tg)
+    html = views.merge_page(ctx, account_merge.plan(syn, tg), {})
+    assert "Дочистить" in html and "Дочистка старой склейки" in html
 
 
 def test_candidates_by_name_in_tasks_when_email_profile_is_empty():
@@ -300,3 +305,55 @@ def test_external_stays_when_unknown_or_ambiguous():
     posted = tasks_store.list_posted_tasks(boss)
     owners = [str(x["assignee_user_id"]) for x in posted]
     assert owners.count(str(boss)) == 2  # оба внешних остались внешними
+
+
+# --- хвосты склеек до 2026-11-11: alias уже есть, а задачи/календарь остались под старым id ---
+
+
+def _old_style_merge(syn: int, tg: int) -> None:
+    with accounts._LOCK:
+        c = accounts._conn()
+        c.execute("DELETE FROM accounts WHERE user_id = ?", (str(syn),))
+        c.execute("INSERT OR REPLACE INTO account_aliases (old_user_id, new_user_id, created_at) VALUES (?, ?, 0)", (str(syn), str(tg)))
+        c.commit()
+
+
+def test_old_merge_tail_is_listed_and_cleaned():
+    boss = next(_ids)
+    tg, syn, _ = _pair()
+    _task(boss, tg, "до склейки")
+    _old_style_merge(syn, tg)
+    _task(boss, syn, "после склейки, со встречи")  # старый id всё ещё подставлялся
+    user_prefs.save_prefs(syn, {"google_account_email": "artem.work@gmail.com"})
+
+    tails = account_merge.tails()
+    assert any(t["old"] == syn and t["new"] == tg and t["rows"] >= 1 for t in tails)
+    p = account_merge.plan(syn, tg)
+    assert p["tail"] and not p["problems"] and p["total_rows"] >= 1
+    with pytest.raises(accounts.AccountError):
+        account_merge.direction(syn, tg)  # обычная склейка такую пару не берёт
+
+    rep = account_merge.merge(tg, syn, reason="test")
+
+    assert rep["tail"] and not rep["errors"]
+    posted = tasks_store.list_posted_tasks(boss)
+    assert {str(t["assignee_user_id"]) for t in posted} == {str(tg)} and len(posted) == 2
+    assert user_prefs.load_prefs(tg).get("google_account_email") == "artem.work@gmail.com"
+    assert not any(t["old"] == syn for t in account_merge.tails())
+    assert accounts.get(syn) is None and accounts.resolve_alias(syn) == tg
+
+
+def test_gcal_channel_id_keeps_old_number():
+    import sqlite3
+    syn, tg = next(_ids) + 5_000_000_000_000_000, next(_ids)
+    db = account_merge._root() / "data" / "gcal_push_t.sqlite"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    c = sqlite3.connect(str(db))
+    c.execute("CREATE TABLE IF NOT EXISTS gcal_channels (channel_id TEXT PRIMARY KEY, user_id TEXT)")
+    c.execute("INSERT INTO gcal_channels VALUES (?, ?)", (f"orb-{syn}-abc", str(syn)))
+    c.commit()
+    found = account_merge._scan(account_merge._connect(db), syn)
+    cc = account_merge._connect(db)
+    account_merge._move_db(cc, syn, tg, found, {})
+    row = cc.execute("SELECT channel_id, user_id FROM gcal_channels WHERE channel_id = ?", (f"orb-{syn}-abc",)).fetchone()
+    assert row and row["user_id"] == str(tg)
