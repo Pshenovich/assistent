@@ -53,7 +53,8 @@
         <li>не используем данные Google для обучения общих моделей ИИ;</li>
         <li>не даём людям читать данные Google, кроме случаев с вашего явного согласия (например, обращение в поддержку), для безопасности или по требованию закона.</li>
       </ul>
-      <p>Отозвать доступ можно в Orbita (Профиль → Интеграции → Отключить Google) или на странице <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. После отключения токены доступа удаляются.</p>
+      <p><b>Что мы храним из Google:</b> токены доступа (чтобы подключение работало); копию ваших событий календаря (название, время, участники, ссылка на встречу) и задач (название, срок, статус) — чтобы показывать расписание и задачи в Orbita. Для ответов на ваши запросы (например, бриф к встрече) отдельные события могут передаваться поставщику языковой модели — только для выполнения этого запроса. Данные Google не используются для генерации изображений.</p>
+      <p>Отозвать доступ можно в Orbita (Профиль → Интеграции → Отключить Google) или на странице <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. После отключения токены доступа удаляются; сохранённые копии событий и задач удаляются вместе с данными аккаунта по вашему запросу.</p>
 
       <h2>3. ИИ-обработка</h2>
       <p>Для ответов Лео, саммари и разбора встреч фрагменты ваших данных отправляются поставщикам языковых моделей через OpenRouter и только для выполнения вашего запроса. Распознавание речи выполняется сервисом Obuchat.</p>
@@ -61,7 +62,7 @@
       <h2>4. Кому мы передаём данные</h2>
       <ul>
         <li>Сервисам, которые вы подключили сами, — чтобы выполнить ваши действия.</li>
-        <li>Поставщикам инфраструктуры (хостинг в России — Beget; отчёты об ошибках — Sentry, без текстов пользователей) по договорам о конфиденциальности.</li>
+        <li>Поставщикам инфраструктуры (хостинг в России — Selectel; отчёты об ошибках — Sentry, без текстов пользователей) по договорам о конфиденциальности.</li>
         <li>Сервису продуктовой аналитики PostHog (серверы в ЕС) — только статистика использования под случайным идентификатором, без имени, ника, контактов и содержимого.</li>
         <li>Участникам вашей организации и людям, с которыми вы сами поделились заметкой или встречей.</li>
       </ul>
@@ -72,6 +73,15 @@
 
       <h2>6. Ваши права</h2>
       <p>Вы можете получить сведения об обработке ваших данных, потребовать их уточнения, блокирования или удаления и отозвать согласие, написав на <a href="mailto:support@getorbita.me">support@getorbita.me</a>.</p>
+
+      <h2>7. Безопасность</h2>
+      <p>Все соединения — только по HTTPS (TLS 1.2+). Токены интеграций хранятся на сервере с доступом только у сервиса; доступ к серверам — только у администраторов по ключам. Ошибки отслеживаются без текстов пользователей.</p>
+
+      <h2>8. Дети</h2>
+      <p>Orbita — рабочий сервис и не предназначена для лиц младше 16 лет. Мы сознательно не собираем их данные.</p>
+
+      <h2>9. Изменения политики</h2>
+      <p>Мы можем обновлять эту политику. О существенных изменениях сообщим в приложении или по почте заранее; дата публикации указана вверху.</p>
     </section>
 
     <hr class="legal-sep" />
@@ -103,7 +113,8 @@
         <li>do not use Google user data to train generalized AI or machine-learning models;</li>
         <li>do not allow humans to read Google user data unless you give explicit consent (e.g. a support request), it is needed for security, or required by law.</li>
       </ul>
-      <p>You can revoke access in Orbita (Profile → Integrations → Disconnect Google) or at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Access tokens are deleted when you disconnect.</p>
+      <p><b>What we store from Google:</b> access tokens (to keep the connection working); a copy of your calendar events (title, time, attendees, meeting link) and tasks (title, due date, status) so that Orbita can show your schedule and tasks. To answer a request you make (for example, a meeting brief), individual events may be sent to a large-language-model provider solely to fulfil that request. Google user data is never used to generate images.</p>
+      <p>You can revoke access in Orbita (Profile → Integrations → Disconnect Google) or at <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Access tokens are deleted when you disconnect; stored copies of events and tasks are deleted together with your account data on request.</p>
 
       <h2>3. AI processing</h2>
       <p>To answer your questions and summarize meetings, parts of your data are sent to large-language-model providers via OpenRouter, solely to fulfil your request. Speech recognition is performed by Obuchat.</p>
@@ -111,7 +122,7 @@
       <h2>4. Sharing</h2>
       <ul>
         <li>Services you connect yourself — to perform the actions you request.</li>
-        <li>Infrastructure providers (hosting in Russia — Beget; error reports — Sentry, without user content) under confidentiality agreements.</li>
+        <li>Infrastructure providers (hosting in Russia — Selectel; error reports — Sentry, without user content) under confidentiality agreements.</li>
         <li>The product analytics service PostHog (EU servers) — usage statistics only, under a random identifier, without your name, username, contacts or content.</li>
         <li>Members of your organization and people you explicitly share a note or meeting with.</li>
       </ul>
@@ -122,6 +133,15 @@
 
       <h2>6. Your rights</h2>
       <p>You may request information about the processing of your data, ask us to correct, block or delete it, and withdraw consent by writing to <a href="mailto:support@getorbita.me">support@getorbita.me</a>.</p>
+
+      <h2>7. Security</h2>
+      <p>All connections use HTTPS only (TLS 1.2+). Integration tokens are stored on our server with access limited to the service; server access is limited to administrators using SSH keys. Error monitoring does not include user content.</p>
+
+      <h2>8. Children</h2>
+      <p>Orbita is a work tool and is not intended for people under 16. We do not knowingly collect their data.</p>
+
+      <h2>9. Changes to this policy</h2>
+      <p>We may update this policy. We will notify you of material changes in the app or by email in advance; the effective date is shown at the top.</p>
     </section>
   </main>
 </body>
