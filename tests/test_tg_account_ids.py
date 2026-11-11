@@ -221,10 +221,12 @@ def test_telegram_of_legacy_account_not_changeable():
     assert accounts.tg_changeable(legacy) is False
     with pytest.raises(accounts.AccountError):
         accounts.issue_tg_link(legacy)
-    # Telegram со своим аккаунтом (почтой) не переносим на чужой аккаунт
-    acc = accounts.create_email_account(_email())
-    with pytest.raises(accounts.AccountError):
-        accounts.link_tg_by_token(accounts.issue_tg_link(acc["user_id"]), legacy)
+    # Telegram со своим аккаунтом (почтой) не переносим на чужой аккаунт: почтовый склеивается с ним
+    mail = _email()
+    acc = accounts.create_email_account(mail)
+    got, _old, merged = accounts.link_tg_by_token(accounts.issue_tg_link(acc["user_id"]), legacy)
+    assert merged and got["user_id"] == legacy and accounts.get(legacy)["tg_user_id"] == legacy
+    assert accounts.get_by_email(mail)["user_id"] == legacy
 
 
 def test_bot_start_link(monkeypatch):
@@ -265,7 +267,7 @@ def test_old_telegram_user_logs_in_by_email_then_links_tg(monkeypatch):
     assert orgs_store.role_of(org["id"], legacy) == "member" and not orgs_store.role_of(org["id"], fresh["user_id"])
 
 
-def test_no_merge_when_new_account_has_documents(monkeypatch):
+def test_merge_even_when_new_account_has_documents(monkeypatch):
     from assistant.stores import note_members
     from assistant.stores import notes as notes_store_mod
 
@@ -273,6 +275,6 @@ def test_no_merge_when_new_account_has_documents(monkeypatch):
     note_members.upsert_profile(legacy, username=f"old{legacy}", first_name="Old")
     fresh = accounts.create_email_account(_email())
     notes_store_mod.create_note(fresh["user_id"], "Уже есть", "<p>текст</p>")
-    with pytest.raises(accounts.AccountError):
-        accounts.link_tg_by_token(accounts.issue_tg_link(fresh["user_id"]), legacy)
-    assert accounts.get(fresh["user_id"]) is not None and accounts.get(legacy) is None
+    acc, _old, merged = accounts.link_tg_by_token(accounts.issue_tg_link(fresh["user_id"]), legacy)
+    assert merged and acc["user_id"] == legacy and accounts.get(fresh["user_id"]) is None
+    assert "Уже есть" in [n["title"] for n in notes_store_mod.list_notes(legacy)]

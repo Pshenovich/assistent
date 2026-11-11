@@ -45,7 +45,7 @@ class AccountError(ValueError):
 
 def _conn() -> sqlite3.Connection:
     conn = notes_store._conn()  # type: ignore[attr-defined]
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'account_aliases'").fetchone():
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'account_emails'").fetchone():
         return conn
     conn.executescript(
         """
@@ -80,6 +80,13 @@ def _conn() -> sqlite3.Connection:
             new_user_id TEXT NOT NULL,
             created_at INTEGER NOT NULL
         );
+        -- Запасные почты: после склейки двух аккаунтов почта присоединённого тоже ведёт в основной.
+        CREATE TABLE IF NOT EXISTS account_emails (
+            email TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_account_emails_user ON account_emails(user_id);
         """
     )
     return conn
@@ -127,8 +134,36 @@ def get_by_email(email: str) -> Optional[dict[str, Any]]:
     except AccountError:
         return None
     with _LOCK:
-        r = _conn().execute(f"SELECT {_COLS} FROM accounts WHERE email = ?", (key,)).fetchone()
+        conn = _conn()
+        r = conn.execute(f"SELECT {_COLS} FROM accounts WHERE email = ?", (key,)).fetchone()
+        if not r:
+            r = conn.execute(
+                f"SELECT {', '.join('a.' + c.strip() for c in _COLS.split(','))} FROM account_emails e "
+                "JOIN accounts a ON a.user_id = e.user_id WHERE e.email = ?",
+                (key,),
+            ).fetchone()
     return _row(r)
+
+
+def extra_emails(user_id: int | str) -> list[str]:
+    """Запасные почты аккаунта (от склеенных с ним)."""
+    with _LOCK:
+        rows = _conn().execute("SELECT email FROM account_emails WHERE user_id = ? ORDER BY created_at", (str(int(user_id)),)).fetchall()
+    return [str(r[0]) for r in rows]
+
+
+def add_extra_email(user_id: int | str, email: str) -> None:
+    """Подтверждённая почта — запасной вход в существующий аккаунт (своя основная почта у него уже есть)."""
+    key = normalize_email(email)
+    uid = str(int(user_id))
+    with _LOCK:
+        conn = _conn()
+        main = conn.execute("SELECT user_id FROM accounts WHERE email = ?", (key,)).fetchone()
+        if main and str(main[0]) != uid:
+            raise AccountError("Эта почта уже привязана к другому аккаунту Орбиты.", 409)
+        if not main:
+            conn.execute("INSERT OR REPLACE INTO account_emails (email, user_id, created_at) VALUES (?, ?, ?)", (key, uid, _now()))
+            conn.commit()
 
 
 def get_by_tg(tg_user_id: int | str) -> Optional[dict[str, Any]]:
@@ -181,6 +216,11 @@ def create_email_account(email: str, *, tg_user_id: int | None = None) -> dict[s
         r = conn.execute(f"SELECT {_COLS} FROM accounts WHERE email = ?", (key,)).fetchone()
         if r:
             return _row(r)  # type: ignore[return-value]
+        extra = conn.execute("SELECT user_id FROM account_emails WHERE email = ?", (key,)).fetchone()
+        if extra:
+            r = conn.execute(f"SELECT {_COLS} FROM accounts WHERE user_id = ?", (str(extra[0]),)).fetchone()
+            if r:
+                return _row(r)  # type: ignore[return-value]
         uid = _new_synthetic_id(conn)
         conn.execute(
             "INSERT INTO accounts (user_id, email, email_verified_at, tg_user_id, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -197,9 +237,12 @@ def attach_email(user_id: int, email: str) -> dict[str, Any]:
     now = _now()
     with _LOCK:
         conn = _conn()
-        other = conn.execute("SELECT user_id FROM accounts WHERE email = ?", (key,)).fetchone()
+        other = conn.execute("SELECT user_id FROM accounts WHERE email = ?", (key,)).fetchone() or conn.execute(
+            "SELECT user_id FROM account_emails WHERE email = ?", (key,)
+        ).fetchone()
         if other and int(other[0]) != uid:
             raise AccountError("Эта почта уже привязана к другому аккаунту Орбиты.", 409)
+        conn.execute("DELETE FROM account_emails WHERE email = ?", (key,))  # запасная стала основной
         mine = conn.execute("SELECT user_id FROM accounts WHERE user_id = ?", (str(uid),)).fetchone()
         if mine:
             conn.execute("UPDATE accounts SET email = ?, email_verified_at = ? WHERE user_id = ?", (key, now, str(uid)))
@@ -359,62 +402,12 @@ def _has_data(user_id: int) -> bool:
 
 
 def merge_into_legacy(new_uid: int, tg_id: int) -> dict[str, Any]:
-    """Вход по почте завёл пустой аккаунт, а Telegram — старый аккаунт с данными: почта переходит
-    на старый аккаунт (id = Telegram id), новый пустой становится его псевдонимом."""
-    new_uid, tg = int(new_uid), int(tg_id)
-    acc = get(new_uid)
-    if not acc or not is_synthetic(new_uid):
-        raise AccountError("Аккаунт не найден.", 404)
-    if get(tg) or get_by_tg(tg):
-        raise AccountError("Этот Telegram уже привязан к другой почте.")
-    if _has_data(new_uid):
-        raise AccountError(
-            "У этого Telegram есть свой аккаунт Орбиты, а в новом аккаунте уже есть документы — "
-            "объединить автоматически не получится. Напишите в поддержку."
-        )
-    now = _now()
-    with _LOCK:
-        conn = _conn()
-        conn.execute("DELETE FROM accounts WHERE user_id = ?", (str(new_uid),))
-        conn.execute(
-            "INSERT INTO accounts (user_id, email, email_verified_at, tg_user_id, created_at) VALUES (?, ?, ?, ?, ?)",
-            (str(tg), acc["email"], acc["email_verified_at"] or now, str(tg), now),
-        )
-        conn.execute(
-            "INSERT OR REPLACE INTO account_aliases (old_user_id, new_user_id, created_at) VALUES (?, ?, ?)",
-            (str(new_uid), str(tg), now),
-        )
-        conn.commit()
-    try:
-        from assistant.stores import orgs_store
+    """Аккаунт по почте и старый аккаунт из Telegram — один человек: всё переносится в старый
+    (id = Telegram id), почта ведёт туда же, новый id становится псевдонимом (account_merge)."""
+    from assistant.stores import account_merge
 
-        orgs_store.reassign_user(new_uid, tg)
-    except Exception as e:
-        print(f"[accounts] merge orgs {new_uid}->{tg} err={e!r}")
-    try:
-        from assistant.stores import org_contacts
-
-        org_contacts.reassign_user(new_uid, tg)  # контакты (коллеги по организации) — следом за членством
-    except Exception as e:
-        print(f"[accounts] merge contacts {new_uid}->{tg} err={e!r}")
-    try:
-        _reassign_note_access(new_uid, tg)
-    except Exception as e:
-        print(f"[accounts] merge note access {new_uid}->{tg} err={e!r}")
-    return get(tg)  # type: ignore[return-value]
-
-
-def _reassign_note_access(old_uid: int, new_uid: int) -> None:
-    """Доступ к чужим документам и чатам, выданный почтовому аккаунту (в т.ч. через email_twin),
-    переходит на склеенный аккаунт; если там такой доступ уже есть — дубль удаляем."""
-    from assistant.stores import note_members
-
-    old, new = str(int(old_uid)), str(int(new_uid))
-    with _LOCK:
-        conn = note_members._conn()  # type: ignore[attr-defined]
-        conn.execute("UPDATE OR IGNORE note_members SET member_user_id = ? WHERE member_user_id = ?", (new, old))
-        conn.execute("DELETE FROM note_members WHERE member_user_id = ?", (old,))
-        conn.commit()
+    rep = account_merge.merge(int(new_uid), int(tg_id), reason="tg_link")
+    return get(int(rep["dst"])) or {}
 
 
 def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optional[int], bool]:
@@ -434,6 +427,9 @@ def link_tg_by_token(token: str, tg_user_id: int) -> tuple[dict[str, Any], Optio
         raise AccountError("Ссылка устарела — откройте её заново из профиля Орбиты.")
     uid = int(r[0])
     if get(tg) and tg != uid:
+        if is_synthetic(uid) and not (get(uid) or {}).get("tg_user_id"):
+            # Старый аккаунт этого Telegram уже со своей почтой, а человек вошёл по другой: один человек.
+            return merge_into_legacy(uid, tg), None, True
         raise AccountError("Этот Telegram — основной для другого аккаунта Орбиты (со своей почтой). Сменить его нельзя.")
     acc = get(uid)
     if not acc:

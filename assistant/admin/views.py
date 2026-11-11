@@ -13,6 +13,7 @@ NAV = (
     ("overview", "Обзор", "/"),
     ("product", "Продукт", "/product"),
     ("users", "Пользователи", "/users"),
+    ("twins", "Двойники", "/twins"),
     ("orgs", "Организации", "/orgs"),
     ("spend", "Расход", "/spend"),
     ("models", "Модели", "/models"),
@@ -30,7 +31,7 @@ PLAN_LABEL = _plan_labels()
 ROLE_LABEL = {"owner": "Владелец", "admin": "Админ", "member": "Участник"}
 MEMBER_STATUS = {"active": "", "pending": "Просится", "invited": "Приглашён"}
 DETAIL_LABEL = {"username": "ник", "user_id": "пользователь", "key": "указали", "plan": "тариф",
-                "seats": "мест", "member": "участник №",
+                "seats": "мест", "member": "участник №", "merged": "присоединён id", "rows": "записей",
                 "label": "название", "enabled": "показывать", "efforts": "уровни", "default_effort": "по умолчанию"}
 
 ACTION_LABEL = {
@@ -253,12 +254,83 @@ def user_link(ctx: Ctx, u: dict[str, Any]) -> str:
 
 
 def merge_button(ctx: Ctx, u: dict[str, Any]) -> str:
-    if not ctx.can_write:
+    """Ссылка на пробный прогон склейки (сама склейка — кнопкой там)."""
+    if not u.get("twin"):
         return ""
-    action = esc(ctx.prefix + "/user/" + u["user_id"] + "/merge")
-    return (f' <form class="inl" method="post" action="{action}" '
-            'onsubmit="return confirm(\'Склеить два аккаунта в один? Почта перейдёт на аккаунт из Telegram, '
-            'отменить нельзя.\')"><button>Склеить</button></form>')
+    href = esc(ctx.url("/merge", a=u["user_id"], b=u["twin"]))
+    return f' <a class="btn" href="{href}">Склеить…</a>'
+
+
+def _acc_label(names: dict[str, str], uid: int, acc: dict[str, Any] | None) -> str:
+    kind = "по почте" if int(uid) >= 5_000_000_000_000_000 else "из Telegram"
+    nm = names.get(str(uid)) or ("ID " + str(uid))
+    em = f' · {esc(acc["email"])}' if acc and acc.get("email") else ""
+    return f'{esc(nm)} <span class="muted small">({kind}, id {esc(uid)}{em})</span>'
+
+
+def twins_page(ctx: Ctx, pairs: list[dict[str, Any]], names: dict[str, str], **flash: str) -> str:
+    rows = []
+    for p in pairs:
+        src, dst = str(p["src"]), str(p["dst"])
+        why = "; ".join(esc(r) for r in p["reasons"])
+        kind = badge("open", "точно один человек") if p["strong"] else badge("pending", "похоже")
+        bad = f'<div class="small warn">{esc(" ".join(p["problems"]))}</div>' if p["problems"] else ""
+        act = f'<a class="btn" href="{esc(ctx.url("/merge", a=src, b=dst))}">Проверить и склеить…</a>' if not p["problems"] else ""
+        rows.append(
+            f'<tr><td><a href="{esc(ctx.url("/user/" + src))}">{esc(names.get(src) or "ID " + src)}</a>'
+            f'<div class="muted small">по почте · id {esc(src)}</div></td>'
+            f'<td><a href="{esc(ctx.url("/user/" + dst))}">{esc(names.get(dst) or "ID " + dst)}</a>'
+            f'<div class="muted small">основной · id {esc(dst)}</div></td>'
+            f'<td>{kind}<div class="small">{why}</div>{bad}</td><td>{act}</td></tr>'
+        )
+    manual = (
+        f'<form class="tools" method="get" action="{esc(ctx.prefix + "/merge")}">'
+        '<input name="a" placeholder="id первого аккаунта" required> <input name="b" placeholder="id второго" required>'
+        + (f'<input type="hidden" name="access_token" value="{esc(ctx.token)}">' if ctx.token else "")
+        + '<button>Проверить пару</button></form>'
+    )
+    body = (
+        "<h1>Двойники</h1>"
+        '<p class="muted">Один человек — два аккаунта: старый из Telegram и новый по почте. При склейке всё из '
+        "аккаунта по почте (документы, задачи, доступы, кредиты, подключения) переезжает в основной, почта "
+        "продолжает работать для входа. «Похоже» — только подсказка по имени или @нику: проверьте, что это один человек.</p>"
+        + table((("Аккаунт по почте", ""), ("Основной", ""), ("Почему пара", ""), ("", "")), rows, "Похожих пар не нашли")
+        + "<h2>Склеить вручную</h2>" + manual
+    )
+    return page(ctx, active="twins", title="Двойники", body=body, **flash)
+
+
+def merge_page(ctx: Ctx, plan: dict[str, Any], names: dict[str, str], **flash: str) -> str:
+    src, dst = plan["src"], plan["dst"]
+    rows = [
+        f'<tr><td>{esc(t["db"])}</td><td>{esc(t["table"])}</td><td class="n">{num(t.get("rows") or 0)}</td>'
+        f'<td class="small muted">{esc(", ".join(t.get("columns") or []) or t.get("error") or "")}</td></tr>'
+        for t in plan["tables"]
+    ]
+    act_label = {"union": "объединить", "move": "перенести, если у основного нет", "tree": "перенести папку", "ids": "заменить id"}
+    frows = [f'<tr><td>{esc(act_label.get(a, a))}</td><td class="small">{esc(p)}</td></tr>' for a, p, _ in plan["files"]]
+    if plan["problems"]:
+        action = f'<div class="flash err">{esc(" ".join(plan["problems"]))}</div>'
+    elif ctx.can_write:
+        action = (
+            f'<form method="post" action="{esc(ctx.prefix + "/merge")}" onsubmit="return confirm(\'Склеить? '
+            'Отменить кнопкой нельзя (резервная копия сохранится на сервере).\')">'
+            f'<input type="hidden" name="src" value="{esc(src)}"><input type="hidden" name="dst" value="{esc(dst)}">'
+            '<button class="pri">Склеить аккаунты</button></form>'
+        )
+    else:
+        action = ""
+    body = (
+        f'<p class="small"><a href="{esc(ctx.url("/twins"))}">← Двойники</a></p><h1>Склейка аккаунтов</h1>'
+        f'<div class="kv"><div>Присоединяем</div><div>{_acc_label(names, src, plan.get("src_account"))}</div>'
+        f'<div>Основной</div><div>{_acc_label(names, dst, plan.get("dst_account"))}</div>'
+        f'<div>Переедет</div><div>{num(plan["total_rows"])} записей, {num(len(plan["files"]))} файлов</div></div>'
+        + action
+        + "<h2>Что переедет (пробный прогон, ничего не изменено)</h2>"
+        + table((("База", ""), ("Таблица", ""), ("Строк", "n"), ("Где номер", "")), rows, "В базах ничего нет")
+        + "<h2>Файлы</h2>" + table((("Что сделаем", ""), ("Файл", "")), frows, "Файлов нет")
+    )
+    return page(ctx, active="twins", title="Склейка аккаунтов", body=body, **flash)
 
 
 def access_buttons(ctx: Ctx, u: dict[str, Any], *, back: str) -> str:

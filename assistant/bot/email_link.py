@@ -60,18 +60,26 @@ def recognize(uid: int, username: Optional[str]) -> tuple[bool, list[str]]:
 def link_after_code(tg_id: int, email: str) -> tuple[int, list[str]]:
     """Код подтверждён: привязать Telegram к аккаунту с этой почтой. (id аккаунта, новые организации)."""
     from assistant.lib import tg_account_ids
-    from assistant.stores import accounts, orgs_store
+    from assistant.stores import account_merge, accounts, orgs_store
 
     acc = accounts.get_by_email(email)
     if acc:
         if acc["tg_user_id"] and int(acc["tg_user_id"]) != int(tg_id):
             raise accounts.AccountError("Эта почта уже привязана к другому Telegram. Войдите с него или напишите в поддержку.")
+        uid = int(acc["user_id"])
         if not acc["tg_user_id"]:
             other = accounts.get_by_tg(tg_id)
-            if other and int(other["user_id"]) != int(acc["user_id"]):
+            legacy = accounts.is_synthetic(uid) and (
+                (other and int(other["user_id"]) == int(tg_id))
+                or (not other and account_merge.has_own_data(int(tg_id)))
+            )
+            if legacy:
+                # У этого Telegram свой старый аккаунт с данными: почтовый аккаунт склеиваем с ним.
+                uid = int(accounts.merge_into_legacy(uid, int(tg_id))["user_id"])
+            elif other and int(other["user_id"]) != uid:
                 raise accounts.AccountError("Этот Telegram уже привязан к другой почте.")
-            accounts.link_tg(int(acc["user_id"]), int(tg_id))
-        uid = int(acc["user_id"])
+            else:
+                accounts.link_tg(uid, int(tg_id))
     else:
         # Аккаунта с этой почтой нет: аккаунт — этот Telegram (старый или новый), почта подтверждена.
         accounts.attach_email(int(tg_id), email)

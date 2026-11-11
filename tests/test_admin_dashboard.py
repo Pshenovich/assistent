@@ -141,7 +141,14 @@ def test_users_list_twins_email_org_and_merge(env, monkeypatch):
     assert "Через организацию" in row and "Открыть доступ" not in row
 
     r = c.post(f"/dashboard/user/{email_uid}/merge", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == f"/dashboard/merge?a={email_uid}&b={tg}"
+    preview = c.get(r.headers["location"]).text
+    assert "пробный прогон" in preview and "note_members" in preview
+    assert accounts.get(email_uid) is not None  # пробный прогон ничего не меняет
+    r = c.post("/dashboard/merge", data={"src": str(email_uid), "dst": str(tg)}, follow_redirects=False)
     assert r.status_code == 303 and "msg=" in r.headers["location"]
+    twins = c.get("/dashboard/twins")
+    assert twins.status_code == 200 and "Двойники" in twins.text
     acc = accounts.get_by_email(mail)
     assert acc and int(acc["user_id"]) == tg and accounts.resolve_alias(email_uid) == tg
     with note_members._LOCK:

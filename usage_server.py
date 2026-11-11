@@ -5816,7 +5816,16 @@ def _email_login_account(email: str) -> tuple[int, bool]:
 
     acc = accounts.get_by_email(email)
     if acc:
-        return int(acc["user_id"]), False
+        uid = int(acc["user_id"])
+        # Почта входа — это Google, подключённый в старом аккаунте: один человек, склеиваем.
+        from assistant.stores import account_merge
+
+        other = account_merge.strong_pair_for_email_login(email, uid)
+        if other:
+            merged = account_merge.try_auto_merge(uid, other, reason="email_login_google")
+            if merged:
+                return merged, False
+        return uid, False
     legacy: int | None = None
     try:
         from assistant.lib.calendar_user_lookup import lookup_user_id_by_calendar_email
@@ -5825,8 +5834,12 @@ def _email_login_account(email: str) -> tuple[int, bool]:
     except Exception:
         legacy = None
     legacy = legacy or orgs_store.user_by_member_email(email)
-    if legacy and not accounts.get(legacy):
-        accounts.attach_email(int(legacy), email)
+    if legacy and not accounts.resolve_alias(int(legacy)):
+        if not accounts.get(legacy):
+            accounts.attach_email(int(legacy), email)
+        else:
+            # У старого аккаунта уже своя почта — эта становится запасным входом, а не вторым аккаунтом.
+            accounts.add_extra_email(int(legacy), email)
         return int(legacy), False
     return int(accounts.create_email_account(email)["user_id"]), True
 
@@ -5899,6 +5912,12 @@ def _email_attach(principal: _MiniappPrincipal, email: str) -> tuple[int, bool]:
         # аккаунта: привязываем Telegram к нему, а не дублируем.
         if (tg and accounts.is_synthetic(owner["user_id"]) and not owner["tg_user_id"]
                 and not accounts.get(uid) and not accounts.get_by_tg(tg)):
+            from assistant.stores import account_merge
+
+            if int(uid) == int(tg) and account_merge.has_own_data(int(tg)):
+                # У Telegram свой старый аккаунт с данными: почтовый склеиваем с ним, остаёмся здесь.
+                accounts.merge_into_legacy(int(owner["user_id"]), int(tg))
+                return uid, False
             accounts.link_tg(int(owner["user_id"]), int(tg))
             return int(owner["user_id"]), True
         raise accounts.AccountError("Эта почта уже привязана к другому аккаунту Орбиты.", 409)

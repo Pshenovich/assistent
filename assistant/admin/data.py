@@ -220,20 +220,36 @@ def users_directory(from_d: str, to_d: str) -> list[dict[str, Any]]:
 
 
 def merge_check(uid: str) -> tuple[int, int] | str:
-    """Можно ли склеить пару двойников: (почтовый id, Telegram id) или причина отказа."""
-    from assistant.stores import accounts
+    """Пара двойников для склейки: (присоединяемый по почте, основной) или причина отказа."""
+    from assistant.stores import account_merge
+    from assistant.stores.accounts import AccountError
 
     row = next((u for u in users_directory(*period(1)) if u["user_id"] == uid), None)
     if not row or not row["twin"]:
         return "Второго аккаунта этого человека не нашли."
-    a, b = int(uid), int(row["twin"])
-    email_uid, tg_uid = (a, b) if accounts.is_synthetic(a) else (b, a)
-    if not accounts.is_synthetic(email_uid) or accounts.is_synthetic(tg_uid):
-        return "Пара не «почта + Telegram»."
-    if accounts._has_data(email_uid):  # type: ignore[attr-defined]
-        return ("В аккаунте по почте уже есть свои документы — автоматически не склеить. "
-                "Перенос документов между аккаунтами пока не сделан.")
-    return email_uid, tg_uid
+    try:
+        src, dst = account_merge.direction(int(uid), int(row["twin"]))
+    except AccountError as e:
+        return str(e)
+    bad = account_merge.problems(src, dst)
+    return " ".join(bad) if bad else (src, dst)
+
+
+def names_for(ids: list[Any]) -> dict[str, str]:
+    """id → имя для страниц склейки (почта, если имени нет)."""
+    from assistant.stores import accounts
+
+    profiles = _profiles()
+    out: dict[str, str] = {}
+    for x in ids:
+        k = str(x)
+        nm = display_name(profiles.get(k), fallback="")
+        if not nm or nm == "Участник":
+            acc = accounts.get(int(k)) if k.isdigit() else None
+            uname = (profiles.get(k) or {}).get("username")
+            nm = (acc or {}).get("email") or (("@" + uname) if uname else "")
+        out[k] = nm
+    return out
 
 
 def unknown_spend(from_d: str, to_d: str) -> float:

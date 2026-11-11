@@ -192,22 +192,64 @@ def make_router(
 
     @r.post("/user/{uid}/merge")
     async def admin_user_merge(uid: str, request: Request) -> Response:
-        actor = _writer(request)
+        """Старая кнопка со строки пользователя: ведёт на пробный прогон."""
+        _writer(request)
         if not uid.isdigit():
             raise HTTPException(status_code=400, detail="Неверный id")
         chk = await run_in_threadpool(data.merge_check, uid)
         if isinstance(chk, str):
             return _back("/user/" + uid, err=chk)
-        email_uid, tg_uid = chk
-        from assistant.stores import accounts
+        return _back(f"/merge?a={chk[0]}&b={chk[1]}")
 
+    @r.get("/twins", response_class=HTMLResponse)
+    async def admin_twins(request: Request) -> Response:
+        actor = _actor(request)
+        if not isinstance(actor, Actor):
+            return actor
+        from assistant.stores import account_merge
+
+        pairs = await run_in_threadpool(account_merge.candidates)
+        names = await run_in_threadpool(data.names_for, [p["src"] for p in pairs] + [p["dst"] for p in pairs])
+        return _html(views.twins_page(_ctx(actor), pairs, names, **_flash(request)))
+
+    @r.get("/merge", response_class=HTMLResponse)
+    async def admin_merge_preview(request: Request) -> Response:
+        actor = _actor(request)
+        if not isinstance(actor, Actor):
+            return actor
+        from assistant.stores import account_merge
+        from assistant.stores.accounts import AccountError
+
+        a = (request.query_params.get("a") or "").strip()
+        b = (request.query_params.get("b") or "").strip()
+        if not (a.isdigit() and b.isdigit()):
+            return _back("/twins", err="Укажите два числовых id")
         try:
-            await run_in_threadpool(accounts.merge_into_legacy, email_uid, tg_uid)
-        except accounts.AccountError as e:
-            return _back("/user/" + uid, err=str(e))
-        await run_in_threadpool(lambda: audit.log(actor.label, "account.merge", f"user:{tg_uid}",
-                                                  merged=str(email_uid)))
-        return _back("/user/" + str(tg_uid), msg="Аккаунты склеены: вход по почте теперь ведёт в аккаунт из Telegram")
+            plan = await run_in_threadpool(account_merge.plan, a, b)
+        except AccountError as e:
+            return _back("/twins", err=str(e))
+        names = await run_in_threadpool(data.names_for, [plan["src"], plan["dst"]])
+        return _html(views.merge_page(_ctx(actor), plan, names, **_flash(request)))
+
+    @r.post("/merge")
+    async def admin_merge(request: Request, src: str = Form(...), dst: str = Form(...)) -> Response:
+        actor = _writer(request)
+        from assistant.stores import account_merge
+        from assistant.stores.accounts import AccountError
+
+        if not (src.isdigit() and dst.isdigit()):
+            raise HTTPException(status_code=400, detail="Неверный id")
+        try:
+            rep = await run_in_threadpool(lambda: account_merge.merge(int(src), int(dst), reason="admin", actor=actor.label))
+        except AccountError as e:
+            return _back(f"/merge?a={src}&b={dst}", err=str(e))
+        moved = sum(v["moved"] + v["text"] for db in rep["tables"].values() for v in db.values())
+        await run_in_threadpool(lambda: audit.log(actor.label, "account.merge", f"user:{rep['dst']}",
+                                                  merged=str(rep["src"]), rows=str(moved)))
+        msg = f"Аккаунты склеены: перенесено {moved} записей, вход по почте ведёт сюда"
+        if rep["errors"]:
+            return _back("/user/" + str(rep["dst"]), err=msg + ". Ошибки: " + "; ".join(rep["errors"])[:400])
+        return _back("/user/" + str(rep["dst"]), msg=msg)
 
     @r.get("/orgs", response_class=HTMLResponse)
     async def admin_orgs(request: Request) -> Response:
