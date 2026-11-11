@@ -252,3 +252,51 @@ def test_candidates_by_contact_card_with_email_and_telegram(monkeypatch, tmp_pat
     hit = [p for p in account_merge.candidates() if p["src"] == syn and p["dst"] == tg]
     assert hit and any("одна карточка" in r for r in hit[0]["reasons"])
     assert contacts_store  # модуль контактов на месте
+
+
+# --- поручено «по почте/по имени», а аккаунт у человека есть: одна карточка, задача у него ---
+
+from assistant.services import assignee_resolve
+
+
+def _ext(boss: int, **kw) -> dict:
+    return tasks_store.create_task(boss, title="внешняя", start_at="2026-11-12T10:00:00+00:00", **kw)
+
+
+def test_external_by_login_email_goes_to_account():
+    boss = next(_ids)
+    email = _mail()
+    syn = int(accounts.create_email_account(email)["user_id"])
+    t = _ext(boss, assignee_email=email.upper(), assignee_name="Артем Данилин")
+    posted = tasks_store.list_posted_tasks(boss)
+    assert [str(x["assignee_user_id"]) for x in posted] == [str(syn)]
+    assert str(tasks_store._get_task_row(int(t["id"]))["assignee_user_id"]) == str(syn)
+
+
+def test_external_by_google_email_goes_to_telegram_account():
+    boss, tg = next(_ids), next(_ids)
+    user_prefs.save_prefs(tg, {"google_account_email": "artem.work@gmail.com"})
+    assignee_resolve.reset_cache()
+    _task(boss, tg, "из бота")
+    _ext(boss, assignee_email="artem.work@gmail.com", assignee_name="Артем Данилин")
+    posted = tasks_store.list_posted_tasks(boss)
+    assert {str(x["assignee_user_id"]) for x in posted} == {str(tg)} and len(posted) == 2
+
+
+def test_external_by_name_joins_the_only_person_with_that_name():
+    boss, tg = next(_ids), next(_ids)
+    tasks_store.create_task(boss, title="раньше", start_at="2026-11-12T10:00:00+00:00", assignee_user_id=tg, assignee_name="Артём Данилин")
+    _ext(boss, assignee_name="артем  данилин", assignee_external=True)
+    posted = tasks_store.list_posted_tasks(boss)
+    assert {str(x["assignee_user_id"]) for x in posted} == {str(tg)} and len(posted) == 2
+
+
+def test_external_stays_when_unknown_or_ambiguous():
+    boss, a, b = next(_ids), next(_ids), next(_ids)
+    tasks_store.create_task(boss, title="1", start_at="2026-11-12T10:00:00+00:00", assignee_user_id=a, assignee_name="Иван Петров")
+    tasks_store.create_task(boss, title="2", start_at="2026-11-12T10:00:00+00:00", assignee_user_id=b, assignee_name="Иван Петров")
+    _ext(boss, assignee_name="Иван Петров", assignee_external=True)
+    _ext(boss, assignee_email="client@example.com", assignee_name="Клиент Клиентов")
+    posted = tasks_store.list_posted_tasks(boss)
+    owners = [str(x["assignee_user_id"]) for x in posted]
+    assert owners.count(str(boss)) == 2  # оба внешних остались внешними

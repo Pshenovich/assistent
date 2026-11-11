@@ -1246,6 +1246,42 @@ def _external_posted(uid: str, *, include_done: bool, archived_flag: int | None,
     return [t for t in rows if is_external_delegation(t, self_emails)]
 
 
+def _adopt_external(uid: str, ext: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Поручено «по почте/по имени», а у человека есть аккаунт: переводим задачу на него
+    (иначе отдельная карточка в «Поставленных», и до исполнителя задача не доходит)."""
+    if not ext:
+        return ext
+    try:
+        from assistant.services import assignee_resolve
+
+        with _LOCK:
+            rows = _conn().execute(
+                "SELECT DISTINCT owner_user_id, assignee_user_id, assignee_name, assignee_external FROM calendar_tasks"
+                " WHERE owner_user_id = ? AND assignee_user_id NOT IN ('', owner_user_id)"
+                " AND IFNULL(assignee_external, 0) = 0 AND IFNULL(assignee_name, '') != ''",
+                (uid,),
+            ).fetchall()
+        names = assignee_resolve.names_of([dict(r) for r in rows])
+        for t in ext:
+            if str(t.get("assignee_user_id") or "") not in ("", uid):
+                continue
+            who = assignee_resolve.resolve(uid, t, names)
+            if not who:
+                continue
+            with _LOCK:
+                _conn().execute(
+                    "UPDATE calendar_tasks SET assignee_user_id = ?, assignee_external = 0, updated_at = ? WHERE id = ?",
+                    (str(who), _now_iso(), int(t["id"])),
+                )
+                _conn().commit()
+            print(f"[tasks] external→account task={t['id']} owner={uid} assignee={who}")
+            t["assignee_user_id"] = str(who)
+            t["assignee_external"] = 0
+    except Exception as e:
+        print(f"[tasks] adopt external err={e!r}")
+    return ext
+
+
 def list_posted_tasks(
     owner_user_id: int | str,
     *,
@@ -1277,6 +1313,7 @@ def list_posted_tasks(
         )
         out = [_row_to_dict(r) for r in cur.fetchall()]
     ext = _external_posted(uid, include_done=include_done, archived_flag=archived_flag, self_emails=self_emails)
+    ext = _adopt_external(uid, ext)
     if ext:
         out = sorted(out + ext, key=lambda t: (str(t.get("start_at") or ""), int(t.get("id") or 0)))
     return out
