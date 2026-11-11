@@ -28926,6 +28926,8 @@
   function postedComposerBusy(state) {
     var cmpEl = state.host.querySelector(".pt-composer");
     if (!cmpEl) return false;
+    // Сообщение уходит: перерисовка перенесла бы текст в новое поле, а очистилось бы старое.
+    if (state.composeSending) return true;
     var bar = cmpEl.querySelector(".note-dictation-bar");
     var menu = cmpEl.querySelector(".note-paie-plus-menu");
     if ((bar && !bar.classList.contains("hidden")) || (menu && !menu.classList.contains("hidden"))) return true;
@@ -30539,6 +30541,7 @@
       }
       send.disabled = true;
       sending = true;
+      state.composeSending = true;
       try {
         var r;
         if (mode === "return") r = await postedApi(state.taskId, "return", { text: text });
@@ -30554,6 +30557,9 @@
           });
         }
         ta.value = "";
+        // Карточку могли перерисовать, пока ждали сервер, — тогда текст сидит уже в новом поле.
+        var liveTa = state.host.querySelector(".pt-composer textarea");
+        if (liveTa && liveTa !== ta) liveTa.value = "";
         state.compose = { files: [], refs: [], mentions: [] };
         state.mode = "";
         if (r && r.task) state.task = Object.assign({}, state.task, r.task);
@@ -30569,6 +30575,7 @@
         syncSend();
       } finally {
         sending = false;
+        state.composeSending = false;
       }
     }
     form.addEventListener("submit", function (e) {
