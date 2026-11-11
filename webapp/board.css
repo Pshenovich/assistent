@@ -2728,3 +2728,44 @@ html:has(.leo-board) body {
   color: inherit;
   font: inherit;
 }
+
+/* «Заменить компонент…» */
+.lb-swap-q {
+  box-sizing: border-box;
+  width: 240px;
+  height: 30px;
+  margin: 2px 2px 6px;
+  padding: 0 8px;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--lb-text) 6%, transparent);
+  color: inherit;
+  font: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.lb-swap-list {
+  overflow-y: auto;
+  max-height: 320px;
+}
+
+.lb-swap-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 244px;
+}
+
+.lb-swap-item svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--lb-comp);
+}
+
+.lb-swap-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

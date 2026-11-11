@@ -465,11 +465,20 @@ export function buildMessage(elements, opts) {
   elements.forEach(function (el) {
     byId[el.id] = el;
   });
+  // Компоненты: мастера экземпляров, которых нет среди скопированного, — во «внутренний» холст
+  // (как делает сама Figma), чтобы экземпляры остались экземплярами.
+  var extra = (opts.masters || []).filter(function (el) {
+    if (byId[el.id]) return false;
+    byId[el.id] = el;
+    return true;
+  });
   var kids = {};
   var tops = [];
-  elements.forEach(function (el) {
+  var hidden = [];
+  elements.concat(extra).forEach(function (el, i) {
     if (el.frame && byId[el.frame]) (kids[el.frame] = kids[el.frame] || []).push(el);
-    else tops.push(el);
+    else if (i < elements.length) tops.push(el);
+    else hidden.push(el);
   });
   var nodes = [];
   var blobs = [];
@@ -477,6 +486,14 @@ export function buildMessage(elements, opts) {
   var newGuid = function () {
     return { sessionID: 1, localID: ++local };
   };
+  // guid каждого элемента заранее: экземпляр ссылается на мастер и его слои, даже если мастер идёт позже.
+  var elGuid = {};
+  Object.keys(byId).forEach(function (id) {
+    elGuid[id] = newGuid();
+  });
+  var dry = false; // «сухая» сборка узла — только чтобы взять его поля для правок экземпляра
+  var pendingText = []; // готовая раскладка текста для правок экземпляров (derivedSymbolData)
+  var setDefs = {}; // фрейм набора вариантов → {свойство: id описания}
   var DOC = { sessionID: 0, localID: 0 };
   var PAGE = { sessionID: 0, localID: 1 };
   nodes.push({ guid: DOC, phase: "CREATED", type: "DOCUMENT", name: "Document", visible: true, opacity: 1, transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 } });
@@ -561,7 +578,9 @@ export function buildMessage(elements, opts) {
 
   /** Узел с общими полями: место у родителя, рамка, имя, видимость, поведение в автолэйауте. */
   function base(el, type, parent, b) {
-    var n = { guid: newGuid(), phase: "CREATED", parentIndex: { guid: parent.guid, position: "" }, type: type, name: String(el.name || defaultName(el)).slice(0, 120),
+    var own = !dry && elGuid[el.id] && !elGuid[el.id].used ? elGuid[el.id] : null;
+    if (own) own.used = true;
+    var n = { guid: own ? { sessionID: own.sessionID, localID: own.localID } : newGuid(), phase: "CREATED", parentIndex: { guid: parent.guid, position: "" }, type: type, name: String(el.name || defaultName(el)).slice(0, 120),
       visible: !el.hidden, opacity: 1, size: { x: r2(Math.max(0.01, b.w)), y: r2(Math.max(0.01, b.h)) },
       transform: clean(mul(inv(parent.world), worldOf(b))) };
     if (el.locked) n.locked = true;
@@ -581,7 +600,8 @@ export function buildMessage(elements, opts) {
     }
     if (el.minW > 0 || el.minH > 0) n.minSize = { value: { x: el.minW || 0, y: el.minH || 0 } };
     if (el.maxW > 0 || el.maxH > 0) n.maxSize = { value: { x: el.maxW || 0, y: el.maxH || 0 } };
-    nodes.push(n);
+    n.overrideKey = { sessionID: n.guid.sessionID, localID: n.guid.localID };
+    if (!dry) nodes.push(n);
     return n;
   }
 
@@ -600,9 +620,34 @@ export function buildMessage(elements, opts) {
     return { dir: p[0], gap: n(1), pad: [n(2), n(3), n(4), n(5)], align: p[6] || "start", justify: p[7] || "start", hug: p[8] || "none", wrap: p[9] === "wrap" };
   }
 
+  /** Названия «Свойство=Значение, …» → {свойство: значение} (как в наборах вариантов Figma). */
+  function variantProps(name) {
+    var out = {};
+    String(name || "").split(",").forEach(function (part) {
+      var i = part.indexOf("=");
+      if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
+    });
+    return out;
+  }
+
+  function isMaster(el) {
+    return el && el.type === "frame" && el.comp;
+  }
+
   function frameNode(el, parent) {
-    var n = base(el, "FRAME", parent, el);
+    var isInst = !dry && el.inst && isMaster(byId[el.inst]);
+    var type = dry ? "FRAME" : isMaster(el) ? "SYMBOL" : isInst ? "INSTANCE" : "FRAME";
+    var n = base(el, type, parent, el);
     paint(n, el, "frame");
+    if (type === "SYMBOL" && parent.el && setDefs[parent.el.id]) {
+      var pr = variantProps(el.name);
+      var defs = setDefs[parent.el.id];
+      n.variantPropSpecs = Object.keys(pr).filter(function (k) {
+        return defs[k];
+      }).map(function (k) {
+        return { propDefId: defs[k], value: pr[k] };
+      });
+    }
     n.frameMaskDisabled = !!el.noclip;
     var L = parseLayout(el.layout);
     var list = kids[el.id] || [];
@@ -634,8 +679,111 @@ export function buildMessage(elements, opts) {
       });
     }
     var me = { guid: n.guid, world: worldOf(el), layout: L, el: el };
+    if (dry) return n;
+    if (type === "INSTANCE") {
+      instanceData(n, el, me);
+      return n;
+    }
+    // Набор вариантов: фрейм, в котором только мастера (больше одного).
+    if (type === "FRAME" && list.length > 1 && list.every(isMaster)) {
+      var defs = {};
+      var names = [];
+      list.forEach(function (k) {
+        Object.keys(variantProps(k.name)).forEach(function (p) {
+          if (names.indexOf(p) < 0) names.push(p);
+        });
+      });
+      if (names.length) {
+        n.isStateGroup = true;
+        n.componentPropDefs = names.map(function (p, i) {
+          var id = newGuid();
+          defs[p] = id;
+          return { id: id, name: p, initialValue: {}, sortPosition: posKey(i, names.length), type: "VARIANT", preferredValues: {},
+            varValue: { value: { textValue: "" }, dataType: "STRING", resolvedDataType: "STRING" } };
+        });
+        setDefs[el.id] = defs;
+      }
+    }
     children(me, list);
     return n;
+  }
+
+  /** Путь слоя мастера для правок экземпляра: guid слоя; слой внутри вложенного экземпляра — [вложенный, слой в его мастере]. */
+  function keyPath(id, depth) {
+    var e = byId[id];
+    if (!e || depth > 6) return null;
+    if (!e.msrc) return [elGuid[e.id]];
+    var root = e;
+    for (var i = 0; root && root.msrc && i < 40; i++) root = byId[root.frame];
+    if (!root || !root.inst) return null;
+    var inner = keyPath(e.msrc, depth + 1);
+    return inner ? [elGuid[root.id]].concat(inner) : null;
+  }
+
+  function guidOnly(g) {
+    return { sessionID: g.sessionID, localID: g.localID };
+  }
+
+  var OV_PAINT = ["fillPaints", "strokePaints", "strokeWeight", "strokeAlign", "dashPattern", "cornerRadius", "rectangleCornerRadiiIndependent",
+    "rectangleTopLeftCornerRadius", "rectangleTopRightCornerRadius", "rectangleBottomRightCornerRadius", "rectangleBottomLeftCornerRadius", "opacity", "effects"];
+  var OV_TEXT = ["fontSize", "fontName", "lineHeight", "letterSpacing", "textAlignHorizontal", "textDecoration", "textCase", "fillPaints"];
+
+  /** Экземпляр: ссылка на мастер, свои правки (symbolOverrides) и готовые размеры слоёв (derivedSymbolData). */
+  function instanceData(n, el, me) {
+    var m = byId[el.inst];
+    var overrides = [];
+    var derived = [];
+    var rootOv = { guidPath: { guids: [guidOnly(elGuid[m.id])] } };
+    var rov = el.ovr || [];
+    // Свой размер — только если его меняли руками; «обнимающий» экземпляр Figma пересчитает сама (иначе он застынет).
+    if (rov.indexOf("geo") >= 0) {
+      rootOv.size = { x: n.size.x, y: n.size.y };
+      if (n.stackMode) n.stackPrimarySizing = rootOv.stackPrimarySizing = "FIXED";
+    }
+    if (rov.some(function (k) {
+      return /^style\./.test(k);
+    })) OV_PAINT.forEach(function (k) {
+      if (n[k] != null) rootOv[k] = n[k];
+    });
+    if (Object.keys(rootOv).length > 1) overrides.push(rootOv);
+    var parts = [];
+    var stack = [el.id];
+    while (stack.length) {
+      (kids[stack.pop()] || []).forEach(function (k) {
+        parts.push(k);
+        stack.push(k.id);
+      });
+    }
+    parts.forEach(function (p) {
+      if (!p.msrc) return;
+      var path = keyPath(p.msrc, 0);
+      if (!path) return;
+      var fe = byId[p.frame];
+      var pinfo = { guid: n.guid, world: worldOf(fe), layout: parseLayout(fe.layout), el: fe };
+      dry = true;
+      var simple = p.type === "rect" || p.type === "ellipse" || p.type === "sticky";
+      var dn = p.type === "text" ? textNode(p, pinfo) : p.type === "frame" ? frameNode(p, pinfo) : simple ? node(p, pinfo) : base(p, "VECTOR", pinfo, p);
+      dry = false;
+      if (!dn) return;
+      var gp = { guids: path.map(guidOnly) };
+      var ov = { guidPath: gp };
+      var keys = p.ovr || [];
+      if (keys.indexOf("text") >= 0 && dn.textData) ov.textData = dn.textData;
+      if (keys.some(function (k) {
+        return /^style\./.test(k);
+      })) (p.type === "text" ? OV_TEXT : OV_PAINT).forEach(function (k) {
+        if (dn[k] != null) ov[k] = dn[k];
+      });
+      if (keys.indexOf("hidden") >= 0 || p.hidden) ov.visible = !p.hidden;
+      if (keys.indexOf("geo") >= 0) ov.size = dn.size;
+      if (Object.keys(ov).length > 1) overrides.push(ov);
+      var d = { guidPath: gp, size: dn.size, transform: dn.transform };
+      derived.push(d);
+      if (dn.type === "TEXT") pendingText.push({ d: d, n: dn });
+    });
+    n.symbolData = { symbolID: guidOnly(elGuid[m.id]), symbolOverrides: overrides, uniformScaleFactor: 1 };
+    n.derivedSymbolData = derived;
+    n.derivedSymbolDataLayoutVersion = 3;
   }
 
   function textNode(el, parent) {
@@ -780,6 +928,12 @@ export function buildMessage(elements, opts) {
   children(root, tops).forEach(function (n) {
     topGuids.push(n.guid);
   });
+  if (hidden.length) {
+    var INTERNAL = { sessionID: 0, localID: 2 };
+    nodes.push({ guid: INTERNAL, phase: "CREATED", parentIndex: { guid: DOC, position: '"' }, type: "CANVAS", name: "Internal Only Canvas", visible: false,
+      opacity: 1, transform: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 }, backgroundOpacity: 1, backgroundEnabled: true, internalOnly: true });
+    children({ guid: INTERNAL, world: { m00: 1, m01: 0, m02: 0, m10: 0, m11: 1, m12: 0 }, layout: null, el: null }, hidden);
+  }
 
   // Готовая раскладка текстов (глифы) — без неё Figma показывает текстовый слой пустым, пока его не тронешь.
   if (opts.faces) {
@@ -794,6 +948,16 @@ export function buildMessage(elements, opts) {
       // Размер слоя — как у раскладки (по содержимому — ширина, «авто-высота» — высота).
       if (n.textAutoResize === "WIDTH_AND_HEIGHT") n.size = { x: dt.layoutSize.x, y: dt.layoutSize.y };
       else if (n.textAutoResize === "HEIGHT") n.size = { x: n.size.x, y: dt.layoutSize.y };
+    });
+    pendingText.forEach(function (t) {
+      var dt = layoutText(t.n, opts.faces(t.n.fontName.family, t.n.fontName.style), function (bytes) {
+        blobs.push({ bytes: bytes });
+        return blobs.length - 1;
+      });
+      if (!dt) return;
+      t.d.derivedTextData = dt;
+      if (t.n.textAutoResize === "WIDTH_AND_HEIGHT") t.d.size = { x: dt.layoutSize.x, y: dt.layoutSize.y };
+      else if (t.n.textAutoResize === "HEIGHT") t.d.size = { x: t.d.size.x, y: dt.layoutSize.y };
     });
   }
 

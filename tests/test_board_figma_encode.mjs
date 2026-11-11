@@ -168,4 +168,53 @@ assert.equal(ph.frame, f2.id);
   assert.ok(q.size.x > 20 && q.size.x < 40, String(q.size.x));
   assert.equal(q.derivedTextData.layoutSize.x, q.size.x);
 }
+// Компоненты: мастер (в наборе вариантов) — SYMBOL, экземпляр — INSTANCE со своими правками; мастер, которого нет
+// среди скопированного, — во внутренний холст. Разбор тем же board-figma.js возвращает мастера и экземпляры.
+{
+  const els4 = [
+    { id: "set", type: "frame", name: "Кнопки", x: 0, y: 0, w: 400, h: 100, style: { fill: "#ffffff" } },
+    { id: "m1", type: "frame", name: "Тип=Главная", comp: true, frame: "set", x: 20, y: 20, w: 140, h: 44, layout: "h 8 12 16 12 16 center center wh",
+      style: { fill: "#2f80ed", radius: 10 } },
+    { id: "m1t", type: "text", frame: "m1", x: 36, y: 32, w: 70, h: 20, text: "Отправить", autoW: true, style: { fontSize: 15, fontFamily: "Inter", textColor: "#ffffff" } },
+    { id: "m2", type: "frame", name: "Тип=Второстепенная", comp: true, frame: "set", x: 200, y: 20, w: 140, h: 44, style: { fill: "#eeeeee", radius: 10 } },
+    { id: "i1", type: "frame", name: "Кнопка", inst: "m1", x: 0, y: 200, w: 140, h: 44, layout: "h 8 12 16 12 16 center center wh", style: { fill: "#2f80ed", radius: 10 } },
+    { id: "i1t", type: "text", frame: "i1", msrc: "m1t", ovr: ["text"], x: 16, y: 212, w: 60, h: 20, text: "Купить", autoW: true,
+      style: { fontSize: 15, fontFamily: "Inter", textColor: "#ffffff" } },
+  ];
+  // 1) Скопированы набор и экземпляр.
+  const m4 = await F._decode(F.toHtml(els4, {}));
+  const gid = (g) => g.sessionID + ":" + g.localID;
+  const sym = m4.nodeChanges.filter((n) => n.type === "SYMBOL");
+  assert.deepEqual(sym.map((n) => n.name).sort(), ["Тип=Второстепенная", "Тип=Главная"]);
+  const setN = m4.nodeChanges.find((n) => n.name === "Кнопки");
+  assert.equal(setN.isStateGroup, true);
+  assert.deepEqual(setN.componentPropDefs.map((d) => d.name), ["Тип"]);
+  assert.deepEqual(sym.find((n) => n.name === "Тип=Главная").variantPropSpecs.map((v) => v.value), ["Главная"]);
+  const inst = m4.nodeChanges.find((n) => n.type === "INSTANCE");
+  const main = sym.find((n) => n.name === "Тип=Главная");
+  assert.equal(gid(inst.symbolData.symbolID), gid(main.guid));
+  const symText = m4.nodeChanges.find((n) => n.type === "TEXT" && gid(n.parentIndex.guid) === gid(main.guid));
+  const tov = inst.symbolData.symbolOverrides.find((o) => o.textData);
+  assert.equal(tov.textData.characters, "Купить");
+  assert.equal(gid(tov.guidPath.guids[0]), gid(symText.overrideKey));
+  assert.ok(inst.derivedSymbolData.some((d) => gid(d.guidPath.guids[0]) === gid(symText.guid)));
+  assert.ok(!m4.nodeChanges.some((n) => gid(n.parentIndex ? n.parentIndex.guid : n.guid) === gid(inst.guid))); // у экземпляра нет своих детей
+  let k4 = 0;
+  const back4 = F._fromFigma(m4, () => "x" + ++k4).elements;
+  const bi = back4.find((e) => e.inst && !e.msrc);
+  assert.equal(back4.find((e) => e.id === bi.inst).name, "Тип=Главная");
+  assert.equal(back4.find((e) => e.msrc && e.frame === bi.id && e.type === "text").text, "Купить");
+  // 2) Скопирован только экземпляр — мастер уходит во внутренний холст.
+  const only = els4.filter((e) => e.id === "i1" || e.id === "i1t");
+  const masters = els4.filter((e) => e.id === "m1" || e.id === "m1t");
+  const m5 = await F._decode(F.toHtml(only, { masters }));
+  const canv = m5.nodeChanges.filter((n) => n.type === "CANVAS");
+  assert.equal(canv.length, 2);
+  const internal = canv.find((c) => c.internalOnly);
+  const sym5 = m5.nodeChanges.find((n) => n.type === "SYMBOL");
+  assert.equal(gid(sym5.parentIndex.guid), gid(internal.guid));
+  let k5 = 0;
+  const back5 = F._fromFigma(m5, () => "y" + ++k5).elements;
+  assert.ok(back5.some((e) => e.inst && !e.msrc && back5.find((x) => x.id === e.inst && x.comp)));
+}
 console.log("board figma encode ok");

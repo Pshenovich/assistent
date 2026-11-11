@@ -8674,6 +8674,60 @@
       syncInstance(rootId);
     }
 
+    /** «Заменить компонент…»: все мастера — этого макета и библиотек, с поиском по названию. */
+    function openSwapMenu(root, anchor) {
+      var items = masterList().map(function (m) {
+        return { id: m.id, label: compLabels[m.id], group: "В этом макете" };
+      });
+      libs.forEach(function (lib) {
+        lib.comps.forEach(function (c) {
+          items.push({ id: c.id, label: c.label, group: lib.name });
+        });
+      });
+      // Не сам себе и не мастер, внутри которого лежит этот экземпляр (получился бы цикл).
+      items = items.filter(function (it) {
+        return it.id !== root.inst && (isLibId(it.id) || withFrameKids([it.id]).indexOf(root.id) < 0);
+      });
+      if (!items.length) {
+        notify("Других компонентов пока нет");
+        return;
+      }
+      openPop(anchor || stage, function (box) {
+        var draw = function (q) {
+          q = String(q || "").trim().toLowerCase();
+          var last = "";
+          var html = items.filter(function (it) {
+            return !q || it.label.toLowerCase().indexOf(q) >= 0;
+          }).slice(0, 80).map(function (it) {
+            var head = it.group !== last ? '<div class="lb-popt">' + esc(it.group) + "</div>" : "";
+            last = it.group;
+            return head + '<button type="button" class="lb-menu-item lb-swap-item" data-swap="' + esc(it.id) + '">' + icon("comp") + "<span>" + esc(it.label) + "</span></button>";
+          }).join("");
+          box.querySelector(".lb-swap-list").innerHTML = html || '<div class="lb-popt">Ничего не нашлось</div>';
+        };
+        box.innerHTML = '<input type="search" class="lb-swap-q" placeholder="Найти компонент"><div class="lb-swap-list"></div>';
+        draw("");
+        var q = box.querySelector(".lb-swap-q");
+        q.addEventListener("input", function () {
+          draw(q.value);
+        });
+        setTimeout(function () {
+          q.focus();
+        }, 0);
+        box.onclick = function (ev) {
+          var b = ev.target.closest("[data-swap]");
+          if (!b) return;
+          closePop();
+          var cur = getEl(root.id);
+          if (!cur || readOnly) return;
+          begin();
+          tx.noOvr = true;
+          swapInstance(cur.id, b.getAttribute("data-swap"));
+          commit();
+        };
+      });
+    }
+
     /** Несколько мастеров → набор вариантов: общий фрейм, названия «Вариант=…», если свойств ещё нет. */
     function combineVariants() {
       var list = selList().filter(function (e) {
@@ -8782,6 +8836,7 @@
       if (lib && o.libraries && o.libraries.open) h += btn("compLibOpen", "library", "Открыть библиотеку");
       if (one !== root && (one.ovr || []).length) h += btn("compResetPart", "reset", "Вернуть как у мастера");
       if (own && one === root) h += btn("compReset", "reset", "Сбросить свои правки");
+      if (one === root) h += btn("compSwap", "comp", "Заменить компонент…");
       if (one === root) h += btn("compDetach", "detach", "Отвязать от компонента");
       return h + "</div>";
     }
@@ -8814,6 +8869,8 @@
         applyLibUpdates([root.id]);
       } else if (a === "compLibOpen" && root && libOf(root.inst)) {
         o.libraries.open(libOf(root.inst));
+      } else if (a === "compSwap" && root) {
+        openSwapMenu(root, inspector.querySelector('[data-act="compSwap"]'));
       } else if (a === "compSelRoot" && root) {
         setSelection([root.id]);
       } else if (a === "compMaster" && root && getEl(root.inst) && !isLibId(root.inst)) {
@@ -10924,11 +10981,51 @@
       withFrameKids(ids).forEach(function (id) {
         set[id] = 1;
       });
-      return sortedEls().filter(function (el) {
+      var list = sortedEls().filter(function (el) {
         return set[el.id];
       }).map(function (el) {
         return serializeEl(el, getEl, pathOptsOf);
       });
+      list.masters = figmaMasters(list, set);
+      return list;
+    }
+
+    /** Мастера экземпляров из выделенного, которых в нём нет (и вложенные): в Figma уйдут во внутренний холст. */
+    function figmaMasters(list, have) {
+      var out = [];
+      var seen = {};
+      var queue = [];
+      var want = function (e) {
+        if (e.inst && !have[e.inst] && !seen[e.inst] && anyEl(e.inst) && anyEl(e.inst).comp) {
+          seen[e.inst] = 1;
+          queue.push(e.inst);
+        }
+      };
+      list.forEach(want);
+      for (var i = 0; i < queue.length && i < 100; i++) {
+        var mid = queue[i];
+        var sub = [anyEl(mid)].concat(masterParts(mid)).filter(Boolean);
+        // Набор вариантов этого мастера (свой макет) — целиком, как кладёт Figma.
+        var vs = !isLibId(mid) ? variantSet(mid) : null;
+        if (vs && !have[vs.id] && !seen["set:" + vs.id]) {
+          seen["set:" + vs.id] = 1;
+          var setEl = getEl(vs.id);
+          if (setEl) out.push(serializeEl(setEl, getEl, pathOptsOf));
+          vs.masters.forEach(function (x) {
+            if (x.id !== mid && !have[x.id] && !seen[x.id]) {
+              seen[x.id] = 1;
+              queue.push(x.id);
+            }
+          });
+        }
+        sub.forEach(function (e) {
+          var ser = serializeEl(e, anyEl, pathOptsOf);
+          if (e.id === mid && !(vs && getEl(vs.id))) delete ser.frame;
+          out.push(ser);
+          want(e);
+        });
+      }
+      return out;
     }
 
     /** Выделенное → родной буфер Figma (webapp/board-figma.js): фреймы с автолэйаутом, стили, тексты с глифами. "" — не вышло. */
@@ -10936,8 +11033,9 @@
       var F = window.LeoBoardFigma;
       if (!F || !F.toHtml || !ids.length) return "";
       list = list || figmaList(ids);
+      var withMasters = list.concat(list.masters || []);
       // Шрифт ещё не загружен — текст в Figma будет пустым до первого щелчка; грузим к следующему копированию.
-      if (F.loadFonts && !F.fontsReady(list)) F.loadFonts(list);
+      if (F.loadFonts && !F.fontsReady(withMasters)) F.loadFonts(withMasters);
       if (!F.isReady()) {
         F.prepare();
         return "";
@@ -10945,6 +11043,7 @@
       var colors = exportColors();
       try {
         return F.toHtml(list, {
+          masters: list.masters || [],
           ink: colors.ink,
           fill: colors.fill,
           textColor: function (el) {
@@ -10966,7 +11065,7 @@
       if (F && F.toHtml && window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
         // Схема и шрифты могут ещё грузиться: ClipboardItem ждёт обещание, жест пользователя не теряется.
         var list = figmaList(ids);
-        var html = Promise.all([F.prepare(), F.loadFonts ? F.loadFonts(list) : null]).then(function () {
+        var html = Promise.all([F.prepare(), F.loadFonts ? F.loadFonts(list.concat(list.masters || [])) : null]).then(function () {
           var fig = figmaClipHtml(ids, list);
           if (!fig) throw new Error("figma");
           return new Blob(['<meta charset="utf-8">' + fig], { type: "text/html" });
