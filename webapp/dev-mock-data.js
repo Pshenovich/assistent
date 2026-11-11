@@ -1069,14 +1069,32 @@
       if (method === "PATCH") Object.assign(mockProfile.settings, JSON.parse((opts && opts.body) || "{}"));
       return mockProfile.settings;
     }
-    if (basePath === "/calendar/sources" && method === "GET") {
+    // Google: «подключение» в моке — через 3 с после старта OAuth; календари — с сохранённым выбором.
+    if (basePath === "/oauth/google/start" && method === "POST") {
+      setTimeout(function () {
+        mockProfile.integrations.google = true;
+      }, 3000);
+      return { url: location.origin + "/?mock-google-oauth" };
+    }
+    if (basePath === "/oauth/google/disconnect" && method === "POST") {
+      mockProfile.integrations.google = false;
+      return { ok: true };
+    }
+    if (basePath === "/calendar/sources/excluded" && method === "PUT") {
+      mockProfile.calExcluded = JSON.parse((opts && opts.body) || "{}").excluded_ids || [];
+    }
+    if (basePath.indexOf("/calendar/sources") === 0) {
+      var ex = mockProfile.calExcluded;
       return {
         calendars: [
           { id: "primary", summary: "Работа", primary: true, backgroundColor: "#3b82f6", excluded: false },
           { id: "team", summary: "Команда продукта", accessRole: "writer", backgroundColor: "#34b36b", excluded: false },
           { id: "personal", summary: "Личное", accessRole: "owner", backgroundColor: "#e5568a", excluded: false },
           { id: "holidays", summary: "Праздники РФ", accessRole: "reader", backgroundColor: "#8e8e93", excluded: true },
-        ],
+        ].map(function (c) {
+          if (ex) c.excluded = ex.indexOf(c.id) >= 0;
+          return c;
+        }),
       };
     }
     if (basePath === "/zoom/status" && method === "GET") {
@@ -1175,7 +1193,7 @@
     if (basePath === "/onboarding/event" && method === "POST") {
       var b = JSON.parse((opts && opts.body) || "{}");
       var now = Date.now() / 1000;
-      var flags = { intro_done: "intro_done_at", team_done: "team_step_done_at", tour_done: "tour_done_at" };
+      var flags = { intro_done: "intro_done_at", team_done: "team_step_done_at", connect_done: "connect_step_done_at", tour_done: "tour_done_at" };
       if (flags[b.kind]) mockOnboarding[flags[b.kind]] = mockOnboarding[flags[b.kind]] || now;
       if (b.kind === "used") mockOnboarding.used[b.feature] = mockOnboarding.used[b.feature] || now;
       if (b.kind === "hint_shown") mockOnboarding.hint_shown[b.feature] = (mockOnboarding.hint_shown[b.feature] || 0) + 1;

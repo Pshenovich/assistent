@@ -71,3 +71,9 @@ def test_tour_has_five_steps_and_intro_texts():
     assert len(cat["tour"]) == 5
     assert "Лео" in cat["intro"]["greeting"]
     assert cat["team"]["title"]
+
+
+def test_connect_step_texts():
+    c = onboarding.catalog()["connect"]
+    for key in ("title", "text", "done_title", "done_text", "cals_title", "cals_text"):
+        assert c.get(key), key

@@ -50,7 +50,7 @@ def test_existing_user_skips_tour_and_used_features_are_known():
     uid = next(_ids)
     notes_store.create_note(uid, "Старая заметка", "текст")
     st = ob.get_state(uid)
-    assert st["intro_done_at"] and st["team_step_done_at"] and st["tour_done_at"]
+    assert st["intro_done_at"] and st["team_step_done_at"] and st["connect_step_done_at"] and st["tour_done_at"]
     assert "notes" in st["used"]
     assert "board" not in st["used"]
 
@@ -87,8 +87,17 @@ def test_events_used_hint_snooze_and_steps():
     st = ob.apply_event(uid, "intro_done")
     assert "board" in st["used"] and st["hint_shown"]["search"] == 2 and "search" in st["snoozed"]
     assert st["intro_done_at"] and not st.get("tour_done_at")
+    assert not st.get("connect_step_done_at")
+    st = ob.apply_event(uid, "connect_done")
+    assert st["connect_step_done_at"] and not st.get("tour_done_at")
     st = ob.apply_event(uid, "tour_done")
     assert st["team_step_done_at"] and st["tour_done_at"]
+
+
+def test_tour_done_backfills_connect_step():
+    uid = next(_ids)
+    st = ob.apply_event(uid, "tour_done")
+    assert st["connect_step_done_at"] and st["tour_done_at"]
 
 
 def test_screen_seen_and_existing_users_know_screens():

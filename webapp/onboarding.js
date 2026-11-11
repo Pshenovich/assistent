@@ -423,6 +423,353 @@
     });
   }
 
+  // ---------- 2½. подключения: Google главный, сразу выбор календарей ----------
+
+  var meInfo = null; // /me из boot: Telegram привязан или нет
+
+  var SVC_ICONS = {
+    google: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+    telegram: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
+    bitrix: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/>',
+    zoom: '<path d="M15 10l4-3v10l-4-3M5 7h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z"/>',
+  };
+  function svcIcon(id) {
+    return '<span class="ob-svc-ico" aria-hidden="true"><svg viewBox="0 0 24 24">' + (SVC_ICONS[id] || "") + "</svg></span>";
+  }
+  function bitrixOn(res) {
+    if (!res) return false;
+    if (res.bitrix) return true;
+    return (res.trackers || []).some(function (t) {
+      return t && t.id === "bitrix24" && t.connected;
+    });
+  }
+  /** По умолчанию в онбординге — только свои календари: основной и те, где человек владелец. */
+  function ownCalendar(c) {
+    return !!(c && (c.primary || String(c.accessRole || "").toLowerCase() === "owner"));
+  }
+
+  /**
+   * Экран «Подключите календарь». Resolve: "" — дальше тур; "mail" / "bitrix" — открыть
+   * настройку сервиса (тур — при следующем входе).
+   */
+  function runConnect(cat) {
+    return new Promise(function (resolve) {
+      var t = (cat && cat.connect) || {};
+      var root = mount("ob-team ob-connect");
+      var res = null; // ответ /integrations
+      var google = false;
+      var waiting = false; // нажали «Подключить Google», ждём возврата
+      var freshConnect = false; // Google подключили на этом шаге — ставим умолчание «только свои»
+      var cals = null;
+      var selected = {};
+      var view = "main";
+      var pollTimer = null;
+      var closed = false;
+
+      function finish(next) {
+        if (closed) return;
+        closed = true;
+        rememberWait(false);
+        if (pollTimer) clearInterval(pollTimer);
+        document.removeEventListener("visibilitychange", onVisible);
+        send("connect_done");
+        unmount(root);
+        resolve(next || "");
+      }
+
+      function countLine() {
+        if (!cals || !cals.length) return "";
+        var on = cals.filter(function (c) {
+          return selected[c.id];
+        }).length;
+        return on + " из " + cals.length;
+      }
+
+      function rowHtml(id, title, sub, right, extra) {
+        return (
+          '<div class="ob-svc-row' + (extra || "") + '">' + svcIcon(id) +
+          '<span class="ob-svc-text"><span class="ob-svc-title">' + esc(title) + "</span>" + sub + "</span>" + right + "</div>"
+        );
+      }
+      function okLine(text) {
+        return '<span class="ob-svc-ok">✓ ' + esc(text) + "</span>";
+      }
+      function subLine(text) {
+        return '<span class="ob-svc-sub">' + esc(text) + "</span>";
+      }
+
+      function renderMain() {
+        view = "main";
+        var tgOn = !!(meInfo && meInfo.tg_linked);
+        var mailOn = !!(res && res.mail);
+        var bxOn = bitrixOn(res);
+        var head = google
+          ? "<h2>" + esc(t.done_title || "Календарь подключён") + '</h2><p class="ob-team-sub">' + esc(t.done_text || "") + "</p>"
+          : "<h2>" + esc(t.title || "Подключите календарь") + '</h2><p class="ob-team-sub">' + esc(t.text || "") + "</p>";
+        var gcard = google
+          ? '<div class="ob-gcard is-on">' +
+            rowHtml(
+              "google",
+              "Google Календарь",
+              okLine("Подключено" + (countLine() ? " · " + countLine() + " календарей" : "")),
+              '<button type="button" class="ob-link ob-svc-act" data-ob="cals">Изменить</button>'
+            ) +
+            "</div>"
+          : '<div class="ob-gcard">' +
+            rowHtml("google", "Google Календарь", subLine("Встречи, задачи, свободные слоты"), "") +
+            '<button type="button" class="ob-btn ob-btn--wide" data-ob="google">' +
+            (waiting ? "Жду подключения…" : "Подключить Google") +
+            "</button>" +
+            (waiting ? '<p class="ob-gcard-hint">Разрешите доступ в открывшемся окне Google и вернитесь сюда</p>' : "") +
+            "</div>";
+        var tgUser = meInfo && meInfo.username ? "@" + meInfo.username : "Подключено";
+        var rows =
+          rowHtml(
+            "telegram",
+            "Telegram",
+            tgOn ? okLine(tgUser) : subLine("Лео в чатах и напоминания"),
+            tgOn ? "" : '<button type="button" class="ob-svc-btn" data-ob="telegram">Привязать</button>'
+          ) +
+          rowHtml(
+            "mail",
+            "Почта",
+            mailOn ? okLine("Подключено") : subLine("Письма и приглашения"),
+            mailOn ? "" : '<button type="button" class="ob-svc-btn" data-ob="mail">Настроить</button>'
+          ) +
+          rowHtml(
+            "bitrix",
+            "Битрикс24",
+            bxOn ? okLine("Подключено") : subLine("Задачи из встреч"),
+            bxOn ? "" : '<button type="button" class="ob-svc-btn" data-ob="bitrix">Настроить</button>'
+          ) +
+          rowHtml("zoom", "Zoom", subLine("Запись и саммари"), '<span class="ob-soon">скоро</span>', " is-soon");
+        var foot = google
+          ? '<button type="button" class="ob-btn ob-btn--wide" data-ob="next">Продолжить</button>'
+          : '<button type="button" class="ob-link" data-ob="later">Подключу позже</button>';
+        root.innerHTML =
+          '<div class="ob-team-inner">' +
+          '<span class="ob-team-leo">' + leoAvatar(google ? "wave" : "fly", 72) + "</span>" +
+          head + gcard +
+          '<p class="ob-label">Ещё можно подключить</p><div class="ob-svc-list">' + rows + "</div>" +
+          '<div class="ob-team-foot">' + foot + "</div></div>";
+      }
+
+      function renderCals(msg) {
+        view = "cals";
+        var list;
+        if (msg) {
+          list = '<p class="ob-team-sub">' + esc(msg) + "</p>";
+        } else if (!cals) {
+          list = '<p class="ob-team-sub">Загружаю календари…</p>';
+        } else {
+          list =
+            '<div class="ob-cal-list" role="group" aria-label="Календари">' +
+            cals
+              .map(function (c) {
+                var on = !!selected[c.id];
+                var sub = c.primary
+                  ? "основной"
+                  : String(c.accessRole || "").toLowerCase() === "owner"
+                    ? ""
+                    : "общий, только " + (String(c.accessRole || "").toLowerCase() === "writer" ? "с правом записи" : "чтение");
+                if (sub === "общий, только с правом записи") sub = "общий";
+                return (
+                  '<button type="button" class="ob-cal' + (on ? " is-on" : "") + '" role="checkbox" aria-checked="' + on + '" data-cal="' + esc(c.id) + '">' +
+                  '<span class="ob-cal-box" aria-hidden="true"></span>' +
+                  '<span class="ob-cal-dot" style="background:' + esc(c.backgroundColor || "var(--text-subtle)") + '"></span>' +
+                  '<span class="ob-svc-text"><span class="ob-svc-title">' + esc(c.summary || c.id) + "</span>" + (sub ? subLine(sub) : "") + "</span>" +
+                  "</button>"
+                );
+              })
+              .join("") +
+            "</div>";
+        }
+        var btn = msg
+          ? '<button type="button" class="ob-btn ob-btn--wide" data-ob="cals-skip">Продолжить</button>'
+          : '<button type="button" class="ob-btn ob-btn--wide" data-ob="cals-done"' + (cals ? "" : " disabled") + ">Готово" + (countLine() ? " · " + countLine() : "") + "</button>";
+        root.innerHTML =
+          '<div class="ob-team-inner">' +
+          '<span class="ob-team-leo">' + leoAvatar("point-down", 72) + "</span>" +
+          "<h2>" + esc(t.cals_title || "Какие календари подтягивать?") + "</h2>" +
+          '<p class="ob-team-sub">' + esc(t.cals_text || "") + "</p>" +
+          list +
+          '<div class="ob-team-err" role="alert"></div>' +
+          '<div class="ob-team-foot">' + btn +
+          '<span class="ob-foot-note">Можно поменять в Профиле → Google</span></div></div>';
+      }
+
+      function excludedIds() {
+        return (cals || [])
+          .filter(function (c) {
+            return !selected[c.id];
+          })
+          .map(function (c) {
+            return c.id;
+          });
+      }
+      function saveExcluded() {
+        return app().apiFetch("/calendar/sources/excluded", json("PUT", { excluded_ids: excludedIds() }));
+      }
+
+      async function openCals() {
+        cals = null;
+        renderCals();
+        try {
+          var r = await app().apiFetch("/calendar/sources", { method: "GET" });
+          var list = (r && r.calendars) || [];
+          if (closed || view !== "cals") return;
+          if (!list.length) {
+            renderCals("Календари появятся через минуту — выбрать их можно в Профиле → Google.");
+            return;
+          }
+          cals = list;
+          selected = {};
+          var hasOwn = cals.some(ownCalendar);
+          cals.forEach(function (c) {
+            selected[c.id] = freshConnect && hasOwn ? ownCalendar(c) : !c.excluded;
+          });
+          renderCals();
+          // Умолчание «только свои» сохраняем сразу: ушёл с экрана — чужие и праздники всё равно не подтянутся.
+          if (freshConnect && hasOwn) {
+            freshConnect = false;
+            saveExcluded().catch(function () {});
+          }
+        } catch (e) {
+          if (!closed && view === "cals") renderCals("Не получилось загрузить календари. Выбрать их можно в Профиле → Google.");
+        }
+      }
+
+      // Ушли в Google в этой же вкладке (окно не открылось) и вернулись — помним, что ждали подключения.
+      var WAIT_KEY = "leo_ob_google_wait";
+      function rememberWait(on) {
+        try {
+          if (on) localStorage.setItem(WAIT_KEY, String(Date.now()));
+          else localStorage.removeItem(WAIT_KEY);
+        } catch (_) {}
+      }
+      function waitedBefore() {
+        try {
+          var ts = Number(localStorage.getItem(WAIT_KEY) || 0);
+          return ts > 0 && Date.now() - ts < 30 * 60 * 1000;
+        } catch (_) {
+          return false;
+        }
+      }
+      if (waitedBefore()) waiting = true;
+
+      async function checkGoogle() {
+        if (closed) return;
+        try {
+          var r = await app().apiFetch("/integrations", { method: "GET" });
+          if (closed) return;
+          res = r || {};
+          var was = google;
+          google = !!(res.google || res.google_connected);
+          if (google && !was && waiting) {
+            waiting = false;
+            rememberWait(false);
+            freshConnect = true;
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = null;
+            send("used", "google");
+            openCals();
+            return;
+          }
+          if (view === "main") renderMain();
+        } catch (_) {}
+      }
+      function onVisible() {
+        if (document.visibilityState === "visible" && view === "main") checkGoogle();
+      }
+      document.addEventListener("visibilitychange", onVisible);
+
+      async function startGoogle(btn) {
+        btn.disabled = true;
+        try {
+          var d = await app().apiFetch("/oauth/google/start", { method: "POST" });
+          if (!d || !d.url) throw new Error("Нет ссылки авторизации");
+          rememberWait(true);
+          if (app().openLink) app().openLink(d.url);
+          else window.open(d.url, "_blank", "noopener,noreferrer");
+          waiting = true;
+          renderMain();
+          if (pollTimer) clearInterval(pollTimer);
+          pollTimer = setInterval(checkGoogle, 2000);
+        } catch (e) {
+          btn.disabled = false;
+          if (app().toast) app().toast("Google: " + ((e && (e.detail || e.message)) || "не получилось"));
+        }
+      }
+
+      root.addEventListener("click", async function (e) {
+        var cal = e.target.closest("[data-cal]");
+        if (cal) {
+          var id = cal.getAttribute("data-cal");
+          selected[id] = !selected[id];
+          cal.classList.toggle("is-on", !!selected[id]);
+          cal.setAttribute("aria-checked", selected[id] ? "true" : "false");
+          var done = root.querySelector('[data-ob="cals-done"]');
+          if (done) done.textContent = "Готово · " + countLine();
+          return;
+        }
+        var b = e.target.closest("[data-ob]");
+        if (!b) return;
+        var kind = b.getAttribute("data-ob");
+        if (kind === "google") return startGoogle(b);
+        if (kind === "cals") {
+          freshConnect = false;
+          return openCals();
+        }
+        if (kind === "cals-skip") return renderMain();
+        if (kind === "cals-done") {
+          b.disabled = true;
+          try {
+            await saveExcluded();
+            renderMain();
+          } catch (ex) {
+            b.disabled = false;
+            var err = root.querySelector(".ob-team-err");
+            if (err) err.textContent = (ex && (ex.detail || ex.message)) || "Не получилось сохранить";
+          }
+          return;
+        }
+        if (kind === "telegram") {
+          if (app().openTelegramLink) app().openTelegramLink(b);
+          return;
+        }
+        if (kind === "mail" || kind === "bitrix") return finish(kind);
+        if (kind === "next" || kind === "later") return finish("");
+      });
+
+      renderMain();
+      checkGoogle().then(function () {
+        // Вернулись из Google в этой вкладке, но доступ не дали — снова обычная кнопка.
+        if (!google && waiting && !pollTimer && !closed) {
+          waiting = false;
+          rememberWait(false);
+          if (view === "main") renderMain();
+        }
+        // Google подключили раньше (например, в боте) — сразу показываем, сколько календарей подтянуто.
+        if (google && !closed && view === "main") {
+          app()
+            .apiFetch("/calendar/sources", { method: "GET" })
+            .then(function (r) {
+              var list = (r && r.calendars) || [];
+              if (!list.length || closed || view !== "main") return;
+              cals = list;
+              selected = {};
+              cals.forEach(function (c) {
+                selected[c.id] = !c.excluded;
+              });
+              renderMain();
+            })
+            .catch(function () {});
+        }
+      });
+    });
+  }
+
   // ---------- 3. тур с подсветкой ----------
 
   function visibleTarget(anchor) {
@@ -1117,6 +1464,15 @@
         await send("intro_done");
       }
       if (!state.team_step_done_at) await runTeam(cat);
+      if (!state.connect_step_done_at) {
+        var setup = await runConnect(cat);
+        // «Настроить» почту или Битрикс — сразу их экран; тур покажем при следующем входе.
+        if (setup) {
+          if (app().setTab) app().setTab("profile");
+          if (app().openServiceSetup) app().openServiceSetup(setup);
+          return;
+        }
+      }
       if (!state.tour_done_at) {
         await runTour(cat);
         quietUntil = Date.now() + 45000;
@@ -1133,6 +1489,7 @@
   function boot(me, opts) {
     if (!me || !me.onboarding) return;
     state = me.onboarding;
+    meInfo = me;
     bindReset();
     bindHowto();
     // ?guide=<id> — «Показать в приложении» из ответа Лео в Telegram.

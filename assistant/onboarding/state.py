@@ -1,6 +1,6 @@
 """Состояние онбординга пользователя в user_prefs (ключ «onboarding»).
 
-{intro_done_at, team_step_done_at, tour_done_at, used: {feat: ts}, hint_shown: {feat: n}, snoozed: {feat: ts},
+{intro_done_at, team_step_done_at, connect_step_done_at, tour_done_at, used: {feat: ts}, hint_shown: {feat: n}, snoozed: {feat: ts},
  screens_seen: {screen: ts}, reset_at, off_at}
 
 off_at — человек выключил онбординг (Профиль → «Как пользоваться Орбитой»): ни интро, ни тура,
@@ -17,8 +17,8 @@ from assistant.onboarding import feature_ids, screen_ids
 from assistant.stores import user_prefs
 
 KEY = "onboarding"
-STEP_FLAGS = ("intro_done_at", "team_step_done_at", "tour_done_at")
-EVENT_KINDS = ("used", "hint_shown", "snooze", "screen_seen", "intro_done", "team_done", "tour_done", "off", "on")
+STEP_FLAGS = ("intro_done_at", "team_step_done_at", "connect_step_done_at", "tour_done_at")
+EVENT_KINDS = ("used", "hint_shown", "snooze", "screen_seen", "intro_done", "team_done", "connect_done", "tour_done", "off", "on")
 MAPS = ("used", "hint_shown", "snoozed", "screens_seen")
 
 
@@ -88,8 +88,13 @@ def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
     if kind == "on":
         st.pop("off_at", None)
         return _save(user_id, st)
-    if kind in ("intro_done", "team_done", "tour_done"):
-        flag = {"intro_done": "intro_done_at", "team_done": "team_step_done_at", "tour_done": "tour_done_at"}[kind]
+    if kind in ("intro_done", "team_done", "connect_done", "tour_done"):
+        flag = {
+            "intro_done": "intro_done_at",
+            "team_done": "team_step_done_at",
+            "connect_done": "connect_step_done_at",
+            "tour_done": "tour_done_at",
+        }[kind]
         if not st.get(flag):
             _track(user_id, "onboarding.step", step=kind)
         st[flag] = st.get(flag) or now
@@ -97,6 +102,7 @@ def apply_event(user_id: int, kind: str, feature: str = "") -> dict[str, Any]:
             # Тур завершает онбординг: и предыдущие шаги считаем пройденными (например, после «Пропустить»).
             st["intro_done_at"] = st.get("intro_done_at") or now
             st["team_step_done_at"] = st.get("team_step_done_at") or now
+            st["connect_step_done_at"] = st.get("connect_step_done_at") or now
         return _save(user_id, st)
     fid = str(feature or "").strip()
     if kind == "screen_seen":

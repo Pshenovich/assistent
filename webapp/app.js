@@ -64243,6 +64243,9 @@
     profileScreen: profileScreen,
     setTab: setTab,
     loadIntegrations: loadIntegrations,
+    // Для онбординга (шаг «Подключения»): экран настройки сервиса и привязка Telegram.
+    openServiceSetup: openServiceSetup,
+    openTelegramLink: openTelegramLink,
     // Для org-kb.js: открыть документ по id поверх текущей вкладки; новый личный документ базы знаний.
     openNote: function (noteId) {
       // body_preview_only: не загрузился — тост, а не пустой документ, который сохранится поверх

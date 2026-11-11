@@ -175,7 +175,7 @@ def initial_state(user_id: int) -> dict[str, Any]:
     if existing:
         from assistant.onboarding import screen_ids
 
-        st["intro_done_at"] = st["team_step_done_at"] = st["tour_done_at"] = now
+        st["intro_done_at"] = st["team_step_done_at"] = st["connect_step_done_at"] = st["tour_done_at"] = now
         # Разделы им знакомы — знакомство не показываем, только подсказки к неосвоенному.
         st["screens_seen"] = {s: now for s in sorted(screen_ids())}
         st["backfilled"] = True
