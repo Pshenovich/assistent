@@ -4,7 +4,7 @@
   "use strict";
 
   var ROLE_LABEL = { owner: "Владелец", admin: "Админ", member: "Участник" };
-  var state = { overview: null, detail: null, market: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null, openMember: null };
+  var state = { overview: null, detail: null, market: null, contacts: null, queue: Promise.resolve(), saved: {}, slugTimer: null, view: null, memberFilter: "all", memberQuery: "" };
 
   function app() {
     return window.LeoApp || {};
@@ -80,6 +80,7 @@
 
   async function open() {
     if (app().profileScreen) app().profileScreen("org");
+    state.view = null;
     var el = root();
     if (el && !el.innerHTML) el.innerHTML = '<p class="pf-hint">Загружаю…</p>';
     await reload();
@@ -150,6 +151,11 @@
     refresh: '<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4" /><path d="M21 3v6h-6" /></svg>',
     copy: '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" /></svg>',
     x: '<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12" /></svg>',
+    users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 19a6.5 6.5 0 0 1 13 0" /><circle cx="17" cy="9" r="2.5" /><path d="M17 14.5a4.5 4.5 0 0 1 4.5 4.5" /></svg>',
+    userPlus: '<svg viewBox="0 0 24 24"><circle cx="10" cy="8" r="3.5" /><path d="M3.5 19a6.5 6.5 0 0 1 13 0" /><path d="M19 8v6M16 11h6" /></svg>',
+    tree: '<svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="5" rx="1.5" /><rect x="3" y="16" width="6" height="5" rx="1.5" /><rect x="15" y="16" width="6" height="5" rx="1.5" /><path d="M12 8v4M6 16v-2h12v2" /></svg>',
+    spark: '<svg viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /></svg>',
+    card: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2.5" /><path d="M3 10h18M7 15h3" /></svg>',
   };
 
   function textHtml(title, sub, titleCls) {
@@ -183,30 +189,183 @@
     return '<div class="pf-group"><p class="pf-group-title">' + esc(title) + (saveKey ? saveMark(saveKey) : "") + "</p>" + inner + "</div>";
   }
 
+  // ---------- экраны ----------
+  // Главная организации — оглавление; каждый раздел открывается своим экраном в той же колонке.
+  // «Назад» в шапке (и системная кнопка Telegram) поднимает на уровень выше, с главной — в Профиль.
+
+  var VIEW_PARENT = {
+    members: "home", member: "members", invite: "members", join: "home", structure: "home", dept: "structure",
+    billing: "home", about: "home", people: "home", market: "home", create: "home",
+  };
+  var VIEW_TITLE = {
+    home: "Организация", members: "Участники", member: "Участник", invite: "Пригласить", join: "Как вступают",
+    structure: "Отделы и команды", dept: "Отдел", billing: "ИИ и оплата", about: "Название и адрес",
+    people: "Показатели сотрудников", market: "Выпуск «Рынок»", create: "Новая организация",
+  };
+
+  function view() {
+    return state.view || { name: "home" };
+  }
+
+  function go(name, id) {
+    state.view = { name: name, id: id == null ? null : String(id) };
+    render();
+    var body = root() && root().closest(".subscreen-body");
+    if (body) body.scrollTop = 0;
+  }
+
+  function goBack() {
+    var v = view();
+    if (v.name === "home" || !state.detail && v.name !== "create") {
+      state.view = null;
+      app().profileScreen("main");
+      return;
+    }
+    // Карточку участника открывают и из отдела — туда и возвращаемся.
+    var parent = v.from || VIEW_PARENT[v.name] || "home";
+    go(parent.name || parent, parent.id);
+  }
+
+  function findMember(d, id) {
+    return (d.members || []).filter(function (m) { return String(m.id) === String(id); })[0] || null;
+  }
+  function findGroup(d, id) {
+    return (d.groups || []).filter(function (g) { return String(g.id) === String(id); })[0] || null;
+  }
+
   function render() {
     var el = root();
     if (!el) return;
     var ov = state.overview || {};
-    var html = state.detail ? heroHtml(state.detail.org) : "";
-    if ((ov.orgs || []).length > 1) html += switcherHtml(ov);
-    html += suggestionsHtml(ov);
-    html += state.detail ? detailHtml(state.detail) : createHtml(ov);
+    var d = state.detail;
+    var v = view();
+    // Участника исключили, отдел удалили, организацию сменили — показываем экран уровнем выше.
+    if (v.name === "member" && !(d && findMember(d, v.id))) v = state.view = { name: "members" };
+    if (v.name === "dept" && !(d && findGroup(d, v.id))) v = state.view = { name: "structure" };
+    if (!d && v.name !== "create") v = state.view = { name: "home" };
+    var html;
+    if (v.name === "create" || !d) html = (d ? "" : suggestionsHtml(ov)) + createHtml(ov);
+    else if (v.name === "members") html = membersHtml(d);
+    else if (v.name === "member") html = memberCardHtml(d, findMember(d, v.id));
+    else if (v.name === "invite") html = inviteHtml(d);
+    else if (v.name === "join") html = (joinHtml(d) + invitesHtml(d)) || '<p class="pf-hint">Здесь пока нечего настроить.</p>';
+    else if (v.name === "structure") html = groupsHtml(d);
+    else if (v.name === "dept") html = deptHtml(d, findGroup(d, v.id));
+    else if (v.name === "billing") html = creditsHtml(d) + billingHtml(d);
+    else if (v.name === "about") html = aboutHtml(d);
+    else if (v.name === "people") html = peopleMetricsHtml(d);
+    else if (v.name === "market") html = marketHtml(state.market);
+    else html = homeHtml(ov, d);
+    el.className = "pf-screen-body org-screen org-view-" + (d ? v.name : "create");
     el.innerHTML = html;
+    var title = document.querySelector("#profile-org .detail-title");
+    if (title) {
+      var g = v.name === "dept" && d ? findGroup(d, v.id) : null;
+      title.textContent = g ? g.name : d ? VIEW_TITLE[v.name] || "Организация" : "Организация";
+    }
   }
 
-  function heroHtml(org) {
-    var pic = org.logo_url ? '<img src="' + esc(org.logo_url) + '" alt="" />' : esc(initials(org.name));
-    return '<div class="pf-hero"><span class="pf-hero-ico org-hero-ico" aria-hidden="true">' + pic + "</span>" +
-      '<p class="pf-hero-title">' + esc(org.name) + "</p>" +
-      '<p class="pf-hero-text">' + esc(ROLE_LABEL[org.my_role] || "") + " · " + org.member_count + " " +
-      plural(org.member_count, "участник", "участника", "участников") + "</p></div>";
+  // Строка-переход в раздел: иконка, название, подпись, значение справа и «›».
+  function navRow(name, id, title, sub, val, icon) {
+    return '<button type="button" class="pf-row" data-org="nav" data-view="' + name + '"' + (id != null ? ' data-id="' + esc(id) + '"' : "") + ">" +
+      (icon ? '<span class="pf-ico" aria-hidden="true">' + icon + "</span>" : "") +
+      '<span class="pf-row-body">' + textHtml(title, sub) + (val ? '<span class="pf-row-val">' + esc(val) + "</span>" : "") +
+      '<span class="pf-chev" aria-hidden="true">›</span></span></button>';
   }
 
-  function switcherHtml(ov) {
-    var opts = ov.orgs.map(function (o) { return [o.id, o.name]; });
-    return '<div class="pf-list">' +
-      staticRow("Текущая организация", "", selectHtml(opts, ov.current_id, 'data-org="switch" aria-label="Текущая организация"'), "label") + "</div>";
+  function orgPic(org) {
+    return org.logo_url ? '<img src="' + esc(org.logo_url) + '" alt="" />' : esc(initials(org.name));
   }
+
+  // Шапка: логотип, название, роль и число участников; при нескольких организациях — переключатель.
+  function headHtml(ov, org) {
+    var sw = "";
+    if ((ov.orgs || []).length > 1) {
+      // Видна подпись «Сменить организацию», а сам выбор — прозрачный select поверх неё.
+      sw = '<label class="org-switch">Сменить организацию<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>' +
+        selectHtml(ov.orgs.map(function (o) { return [o.id, o.name]; }), ov.current_id, 'data-org="switch" aria-label="Сменить организацию"') + "</label>";
+    }
+    return '<div class="org-head"><span class="pf-hero-ico org-hero-ico" aria-hidden="true">' + orgPic(org) + "</span>" +
+      '<div class="org-head-text"><p class="org-head-title">' + esc(org.name) + "</p>" +
+      '<p class="org-head-sub">' + esc(ROLE_LABEL[org.my_role] || "") + " · " + org.member_count + " " +
+      plural(org.member_count, "участник", "участника", "участников") + "</p></div>" + sw + "</div>";
+  }
+
+  function pendingMembers(d) {
+    return (d.members || []).filter(function (m) { return m.status === "pending"; });
+  }
+
+  function homeHtml(ov, d) {
+    var org = d.org;
+    var can = d.can || {};
+    var members = (d.members || []).filter(function (m) { return m.status !== "pending"; });
+    var invited = members.filter(function (m) { return m.status === "invited"; }).length;
+    var top = headHtml(ov, org);
+    var pend = can.approve ? pendingMembers(d) : [];
+    if (pend.length) {
+      var names = pend.slice(0, 2).map(function (m) { return memberName(d, m); }).join(", ") + (pend.length > 2 ? " и ещё " + (pend.length - 2) : "");
+      top += '<button type="button" class="org-banner" data-org="nav" data-view="members">' +
+        '<span class="pf-ico" aria-hidden="true">' + ICO.userPlus + "</span>" +
+        '<span class="pf-row-text"><span class="pf-row-title">' + pend.length + " " + plural(pend.length, "заявка", "заявки", "заявок") + " на вступление</span>" +
+        '<span class="pf-row-sub">' + esc(names) + '</span></span><span class="org-banner-go">Разобрать</span></button>';
+    }
+    var html = '<div class="org-home-top">' + top + "</div>" + suggestionsHtml(ov);
+
+    var team = navRow("members", null, "Участники",
+      members.length + " " + plural(members.length, "человек", "человека", "человек") + (invited ? " · " + invited + " " + plural(invited, "приглашён", "приглашены", "приглашены") : ""),
+      "", ICO.users);
+    var groups = d.groups || [];
+    if (groups.length || can.invite) {
+      var teams = groups.reduce(function (n, g) { return n + g.teams.length; }, 0);
+      team += navRow("structure", null, "Отделы и команды",
+        groups.length ? groups.length + " " + plural(groups.length, "отдел", "отдела", "отделов") + (teams ? " · " + teams + " " + plural(teams, "команда", "команды", "команд") : "") : "Пока нет — кому открывать базу знаний и сейфы",
+        "", ICO.tree);
+    }
+    if (can.invite) {
+      var doms = org.domains || [];
+      var links = (d.invites || []).length;
+      var joinSub = [doms.length ? "@" + doms[0] + (org.join_mode === "auto" ? " сразу" : " по заявке") : "",
+        links ? links + " " + plural(links, "ссылка", "ссылки", "ссылок") : ""].filter(Boolean).join(" · ") || "Домен почты и ссылки-приглашения";
+      team += navRow("join", null, "Как вступают", joinSub, "", ICO.link);
+    }
+    var cols = group("Команда", "", '<div class="pf-list">' + team + "</div>");
+
+    var money = "";
+    var c = d.credits;
+    if (c) {
+      var u = c.can_manage && c.usage;
+      var msub = u ? "В " + (MONTHS_IN[Number(String(u.month_from).slice(5, 7)) - 1] || "этом месяце") + " потрачено " + fmtNum(u.spent_month) + " кр" : "Счёт организации";
+      money += navRow("billing", null, "Кредиты ИИ", msub, fmtNum(c.balance) + " кр", ICO.spark);
+    }
+    money += navRow("billing", null, "Тариф", "Занято " + (org.seats_used || 0) + " из " + (org.seats || 0) + " мест", planLabel(d, org.plan), ICO.card);
+    cols += group("ИИ и оплата", "", '<div class="pf-list">' + money + "</div>");
+
+    var set = "";
+    if (can.edit_org) set += navRow("about", null, "Название и адрес", "", org.slug || "");
+    var pm = d.people_metrics;
+    if (pm && (pm.can_toggle || pm.can_view)) set += navRow("people", null, "Показатели сотрудников", "", pm.enabled ? "Включены" : "Выключены");
+    var m = state.market;
+    if (m && m.settings) set += navRow("market", null, "Выпуск «Рынок»", "", m.settings.time ? "в " + m.settings.time : "");
+    if (set) cols += group("Настройки", "", '<div class="pf-list">' + set + "</div>");
+    html += '<div class="org-home-grid">' + cols + "</div>";
+
+    var danger = '<button type="button" class="pf-row pf-row--danger" data-org="leave"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Выйти из организации</span></span></span></button>';
+    if (can.delete_org) {
+      danger += '<button type="button" class="pf-row pf-row--danger" data-org="delete"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить организацию</span></span></span></button>';
+    }
+    html += '<div class="pf-list org-home-wide">' + danger + "</div>";
+    html += '<button type="button" class="pf-btn pf-btn--ghost org-home-wide" data-org="nav" data-view="create">Создать ещё одну организацию</button>';
+    return html;
+  }
+
+  function aboutHtml(d) {
+    var org = d.org;
+    return group("Название и адрес", "org", '<div><div class="pf-list">' +
+      '<label class="pf-field"><span class="pf-field-label">Название</span><input type="text" class="pf-input" id="org-name" maxlength="80" value="' + esc(org.name) + '" /></label>' +
+      '<label class="pf-field"><span class="pf-field-label">Короткий адрес</span><input type="text" class="pf-input" id="org-slug" maxlength="40" value="' + esc(org.slug) + '" autocapitalize="off" spellcheck="false" /></label>' +
+      '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p></div>');
+  }
+
 
   function suggestionsHtml(ov) {
     var rows = (ov.suggestions || [])
@@ -245,40 +404,6 @@
       '<p class="pf-hint">' + esc(domHint) + "</p></div>" +
       '<button type="button" class="pf-btn" data-org="create">Создать организацию</button>'
     );
-  }
-
-  function detailHtml(d) {
-    var org = d.org;
-    var can = d.can || {};
-    var html = "";
-
-    if (can.edit_org) {
-      html += group("Название и адрес", "org", '<div class="pf-list">' +
-        '<label class="pf-field"><span class="pf-field-label">Название</span><input type="text" class="pf-input" id="org-name" maxlength="80" value="' + esc(org.name) + '" /></label>' +
-        '<label class="pf-field"><span class="pf-field-label">Короткий адрес</span><input type="text" class="pf-input" id="org-slug" maxlength="40" value="' + esc(org.slug) + '" autocapitalize="off" spellcheck="false" /></label>' +
-        '</div><p class="pf-hint" id="org-slug-hint">Латиница, цифры и дефис. Пригодится для публичной страницы выпуска и поддомена.</p>');
-    }
-
-    html += membersHtml(d);
-    html += groupsHtml(d);
-    if (can.invite) html += joinHtml(d) + invitesHtml(d);
-    html += peopleMetricsHtml(d);
-    html += creditsHtml(d);
-    html += billingHtml(d);
-    html += marketHtml(state.market);
-
-    var danger = "";
-    if ((state.overview.orgs || []).length) {
-      danger += '<button type="button" class="pf-row pf-row--danger" data-org="leave"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Выйти из организации</span></span></span></button>';
-    }
-    if (can.delete_org) {
-      danger += '<button type="button" class="pf-row pf-row--danger" data-org="delete"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить организацию</span></span></span></button>';
-    }
-    if (danger) html += '<div class="pf-list">' + danger + "</div>";
-    if ((state.overview.orgs || []).length) {
-      html += '<button type="button" class="pf-btn pf-btn--ghost" data-org="show-create">Создать ещё одну организацию</button>';
-    }
-    return html;
   }
 
   // «Показатели сотрудников»: включает владелец или админ; раздел «Люди» — руководителям отделов и админам.
@@ -367,7 +492,7 @@
     list += staticRow("Занято мест", "Место занимает участник с платным тарифом",
       '<span class="pf-row-val' + (used > seats ? " pf-status--err" : "") + '">' + used + " из " + seats + "</span>");
     inner += "<div>" + '<div class="pf-list">' + list + "</div>" +
-      (can.billing ? '<p class="pf-hint">Тариф каждому участнику — в его строке в списке участников.</p>' : "") + "</div>";
+      (can.billing ? '<p class="pf-hint">Тариф каждого человека — в его карточке: Участники → человек.</p>' : "") + "</div>";
     return group("Тариф", "billing", inner);
   }
 
@@ -388,14 +513,14 @@
       (c.can_manage ? '<button type="button" class="pf-pay" data-org="credits-topup">Пополнить</button>' : "") + "</div></section>";
     var hint = c.can_manage
       ? '<p class="pf-hint">У каждого участника дневной лимит (по умолчанию ' + fmtNum(c.default_daily_limit) +
-        " кр). Сверх лимита Лео продолжает работать, кредиты списываются со счёта организации. Лимит и модели — в строке участника.</p>"
+        " кр). Сверх лимита Лео продолжает работать, кредиты списываются со счёта организации. Лимит и модели — в карточке участника.</p>"
       : "";
     return group("Кредиты ИИ", "credits", "<div>" + wallet + usageHtml(d) + hint + "</div>");
   }
 
   var MONTHS_IN = ["январе", "феврале", "марте", "апреле", "мае", "июне", "июле", "августе", "сентябре", "октябре", "ноябре", "декабре"];
 
-  // Расход сотрудников: итог за месяц и список «кто сколько потратил» (видит руководитель).
+  // Расход сотрудников: итог за месяц и список «кто сколько потратил» полосками (видит руководитель).
   function usageHtml(d) {
     var c = d.credits;
     var u = c && c.can_manage && c.usage;
@@ -408,17 +533,22 @@
       return { uid: uid, name: names[uid] || uid, month: Number(a.spent_month) || 0, today: Number(a.spent_today) || 0, over: Number(a.over_month) || 0 };
     }).filter(function (r) { return r.month > 0 || r.today > 0; });
     rows.sort(function (a, b) { return b.month - a.month; });
+    var max = rows.length ? Math.max(rows[0].month, 1) : 1;
     var head = staticRow("Потрачено в " + month, "≈ " + fmtNum(u.spent_month_rub) + " ₽ · сегодня " + fmtNum(u.spent_today) + " кр" +
         (u.over_month > 0 ? " · со счёта организации " + fmtNum(u.over_month) + " кр" : ""),
       '<span class="pf-row-val">' + fmtNum(u.spent_month) + " кр</span>");
     var list = rows.length
       ? rows.map(function (r) {
-          return staticRow(r.name, "сегодня " + fmtNum(r.today) + " кр" + (r.over > 0 ? " · сверх лимита за месяц " + fmtNum(r.over) : ""),
-            '<span class="pf-row-val">' + fmtNum(r.month) + " кр</span>");
+          var sub = "сегодня " + fmtNum(r.today) + " кр" + (r.over > 0 ? " · сверх лимита за месяц " + fmtNum(r.over) : "");
+          return '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text">' +
+            '<span class="pf-row-title">' + esc(r.name) + '</span><span class="pf-row-sub">' + esc(sub) + "</span>" +
+            '<span class="org-bar" aria-hidden="true"><span style="width:' + Math.max(2, Math.round(r.month / max * 100)) + '%"></span></span>' +
+            '</span><span class="pf-row-val">' + fmtNum(r.month) + " кр</span></span></div>";
         }).join("")
       : '<p class="pf-hint">В этом месяце сотрудники ещё не тратили кредиты.</p>';
     return '<div class="pf-list org-usage">' + head + list + "</div>";
   }
+
 
   function memberAi(d, m) {
     var c = d.credits;
@@ -432,14 +562,13 @@
     var allowed = ai.allowed_models;  // null — доступны все
     var all = !allowed;
     var uid = esc(m.user_id);
-    var spent = "Сегодня " + fmtNum(ai.spent_today) + " кр" + (ai.over_today > 0 ? ", сверх лимита " + fmtNum(ai.over_today) : "");
     var chips = '<button type="button" class="pf-chip' + (all ? " is-on" : "") + '" data-org-ai="all" data-uid="' + uid + '" aria-pressed="' + all + '">Все модели</button>' +
       models.map(function (x) {
         var on = all || allowed.indexOf(x.id) >= 0;
         return '<button type="button" class="pf-chip' + (on ? " is-on" : "") + '" data-org-ai="model" data-uid="' + uid + '" data-model="' + esc(x.id) +
           '" aria-pressed="' + on + '">' + esc(x.name) + "</button>";
       }).join("");
-    return staticRow("Дневной лимит, кр", spent,
+    return staticRow("Дневной лимит, кр", "",
         '<input type="number" class="pf-num-input org-num" data-org-ai="limit" data-uid="' + uid + '" min="0" max="1000000" step="50" inputmode="numeric" value="' +
         Math.round(ai.daily_limit) + '" aria-label="Дневной лимит, кредитов" />', "label") +
       '<div class="pf-field"><span class="pf-field-label">Доступные модели</span><div class="pf-chips org-chips">' + chips + "</div></div>" +
@@ -512,91 +641,224 @@
     return m.user_id === d.my_user_id ? name + " (вы)" : name;
   }
 
-  function memberSub(d, m, ai) {
-    if (m.status === "pending") return "Просится в организацию";
-    if (m.status === "invited") {
-      return "Приглашён — войдёт по почте" + (m.tg ? " или через @" + m.tg + " в Telegram" : "") + " · " + planLabel(d, m.plan);
-    }
+  // В каких отделах и командах человек: [{g, team, lead}] — команда внутри отдела или сам отдел.
+  function memberGroups(d, uid) {
+    var out = [];
+    (d.groups || []).forEach(function (g) {
+      if (g.member_ids.indexOf(uid) >= 0 || g.lead_user_id === uid) out.push({ g: g, team: null, lead: g.lead_user_id === uid });
+      g.teams.forEach(function (t) {
+        if (t.member_ids.indexOf(uid) >= 0) out.push({ g: g, team: t, lead: false });
+      });
+    });
+    return out;
+  }
+
+  function groupLabel(x) {
+    return x.team ? x.g.name + " · " + x.team.name : x.g.name;
+  }
+
+  // Короткая подпись в списке: роль (кроме обычного участника) и отдел; почта — если отделов нет.
+  function memberLine(d, m) {
+    if (m.status === "pending") return m.email || "Просится в организацию";
+    if (m.status === "invited") return "Приглашён" + (m.tg ? " · @" + m.tg : "") + " — ждём входа";
     var parts = [];
-    if (m.email && m.email !== m.name) parts.push(m.email);
-    if (m.username || m.tg) parts.push("@" + (m.username || m.tg));
-    parts.push(ROLE_LABEL[m.role] || "");
-    if (m.guest) parts.push("гость");
-    parts.push(planLabel(d, m.plan));
-    if (ai) parts.push("лимит " + fmtNum(ai.daily_limit) + " кр" + (ai.spent_month != null ? " · за месяц " + fmtNum(ai.spent_month) : ""));
+    if (m.role !== "member") parts.push(ROLE_LABEL[m.role]);
+    var gs = m.user_id ? memberGroups(d, m.user_id) : [];
+    if (gs.length) parts.push(groupLabel(gs[0]) + (gs.length > 1 ? " +" + (gs.length - 1) : ""));
+    else parts.push(m.email && m.email !== m.name ? m.email : m.username || m.tg ? "@" + (m.username || m.tg) : ROLE_LABEL[m.role]);
     return parts.filter(Boolean).join(" · ");
   }
 
-  // Участник — строка с аватаром; у руководителя строка раскрывается: роль, тариф, лимит, модели, исключить.
-  function memberHtml(d, m) {
+  function avatarHtml(d, m, big) {
+    var name = memberName(d, m).replace(/ \(вы\)$/, "");
+    var cls = "pf-avatar" + (big ? " org-avatar-big" : "") + (m.status === "invited" ? " org-avatar--invited" : "") + (m.user_id === d.my_user_id ? " org-avatar--me" : "");
+    return '<span class="' + cls + '" aria-hidden="true">' + esc(initials(name)) + "</span>";
+  }
+
+  function tag(text, kind) {
+    return '<span class="org-tag org-tag--' + kind + '">' + esc(text) + "</span>";
+  }
+
+  // Участник открывается своей карточкой, если руководителю там есть что менять.
+  function memberCanEdit(d, m) {
     var can = d.can || {};
     var me = d.org.my_role;
     var ai = memberAi(d, m);
-    var name = memberName(d, m);
-    var avatar = '<span class="pf-avatar" aria-hidden="true">' + esc(initials(name.replace(/ \(вы\)$/, ""))) + "</span>";
-    var sub = memberSub(d, m, ai);
-    if (m.status === "pending") {
-      var acts = can.approve
-        ? '<span class="org-actions"><button type="button" class="pf-link pf-link--muted" data-org="reject" data-uid="' + esc(m.user_id) + '">Отклонить</button>' +
-          '<button type="button" class="pf-link" data-org="approve" data-uid="' + esc(m.user_id) + '">Принять</button></span>'
-        : "";
-      return '<div class="pf-row pf-row--static">' + avatar + '<span class="pf-row-body">' + textHtml(name, sub) + acts + "</span></div>";
-    }
-    var canRole = m.status === "active" && can.set_role && m.user_id !== d.my_user_id;
-    var canRemove = can.remove_member && m.role !== "owner" && (m.role !== "admin" || me === "owner");
-    var aiEdit = ai && d.credits.can_manage;
-    var canGuest = can.invite && m.status === "active" && m.role === "member";
-    if (!(canRole || can.billing || canRemove || aiEdit || canGuest)) {
-      return '<div class="pf-row pf-row--static">' + avatar + '<span class="pf-row-body">' + textHtml(name, sub) + "</span></div>";
-    }
-    var open = state.openMember === String(m.id);
-    var html = '<button type="button" class="pf-row" data-org="member-toggle" data-mid="' + m.id + '" aria-expanded="' + open + '">' + avatar +
-      '<span class="pf-row-body">' + textHtml(name, sub) + '<span class="pf-chev' + (open ? " pf-chev--open" : "") + '" aria-hidden="true">›</span></span></button>';
-    if (!open) return html;
-    var edit = "";
-    if (canRole) {
-      edit += staticRow("Роль", "", selectHtml(["owner", "admin", "member"].map(function (r) { return [r, ROLE_LABEL[r]]; }), m.role,
-        'data-org="role" data-uid="' + esc(m.user_id) + '" aria-label="Роль"'), "label");
-    }
-    if (can.billing) {
-      edit += staticRow("Тариф", "", planSelect(d, m.plan, 'data-org="member-plan" data-mid="' + m.id + '" aria-label="Тариф участника"'), "label");
-    }
-    if (aiEdit) edit += memberAiHtml(d, m, ai);
-    if (canGuest) {
-      edit += '<label class="pf-row pf-row--static"><span class="pf-row-body">' +
-        textHtml("Гость", "Подрядчик или клиент: не видит открытое «Всем», только своё и своих отделов") +
-        '<input type="checkbox" class="pf-switch" data-org="guest" data-mid="' + m.id + '"' + (m.guest ? " checked" : "") + ' aria-label="Гость" /></span></label>';
-    }
-    if (canRemove) {
-      edit += '<button type="button" class="pf-row" data-org="remove" data-mid="' + m.id + '"><span class="pf-row-body">' +
-        textHtml(m.status === "invited" ? "Отозвать приглашение" : "Исключить из организации", "", "pf-link--danger") + "</span></button>";
-    }
-    return html + '<div class="org-member-edit">' + edit + "</div>";
+    return {
+      role: m.status === "active" && can.set_role && m.user_id !== d.my_user_id,
+      plan: !!can.billing,
+      remove: can.remove_member && m.role !== "owner" && (m.role !== "admin" || me === "owner"),
+      ai: !!(ai && d.credits.can_manage),
+      guest: can.invite && m.status === "active" && m.role === "member",
+      groups: !!(m.user_id && m.status === "active" && (d.groups || []).some(function (g) { return g.can_manage; })),
+    };
+  }
+
+  function memberRowHtml(d, m) {
+    var ai = memberAi(d, m);
+    var right = "";
+    if (m.guest) right += tag("гость", "guest");
+    if (ai && ai.over_today > 0) right += tag("лимит", "warn");
+    if (m.status === "invited") right += tag("ждём", "muted");
+    var body = '<span class="pf-row-body">' + textHtml(memberName(d, m), memberLine(d, m)) + right;
+    return '<button type="button" class="pf-row" data-org="nav" data-view="member" data-id="' + m.id + '">' + avatarHtml(d, m) + body +
+      '<span class="pf-chev" aria-hidden="true">›</span></span></button>';
+  }
+
+  var MEMBER_FILTERS = [
+    ["all", "Все", function () { return true; }],
+    ["admins", "Админы", function (m) { return m.status === "active" && m.role !== "member"; }],
+    ["invited", "Приглашены", function (m) { return m.status === "invited"; }],
+    ["guests", "Гости", function (m) { return !!m.guest; }],
+  ];
+
+  function memberMatches(d, m, q) {
+    if (!q) return true;
+    var hay = [memberName(d, m), m.email, m.username, m.tg, m.invited_key].join(" ").toLowerCase();
+    return hay.indexOf(q) >= 0;
+  }
+
+  function membersListHtml(d) {
+    var f = MEMBER_FILTERS.filter(function (x) { return x[0] === state.memberFilter; })[0] || MEMBER_FILTERS[0];
+    var q = String(state.memberQuery || "").trim().toLowerCase();
+    var list = (d.members || []).filter(function (m) { return m.status !== "pending" && f[2](m) && memberMatches(d, m, q); });
+    var rows = list.map(function (m) { return memberRowHtml(d, m); }).join("");
+    return group((f[0] === "all" ? "В организации" : f[1]) + " · " + list.length, "members",
+      rows ? '<div class="pf-list">' + rows + "</div>" : '<p class="pf-hint">Никого не нашлось.</p>');
   }
 
   function membersHtml(d) {
     var can = d.can || {};
-    var rows = (d.members || []).map(function (m) { return memberHtml(d, m); }).join("");
-    var add = "";
-    if (can.invite) {
-      var opts = contactOptions(d);
-      if (opts) {
-        add += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
-          '<span class="pf-row-body"><select class="pf-input" data-org="add-contact" aria-label="Добавить из контактов">' +
-          '<option value="">Добавить из контактов…</option>' + opts + "</select></span></div>";
-      }
-      add += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.mail + "</span>" +
-        '<span class="pf-row-body org-add-row"><input type="email" class="pf-input" id="org-add-key" placeholder="Рабочая почта (обязательно)" autocapitalize="off" spellcheck="false" aria-label="Рабочая почта участника" />' +
-        '<input type="text" class="pf-input" id="org-add-tg" placeholder="@ник в Telegram" autocapitalize="off" spellcheck="false" aria-label="Ник в Telegram (необязательно)" />' +
-        '<button type="button" class="pf-link" data-org="add">Добавить</button></span></div>' +
-        '<p class="pf-hint">Участник входит по почте — пришлём ему письмо. С ником бот узнает его сразу, как он нажмёт Start.</p>';
+    var active = (d.members || []).filter(function (m) { return m.status !== "pending"; });
+    var html = '<label class="pf-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4-4" /></svg>' +
+      '<input type="search" id="org-member-q" placeholder="Имя, почта или ник" aria-label="Найти участника" value="' + esc(state.memberQuery || "") + '" /></label>';
+    var chips = MEMBER_FILTERS.map(function (x) {
+      var n = active.filter(x[2]).length;
+      if (x[0] !== "all" && !n) return "";
+      var on = (state.memberFilter || "all") === x[0];
+      return '<button type="button" class="pf-chip org-filter' + (on ? " is-on" : "") + '" data-org="member-filter" data-filter="' + x[0] + '" aria-pressed="' + on + '">' + esc(x[1]) + " " + n + "</button>";
+    }).join("");
+    html += '<div class="pf-chips org-filters">' + chips + "</div>";
+    var pend = pendingMembers(d);
+    if (pend.length) {
+      var prow = pend.map(function (m) {
+        var acts = can.approve
+          ? '<span class="org-actions"><button type="button" class="pf-link pf-link--muted" data-org="reject" data-uid="' + esc(m.user_id) + '">Отклонить</button>' +
+            '<button type="button" class="pf-link" data-org="approve" data-uid="' + esc(m.user_id) + '">Принять</button></span>'
+          : "";
+        return '<div class="pf-row pf-row--static">' + avatarHtml(d, m) + '<span class="pf-row-body">' + textHtml(memberName(d, m), memberLine(d, m)) + acts + "</span></div>";
+      }).join("");
+      html += group("Просятся в организацию · " + pend.length, "", '<div class="pf-list">' + prow + "</div>");
     }
-    return group("Участники", "members", "<div>" + '<div class="pf-list">' + rows + add + "</div>" +
-      (can.set_role ? '<p class="pf-hint">Админ приглашает и исключает участников и настраивает выпуск «Рынок». Владелец ещё меняет название и адрес, назначает админов. Назначить другого владельцем — передать владение.</p>' : "") +
-      "</div>");
+    html += '<div id="org-members-list">' + membersListHtml(d) + "</div>";
+    if (can.invite) html += '<button type="button" class="pf-btn" data-org="nav" data-view="invite">Пригласить</button>';
+    if (can.set_role) {
+      html += '<p class="pf-hint">Админ приглашает и исключает участников и настраивает выпуск «Рынок». Владелец ещё меняет название и адрес, назначает админов. Назначить другого владельцем — передать владение.</p>';
+    }
+    return html;
   }
 
-  // Участника добавляем только по почте: контакт без почты в список не попадает. Ник — подсказка боту.
+  // Карточка участника: доступ, тариф, ИИ, отделы, исключить.
+  function memberCardHtml(d, m) {
+    var ai = memberAi(d, m);
+    var e = memberCanEdit(d, m);
+    var contacts = [];
+    if (m.email && m.email !== m.name) contacts.push(m.email);
+    if (m.username || m.tg) contacts.push("@" + (m.username || m.tg));
+    var tags = tag(m.status === "invited" ? "Приглашён" : m.status === "pending" ? "Заявка" : ROLE_LABEL[m.role], "role");
+    if (m.guest) tags += tag("Гость", "guest");
+    var gs = m.user_id ? memberGroups(d, m.user_id) : [];
+    gs.forEach(function (x) { tags += tag(groupLabel(x) + (x.lead ? " · руководитель" : ""), "group"); });
+    var html = '<div class="org-person">' + avatarHtml(d, m, true) + '<div class="org-person-text">' +
+      '<p class="org-head-title">' + esc(memberName(d, m)) + "</p>" +
+      (contacts.length ? '<p class="org-head-sub">' + esc(contacts.join(" · ")) + "</p>" : "") +
+      '<p class="org-tags">' + tags + "</p></div></div>";
+    if (m.status === "pending") return html + '<p class="pf-hint">Человек просится в организацию — принять или отклонить можно в списке участников.</p>';
+
+    var acc = "";
+    if (e.role) {
+      acc += staticRow("Роль", "", selectHtml(["owner", "admin", "member"].map(function (r) { return [r, ROLE_LABEL[r]]; }), m.role,
+        'data-org="role" data-uid="' + esc(m.user_id) + '" aria-label="Роль"'), "label");
+    } else {
+      acc += staticRow("Роль", "", '<span class="pf-row-val">' + esc(ROLE_LABEL[m.role] || "") + "</span>");
+    }
+    if (e.guest) {
+      acc += '<label class="pf-row pf-row--static"><span class="pf-row-body">' +
+        textHtml("Гость", "Подрядчик или клиент: не видит открытое «Всем», только своё и своих отделов") +
+        '<input type="checkbox" class="pf-switch" data-org="guest" data-mid="' + m.id + '"' + (m.guest ? " checked" : "") + ' aria-label="Гость" /></span></label>';
+    }
+    if (e.plan) {
+      acc += staticRow("Тариф", "", planSelect(d, m.plan, 'data-org="member-plan" data-mid="' + m.id + '" aria-label="Тариф участника"'), "label");
+    } else {
+      acc += staticRow("Тариф", "", '<span class="pf-row-val">' + esc(planLabel(d, m.plan)) + "</span>");
+    }
+    html += group("Доступ", "members", '<div class="pf-list">' + acc + "</div>");
+
+    if (ai) {
+      var limit = Math.max(Number(ai.daily_limit) || 0, 1);
+      var spent = Number(ai.spent_today) || 0;
+      var within = Math.min(spent, limit);
+      var bar = '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text">' +
+        '<span class="pf-row-title">Сегодня ' + fmtNum(spent) + " из " + fmtNum(ai.daily_limit) + " кр</span>" +
+        '<span class="org-bar org-bar--wide" aria-hidden="true"><span style="width:' + Math.round(within / Math.max(spent, limit) * 100) + '%"></span>' +
+        (spent > limit ? '<span class="org-bar-over" style="width:' + Math.round((spent - limit) / spent * 100) + '%"></span>' : "") + "</span>" +
+        (ai.over_today > 0 ? '<span class="pf-row-sub org-warn">' + fmtNum(ai.over_today) + " кр сверх лимита — со счёта организации</span>" : "") +
+        "</span></span></div>";
+      var aiList = bar;
+      if (e.ai) aiList += memberAiHtml(d, m, ai);
+      else aiList += staticRow("Дневной лимит", "", '<span class="pf-row-val">' + fmtNum(ai.daily_limit) + " кр</span>");
+      if (ai.spent_month != null) aiList += staticRow("За месяц", "", '<span class="pf-row-val">' + fmtNum(ai.spent_month) + " кр</span>");
+      html += group("ИИ", "", '<div class="pf-list org-ai">' + aiList + "</div>");
+    }
+
+    if (m.user_id && m.status === "active" && ((d.groups || []).length)) {
+      var rows = gs.map(function (x) {
+        return navRow("dept", x.g.id, groupLabel(x), x.lead ? "Руководитель отдела" : x.team ? "Участник команды" : "В отделе напрямую", "");
+      }).join("");
+      if (e.groups) {
+        var opts = [];
+        (d.groups || []).forEach(function (g) {
+          if (!g.can_manage) return;
+          if (g.member_ids.indexOf(m.user_id) < 0) opts.push([g.id, g.name]);
+          g.teams.forEach(function (t) { if (t.member_ids.indexOf(m.user_id) < 0) opts.push([t.id, g.name + " · " + t.name]); });
+        });
+        if (opts.length) {
+          rows += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+            '<span class="pf-row-body"><select class="pf-input" data-org="member-group-add" data-uid="' + esc(m.user_id) + '" aria-label="Добавить в отдел или команду">' +
+            '<option value="">Добавить в отдел или команду…</option>' +
+            opts.map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + "</option>"; }).join("") + "</select></span></div>";
+        }
+      }
+      if (rows) html += group("Отделы и команды", "groups", '<div class="pf-list">' + rows + "</div>");
+    }
+
+    if (e.remove) {
+      html += '<div class="pf-list"><button type="button" class="pf-row pf-row--danger" data-org="remove" data-mid="' + m.id + '"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' +
+        (m.status === "invited" ? "Отозвать приглашение" : "Исключить из организации") + "</span></span></span></button></div>";
+    }
+    return html;
+  }
+
+  // Пригласить: почта и ник, из контактов; ссылки и домен — отдельным разделом «Как вступают».
+  function inviteHtml(d) {
+    var can = d.can || {};
+    if (!can.invite) return '<p class="pf-hint">Приглашать участников могут владелец и админы.</p>';
+    var form = '<label class="pf-field"><span class="pf-field-label">Рабочая почта</span><input type="email" class="pf-input" id="org-add-key" placeholder="name@company.ru" autocapitalize="off" spellcheck="false" /></label>' +
+      '<label class="pf-field"><span class="pf-field-label">Ник в Telegram — по желанию</span><input type="text" class="pf-input" id="org-add-tg" placeholder="@ник" autocapitalize="off" spellcheck="false" /></label>';
+    var html = group("По почте", "members", "<div>" + '<div class="pf-list">' + form + "</div>" +
+      '<p class="pf-hint">Пришлём письмо со входом. С ником бот узнает человека, как только тот нажмёт Start.</p></div>');
+    html += '<button type="button" class="pf-btn" data-org="add">Отправить приглашение</button>';
+    var opts = contactOptions(d);
+    if (opts) {
+      html += group("Из контактов", "", '<div class="pf-list"><div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+        '<span class="pf-row-body"><select class="pf-input" data-org="add-contact" aria-label="Добавить из контактов">' +
+        '<option value="">Выбрать контакт…</option>' + opts + "</select></span></div></div>");
+    }
+    html += group("Другие способы", "", '<div class="pf-list">' + navRow("join", null, "Ссылка-приглашение и домен почты", "Для подрядчиков и коллег с рабочей почтой", "", ICO.link) + "</div>");
+    return html;
+  }
+
+
   // ---------- отделы и команды ----------
 
   function personName(d, uid) {
@@ -615,79 +877,106 @@
       "</select>";
   }
 
-  function peopleRows(d, g, manage) {
-    return g.member_ids.map(function (uid) {
-      var name = personName(d, uid);
-      var lead = g.lead_user_id === uid ? "руководитель" : "";
-      var del = manage ? delBtn('data-org="group-member-del" data-gid="' + g.id + '" data-uid="' + esc(uid) + '"', "Убрать " + name) : "";
-      return '<div class="pf-row pf-row--static"><span class="pf-avatar" aria-hidden="true">' + esc(initials(name)) + "</span>" +
-        '<span class="pf-row-body">' + textHtml(name, lead) + del + "</span></div>";
-    }).join("");
-  }
-
   function addPersonRow(d, g, label) {
     var sel = personSelect(d, g.member_ids, 'data-org="group-member-add" data-gid="' + g.id + '" aria-label="' + esc(label) + '"', label + "…");
     return sel ? '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
       '<span class="pf-row-body">' + sel + "</span></div>" : "";
   }
 
-  function teamHtml(d, dept, t) {
-    var sub = t.member_ids.length + " " + plural(t.member_ids.length, "участник", "участника", "участников");
-    var head = '<div class="pf-row pf-row--static"><span class="pf-row-body">' + textHtml(t.name, sub) +
-      (dept.can_manage ? delBtn('data-org="group-del" data-gid="' + t.id + '"', "Удалить команду") : "") + "</span></div>";
-    return '<div class="org-team">' + head + peopleRows(d, t, dept.can_manage) +
-      (dept.can_manage ? addPersonRow(d, t, "Добавить в команду") : "") + "</div>";
-  }
-
-  function deptHtml(d, g) {
-    var can = d.can || {};
+  function deptPeople(g) {
     var people = g.member_ids.slice();
     g.teams.forEach(function (t) { t.member_ids.forEach(function (u) { if (people.indexOf(u) < 0) people.push(u); }); });
-    var sub = [g.lead_user_id ? "руководитель " + personName(d, g.lead_user_id).replace(/ \(вы\)$/, "") : "",
-      people.length + " " + plural(people.length, "участник", "участника", "участников"),
-      g.teams.length ? g.teams.length + " " + plural(g.teams.length, "команда", "команды", "команд") : ""].filter(Boolean).join(" · ");
-    var open = state.openGroup === String(g.id);
-    var html = '<button type="button" class="pf-row" data-org="group-toggle" data-gid="' + g.id + '" aria-expanded="' + open + '">' +
-      '<span class="pf-row-body">' + textHtml(g.name, sub) + '<span class="pf-chev' + (open ? " pf-chev--open" : "") + '" aria-hidden="true">›</span></span></button>';
-    if (!open) return html;
-    var edit = "";
-    if (g.can_manage) {
-      edit += '<label class="pf-field"><span class="pf-field-label">Название отдела</span><input type="text" class="pf-input" data-org="group-name" data-gid="' + g.id + '" maxlength="60" value="' + esc(g.name) + '" /></label>';
+    return people;
+  }
+
+  function leadName(d, g) {
+    return g.lead_user_id ? personName(d, g.lead_user_id).replace(/ \(вы\)$/, "") : "";
+  }
+
+  // Отдел — карточкой: шапка ведёт в отдел, под ней команды веточкой.
+  function deptCardHtml(d, g) {
+    var n = deptPeople(g).length;
+    var sub = [leadName(d, g) || "Руководитель не назначен", n + " " + plural(n, "человек", "человека", "человек")].join(" · ");
+    var html = '<button type="button" class="pf-row org-dept-head" data-org="nav" data-view="dept" data-id="' + g.id + '">' +
+      '<span class="org-tile" aria-hidden="true">' + esc(initials(g.name).charAt(0)) + "</span>" +
+      '<span class="pf-row-body">' + textHtml(g.name, sub, "org-dept-title") + '<span class="pf-chev" aria-hidden="true">›</span></span></button>';
+    if (g.teams.length) {
+      html += '<div class="org-tree">' + g.teams.map(function (t) {
+        return '<button type="button" class="org-tree-row" data-org="nav" data-view="dept" data-id="' + g.id + '">' +
+          '<span class="org-tree-name">' + esc(t.name) + '</span><span class="org-tree-count">' + t.member_ids.length + "</span></button>";
+      }).join("") + "</div>";
     }
-    if (can.edit_org || can.invite) {
-      var leadOpts = [["", "Не назначен"]].concat((d.members || []).filter(function (m) { return m.status === "active"; })
-        .map(function (m) { return [m.user_id, memberName(d, m)]; }));
-      edit += staticRow("Руководитель", "Управляет составом отдела и его командами", selectHtml(leadOpts, g.lead_user_id || "",
-        'data-org="group-lead" data-gid="' + g.id + '" aria-label="Руководитель отдела"'), "label");
-    }
-    edit += '<p class="pf-group-title org-sub-title">В отделе напрямую</p>' + peopleRows(d, g, g.can_manage) +
-      (g.can_manage ? addPersonRow(d, g, "Добавить в отдел") : "");
-    edit += '<p class="pf-group-title org-sub-title">Команды</p>' + g.teams.map(function (t) { return teamHtml(d, g, t); }).join("");
-    if (g.can_manage) {
-      edit += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
-        '<span class="pf-row-body org-add-row"><input type="text" class="pf-input" id="org-team-new-' + g.id + '" maxlength="60" placeholder="Новая команда, например «' + esc(g.name) + ' · бэкенд»" aria-label="Название команды" />' +
-        '<button type="button" class="pf-link" data-org="team-add" data-gid="' + g.id + '">Добавить</button></span></div>';
-    }
-    if (can.edit_org || can.invite) {
-      edit += '<button type="button" class="pf-row" data-org="group-del" data-gid="' + g.id + '" data-dept="1"><span class="pf-row-body">' +
-        textHtml("Удалить отдел", "", "pf-link--danger") + "</span></button>";
-    }
-    return html + '<div class="org-member-edit org-group-edit">' + edit + "</div>";
+    return '<div class="pf-list org-dept">' + html + "</div>";
   }
 
   function groupsHtml(d) {
     var can = d.can || {};
     var groups = d.groups || [];
-    if (!groups.length && !can.invite) return "";
-    var rows = groups.map(function (g) { return deptHtml(d, g); }).join("");
+    var html = '<p class="pf-hint org-lead-hint">Отдел и его команды — кому открывать разделы базы знаний и сейфы. Открытое отделу видят все его команды, открытое команде — только она. «Все» — участники организации, кроме гостей.</p>';
+    if (groups.length) html += '<div class="org-depts">' + groups.map(function (g) { return deptCardHtml(d, g); }).join("") + "</div>";
+    else if (!can.invite) html += '<p class="pf-hint">Отделов пока нет.</p>';
     if (can.invite) {
-      rows += '<div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
-        '<span class="pf-row-body org-add-row"><input type="text" class="pf-input" id="org-dept-new" maxlength="60" placeholder="Новый отдел, например «ОКК»" aria-label="Название отдела" />' +
-        '<button type="button" class="pf-link" data-org="dept-add">Добавить</button></span></div>';
+      html += group("Новый отдел", "groups", '<div class="pf-list"><div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+        '<span class="pf-row-body org-add-row"><input type="text" class="pf-input" id="org-dept-new" maxlength="60" placeholder="Например, «ОКК»" aria-label="Название отдела" />' +
+        '<button type="button" class="pf-link" data-org="dept-add">Добавить</button></span></div></div>');
     }
-    return group("Отделы и команды", "groups", "<div>" + '<div class="pf-list">' + rows + "</div>" +
-      '<p class="pf-hint">Кому открыт раздел базы знаний или запись сейфа. Открытое отделу видят все его команды, открытое команде — только она. «Все» — участники организации, кроме гостей.</p></div>');
+    return html;
   }
+
+  // Человек в отделе или команде; нажатие ведёт в его карточку.
+  function personRows(d, g, manage, leadId) {
+    return g.member_ids.map(function (uid) {
+      var m = (d.members || []).filter(function (x) { return x.user_id === uid; })[0];
+      var name = personName(d, uid);
+      var sub = leadId === uid ? "руководитель" : "";
+      var del = manage ? delBtn('data-org="group-member-del" data-gid="' + g.id + '" data-uid="' + esc(uid) + '"', "Убрать " + name) : "";
+      var av = '<span class="pf-avatar" aria-hidden="true">' + esc(initials(name.replace(/ \(вы\)$/, ""))) + "</span>";
+      if (!m) return '<div class="pf-row pf-row--static">' + av + '<span class="pf-row-body">' + textHtml(name, sub) + del + "</span></div>";
+      return '<div class="pf-row pf-row--static org-person-row">' + av + '<span class="pf-row-body">' +
+        '<button type="button" class="org-person-link" data-org="nav" data-view="member" data-id="' + m.id + '">' + textHtml(name, sub) + "</button>" + del + "</span></div>";
+    }).join("");
+  }
+
+  function deptHtml(d, g) {
+    var can = d.can || {};
+    var html = "";
+    var head = "";
+    if (g.can_manage) {
+      head += '<label class="pf-field"><span class="pf-field-label">Название отдела</span><input type="text" class="pf-input" data-org="group-name" data-gid="' + g.id + '" maxlength="60" value="' + esc(g.name) + '" /></label>';
+    }
+    if (can.edit_org || can.invite) {
+      var leadOpts = [["", "Не назначен"]].concat((d.members || []).filter(function (m) { return m.status === "active"; })
+        .map(function (m) { return [m.user_id, memberName(d, m)]; }));
+      head += staticRow("Руководитель", "Управляет составом отдела и его командами", selectHtml(leadOpts, g.lead_user_id || "",
+        'data-org="group-lead" data-gid="' + g.id + '" aria-label="Руководитель отдела"'), "label");
+    } else {
+      head += staticRow("Руководитель", "", '<span class="pf-row-val">' + esc(leadName(d, g) || "Не назначен") + "</span>");
+    }
+    html += group("Отдел", "groups", '<div class="pf-list">' + head + "</div>");
+
+    g.teams.forEach(function (t) {
+      var del = g.can_manage ? '<button type="button" class="pf-link pf-link--muted org-team-del" data-org="group-del" data-gid="' + t.id + '">Удалить команду</button>' : "";
+      var body = personRows(d, t, g.can_manage, null) + (g.can_manage ? addPersonRow(d, t, "Добавить в «" + t.name + "»") : "");
+      html += '<div class="pf-group"><p class="pf-group-title org-team-title"><span>Команда · ' + esc(t.name) + " · " + t.member_ids.length + "</span>" + del + "</p>" +
+        (body ? '<div class="pf-list">' + body + "</div>" : '<p class="pf-hint">В команде пока никого.</p>') + "</div>";
+    });
+
+    var direct = personRows(d, g, g.can_manage, g.lead_user_id) + (g.can_manage ? addPersonRow(d, g, "Добавить в отдел") : "");
+    html += group((g.teams.length ? "Без команды" : "Люди") + " · " + g.member_ids.length, "",
+      "<div>" + (direct ? '<div class="pf-list">' + direct + "</div>" : '<p class="pf-hint">Пока никого.</p>') +
+      '<p class="pf-hint">Открытое отделу видят все его команды, открытое команде — только она.</p></div>');
+
+    if (g.can_manage) {
+      html += group("Новая команда", "", '<div class="pf-list"><div class="pf-row pf-row--static"><span class="pf-ico pf-add-ico" aria-hidden="true">' + ICO.plus + "</span>" +
+        '<span class="pf-row-body org-add-row"><input type="text" class="pf-input" id="org-team-new-' + g.id + '" maxlength="60" placeholder="Например, «' + esc(g.name) + ' · бэкенд»" aria-label="Название команды" />' +
+        '<button type="button" class="pf-link" data-org="team-add" data-gid="' + g.id + '">Добавить</button></span></div></div>');
+    }
+    if (can.edit_org || can.invite) {
+      html += '<div class="pf-list"><button type="button" class="pf-row pf-row--danger" data-org="group-del" data-gid="' + g.id + '" data-dept="1"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Удалить отдел</span></span></span></button></div>';
+    }
+    return html;
+  }
+
 
   function addGroup(name, parentId) {
     var id = currentId();
@@ -695,7 +984,7 @@
     if (!name) return;
     return autosave("groups", async function () {
       var d = await api("/" + id + "/groups", json("POST", { name: name, parent_id: parentId || null }));
-      if (!parentId && d.created) state.openGroup = String(d.created.id);
+      if (!parentId && d.created) state.view = { name: "dept", id: String(d.created.id) };
       return d;
     });
   }
@@ -857,9 +1146,16 @@
       if (window.LeoPeople) window.LeoPeople.open(id);
       return;
     }
-    if (kind === "group-toggle") {
-      var gid = btn.getAttribute("data-gid");
-      state.openGroup = state.openGroup === gid ? null : gid;
+    if (kind === "nav") {
+      var cur = view();
+      var target = btn.getAttribute("data-view");
+      go(target, btn.getAttribute("data-id"));
+      // Карточка человека, открытая из отдела, возвращает в отдел.
+      if (target === "member" && cur.name === "dept") state.view.from = { name: "dept", id: cur.id };
+      return;
+    }
+    if (kind === "member-filter") {
+      state.memberFilter = btn.getAttribute("data-filter") || "all";
       render();
       return;
     }
@@ -880,17 +1176,12 @@
         return api("/" + id + "/groups/" + btn.getAttribute("data-gid") + "/members/" + btn.getAttribute("data-uid"), { method: "DELETE" });
       });
     }
-    if (kind === "member-toggle") {
-      var mid = btn.getAttribute("data-mid");
-      state.openMember = state.openMember === mid ? null : mid;
-      render();
-      return;
-    }
     if (kind === "create") {
       return act(async function () {
         var name = (document.getElementById("org-new-name") || {}).value || "";
         var domEl = document.getElementById("org-new-domain");
         await api("", json("POST", { name: name.trim(), domain: domEl ? domEl.value : "" }));
+        state.view = null;
         toast("Организация создана");
         await reload();
       });
@@ -908,11 +1199,6 @@
           setSaved("market", "err", errText(e));
         }
       });
-    }
-    if (kind === "show-create") {
-      state.detail = null;
-      render();
-      return;
     }
     if (kind === "join") {
       return act(async function () {
@@ -1001,6 +1287,7 @@
     if (kind === "switch") {
       return act(async function () {
         await api("/" + el.value + "/current", { method: "POST" });
+        state.view = null;
         await reload();
       });
     }
@@ -1016,6 +1303,13 @@
       var gId = el.getAttribute("data-gid");
       return autosave("groups", function () {
         return api("/" + id + "/groups/" + gId + "/members", json("POST", { user_id: gUid }));
+      });
+    }
+    if (kind === "member-group-add" && el.value) {
+      var mgUid = Number(el.getAttribute("data-uid"));
+      var mgGid = el.value;
+      return autosave("groups", function () {
+        return api("/" + id + "/groups/" + mgGid + "/members", json("POST", { user_id: mgUid }));
       });
     }
     if (kind === "group-lead") {
@@ -1132,6 +1426,12 @@
   }
 
   function onInput(e) {
+    if (e.target.id === "org-member-q") {
+      state.memberQuery = e.target.value;
+      var box = document.getElementById("org-members-list");
+      if (box && state.detail) box.innerHTML = membersListHtml(state.detail);
+      return;
+    }
     if (e.target.id !== "org-slug") return;
     var val = e.target.value.trim().toLowerCase();
     clearTimeout(state.slugTimer);
@@ -1210,7 +1510,7 @@
     var peopleBtn = document.getElementById("profile-people-open");
     if (peopleBtn) peopleBtn.addEventListener("click", openPeopleFromProfile);
     var back = document.getElementById("profile-org-back");
-    if (back) back.addEventListener("click", function () { app().profileScreen("main"); });
+    if (back) back.addEventListener("click", goBack);
     var el = root();
     if (el) {
       el.addEventListener("click", onClick);

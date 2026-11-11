@@ -17,20 +17,6 @@
 .pf-num-input.org-num { width: 5.5rem; }
 .pf-num-input.org-time { width: auto; }
 
-/* Раскрытая строка участника: настройки под ней, со сдвигом под аватар */
-.org-member-edit {
-  border-top: 1px solid var(--border);
-  background: var(--surface-muted);
-}
-.org-member-edit .pf-row,
-.org-member-edit .pf-field { padding-left: calc(1rem + 2.1rem + 0.75rem); }
-.org-member-edit + .pf-row .pf-row-body { border-top: 1px solid var(--border); }
-.org-member-edit > .pf-row:first-child .pf-row-body { border-top: 0; }
-.org-member-edit .pf-field { border-top: 1px solid var(--border); }
-.org-member-edit button.pf-row:hover { background: var(--surface); }
-.org-chips { margin-top: 0.35rem; }
-.org-chips .pf-chip { padding: 0.3rem 0.7rem; font-size: 0.8125rem; }
-
 /* Счёт организации в pf-wallet */
 .org-wallet-sub { flex: 1; min-width: 0; font-size: 0.8125rem; color: var(--text-secondary); }
 
@@ -46,11 +32,6 @@
 /* Экран без организации */
 .org-empty { margin-bottom: 0.25rem; }
 
-@media (max-width: 420px) {
-  .org-member-edit .pf-row,
-  .org-member-edit .pf-field { padding-left: 1rem; }
-}
-
 /* «Поделиться контактом»: получатели, которых ещё нет в Орбите */
 .contact-share-off { opacity: 0.5; cursor: default; }
 
@@ -59,12 +40,165 @@
 .org-add-row #org-add-key { flex: 1 1 14rem; min-width: 0; }
 .org-add-row #org-add-tg { flex: 1 1 8rem; min-width: 0; }
 
-/* Отделы и команды: раскрытый отдел без аватара — сдвиг меньше; команды — блоком с отступом */
-.org-group-edit .pf-row,
-.org-group-edit .pf-field { padding-left: 1.75rem; }
-.org-group-edit .org-team .pf-row { padding-left: 2.75rem; }
-.org-group-edit .org-team > .pf-row:first-child { padding-left: 1.75rem; }
-.org-group-edit .org-team > .pf-row:first-child .pf-row-title { font-weight: 600; }
-.org-sub-title { margin: 0; padding: 0.75rem 1rem 0.25rem 1.75rem; border-top: 1px solid var(--border); }
-.org-group-edit .org-add-row .pf-input { flex: 1 1 12rem; min-width: 0; }
-.org-group-edit .pf-add-select .pf-input { width: 100%; }
+/* ---- Экраны организации (с 2026-11-11): главная-оглавление и разделы ---- */
+
+/* Шапка организации и карточка человека: логотип/аватар, название, подпись */
+.org-head,
+.org-person {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.org-head { flex-direction: column; text-align: center; gap: 0.4rem; padding-top: 0.25rem; }
+.org-head-text,
+.org-person-text { display: grid; gap: 0.2rem; min-width: 0; }
+.org-head-title { margin: 0; font-size: 1.25rem; font-weight: 700; line-height: 1.25; }
+.org-head-sub { margin: 0; font-size: 0.8125rem; color: var(--text-secondary); overflow-wrap: anywhere; }
+.org-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.25rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8125rem;
+  color: var(--accent);
+  background: var(--surface);
+  cursor: pointer;
+}
+.org-switch svg { width: 0.8rem; height: 0.8rem; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.org-switch select { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.org-switch:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pf-avatar.org-avatar-big { width: 3.5rem; height: 3.5rem; font-size: 1.1rem; }
+.pf-avatar.org-avatar--me { color: var(--on-accent); background: var(--accent); }
+.pf-avatar.org-avatar--invited { border: 1px dashed var(--border-strong, var(--border)); color: var(--text-secondary); background: var(--surface-muted); }
+
+/* Заявки на вступление — плашка на главной */
+.org-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-lg, 12px);
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--accent-subtle);
+  cursor: pointer;
+}
+.org-banner .pf-ico { color: var(--on-accent); background: var(--accent); }
+.org-banner .pf-row-title { font-weight: 600; }
+.org-banner-go { flex: none; font-size: 0.875rem; font-weight: 600; color: var(--accent); }
+.org-home-top { display: grid; gap: 1rem; }
+.org-home-grid { display: grid; gap: 1.25rem; }
+
+/* Метки в строках и в карточке */
+.org-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.3rem 0 0; }
+.org-tag {
+  flex: none;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.org-tag--role { color: var(--accent); background: var(--accent-muted); }
+.org-tag--group,
+.org-tag--guest { color: var(--violet-text); background: var(--violet-muted); }
+.org-tag--warn { color: var(--ui-due-fg); background: var(--ui-due-bg); }
+.org-tag--muted { color: var(--text-secondary); background: var(--surface-muted); }
+
+/* Поиск и фильтры участников */
+.org-filters .pf-chip.is-on::before { content: none; }
+.org-filters .pf-chip { padding: 0.3rem 0.75rem; font-size: 0.8125rem; }
+
+/* Полоски расхода кредитов */
+.org-bar {
+  display: flex;
+  height: 0.3rem;
+  margin-top: 0.35rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-muted);
+}
+.org-bar > span { background: var(--accent); }
+.org-bar > .org-bar-over { background: var(--warning); }
+.org-bar--wide { height: 0.45rem; }
+.org-warn.pf-row-sub { white-space: normal; color: var(--warning-text); }
+
+/* Отделы: карточка с плиткой-буквой и командами веточкой */
+.org-depts { display: grid; gap: 0.85rem; }
+.org-tile {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: var(--radius-sm, 8px);
+  font-weight: 700;
+  color: var(--violet-text);
+  background: var(--violet-muted);
+}
+.org-dept-title { font-weight: 600; }
+.org-tree {
+  display: grid;
+  margin: 0 1rem 0.75rem 2.05rem;
+  border-left: 2px solid var(--border);
+}
+.org-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0 0.45rem 0.85rem;
+  border: 0;
+  font: inherit;
+  font-size: 0.9375rem;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  cursor: pointer;
+}
+.org-tree-row:hover .org-tree-name { color: var(--accent); }
+.org-tree-name { flex: 1; min-width: 0; }
+.org-tree-count { font-size: 0.8125rem; color: var(--text-secondary); }
+.org-lead-hint { margin: 0; }
+.org-team-title { justify-content: space-between; }
+.org-team-del.pf-link { font-size: 0.75rem; font-weight: 500; text-transform: none; letter-spacing: 0; color: var(--text-secondary); }
+
+/* Человек в отделе: имя ведёт в карточку */
+.org-person-link {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  cursor: pointer;
+}
+.org-person-link:hover .pf-row-title { color: var(--accent); }
+
+/* Десктоп: главная — как Профиль, сеткой карточек; разделы — обычной колонкой подэкрана */
+@media (min-width: 960px) {
+  .org-screen.org-view-home { max-width: 68rem; }
+  .org-view-home .org-home-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; }
+  .org-view-home .org-head {
+    flex-direction: row;
+    text-align: left;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg, 12px);
+    background: var(--surface);
+  }
+  .org-view-home .org-head-text { flex: 1; }
+  .org-view-home .org-switch { flex: none; margin-top: 0; }
+  .org-view-home .org-home-top > .org-head:only-child { grid-column: 1 / -1; max-width: calc(50% - 0.5rem); }
+  .org-home-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 1rem; }
+  .org-depts { grid-template-columns: minmax(0, 1fr); }
+}

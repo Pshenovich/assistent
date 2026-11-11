@@ -54229,6 +54229,28 @@
     scrollDiscussionToEnd();
   }
 
+  // Поле ввода очищаем сразу при отправке (сообщение уже видно в ленте); при ошибке — вернём текст.
+  function takeDiscussComposerDraft() {
+    var ed = noteGptEditor();
+    var input = document.getElementById("note-paie-reply-input");
+    var draft = { html: ed ? ed.innerHTML : "", value: input ? input.value : "" };
+    if (input) input.value = "";
+    clearGptComposer();
+    return draft;
+  }
+
+  function restoreDiscussComposerDraft(draft) {
+    if (!draft) return;
+    var ed = noteGptEditor();
+    if (ed && draft.html && gptComposerIsEmpty(ed)) {
+      ed.innerHTML = draft.html;
+      syncGptEditorEmpty(ed);
+      autosizeNoteComposer(ed);
+    }
+    var input = document.getElementById("note-paie-reply-input");
+    if (input && draft.value && !input.value) input.value = draft.value;
+  }
+
   function markOptimisticUserSent() {
     var meta = document.querySelector("#note-discuss-optimistic-user .note-discuss-send-state");
     if (meta) meta.textContent = "Отправлено";
@@ -54398,6 +54420,7 @@
     beginNoteAgentSession(kind, itemId, agentId === "gpt" ? "gpt" : agentId, sessionTitle);
     syncNotePaieReplyForm(true);
     appendOptimisticUserMessage(body, quote, canvasSnapshot);
+    var composerDraft = takeDiscussComposerDraft();
     clearCanvasSelections();
     wrap._commentDraft = null;
     wrap._commentChairId = null;
@@ -54608,6 +54631,7 @@
         return;
       }
       if (isViewingNoteDiscussion(kind, itemId) || (liveErr && String(liveErr._shareId) === String(itemId))) {
+        if (!saved) restoreDiscussComposerDraft(composerDraft);
         alert(e.message || String(e));
         await refreshNoteCommentsList();
       } else {
@@ -54664,6 +54688,7 @@
     wrap._discussionPinId = null;
     var input = document.getElementById("note-paie-reply-input");
     appendOptimisticUserMessage(body, quote);
+    var composerDraft = takeDiscussComposerDraft();
     try {
       await ensureDiscussChat();
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
@@ -54702,6 +54727,7 @@
       await refreshNoteCommentsList();
       scrollDiscussionToEnd();
     } catch (e) {
+      if (!footSaved) restoreDiscussComposerDraft(composerDraft);
       alert(e.message || String(e));
     }
   }
@@ -55292,6 +55318,7 @@
       pct: 12,
     });
     appendOptimisticUserMessage(body, quote);
+    var composerDraft = takeDiscussComposerDraft();
     var editor = noteGptEditor();
     var submit = document.getElementById("note-paie-reply-submit");
     if (submit) {
@@ -55353,6 +55380,7 @@
         var live = document.getElementById("note-editor-more-wrap");
         if (live && String(live._shareId) === String(itemId)) {
           live._researchRunning = false;
+          restoreDiscussComposerDraft(composerDraft);
           setNotePaeiStatus(e.message || "Не удалось запустить Research");
         } else {
           showNoteToast(e.message || "Не удалось запустить Research");
