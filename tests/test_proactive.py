@@ -38,6 +38,9 @@ class RulesTests(unittest.TestCase):
         self.assertEqual(one[0]["actions"][0]["payload"]["task_ids"], [1])
         many = proactive.rule_overdue([t1, t2], NOW, TZ, "1")
         self.assertEqual(many[0]["title"], "2 задачи просрочены")
+        # Футер «вы» ведёт в «Мои задачи» (там просроченные первой группой) — и у одной, и у нескольких.
+        self.assertEqual([a["act"] for a in one[0]["actions"]], ["postpone", "open_my_tasks"])
+        self.assertEqual([a["act"] for a in many[0]["actions"]], ["postpone", "open_my_tasks"])
         self.assertIn("Давид", many[0]["source"])
         # «Список» открывает чек-лист: в карточке все задачи с id, в тексте для ассистента — их id.
         self.assertEqual([t["id"] for t in many[0]["tasks"]], [2, 1])

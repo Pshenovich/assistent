@@ -570,8 +570,7 @@ def chip_label(task: dict[str, Any], *, tz: ZoneInfo | None = None) -> str:
     if start is None:
         return str(task.get("title") or DEFAULT_TITLE)
     if task.get("all_day"):
-        local_tz = tz or start.tzinfo or timezone.utc
-        start = _coerce_aware(start, local_tz)
+        start = datetime.combine(all_day_date(task) or start.date(), time.min)
     elif tz is not None:
         start = start.astimezone(tz)
     months = (
@@ -619,10 +618,10 @@ def as_calendar_event(
     start = _parse_dt(task.get("start_at"))
     end = _parse_dt(task.get("end_at")) or (start + DEFAULT_DURATION if start else None)
     all_day = bool(task.get("all_day"))
-    # All-day: гражданская дата в tz календаря (не «вчера» из UTC midnight).
+    # All-day: одна дата для постановщика и исполнителя, даже если пояса разные.
     if all_day and start is not None:
         local_tz = tz or start.tzinfo or timezone.utc
-        start = _coerce_aware(start, local_tz)
+        start = datetime.combine(all_day_date(task) or start.date(), time.min, tzinfo=local_tz)
         end = start + timedelta(days=1)
     else:
         if start and tz is not None:
@@ -689,6 +688,19 @@ def as_calendar_event(
         "schedule_log": _normalize_schedule_log(task.get("schedule_log") or []),
         "schedule_log_lines": format_schedule_log_lines(task, tz=tz),
     }
+
+
+def all_day_date(task: dict[str, Any]):
+    """Дата задачи «на весь день» — одна для всех, в каком бы поясе её ни поставили.
+
+    Храним полночь→полночь в поясе постановщика (в UTC). Если пересчитать начало в пояс
+    исполнителя, который западнее, выйдет «вчера, 22:00» — задача на 11-е станет 10-м.
+    Середина суток (начало + 12 ч) в UTC попадает на ту же дату для поясов от −12 до +12.
+    """
+    start = _parse_dt(task.get("start_at"))
+    if start is None:
+        return None
+    return (start.astimezone(timezone.utc) + timedelta(hours=12)).date()
 
 
 def _coerce_aware(dt: datetime, tz: ZoneInfo | timezone) -> datetime:

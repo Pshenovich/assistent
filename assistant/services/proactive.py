@@ -229,6 +229,29 @@ def _event_ref(ev: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _task_late(t: dict[str, Any], now: datetime, tz: Any) -> bool:
+    """Срок прошёл. Задача «на весь день» — только когда её день кончился у смотрящего."""
+    if t.get("all_day"):
+        from assistant.stores.calendar_tasks import all_day_date
+
+        day = all_day_date(t)
+        return day is not None and day < now.astimezone(tz).date()
+    end = _parse(t.get("end_at")) or _parse(t.get("start_at"))
+    return bool(end and end < now - timedelta(minutes=30))
+
+
+def _task_due(t: dict[str, Any], tz: Any, now: datetime) -> str:
+    """«сегодня» / «вчера» / «пн, 10 ноя» — для «на весь день» по её дате, а не по поясу постановщика."""
+    if t.get("all_day"):
+        from assistant.stores.calendar_tasks import all_day_date
+
+        day = all_day_date(t)
+        if day is not None:
+            return _day(datetime(day.year, day.month, day.day, 12, tzinfo=tz), tz, now)
+    start = _parse(t.get("start_at"))
+    return _day(start, tz, now) if start else ""
+
+
 # ---------------------------------------------------------------- правила
 
 def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) -> list[dict[str, Any]]:
@@ -236,8 +259,7 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
     for t in tasks:
         if t.get("done"):
             continue
-        end = _parse(t.get("end_at")) or _parse(t.get("start_at"))
-        if end and end < now - timedelta(minutes=30):
+        if _task_late(t, now, tz):
             late.append(t)
     if not late:
         return []
@@ -252,12 +274,13 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
 
     if len(late) == 1:
         t = late[0]
-        start = _parse(t.get("start_at"))
+        d = _task_due(t, tz, now)
         title = f"Просрочено: «{t.get('title') or 'Задача'}»"
-        src = f"{who(t)} · срок {_day(start, tz, now)}" if start else who(t)
+        src = f"{who(t)} · срок {d}" if d else who(t)
         actions = [
             {"label": "Перенести на завтра", "act": "postpone", "primary": True, "payload": {"task_ids": ids}},
-            {"label": "Открыть", "act": "open_task", "payload": {"task_id": ids[0]}},
+            # Футер «вы» → «Мои задачи»: там просроченные первой группой.
+            {"label": "Мои задачи", "act": "open_my_tasks", "payload": {"task_ids": ids}},
         ]
     else:
         names: list[str] = []
@@ -271,11 +294,11 @@ def rule_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any, uid: str) 
         src = ", ".join(names[:4])
         actions = [
             {"label": "Перенести на завтра", "act": "postpone", "primary": True, "payload": {"task_ids": ids}},
-            {"label": "Список", "act": "open_tasks", "payload": {"task_ids": ids}},
+            {"label": "Мои задачи", "act": "open_my_tasks", "payload": {"task_ids": ids}},
         ]
     def due(t: dict[str, Any]) -> str:
-        start = _parse(t.get("start_at"))
-        return f"срок {_day(start, tz, now)}" if start else ""
+        d = _task_due(t, tz, now)
+        return f"срок {d}" if d else ""
 
     # Для «Списка» (отметить выполненные) и для ассистента: id и сроки, чтобы он показал карточки всех задач,
     # а не искал их наугад по названиям.
@@ -317,8 +340,7 @@ def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> 
     for t in tasks:
         if t.get("done") or t.get("owner_archived"):
             continue
-        end = _parse(t.get("end_at")) or _parse(t.get("start_at"))
-        if end and end < now - timedelta(minutes=30):
+        if _task_late(t, now, tz):
             late.append(t)
     if not late:
         return []
@@ -334,9 +356,9 @@ def rule_posted_overdue(tasks: list[dict[str, Any]], now: datetime, tz: Any) -> 
             names.append(nm)
     task_rows = []
     for t in late:
-        start = _parse(t.get("start_at"))
+        d = _task_due(t, tz, now)
         meta = str(t.get("assignee_name") or "исполнитель") + (" · не из команды" if t.get("assignee_external") else "")
-        meta += f" · срок {_day(start, tz, now)}" if start else ""
+        meta += f" · срок {d}" if d else ""
         task_rows.append({"id": int(t["id"]), "text": str(t.get("title") or "Задача"), "meta": meta})
     title = f"{n} {word}"
     return [

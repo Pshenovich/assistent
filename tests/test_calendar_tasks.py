@@ -340,3 +340,31 @@ def test_task_for_person_without_account_goes_to_posted(tasks_db):
     posted = store.list_posted_tasks(11, include_done=True, self_emails=["me@x.ru"])
     assert [t["id"] for t in posted] == [ext["id"]]
     assert store.count_active_posted_tasks(11, ["me@x.ru"]) == 1
+
+
+def test_all_day_same_date_for_assignee_in_other_tz(tasks_db):
+    """Постановщик восточнее исполнителя: задача на 11-е у исполнителя тоже 11-е, а не «вчера»."""
+    from assistant.services import proactive
+
+    store = tasks_db
+    owner_tz = ZoneInfo("Asia/Novosibirsk")
+    viewer_tz = ZoneInfo("Europe/Moscow")
+    row = store.create_task(
+        11, title="Разобраться с оплатой", start_at="2026-11-11", all_day=True, tz=owner_tz,
+        assignee_user_id=22,
+    )
+    assert str(store.all_day_date(row)) == "2026-11-11"
+    ev = store.as_calendar_event(row, tz=viewer_tz, viewer_id=22)
+    assert ev["start"] == {"date": "2026-11-11"}
+    assert ev["end"] == {"date": "2026-11-12"}
+    assert store.chip_label(row, tz=viewer_tz) == "11 ноя"
+    # Вечер 11-го по Москве: день ещё не кончился — не просрочено.
+    evening = datetime(2026, 11, 11, 21, 0, tzinfo=viewer_tz)
+    assert proactive.rule_overdue([row], evening, viewer_tz, "22") == []
+    # 12-го — просрочено, срок «вчера».
+    next_day = datetime(2026, 11, 12, 10, 0, tzinfo=viewer_tz)
+    cards = proactive.rule_overdue([row], next_day, viewer_tz, "22")
+    assert cards and "срок вчера" in cards[0]["source"]
+    # Исполнитель западнее UTC тоже видит 11-е.
+    west = store.as_calendar_event(row, tz=ZoneInfo("America/New_York"), viewer_id=22)
+    assert west["start"] == {"date": "2026-11-11"}

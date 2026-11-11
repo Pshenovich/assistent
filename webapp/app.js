@@ -22684,7 +22684,7 @@
     loadFocus(false);
   });
 
-  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, open_posted: 1, url: 1 };
+  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, open_my_tasks: 1, open_posted: 1, url: 1 };
 
   // Карточки с пунктами (договорённости, задачи из саммари, важное из чатов) разбираются в чате.
   function focusHasItems(it) {
@@ -25802,6 +25802,11 @@
         } else {
           showNoteToast(skipped ? "Уже напоминали недавно — попробуйте позже" : "Нечего напоминать");
         }
+      } else if (act === "open_my_tasks") {
+        // «Просрочено» → «Мои задачи»: просроченные там первой группой.
+        if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
+        if (currentTab !== "actual") setTab("actual");
+        setMyTasksScreen(true);
       } else if (act === "open_posted") {
         if (isNoteDiscussionOpen()) closeNoteDiscussion(true);
         if (currentTab !== "actual") setTab("actual");
