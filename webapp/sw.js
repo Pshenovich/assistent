@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261110-ptcard";
+var CACHE_VERSION = "miniapp-v1-20261110-euvpn";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -14,6 +14,7 @@ var PRECACHE_URLS = [
   "./theme.js?v=20261029-spktools",
   "./styles.css?v=20261110-ptcard",
   "./board.css?v=20261107-embed1",
+  "./failover.js?v=20261110-eu1",
   "./realtime.js?v=20261103-analytics",
   "./note-yjs.js?v=20261106-reseedack",
   "./app.js?v=20261110-ptcard",
@@ -108,6 +109,84 @@ function matchShellHtml() {
       if (hit) return hit;
       return cache.match("./");
     });
+  });
+}
+
+// Запасной адрес для VPN (см. failover.js). С частью VPN наш сервер в РФ не отвечает совсем:
+// TLS «висит» без ответа. Если за VPN_NAV_WAIT_MS HTML не пришёл и /healthz тоже молчит —
+// отдаём маленькую страницу, которая проверяет eu.getorbita.me и переходит туда с тем же путём.
+// При медленной, но живой сети (healthz ответил) HTML ждём как раньше — старый shell не подсовываем.
+var VPN_MAIN_HOST = "getorbita.me";
+var VPN_EU_ORIGIN = "https://eu.getorbita.me";
+var VPN_NAV_WAIT_MS = 8000;
+
+function swProbe(url, ms) {
+  var ctl = typeof AbortController === "function" ? new AbortController() : null;
+  var timer = setTimeout(function () {
+    if (ctl) ctl.abort();
+  }, ms);
+  var opts = { cache: "no-store", credentials: "omit" };
+  if (ctl) opts.signal = ctl.signal;
+  return fetch(url, opts)
+    .then(function () {
+      return true;
+    })
+    .catch(function () {
+      return false;
+    })
+    .then(function (ok) {
+      clearTimeout(timer);
+      return ok;
+    });
+}
+
+function vpnFallbackPage(requestUrl) {
+  var target = VPN_EU_ORIGIN + "/webapp/";
+  try {
+    var u = new URL(requestUrl);
+    target = VPN_EU_ORIGIN + u.pathname + u.search + u.hash;
+  } catch (_) {}
+  var html =
+    '<!doctype html><html lang="ru"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    "<title>Орбита</title><style>" +
+    ":root{color-scheme:light dark}body{margin:0;min-height:100vh;display:flex;align-items:center;" +
+    "justify-content:center;font:15px/1.45 -apple-system,system-ui,sans-serif;background:Canvas;color:CanvasText}" +
+    "main{max-width:340px;padding:24px;text-align:center}p{opacity:.75}" +
+    "button{font:inherit;padding:10px 18px;border-radius:10px;border:1px solid GrayText;background:transparent;color:inherit}" +
+    "</style></head><body><main><h2 id=t>Подключаемся через запасной адрес…</h2>" +
+    "<p id=d>Основной адрес не отвечает — часто так бывает с VPN.</p>" +
+    '<button id=r hidden onclick="location.reload()">Повторить</button></main><script>' +
+    "(function(){var T=" + JSON.stringify(target) + ";" +
+    "try{sessionStorage.setItem('leo-failover-switched','1')}catch(e){}" +
+    "var c=window.AbortController?new AbortController():null;setTimeout(function(){c&&c.abort()},6000);" +
+    "fetch(" + JSON.stringify(VPN_EU_ORIGIN + "/healthz") + "+'?t='+Date.now(),{mode:'no-cors',cache:'no-store',signal:c&&c.signal})" +
+    ".then(function(){location.replace(T)}).catch(function(){" +
+    "document.getElementById('t').textContent='Нет связи с Орбитой';" +
+    "document.getElementById('d').textContent='Проверьте интернет или попробуйте другой сервер VPN.';" +
+    "document.getElementById('r').hidden=false})})();" +
+    "</script></body></html>";
+  return new Response(html, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } });
+}
+
+function navigateWithVpnFallback(request, networkPromise) {
+  if ((self.location.hostname || "").toLowerCase() !== VPN_MAIN_HOST) return networkPromise;
+  return new Promise(function (resolve) {
+    var done = false;
+    function finish(r) {
+      if (done) return;
+      done = true;
+      resolve(r);
+    }
+    networkPromise.then(finish, function () {
+      finish(Response.error());
+    });
+    setTimeout(function () {
+      if (done) return;
+      swProbe(self.location.origin + "/healthz?t=" + Date.now(), 4000).then(function (alive) {
+        if (!alive) finish(vpnFallbackPage(request.url));
+      });
+    }, VPN_NAV_WAIT_MS);
   });
 }
 
@@ -291,24 +370,23 @@ self.addEventListener("fetch", function (event) {
 
   // Browser/VPN: never abort HTML with a short timeout (that served a stale shell).
   if (isNavigationRequest(request) || isHtmlPath(path)) {
-    event.respondWith(
-      fetch(request)
-        .then(function (response) {
-          if (response && response.ok) {
-            cachePut(SHELL_CACHE, "./index.html", response.clone());
-            cachePut(SHELL_CACHE, "./", response.clone());
-            return response;
-          }
-          return matchShellHtml().then(function (cached) {
-            return cached || response;
-          });
-        })
-        .catch(function () {
-          return matchShellHtml().then(function (cached) {
-            return cached || Response.error();
-          });
-        })
-    );
+    var network = fetch(request)
+      .then(function (response) {
+        if (response && response.ok) {
+          cachePut(SHELL_CACHE, "./index.html", response.clone());
+          cachePut(SHELL_CACHE, "./", response.clone());
+          return response;
+        }
+        return matchShellHtml().then(function (cached) {
+          return cached || response;
+        });
+      })
+      .catch(function () {
+        return matchShellHtml().then(function (cached) {
+          return cached || Response.error();
+        });
+      });
+    event.respondWith(navigateWithVpnFallback(request, network));
     return;
   }
 
