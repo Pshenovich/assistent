@@ -762,9 +762,8 @@ def candidates() -> list[dict[str, Any]]:
         try:
             nconn = notes_store._conn()  # type: ignore[attr-defined]
             profiles = {
-                int(r["user_id"]): dict(r) for r in nconn.execute(
-                    "SELECT user_id, username, first_name, last_name FROM user_profiles"
-                ).fetchall() if str(r["user_id"]).lstrip("-").isdigit()
+                int(r["user_id"]): dict(r) for r in nconn.execute("SELECT * FROM user_profiles").fetchall()
+                if str(r["user_id"]).lstrip("-").isdigit()
             }
         except Exception:
             profiles = {}
@@ -805,18 +804,41 @@ def candidates() -> list[dict[str, Any]]:
         for other in google.get(a["email"], []):
             if other != a["user_id"] and other not in aliased:
                 add(a["user_id"], other, f"почта входа {a['email']} подключена как Google в другом аккаунте", True)
-    # 3) подсказки: тот же @ник или то же имя
+    # 3) подсказки: тот же @ник или то же имя. Имя — из профиля (своё и из Telegram) и из задач:
+    # у аккаунта по почте профиль часто пустой, а постановщик вписал имя в поручение.
     nick: dict[str, list[int]] = {}
     name: dict[str, list[int]] = {}
+
+    def add_name(n: str, uid: int) -> None:
+        n = re.sub(r"\s+", " ", (n or "").strip().lower().replace("ё", "е"))
+        if n and " " in n and uid not in name.setdefault(n, []):
+            name[n].append(uid)
+
     for uid, p in profiles.items():
         if uid in aliased:
             continue
         u = str(p.get("username") or "").strip().lstrip("@").lower()
         if u:
             nick.setdefault(u, []).append(uid)
-        n = _norm_name(p)
-        if n and " " in n:
-            name.setdefault(n, []).append(uid)
+        add_name(_norm_name(p), uid)
+        add_name(" ".join(str(p.get(k) or "").strip() for k in ("custom_first_name", "custom_last_name")), uid)
+    for uid, n in _task_assignee_names():
+        if uid not in aliased:
+            add_name(n, uid)
+    # 4) контакт, где почта и Telegram в одной карточке: почта — у аккаунта по почте, Telegram — у другого
+    for owner, c in _contact_rows():
+        em = str(c.get("email") or "").strip().lower()
+        acc = accounts.get_by_email(em) if em else None
+        if not acc or not accounts.is_synthetic(acc["user_id"]):
+            continue
+        tg = _contact_tg(c)
+        if tg and tg != acc["user_id"] and tg not in aliased and accounts.account_for_tg(tg) != acc["user_id"]:
+            try:
+                src, dst = direction(acc["user_id"], tg)
+            except AccountError:
+                continue
+            label = str(c.get("name") or em)
+            add(src, dst, f"в контактах у id {owner} одна карточка «{label}»: эта почта и этот Telegram", False)
     for groups, label in ((nick, "тот же @ник"), (name, "то же имя и фамилия")):
         for key, ids in groups.items():
             syn = [i for i in ids if accounts.is_synthetic(i) and i in by_id]
@@ -837,6 +859,56 @@ def candidates() -> list[dict[str, Any]]:
         res.append(item)
     res.sort(key=lambda x: (not x["strong"], bool(x["problems"]), x["src"]))
     return res
+
+
+def _task_assignee_names() -> list[tuple[int, str]]:
+    """(исполнитель, имя, как его вписали в поручение)."""
+    try:
+        from assistant.stores import calendar_tasks as tasks_store
+
+        with tasks_store._LOCK:  # type: ignore[attr-defined]
+            rows = tasks_store._conn().execute(  # type: ignore[attr-defined]
+                "SELECT DISTINCT assignee_user_id, assignee_name FROM calendar_tasks "
+                "WHERE assignee_user_id != '' AND IFNULL(assignee_name, '') != ''"
+            ).fetchall()
+        return [(int(r[0]), str(r[1])) for r in rows if str(r[0]).lstrip("-").isdigit()]
+    except Exception as e:
+        print(f"[account_merge] task names err={e!r}")
+        return []
+
+
+def _contact_rows() -> list[tuple[str, dict[str, Any]]]:
+    """Личные контакты всех владельцев: (id владельца, карточка)."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    try:
+        from assistant.stores import contacts_store
+
+        for d in _contacts_dirs():
+            for p in sorted(d.glob("*.json")):
+                try:
+                    rows = contacts_store._read_contact_rows(p)  # type: ignore[attr-defined]
+                except Exception:
+                    continue
+                out += [(p.stem, c) for c in rows if isinstance(c, dict)]
+    except Exception as e:
+        print(f"[account_merge] contacts err={e!r}")
+    return out
+
+
+def _contact_tg(c: dict[str, Any]) -> Optional[int]:
+    raw = str(c.get("telegram_user_id") or "").strip()
+    if raw.lstrip("-").isdigit() and int(raw) > 0:
+        return int(raw)
+    uname = str(c.get("telegram_username") or "").strip().lstrip("@")
+    if not uname:
+        return None
+    try:
+        from assistant.stores import telegram_registry
+
+        found = telegram_registry.lookup_user_id(uname)
+        return int(found) if found else None
+    except Exception:
+        return None
 
 
 def strong_pair_for_email_login(email: str, uid: int) -> Optional[int]:

@@ -225,3 +225,30 @@ def test_admin_pages_render():
     assert "Склеить аккаунты" in html and "пробный прогон" in html
     html = views.twins_page(ctx, account_merge.candidates(), {})
     assert "Двойники" in html
+
+
+def test_candidates_by_name_in_tasks_when_email_profile_is_empty():
+    """Случай Артёма: у аккаунта по почте профиля нет, имя есть только в поручениях постановщика."""
+    boss = next(_ids)
+    tg = next(_ids)
+    note_members.upsert_profile(tg, first_name="Артём", last_name="Данилин")
+    syn = int(accounts.create_email_account(_mail())["user_id"])  # профиль не заполнял
+    tasks_store.create_task(boss, title="а", start_at="2026-11-12T10:00:00+00:00", assignee_user_id=syn,
+                            assignee_name="Артем Данилин")
+    hit = [p for p in account_merge.candidates() if p["src"] == syn and p["dst"] == tg]
+    assert hit and not hit[0]["strong"] and any("данилин" in r for r in hit[0]["reasons"])
+
+
+def test_candidates_by_contact_card_with_email_and_telegram(monkeypatch, tmp_path):
+    from assistant.stores import contacts_store
+
+    owner = next(_ids)
+    tg = next(_ids)
+    email = _mail()
+    syn = int(accounts.create_email_account(email)["user_id"])
+    monkeypatch.setattr(account_merge, "_contacts_dirs", lambda: [tmp_path])
+    (tmp_path / f"{owner}.json").write_text(json.dumps(
+        [{"name": "Кто-то", "email": email, "aliases": [], "telegram_user_id": tg}], ensure_ascii=False))
+    hit = [p for p in account_merge.candidates() if p["src"] == syn and p["dst"] == tg]
+    assert hit and any("одна карточка" in r for r in hit[0]["reasons"])
+    assert contacts_store  # модуль контактов на месте
