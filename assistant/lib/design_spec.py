@@ -317,7 +317,7 @@ def _node(el: dict[str, Any], parent: Optional[dict[str, Any]], kids: dict[str, 
             # Без своего цвета текст берёт контрастный к заливке (как рисует клиент).
             "color": bd.auto_text_color(st, None if st.get("fillOff") else _hex_fill(st.get("fill"))) or _hex_ink(st.get("textColor"), "#000000"),
             "align": st.get("align") if st.get("align") in ("left", "center", "right") else ("left" if t == "text" else "center"),
-            "valign": st.get("valign") or "center",
+            "valign": {"top": "top", "bottom": "bottom", "middle": "center"}.get(st.get("valign") or "", "top" if t == "text" else "center"),
         }
         if st.get("letterSpacing"):
             tx["letterSpacing"] = f"{_r(st['letterSpacing'])}%"

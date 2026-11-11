@@ -201,8 +201,8 @@
     "/webapp/board-blocks.js?v=20261103-boardtpl",
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261105-design43",
-    "/webapp/board-figma.js?v=20261106-figcopy3",
-    "/webapp/board.js?v=20261107-embed2",
+    "/webapp/board-figma.js?v=20261111-valign3",
+    "/webapp/board.js?v=20261111-valign3",
   ];
   let boardScriptsPromise = null;
 

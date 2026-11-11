@@ -310,6 +310,15 @@ class BoardCornersAndNestingTests(unittest.TestCase):
         self.assertEqual((st["fontFamily"], st["fontWeight"], st["lineHeight"], st["letterSpacing"], st["valign"], st["textCase"]),
                          ("Golos Text", 600, 24, -2, "bottom", "upper"))
         self.assertNotIn("deco", st)
+        body = json.dumps({"v": 1, "elements": {"t": {"id": "t", "type": "text", "x": 0, "y": 0, "w": 10, "h": 10, "text": "a",
+                                                    "style": {"valign": "middle"}}}})
+        self.assertEqual(board_doc.parse_board(body)["elements"]["t"]["style"]["valign"], "middle")
+        body = json.dumps({"v": 1, "elements": {
+            "t": {"id": "t", "type": "text", "x": 0, "y": 0, "w": 10, "h": 40, "text": "a", "fixH": True},
+            "a": {"id": "a", "type": "text", "x": 0, "y": 0, "w": 10, "h": 40, "text": "a", "fixH": True, "autoW": True},
+            "r": {"id": "r", "type": "rect", "x": 0, "y": 0, "w": 10, "h": 40, "fixH": True}}})
+        els = board_doc.parse_board(body)["elements"]
+        self.assertEqual([els[k].get("fixH") for k in ("t", "a", "r")], [True, None, None])
 
     def test_frame_layout(self) -> None:
         good = {"id": "f", "type": "frame", "x": 0, "y": 0, "w": 100, "h": 100, "layout": "v 12 16 16 16 16 center start wh"}

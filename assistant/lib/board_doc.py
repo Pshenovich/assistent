@@ -397,6 +397,8 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
             el[k] = True
     if raw.get("autoW") is True and etype == "text":
         el["autoW"] = True  # текст «ширина по содержимому» — без переноса строк
+    if raw.get("fixH") is True and etype == "text" and not el.get("autoW"):
+        el["fixH"] = True  # текст фиксированной высоты — не подгоняется под содержимое
     for k in ("minW", "maxW", "minH", "maxH"):
         v = _num(raw.get(k), 0, 0, 1e5)
         if v > 0:
@@ -434,7 +436,7 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
                     st[k] = n
                 continue
             if k in ("valign", "deco", "textCase"):
-                ok = {"valign": ("top", "bottom"), "deco": ("underline", "strike"), "textCase": ("upper", "lower", "title")}[k]
+                ok = {"valign": ("top", "middle", "bottom"), "deco": ("underline", "strike"), "textCase": ("upper", "lower", "title")}[k]
                 if v in ok:
                     st[k] = v
                 continue

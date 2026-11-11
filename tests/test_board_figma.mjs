@@ -118,7 +118,7 @@ assert.deepEqual(net.paths, [{ d: "M0 0L20 10", stroke: "#1a2659", sw: 2, cap: "
         stackMode: "VERTICAL", stackSpacing: 8, stackHorizontalPadding: 16, stackVerticalPadding: 12, stackPrimarySizing: "RESIZE_TO_FIT_WITH_IMPLICIT_SIZE",
         stackCounterAlignItems: "CENTER", effects: [{ type: "DROP_SHADOW", color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 4 }, radius: 12, visible: true }] },
       { guid: G(3), type: "TEXT", parentIndex: P(2, "a"), size: { x: 168, y: 20 }, transform: T(16, 12), textData: { characters: "Заголовок" },
-        fontSize: 16, fontName: { family: "Inter", style: "Semi Bold" }, fillPaints: [{ type: "SOLID", color: { r: 0.1, g: 0.1, b: 0.1, a: 1 } }] },
+        fontSize: 16, textAlignVertical: "CENTER", lineHeight: { value: 100, units: "PERCENT" }, derivedTextData: { baselines: [{ lineHeight: 19.36 }] }, fontName: { family: "Inter", style: "Semi Bold" }, fillPaints: [{ type: "SOLID", color: { r: 0.1, g: 0.1, b: 0.1, a: 1 } }] },
       { guid: G(4), type: "RECTANGLE", parentIndex: P(2, "b"), size: { x: 168, y: 40 }, transform: T(16, 40), stackChildAlignSelf: "STRETCH",
         rectangleCornerRadiiIndependent: true, rectangleTopLeftCornerRadius: 8, rectangleTopRightCornerRadius: 8,
         strokePaints: [{ type: "SOLID", color: { r: 0, g: 0, b: 1, a: 1 } }], strokeWeight: 2, strokeAlign: "INSIDE",
@@ -135,6 +135,9 @@ assert.deepEqual(net.paths, [{ d: "M0 0L20 10", stroke: "#1a2659", sw: 2, cap: "
   assert.equal(fr.layout, "v 8 12 16 12 16 center start h");
   assert.deepEqual([fr.style.fill, fr.style.radius, fr.style.shadow], ["#ffffff", 12, "0 4 12 #00000040"]);
   assert.deepEqual([tx.type, tx.frame, tx.x, tx.y, tx.text, tx.style.textColor, tx.style.fontFamily, tx.style.fontWeight], ["text", fr.id, 116, 62, "Заголовок", "#1a1a1a", "Inter", 600]);
+  assert.equal(tx.style.valign, "middle"); // центр из Figma сохраняется явно: у текста по умолчанию верх
+  assert.equal(tx.style.lineHeight, 19.4); // 100% во Figma — естественная строка шрифта (из раскладки), не кегль
+  assert.equal(tx.fixH, true); // фиксированный блок Figma (без «авто-высоты») держит свою высоту
   assert.equal(rc.grow, "w"); // STRETCH поперёк вертикального — «заполнить» по ширине
   assert.deepEqual([rc.style.radii, rc.style.stroke, rc.style.strokeWidth, rc.style.strokeAlign, rc.style.fillGrad], ["8 8 0 0", "#0000ff", 2, "inside", "linear 0 #ff0000ff@0 #0000ffff@100"]);
   assert.equal(im.text || im.name, "Картинка из Figma"); // маленькая заглушка — без подписи, но узнаётся по имени

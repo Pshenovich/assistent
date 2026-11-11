@@ -634,7 +634,11 @@ function fromFigma(msg, uid) {
     if (wt !== 400) st.fontWeight = wt;
     var lh = tp.lineHeight;
     if (lh && lh.value && tp.fontSize) {
-      var px = lh.units === "PIXELS" ? lh.value : lh.units === "PERCENT" ? (lh.value / 100) * tp.fontSize : lh.units === "RAW" ? lh.value * tp.fontSize : 0;
+      // PERCENT в буфере Figma — доля «естественной» высоты строки шрифта (у Inter ≈1,21 кегля), а не кегля:
+      // 100% у 13px — строка 16px. Точное значение — из раскладки Figma (derivedTextData), иначе ≈1,21.
+      var dl = tp.derivedTextData && tp.derivedTextData.baselines && tp.derivedTextData.baselines[0];
+      var natural = dl && dl.lineHeight > 0 && lh.units === "PERCENT" ? dl.lineHeight / (lh.value / 100) : tp.fontSize * 1.21;
+      var px = lh.units === "PIXELS" ? lh.value : lh.units === "PERCENT" ? (lh.value / 100) * natural : lh.units === "RAW" ? lh.value * tp.fontSize : 0;
       if (px > 0 && Math.abs(px - tp.fontSize * 1.3) > 0.5) st.lineHeight = Math.round(px * 10) / 10;
     }
     var ls = tp.letterSpacing;
@@ -648,6 +652,7 @@ function fromFigma(msg, uid) {
     if (tp.textCase === "LOWER") st.textCase = "lower";
     if (tp.textCase === "TITLE") st.textCase = "title";
     if (tp.textAlignVertical === "TOP") st.valign = "top";
+    if (tp.textAlignVertical === "CENTER") st.valign = "middle";
     if (tp.textAlignVertical === "BOTTOM") st.valign = "bottom";
     return st;
   }
@@ -972,6 +977,8 @@ function fromFigma(msg, uid) {
         if (n.opacity != null && n.opacity < 0.999) tst.opacity = Math.round(n.opacity * 1000) / 1000;
         var tel = withGrow(Object.assign({ id: uid(), type: "text", text: textOf(n.textData) }, b, { style: tst }));
         if (n.textAutoResize === "WIDTH_AND_HEIGHT") tel.autoW = true;
+        // Фиксированный блок Figma (NONE/TRUNCATE) держит высоту — иначе центр по вертикали теряется.
+        else if (n.textAutoResize !== "HEIGHT") tel.fixH = true;
         put(tel, n, parentFrame, groupId);
         return;
       }

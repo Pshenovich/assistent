@@ -623,6 +623,7 @@
     if (el.grow) o.grow = el.grow;
     if (el.pin) o.pin = el.pin;
     if (el.autoW) o.autoW = true;
+    if (el.fixH && el.type === "text") o.fixH = true;
     if (el.hidden) o.hidden = true;
     if (el.locked) o.locked = true;
     ["minW", "maxW", "minH", "maxH"].forEach(function (k) {
@@ -1204,7 +1205,7 @@
       div.style.letterSpacing = st.letterSpacing ? Number(st.letterSpacing) / 100 + "em" : "";
       div.style.textDecoration = st.deco === "underline" ? "underline" : st.deco === "strike" ? "line-through" : "";
       div.style.textTransform = st.textCase === "upper" ? "uppercase" : st.textCase === "lower" ? "lowercase" : st.textCase === "title" ? "capitalize" : "";
-      div.style.justifyContent = st.valign === "top" ? "flex-start" : st.valign === "bottom" ? "flex-end" : "";
+      div.style.justifyContent = st.valign === "top" ? "flex-start" : st.valign === "bottom" ? "flex-end" : st.valign === "middle" ? "center" : "";
       // Текст «ширина по содержимому» (из Figma) не переносится: другой шрифт не ломает строку.
       div.style.whiteSpace = el.autoW ? "pre" : "";
       // Подпись — в «полезной» части фигуры (у треугольника — в широкой, у цилиндра — под крышкой).
@@ -1719,6 +1720,11 @@
       range.selectNodeContents(textEl);
       var r = range.getBoundingClientRect();
       if (!r.width && !r.height) return null;
+      // Масштаб — по самому узлу, а не по view.z: сразу после вставки/открытия мир может быть ещё не
+      // перемасштабирован, и деление на view.z раздувало блок (16px строка → 26px при z 0,61).
+      var host = textEl.parentElement;
+      var z = host && host.offsetWidth > 0 ? host.getBoundingClientRect().width / host.offsetWidth : view.z;
+      if (!(z > 0)) z = view.z;
       // Заданный межстрочный интервал (из Figma) — высота = строки × интервал, а не высота самих букв.
       var lh = parseFloat(getComputedStyle(textEl).lineHeight);
       if (isFinite(lh) && lh > 0) {
@@ -1726,20 +1732,23 @@
         Array.prototype.forEach.call(range.getClientRects(), function (q) {
           if (!q.height) return;
           if (!tops.some(function (t) {
-            return Math.abs(t - q.top) < (lh * view.z) / 2;
+            return Math.abs(t - q.top) < (lh * z) / 2;
           })) tops.push(q.top);
         });
-        if (tops.length) return Math.max(r.height / view.z, tops.length * lh);
+        if (tops.length) return Math.max(r.height / z, tops.length * lh);
       }
-      return r.height / view.z;
+      return r.height / z;
     }
 
     /** Текстовый блок растёт по высоте под текст (без отдельного шага отмены). */
     function fitTextHeight(el, textEl) {
-      if (el.rot) return;
+      // Фиксированная высота (как «Fixed size» во Figma) — блок не подгоняется, текст выравнивается внутри.
+      if (el.rot || el.fixH) return;
       var th = textHeight(textEl);
       if (th == null) return;
-      var h = Math.max(20, Math.ceil(th));
+      // Пустой блок — не меньше 20px (за него можно ухватиться); с текстом — ровно по строкам, как во Figma
+      // (иначе мелкий текст 13px в 20px-блоке выглядит прижатым к верху, а кнопка центрирует раздутый блок).
+      var h = String(el.text || "") ? Math.max(1, Math.ceil(th)) : Math.max(20, Math.ceil(th));
       if (Math.abs(h - el.h) > 1) {
         var next = Object.assign({}, el, { h: h });
         els.set(el.id, next);
@@ -1822,7 +1831,7 @@
             mid(c[0], c[1]), mid(c[1], c[2]), mid(c[2], c[3]), mid(c[3], c[0]),
           ];
           var names = [["nw", c[0]], ["n", mids[0]], ["ne", c[1]], ["e", mids[1]], ["se", c[2]], ["s", mids[2]], ["sw", c[3]], ["w", mids[3]]];
-          if (single.type === "text") names = [["w", mids[3]], ["e", mids[1]], ["nw", c[0]], ["se", c[2]]];
+          if (single.type === "text") names = [["n", mids[0]], ["s", mids[2]], ["w", mids[3]], ["e", mids[1]], ["nw", c[0]], ["se", c[2]]];
           // Таблица и карточка растут по высоте сами — тянутся только вширь; Гант — по данным.
           if (BLOCKS[single.type]) names = single.type === "gantt" ? [] : [["w", mids[3]], ["e", mids[1]]];
           // Поворот мышкой: чуть снаружи каждого угла — зона с курсором поворота (как во Figma).
@@ -4647,9 +4656,12 @@
         var PL = f ? parseLayout(f.layout) : null;
         var sizeField = function (k, label, val) {
           var modes = [["fixed", "Фикс."]];
+          var textH = k === "h" && one.type === "text" && !one.autoW;
           if (LA) modes.push(["hug", "Обним."]);
+          // Высота текста: по содержимому или фиксированная (тогда работает выравнивание по вертикали).
+          if (textH) modes.unshift(["hug", "По тексту"]);
           if (PL) modes.push(["fill", "Заполн."]);
-          var curM = LA && LA.hug.indexOf(k) >= 0 ? "hug" : PL && grows(one, k) ? "fill" : "fixed";
+          var curM = (LA && LA.hug.indexOf(k) >= 0) || (textH && !one.fixH && !grows(one, k)) ? "hug" : PL && grows(one, k) ? "fill" : "fixed";
           if (modes.length < 2) return numField(k, label, val, { title: k === "h" && one.type === "text" ? "Высота текста — по содержимому" : label });
           return '<div class="lb-if lb-ifsel" title="' + label + '"><span>' + label + '</span><input type="text" inputmode="decimal" data-k="' + k + '" value="' + esc(String(val)) + '">' +
             '<select data-k="size' + label + '">' + modes.map(function (m) {
@@ -4901,6 +4913,7 @@
           var fw = {};
           fw[k] = n;
           if (cur.type === "frame" && cur.device) fw.device = undefined;
+          if (cur.type === "text" && k === "h" && !cur.autoW) fw.fixH = true;
           var LH = cur.type === "frame" ? parseLayout(cur.layout) : null;
           if (LH && LH.hug.indexOf(k) >= 0) {
             LH.hug = LH.hug.replace(k, "") || "none";
@@ -4957,6 +4970,7 @@
           var gr = String(cur.grow || "").replace(axs, "");
           if (raw === "fill") gr += axs;
           fz.grow = gr ? (gr.indexOf("w") >= 0 ? "w" : "") + (gr.indexOf("h") >= 0 ? "h" : "") : undefined;
+          if (cur.type === "text" && axs === "h") fz.fixH = raw === "hug" ? undefined : true;
           patch(cur.id, fz);
         } else if (k === "lcols") {
           var LG = cur.type === "frame" ? parseLayout(cur.layout) : null;
@@ -5298,7 +5312,7 @@
         var P = pinOf(k0);
         var box = k0.type !== "line" && k0.type !== "pen";
         var sw = box && !k0.rot && !(k0.type === "text" && k0.autoW);
-        var sh = box && !k0.rot && k0.type !== "text" && !BLOCKS[k0.type];
+        var sh = box && !k0.rot && (k0.type !== "text" || k0.fixH) && !BLOCKS[k0.type];
         var X = pinAxis(P.h, b.x, b.w, o.x, o.w, n.x, n.w, sw);
         var Y = pinAxis(P.v, b.y, b.h, o.y, o.h, n.y, n.h, sh);
         var dx = r1(X[0] - b.x);
@@ -6594,7 +6608,8 @@
               return (x.style || {})[k] || "";
             });
           };
-          if (tb.hasAttribute("data-va")) applyStyle(isTextual, { valign: tb.getAttribute("data-va") === "middle" ? null : tb.getAttribute("data-va") });
+          // «По центру» пишем явно: у текстового блока по умолчанию верх, null вернул бы его наверх.
+          if (tb.hasAttribute("data-va")) applyStyle(isTextual, { valign: tb.getAttribute("data-va") });
           else if (tb.hasAttribute("data-deco")) applyStyle(isTextual, { deco: cur0("deco") === tb.getAttribute("data-deco") ? null : tb.getAttribute("data-deco") });
           else applyStyle(isTextual, { textCase: cur0("textCase") === tb.getAttribute("data-tcase") ? null : tb.getAttribute("data-tcase") });
           return;
@@ -8401,7 +8416,12 @@
         if (dir[0] < 0) x0 = el0.w - w;
         if (dir[1] < 0) y0 = el0.h - h;
       }
-      if (el0.type === "text" || BLOCKS[el0.type]) {
+      // Текст: потянули верх/низ — высота становится фиксированной; угол — масштаб (фикс. высота — пропорционально).
+      var textFixH = el0.type === "text" && (el0.fixH || (dir[1] && !dir[0]));
+      if (el0.type === "text" && textFixH && dir[0] && dir[1] && el0.w > 0) {
+        h = el0.h * (w / el0.w);
+        if (dir[1] < 0) y0 = el0.h - h;
+      } else if ((el0.type === "text" && !textFixH) || BLOCKS[el0.type]) {
         h = el0.h;
         y0 = 0;
       }
@@ -8418,8 +8438,9 @@
         var fs = (el0.style && el0.style.fontSize) || 18;
         f.style = { fontSize: Math.max(8, Math.round(fs * (w / Math.max(1, el0.w)))) };
       }
+      if (textFixH && !el0.fixH) f.fixH = true;
       guides = [];
-      if (!el0.rot && !free && !(ratio && dir[0] && dir[1])) snapResize(g, f, dir, el0.type === "text" || BLOCKS[el0.type]);
+      if (!el0.rot && !free && !(ratio && dir[0] && dir[1])) snapResize(g, f, dir, (el0.type === "text" && !textFixH) || BLOCKS[el0.type]);
       // Тянут край «обнимающего» экрана — по этой оси размер становится фиксированным (как во Figma).
       if (el0.grow) {
         var gg = String(el0.grow);
@@ -9110,7 +9131,7 @@
       align = alignOf(el);
       cx = align === "center" ? el.x + el.w / 2 : align === "right" ? el.x + el.w - padX : el.x + padX;
       var pad = el.type === "text" ? 0 : 8;
-      if (el.type === "text" || st.valign === "top") top = el.y + pad + lh / 2;
+      if (st.valign === "top" || (el.type === "text" && st.valign !== "middle" && st.valign !== "bottom")) top = el.y + pad + lh / 2;
       else if (st.valign === "bottom") top = el.y + el.h - pad - lh / 2 - (lines.length - 1) * lh;
       else {
         var capT = el.type === "cylinder" ? G.capOf(el.w, el.h) : 0;

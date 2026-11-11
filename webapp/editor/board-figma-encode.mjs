@@ -642,9 +642,9 @@ export function buildMessage(elements, opts) {
     var st = el.style || {};
     var n = base(el, "TEXT", parent, el);
     textProps(n, el, Number(st.fontSize) || 16);
-    n.textAutoResize = el.autoW ? "WIDTH_AND_HEIGHT" : "HEIGHT";
+    n.textAutoResize = el.autoW ? "WIDTH_AND_HEIGHT" : el.fixH ? "NONE" : "HEIGHT";
     if (st.valign === "bottom") n.textAlignVertical = "BOTTOM";
-    else if (st.valign === "center") n.textAlignVertical = "CENTER";
+    else if (st.valign === "middle" || st.valign === "center") n.textAlignVertical = "CENTER";
     if (st.opacity != null && Number(st.opacity) < 1) n.opacity = Math.max(0, Number(st.opacity));
     return n;
   }
