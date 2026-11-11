@@ -175,6 +175,30 @@ async def run_llm_in_threadpool(func: Any, *args: Any, **kwargs: Any) -> Any:
     return await anyio.to_thread.run_sync(partial(func, *args, **kwargs), limiter=_llm_limiter())
 
 
+_VOICE_LIMITER: Any = None
+
+
+def _voice_limiter() -> Any:
+    """Свой лимит потоков для расшифровки голоса из чата: диктовка не стоит в очереди за ответами
+    модели (они держат поток десятки секунд), а ждёт только Obuchat. VOICE_THREADS, по умолчанию 6."""
+    global _VOICE_LIMITER
+    if _VOICE_LIMITER is None:
+        import anyio
+
+        try:
+            n = max(1, int(os.getenv("VOICE_THREADS", "6") or "6"))
+        except ValueError:
+            n = 6
+        _VOICE_LIMITER = anyio.CapacityLimiter(n)
+    return _VOICE_LIMITER
+
+
+async def run_voice_in_threadpool(func: Any, *args: Any, **kwargs: Any) -> Any:
+    import anyio.to_thread
+
+    return await anyio.to_thread.run_sync(partial(func, *args, **kwargs), limiter=_voice_limiter())
+
+
 def _is_local_dev_request(request: Request) -> bool:
     """Локальный uvicorn / Simple Browser в Cursor — без жёсткого frame lock."""
     mode = (os.getenv("MINIAPP_DEV_MODE", "") or "").strip().lower()
@@ -4450,20 +4474,65 @@ def _convert_webm_to_wav(src: Path, dst: Path) -> None:
         raise RuntimeError("Конвертация webm-аудио вернула пустой файл")
 
 
+def _remux_webm_to_ogg(src: Path, dst: Path) -> bool:
+    """WebM/Opus → Ogg/Opus без перекодирования (доли секунды, файл того же размера — в разы меньше
+    WAV). False — если не вышло (в webm не Opus и т.п.): тогда зовущий перегоняет в WAV."""
+    import shutil
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    try:
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                # Как в _convert_webm_to_wav: формат и протоколы фиксированы (SSRF через HLS).
+                "-protocol_whitelist",
+                "file",
+                "-f",
+                "matroska",
+                "-i",
+                str(src),
+                "-vn",
+                "-c:a",
+                "copy",
+                "-f",
+                "ogg",
+                str(dst),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+    except Exception:
+        return False
+    return proc.returncode == 0 and dst.is_file() and dst.stat().st_size > 0
+
+
 def _prepare_miniapp_voice_audio(
     data: bytes,
     filename: str,
     content_type: str | None,
 ) -> tuple[bytes, str]:
-    """Browser MediaRecorder often produces WebM/Opus; convert it for Obuchat."""
+    """Браузерный MediaRecorder (Chrome) пишет WebM/Opus, Obuchat его не берёт: перекладываем Opus
+    в Ogg без перекодирования; не вышло — WAV 16 кГц, как раньше."""
     import tempfile
 
     if not _is_webm(filename, content_type):
         return data, filename
     with tempfile.TemporaryDirectory(prefix="miniapp_voice_") as td:
         src = Path(td) / "voice.webm"
-        dst = Path(td) / "voice.wav"
         src.write_bytes(data)
+        ogg = Path(td) / "voice.ogg"
+        if _remux_webm_to_ogg(src, ogg):
+            return ogg.read_bytes(), "voice.ogg"
+        dst = Path(td) / "voice.wav"
         _convert_webm_to_wav(src, dst)
         return dst.read_bytes(), "voice.wav"
 
@@ -11917,6 +11986,7 @@ async def miniapp_voice_transcribe(
     source_filename = filename
     source_size = len(data)
     content_type = file.content_type
+    t_start = time.monotonic()
     try:
         data, filename = await run_in_threadpool(
             _prepare_miniapp_voice_audio,
@@ -11935,8 +12005,19 @@ async def miniapp_voice_transcribe(
     if isinstance(principal.user, dict) and principal.user.get("username"):
         username = str(principal.user.get("username") or "").strip() or None
 
+    prep_sec = time.monotonic() - t_start
+
     def _run() -> dict[str, Any]:
-        result = obu.transcribe_bytes(data, filename)
+        t_asr = time.monotonic()
+        # Голос из чата — без LLM у Obuchat (быстрее); «эээ», числа, словарь, сниппеты — наш код ниже.
+        result = obu.transcribe_bytes(
+            data,
+            filename,
+            speakers=obu.dictation_speakers(),
+            llm=obu.dictation_llm_enabled(),
+            quick=True,
+        )
+        asr_sec = time.monotonic() - t_asr
         # Диктовка в заметку: один говорящий — без «Спикер 1:»; в журнал транскрипций не попадает.
         dictation = str(purpose or "").strip().lower() == "note"
         if dictation:
@@ -11975,6 +12056,11 @@ async def miniapp_voice_transcribe(
             telegram_user_id=str(int(principal.telegram_user_id)),
             telegram_username=username,
         )
+        print(
+            "[miniapp_voice_transcribe] timing "
+            f"src={source_filename!r} src_bytes={source_size} sent={filename!r} bytes={len(data)} "
+            f"prep={prep_sec:.2f}s asr={asr_sec:.2f}s total={time.monotonic() - t_start:.2f}s"
+        )
         return {
             "text": transcript,
             "plain_text": transcript,
@@ -11984,7 +12070,7 @@ async def miniapp_voice_transcribe(
         }
 
     try:
-        return await run_llm_in_threadpool(_run)
+        return await run_voice_in_threadpool(_run)
     except RuntimeError as e:
         print(
             "[miniapp_voice_transcribe] failed "

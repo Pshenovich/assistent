@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 
 from telegram import InlineKeyboardMarkup, Message, Update
 from telegram.ext import ContextTypes
@@ -333,8 +334,19 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
         status = await set_status(
             status, "Транскрибирую…", anchor=msg, context=context
         )
-        result = await asyncio.to_thread(obu.transcribe_bytes, audio, "voice.ogg")
+        t_asr = time.monotonic()
+        # Голосовое боту — без LLM у Obuchat: ждём только распознавание, чистит наш код ниже.
+        result = await asyncio.to_thread(
+            obu.transcribe_bytes,
+            audio,
+            "voice.ogg",
+            speakers=obu.dictation_speakers(),
+            llm=obu.dictation_llm_enabled(),
+            quick=True,
+        )
+        asr_sec = time.monotonic() - t_asr
         text = (result.plain_text or "").strip()
+        print(f"[voice] asr_timing chat={msg.chat_id} bytes={len(audio)} asr={asr_sec:.2f}s")
         if not text:
             await set_status(status, "(пустая транскрипция)", anchor=msg, context=context)
             return

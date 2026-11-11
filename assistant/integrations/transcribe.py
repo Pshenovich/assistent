@@ -174,9 +174,35 @@ def _request_kwargs() -> dict[str, Any]:
     return {"verify": _verify_ssl()}
 
 
-def transcribe_bytes(audio: bytes, filename: str, *, speakers: str | None = None) -> TranscribeResult:
+def transcribe_bytes(
+    audio: bytes,
+    filename: str,
+    *,
+    speakers: str | None = None,
+    llm: bool = True,
+    quick: bool = False,
+) -> TranscribeResult:
+    """llm=False — сырой текст распознавания без обработки моделью на стороне Obuchat.
+
+    quick=True — для голоса из чата: POST без ?wait=true (Obuchat с wait отвечает только на своём
+    2-секундном шаге) и опрос /jobs раз в секунду — короткое голосовое приходит за ~1 с, а не за 2–6.
+    """
     files = {"file": (_upload_name(filename), audio, "application/octet-stream")}
-    return _transcribe(files=files, data=_form_fields(speakers))
+    return _transcribe(files=files, data=_form_fields(speakers, llm), quick=quick)
+
+
+def dictation_llm_enabled() -> bool:
+    """Голос в чате с Лео (микрофон в приложении, голосовое боту): по умолчанию без LLM у Obuchat —
+    чистку («эээ», числа, словарь, сниппеты) делает наш код в voice_postprocess. VOICE_DICTATION_LLM=1
+    возвращает прежнее поведение."""
+    return (os.getenv("VOICE_DICTATION_LLM", "0") or "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def dictation_speakers() -> str:
+    """Режим говорящих для голоса из чата: по умолчанию «none» — без разделения на спикеров (говорит
+    один человек, и Obuchat не тратит время на диаризацию). OBUCHAT_DICTATION_SPEAKERS=auto — как раньше.
+    Obuchat принимает auto, 2, none («1» — 400)."""
+    return (os.getenv("OBUCHAT_DICTATION_SPEAKERS", "none") or "none").strip() or "none"
 
 
 def transcribe_file(path: str | os.PathLike, filename: str, *, speakers: str | None = None) -> TranscribeResult:
@@ -193,9 +219,9 @@ def _upload_name(filename: str) -> str:
     return fn
 
 
-def _form_fields(speakers: str | None) -> dict[str, str]:
+def _form_fields(speakers: str | None, llm: bool = True) -> dict[str, str]:
     mode = (speakers or _speakers_mode()).strip() or "auto"
-    return {"speakers": mode, "llm_enabled": "true"}
+    return {"speakers": mode, "llm_enabled": "true" if llm else "false"}
 
 
 class _StreamingMultipart:
@@ -234,9 +260,16 @@ class _StreamingMultipart:
         yield self.tail
 
 
-def _transcribe(*, extra_headers: dict[str, str] | None = None, **send: Any) -> TranscribeResult:
+# Опрос /jobs у Obuchat: чаще раза в секунду nginx отвечает 503 через раз.
+_QUICK_FIRST_POLL_SEC = 0.6
+_QUICK_POLL_SEC = 1.0
+
+
+def _transcribe(
+    *, extra_headers: dict[str, str] | None = None, quick: bool = False, **send: Any
+) -> TranscribeResult:
     headers = {"X-API-Key": _api_key(), **(extra_headers or {})}
-    url = f"{OBUCHAT_TRANSCRIBE_BASE}/transcribe?wait=true"
+    url = f"{OBUCHAT_TRANSCRIBE_BASE}/transcribe" + ("" if quick else "?wait=true")
     post_timeout = _post_timeout_sec()
     req_kwargs = _request_kwargs()
     try:
@@ -272,8 +305,14 @@ def _transcribe(*, extra_headers: dict[str, str] | None = None, **send: Any) -> 
         raise RuntimeError(f"Нет текста в ответе: {body!r}")
     poll_timeout = _poll_timeout_sec()
     deadline = time.monotonic() + poll_timeout
+    if quick:
+        delay, step = _QUICK_FIRST_POLL_SEC, _QUICK_POLL_SEC
+    else:
+        # Первый опрос — через секунду: короткое голосовое часто уже готово, дальше — раз в 3 с.
+        delay, step = 1.0, 3.0
     while time.monotonic() < deadline:
-        time.sleep(3)
+        time.sleep(delay)
+        delay = step
         try:
             jr = requests.get(
                 f"{OBUCHAT_TRANSCRIBE_BASE}/jobs/{job_id}",
@@ -285,8 +324,13 @@ def _transcribe(*, extra_headers: dict[str, str] | None = None, **send: Any) -> 
             raise RuntimeError(
                 f"Транскрибация: таймаут ожидания результата ({int(poll_timeout)} с)."
             ) from e
+        if jr.status_code in (429, 502, 503, 504):
+            continue  # ограничение частоты или перезапуск у Obuchat — спросим на следующем шаге
         jr.raise_for_status()
-        data2 = jr.json()
+        try:
+            data2 = jr.json()
+        except ValueError:
+            continue
         if isinstance(data2, dict) and data2.get("status") in ("done", "failed"):
             out = _result_from_body(data2, job_id=job_id)
             if out:
