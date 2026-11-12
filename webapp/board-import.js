@@ -2,7 +2,9 @@
  *
  * Miro при копировании кладёт в text/html `data-meta="<--(miro-data-v1)…(/miro-data-v1)-->"`:
  * base64, каждый байт сдвинут на 59, внутри JSON {data: {objects: [{id, widgetData: {type, json}}]}}.
- * Координаты виджета — его центр (offsetPx), размер — size × scale. Линия цепляется к виджету по
+ * Координаты виджета — его центр (offsetPx), размер — size × scale; у содержимого рамки offsetPx —
+ * от левого верхнего угла рамки (_position.schema "parentOffsetPx", рамка — _parent.index), изломы
+ * линий — всегда точки на доске. Линия цепляется к виджету по
  * id (widgetIndex) в точке point (доли ширины и высоты). Формат закрытый: что не разобрали —
  * null, и доска вставит текст как раньше.
  *
@@ -124,26 +126,73 @@
     return { anchor: [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))] };
   }
 
+  /** Блок-схема Miro (stencil, ns:diagrammingNotation) → наша фигура. */
+  var MIRO_STENCILS = {
+    "flowchart-decision": "diamond", "flowchart-terminator": "pill", "flowchart-data": "parallelogram",
+    "flowchart-database": "cylinder", "flowchart-connector": "ellipse",
+  };
+
+  function decodeEntities(s) {
+    s = String(s || "");
+    try {
+      var ta = new DOMParser().parseFromString("<textarea>" + s.replace(/</g, "&lt;") + "</textarea>", "text/html");
+      return ta.querySelector("textarea").value;
+    } catch (_) {
+      return s.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    }
+  }
+
+  /** Центр виджета на доске Miro. У содержимого рамки offsetPx — от левого верхнего угла рамки
+   * (schema "parentOffsetPx", рамка — _parent.index), у остальных — точка на доске (canvasOffsetPx).
+   * _useTopLeftPositioning (блоки кода) — offsetPx указывает левый верхний угол, а не центр. */
+  function miroCenter(j, raw, bw, bh, depth) {
+    var p = j._position;
+    var off = p && p.offsetPx;
+    if (!off || !isFinite(off.x) || !isFinite(off.y)) return null;
+    var x = Number(off.x);
+    var y = Number(off.y);
+    if (p.schema === "parentOffsetPx" && j._parent) {
+      var par = raw[j._parent.index];
+      var pj = par && par.widgetData && par.widgetData.json;
+      // Рамки нет в буфере — места не восстановить: такой виджет пропускаем. Рамка в рамке — так же вверх.
+      var pc = pj && (depth || 0) < 8 ? miroCenter(pj, raw, 0, 0, (depth || 0) + 1) : null;
+      if (!pc) return null;
+      var pk = (pj.scale && pj.scale.scale) || 1;
+      var ps = pj.size || {};
+      x += pc.x - ((Number(ps.width) || Number(pj.width) || 0) * pk) / 2;
+      y += pc.y - ((Number(ps.height) || Number(pj.height) || 0) * pk) / 2;
+    }
+    if (j._useTopLeftPositioning) {
+      x += bw / 2;
+      y += bh / 2;
+    }
+    return { x: x, y: y };
+  }
+
   function fromMiro(objects, uid) {
     var els = [];
     var byId = {};
     var skipped = 0;
     var imageSlots = 0;
     var boxes = {};
+    var raw = {};
+    objects.forEach(function (o) {
+      if (o && o.id != null) raw[o.id] = o;
+    });
     // Сначала блоки (у линий ссылки на них), потом линии.
     objects.forEach(function (o) {
       var w = o && o.widgetData;
       if (!w || w.type === "line") return;
       var j = w.json || {};
-      var pos = j._position && j._position.offsetPx;
       var size = j.size || {};
       var k = (j.scale && j.scale.scale) || 1;
-      if (!pos || !isFinite(pos.x) || !isFinite(pos.y)) {
+      var bw = (Number(size.width) || 100) * k;
+      var bh = (Number(size.height) || 40) * k;
+      var pos = miroCenter(j, raw, bw, bh);
+      if (!pos) {
         skipped++;
         return;
       }
-      var bw = (Number(size.width) || 100) * k;
-      var bh = (Number(size.height) || 40) * k;
       var st = json(j.style);
       var base = { id: uid(), x: pos.x - bw / 2, y: pos.y - bh / 2, w: bw, h: bh };
       var rot = j.rotation && Number(j.rotation.rotation);
@@ -201,6 +250,35 @@
           style: { fill: "gray", stroke: "gray", strokeWidth: 2, dash: "dashed", radius: 8, fontSize: Math.max(14, Math.round(iw / 22)), textColor: "gray" },
         });
         imageSlots++;
+      } else if (w.type === "code") {
+        // Блок кода — текст моноширинным шрифтом на светлой подложке.
+        el = Object.assign(base, {
+          type: "text", text: decodeEntities(j.code).replace(/\s+$/, ""),
+          style: { fontSize: Math.round(14 * k), fontFamily: "JetBrains Mono", textColor: "#1a1a1a", align: "left", fill: "#f2f4f7" },
+        });
+      } else if (w.type === "emoji") {
+        el = Object.assign(base, {
+          type: "text", text: String(j.code || ""),
+          style: { fontSize: Math.max(12, Math.round(bh * 0.75)), align: "center" },
+        });
+      } else if (w.type === "stencil") {
+        // Фигура блок-схемы Miro: вид — по ns:diagrammingNotation, подпись — schema.data.texts.name.
+        var notation = (j["ns:diagrammingNotation"] && j["ns:diagrammingNotation"].element) || "";
+        var sd = (j.schema && j.schema.data) || {};
+        var nm = (sd.texts && sd.texts.name) || {};
+        var sfill = hex(st.bc) || "none";
+        var skind = MIRO_STENCILS[notation] || "rect";
+        el = Object.assign(base, {
+          type: skind, text: htmlText(nm.text).text,
+          style: {
+            fill: sfill, stroke: hex(st.brc) || "ink",
+            strokeWidth: st.brc != null && st.brc < 0 ? 0 : Number(st.brw) >= 0 ? Number(st.brw) : 2,
+            fontSize: Math.round((Number(st.fs) || 14) * k),
+            textColor: textColor(st.tc, /^#/.test(sfill)),
+            align: st.ta === "l" ? "left" : st.ta === "r" ? "right" : "center",
+          },
+        });
+        if (skind === "rect") el.style.radius = Math.round(((sd.formulaValues && Number(sd.formulaValues.borderRadius)) || 0) * k);
       } else if (w.type === "frame") {
         el = Object.assign(base, {
           type: "rect", text: "",

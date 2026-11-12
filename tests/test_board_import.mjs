@@ -62,5 +62,48 @@ const slot = res.elements.find((e) => String(e.text || "").startsWith("Карт�
 assert.deepEqual([slot.type, slot.x, slot.y, slot.w, slot.h], ["rect", 400, -50, 200, 100]);
 assert.equal(res.imageSlots, 1);
 assert.equal(IMP.fromHtml("<p>просто текст</p>", () => "x"), null);
+
+// Содержимое рамки: offsetPx — от левого верхнего угла рамки (parentOffsetPx), не от центра доски.
+{
+  const frame = { id: 0, widgetData: { type: "frame", json: {
+    _parent: null, _position: { offsetPx: { x: -10000, y: -5000 }, schema: "canvasOffsetPx" },
+    size: { width: 2000, height: 1000 }, scale: { scale: 1 }, title: "Рамка", style: "{}",
+  } } };
+  const inFrame = (id, type, x, y, extra) => ({ id, widgetData: { type, json: Object.assign({
+    _parent: { index: 0 }, _position: { offsetPx: { x, y }, schema: "parentOffsetPx", containerType: "FRAME" },
+    size: { width: 200, height: 100 }, scale: { scale: 1 },
+  }, extra) } });
+  const objs = [
+    frame,
+    inFrame(1, "sticker", 300, 200, { text: "<p>Стикер</p>", style: "{}" }),
+    inFrame(2, "code", 100, 100, { code: "event: &#39;etap&#39;\n", _useTopLeftPositioning: true }),
+    inFrame(3, "emoji", 50, 50, { code: "✅", size: { width: 80, height: 80 } }),
+    inFrame(4, "stencil", 1000, 500, {
+      "ns:diagrammingNotation": { collection: "flowchart", element: "flowchart-decision" },
+      schema: { data: { texts: { name: { text: "<p>Да?</p>" } } } }, style: JSON.stringify({ bc: 11399367, fs: 24 }),
+    }),
+    { id: 5, widgetData: { type: "line", json: {
+      _parent: { index: 0 }, primary: { widgetIndex: 1, point: { x: 1, y: 0.5 } }, secondary: { widgetIndex: 4, point: { x: 0, y: 0.5 } },
+      points: [{ x: -10500, y: -5300 }], style: "{}",
+    } } },
+    // Рамки нет в буфере — место не восстановить, пропускаем.
+    { id: 6, widgetData: { type: "sticker", json: { _parent: { index: 77 }, _position: { offsetPx: { x: 1, y: 1 }, schema: "parentOffsetPx" }, style: "{}" } } },
+  ];
+  let m = 0;
+  const r = IMP.fromHtml(miroHtml(objs), () => "f" + ++m);
+  const fr = r.elements.find((e) => e.type === "rect" && e.w === 2000);
+  assert.deepEqual([fr.x, fr.y], [-11000, -5500]);
+  const sticky = r.elements.find((e) => e.type === "sticky");
+  assert.deepEqual([sticky.x, sticky.y], [-11000 + 300 - 100, -5500 + 200 - 50]);
+  const code = r.elements.find((e) => e.style && e.style.fontFamily === "JetBrains Mono");
+  assert.deepEqual([code.x, code.y, code.text], [-11000 + 100, -5500 + 100, "event: 'etap'"]);
+  const emoji = r.elements.find((e) => e.text === "✅");
+  assert.deepEqual([emoji.x, emoji.y], [-11000 + 50 - 40, -5500 + 50 - 40]);
+  const dia = r.elements.find((e) => e.type === "diamond");
+  assert.deepEqual([dia.x, dia.y, dia.text, dia.style.fill], [-10000 - 100, -5000 - 50, "Да?", "#adf0c7"]);
+  const line = r.elements.find((e) => e.type === "line");
+  assert.deepEqual([line.start.el, line.end.el, line.waypoints], [sticky.id, dia.id, [[-10500, -5300]]]);
+  assert.equal(r.skipped, 1);
+}
 assert.equal(IMP.fromHtml('<span data-meta="<--(miro-data-v1)!!!(/miro-data-v1)-->">', () => "x"), null);
 console.log("board import ok");

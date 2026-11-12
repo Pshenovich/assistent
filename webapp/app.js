@@ -200,7 +200,7 @@
     "/webapp/board-geom.js?v=20261105-design43",
     "/webapp/board-blocks.js?v=20261103-boardtpl",
     "/webapp/board-templates.js?v=20261104-doctype2",
-    "/webapp/board-import.js?v=20261105-design43",
+    "/webapp/board-import.js?v=20261112-miroframes",
     "/webapp/board-figma.js?v=20261111-comps2",
     "/webapp/board.js?v=20261111-comps2",
   ];
