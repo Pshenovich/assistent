@@ -69,6 +69,13 @@ html.vkui--vkIOS--dark {
   --overlay-5: rgba(255, 255, 255, 0.12);
   --overlay-6: rgba(255, 255, 255, 0.16);
   --overlay-7: rgba(255, 255, 255, 0.24);
+  /* Полноэкранный просмотр фото — тёмный в обеих темах. */
+  --media-viewer-bg: rgba(0, 0, 0, 0.92);
+  --media-viewer-fg: #fff;
+  --media-viewer-btn: rgba(255, 255, 255, 0.14);
+  --media-viewer-btn-hover: rgba(255, 255, 255, 0.24);
+  --media-chip-bg: rgba(0, 0, 0, 0.6);
+  --media-chip-bg-hover: rgba(0, 0, 0, 0.78);
   /* Цвет теней: на тёмном — чёрный, на светлом — мягче (тени в стилях берут от него долю). */
   --shadow-color: #000000;
   /* Выбранный сегмент на серой подложке переключателя. */
@@ -230,6 +237,13 @@ html[data-theme="light"] {
   --overlay-5: rgba(0, 0, 0, 0.09);
   --overlay-6: rgba(0, 0, 0, 0.12);
   --overlay-7: rgba(0, 0, 0, 0.18);
+  /* Полноэкранный просмотр фото — тёмный в обеих темах. */
+  --media-viewer-bg: rgba(0, 0, 0, 0.92);
+  --media-viewer-fg: #fff;
+  --media-viewer-btn: rgba(255, 255, 255, 0.14);
+  --media-viewer-btn-hover: rgba(255, 255, 255, 0.24);
+  --media-chip-bg: rgba(0, 0, 0, 0.6);
+  --media-chip-bg-hover: rgba(0, 0, 0, 0.78);
   --shadow-color: rgba(15, 23, 42, 0.35);
   --seg-active: var(--surface);
   --orbit-dot: #5b5ee8;
@@ -16356,6 +16370,16 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
   .pt-kcol { flex: 0 0 380px; }
 }
 
+/* ‹ › над Канбаном — листать колонки без тачпада (только компьютер и только если колонки не влезают). */
+.pt-knav { display: none; }
+@media (min-width: 960px) {
+  .pt-knav { display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 8px; }
+  .pt-knav.is-hidden { display: none; }
+  .pt-knav-btn { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text); cursor: pointer; }
+  .pt-knav-btn:hover:not(:disabled) { background: var(--overlay-3); }
+  .pt-knav-btn:disabled { opacity: 0.35; cursor: default; }
+}
+
 /* Чип «у других» в шапке: сколько поручений ждут вас */
 .hero-chip .hero-chip-late { color: var(--danger); font-weight: 500; }
 
@@ -25794,3 +25818,15 @@ html.av2-dock #modal-overlay .modal { width: 100%; max-width: none; height: 100%
 /* Значок вида ленты/сетки нужен только там, где подпись кнопки скрыта (телефон). */
 .av2-view-ico { display: none; }
 @media (max-width: 959px) { .av2-view-ico { display: block; } }
+
+/* Фото в документе: кнопка «На весь экран» в углу и просмотр поверх всего. */
+.doc-img-expand { position: fixed; z-index: 1200; width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; background: var(--media-chip-bg); color: var(--media-viewer-fg); cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3); }
+.doc-img-expand:hover { background: var(--media-chip-bg-hover); }
+.doc-img-expand.hidden { display: none; }
+.doc-img-viewer { position: fixed; inset: 0; z-index: 2000; background: var(--media-viewer-bg); }
+.doc-img-viewer-stage { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 56px 24px 24px; box-sizing: border-box; overflow: hidden; }
+.doc-img-viewer-stage img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: zoom-in; border-radius: 4px; }
+.doc-img-viewer.is-actual .doc-img-viewer-stage { overflow: auto; display: block; text-align: center; }
+.doc-img-viewer.is-actual .doc-img-viewer-stage img { max-width: none; max-height: none; cursor: zoom-out; }
+.doc-img-viewer-close { position: absolute; top: 12px; right: 12px; width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; background: var(--media-viewer-btn); color: var(--media-viewer-fg); cursor: pointer; }
+.doc-img-viewer-close:hover { background: var(--media-viewer-btn-hover); }

@@ -19730,6 +19730,14 @@ async def miniapp_tracker_create_task(
         raise HTTPException(status_code=409, detail=str(e)) from e
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    if str(body.calendar_task_id or "").isdigit():
+        # Дубль задачи Орбиты: сразу подтянуть исполнителя/срок/стадию (не на меня — в «Поручил я»).
+        from assistant.services import tracker_sync
+
+        try:
+            await run_in_threadpool(partial(tracker_sync.sync_for_task, uid, body.calendar_task_id, max_age_sec=0))
+        except Exception as e:  # noqa: BLE001 — дубль создан, сверка догонит фоном
+            print(f"[trackers] first sync task={body.calendar_task_id} err={e!r}")
     if body.meeting_item and str(body.note_id or "").isdigit():
         # вложенные пункты — подзадачами в трекере, с той же доской и стадией
         await run_in_threadpool(
@@ -19752,12 +19760,23 @@ async def miniapp_tracker_links(
     calendar_task_id: str,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict:
-    from assistant.stores import trackers as trackers_store
+    from assistant.services import tracker_sync
 
-    links = await run_in_threadpool(
-        trackers_store.tasks_for_calendar_task, int(principal.telegram_user_id), calendar_task_id
-    )
-    return {"links": links}
+    uid = int(principal.telegram_user_id)
+    before = await run_in_threadpool(_task_sync_stamp, uid, calendar_task_id)
+    # Открыли задачу — заодно сверяем дубль с трекером (не чаще раза в пару минут).
+    links = await run_in_threadpool(tracker_sync.sync_for_task, uid, calendar_task_id)
+    after = await run_in_threadpool(_task_sync_stamp, uid, calendar_task_id)
+    return {"links": links, "task_changed": bool(before and after and before != after)}
+
+
+def _task_sync_stamp(uid: int, calendar_task_id: str) -> str:
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    if not str(calendar_task_id or "").isdigit():
+        return ""
+    t = calendar_tasks_store.get_task_for_user(uid, int(calendar_task_id))
+    return str((t or {}).get("updated_at") or "")
 
 
 @miniapp_router.post("/trackers/describe-wwa")

@@ -18070,6 +18070,16 @@
       (ev.event && ev.event.owner_archived)
     );
     var taskSource = { kind: "task", id: String(taskId), calendarId: "leo-tasks" };
+    // Дубли в трекерах — всегда, даже если список трекеров ещё не загрузился (раньше чип появлялся не всегда).
+    if (existing) {
+      mountTrackerLinks(document.getElementById("m-task-tracker-links"), taskId, function (n) {
+        var dupItem = buildTaskMenu._dupItem;
+        if (!n || !dupItem) return;
+        dupItem.label = dupItem.label.replace(/^Дубль в /, "Ещё дубль в ");
+        var btns = document.querySelectorAll("#modal-more-menu .modal-more-item");
+        if (btns[0] && /^Дубль в /.test(btns[0].textContent)) btns[0].textContent = dupItem.label;
+      });
+    }
     function buildTaskMenu() {
       if (!existing) return null;
       var taskMenu = modalConvertMenu("task", taskSource);
@@ -18091,12 +18101,7 @@
           },
         };
         taskMenu.unshift(dupItem);
-        mountTrackerLinks(document.getElementById("m-task-tracker-links"), taskId, function (n) {
-          if (!n) return;
-          dupItem.label = "Ещё дубль в " + dupTracker.title;
-          var btns = document.querySelectorAll("#modal-more-menu .modal-more-item");
-          if (btns[0] && /^Дубль в /.test(btns[0].textContent)) btns[0].textContent = dupItem.label;
-        });
+        buildTaskMenu._dupItem = dupItem;
       }
       var linkUrl = ev.url || taskShareUrl(taskId);
       taskMenu.unshift({ label: "Скопировать ссылку", fn: function () { copyModalTaskLink(linkUrl); } });
@@ -18831,7 +18836,14 @@
           b.type = "button";
           b.className = "tracker-link-chip";
           b.title = l.title || "";
-          var text = (tr ? tr.title : l.provider) + " #" + l.external_id + (l.stage_name ? " · " + l.stage_name : "");
+          // «Битрикс24 #123 · В работе · до 15 ноя · Иван Петров» — что сейчас в трекере.
+          var bits = [(tr ? tr.title : l.provider) + " #" + l.external_id];
+          var st = l.stage_name || l.status || "";
+          if (Number(l.closed)) st = l.status || "Завершена";
+          if (st) bits.push(st);
+          if (l.deadline && !Number(l.closed)) bits.push("до " + postedShortDate(String(l.deadline).slice(0, 10)));
+          if (l.responsible_name && l.responsible_other) bits.push(l.responsible_name);
+          var text = bits.join(" · ");
           b.innerHTML =
             '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>';
           var span = document.createElement("span");
@@ -18844,6 +18856,12 @@
         });
         host.classList.toggle("hidden", !links.length);
         if (onCount) onCount(links.length);
+        // Сверка с трекером поменяла задачу (срок, «выполнено», исполнитель) — списки и Фокус заново.
+        if (r && r.task_changed) {
+          showNoteToast("Срок и статус обновлены из трекера");
+          loadMyTasksList();
+          loadActual({ silent: true });
+        }
       })
       .catch(function () {});
   }
@@ -28434,8 +28452,46 @@
       jump.appendChild(j);
     });
     listEl.appendChild(jump);
+    // Компьютер без тачпада: ‹ › над колонками листают ленту на одну колонку.
+    var nav = document.createElement("div");
+    nav.className = "pt-knav is-hidden";
+    var ARROW = function (d) {
+      return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>';
+    };
+    function navBtn(dir) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "pt-knav-btn";
+      b.setAttribute("aria-label", dir < 0 ? "Предыдущие колонки" : "Следующие колонки");
+      b.title = dir < 0 ? "Назад по колонкам" : "Дальше по колонкам";
+      b.innerHTML = ARROW(dir < 0 ? "M15 6l-6 6 6 6" : "M9 6l6 6-6 6");
+      b.addEventListener("click", function () {
+        var col = board.querySelector(".pt-kcol");
+        var step = col ? col.getBoundingClientRect().width + 12 : board.clientWidth * 0.8;
+        var from = board.scrollLeft;
+        var to = Math.max(0, Math.min(board.scrollWidth - board.clientWidth, from + dir * step));
+        board.scrollTo({ left: to, behavior: "smooth" });
+        // Плавная прокрутка не сработала (анимации выключены / вкладка в фоне) — сразу на место.
+        window.setTimeout(function () {
+          if (Math.abs(board.scrollLeft - from) < 2 && Math.abs(to - from) >= 2) board.scrollLeft = to;
+          syncNav();
+        }, 450);
+      });
+      nav.appendChild(b);
+      return b;
+    }
+    var navPrev = navBtn(-1);
+    var navNext = navBtn(1);
+    function syncNav() {
+      var max = board.scrollWidth - board.clientWidth;
+      nav.classList.toggle("is-hidden", !(board.clientWidth > 0 && max > 4));
+      navPrev.disabled = board.scrollLeft <= 4;
+      navNext.disabled = board.scrollLeft >= max - 4;
+    }
+    listEl.appendChild(nav);
     listEl.appendChild(board);
     function syncJump() {
+      syncNav();
       var x = board.scrollLeft + 8;
       var cur = "";
       var first = board.firstChild;
@@ -28463,6 +28519,7 @@
       var visible = board.clientWidth > 0;
       if (visible && wasHidden && savedLeft) board.scrollLeft = savedLeft;
       wasHidden = !visible;
+      syncNav();
     }
     var ro = typeof ResizeObserver === "function" ? new ResizeObserver(restoreLeft) : null;
     if (ro) ro.observe(board);
@@ -33005,6 +33062,24 @@
     m.second = { label: "Список", fn: function (b) { m.open(b); } };
     return m;
   }
+  // «Открытый вопрос» → новая задача: вопрос — название, контекст карточки и ссылка на место в документе — описание,
+  // сам документ — источник задачи (note_id).
+  function av2QuestionToTask(it) {
+    var meta = it._item || {};
+    var text = String(meta.text || "").trim() || String(it.title || "").replace(/^Не решено:\s*/, "").trim();
+    text = text.charAt(0).toUpperCase() + text.slice(1);
+    var note = it.note || {};
+    var at = /^i[0-9a-f]{10}$/.test(String(meta.item || "")) ? String(meta.item) : "";
+    var quote = String(meta.quote || "").trim();
+    var src = focusSplitSource(it.source).text || String(note.title || "");
+    var lines = ["Открытый вопрос" + (src ? " из «" + src + "»" : "") + "."];
+    if (quote && quote !== text) lines.push("«" + quote + "»");
+    if (note.id) lines.push("В документе: " + noteFragmentUrl(note.id, "", at, { quote: at ? "" : quote || text }));
+    openTaskModal(
+      { summary: text.slice(0, 200), description: lines.join("\n\n"), note_id: note.id ? String(note.id) : "" },
+      { quote: quote || text }
+    );
+  }
   function av2LeoModel(it) {
     var src = focusSplitSource(it.source);
     var all = it.actions || [];
@@ -33059,6 +33134,7 @@
       // Договорённость, срок, открытый вопрос: галочка — «уже сделано».
       if (doneAct && !m.iconBtn) m.iconBtn = { icon: "check", title: "Готово", fn: function (b) { runFocusAction(it, doneAct, b); } };
       if (openSrc) m.menu.push({ label: "Открыть источник", fn: function () { openSrc(null); } });
+      if (it.type === "open_question") m.menu.unshift({ label: "В задачу", fn: function () { av2QuestionToTask(it); } });
     }
     m.menu.push(av2LaterItem(m), { label: "Удалить", danger: true, fn: m.dismiss });
     return m;
@@ -66553,6 +66629,108 @@
       return true;
     },
   };
+
+  // ——— Фото в документе: нажали — в углу кнопка «На весь экран», по ней — просмотр поверх всего ———
+  var DOC_IMG_SEL = "img.note-editor-image, .ProseMirror img, .note-editor-pad--body img";
+  var docImgBtn = null;
+  var docImgTarget = null;
+  function docImgBtnHide() {
+    if (docImgBtn) docImgBtn.classList.add("hidden");
+    docImgTarget = null;
+  }
+  function docImgBtnPlace() {
+    if (!docImgBtn || !docImgTarget) return;
+    if (!docImgTarget.isConnected) return docImgBtnHide();
+    var r = docImgTarget.getBoundingClientRect();
+    if (r.width < 40 || r.bottom < 0 || r.top > window.innerHeight) return docImgBtnHide();
+    docImgBtn.style.top = Math.round(Math.max(8, r.top + 8)) + "px";
+    docImgBtn.style.left = Math.round(r.right - 8 - 36) + "px";
+  }
+  function docImgBtnShow(img) {
+    if (!docImgBtn) {
+      docImgBtn = document.createElement("button");
+      docImgBtn.type = "button";
+      docImgBtn.className = "doc-img-expand hidden";
+      docImgBtn.title = "Открыть на весь экран";
+      docImgBtn.setAttribute("aria-label", "Открыть фото на весь экран");
+      docImgBtn.innerHTML =
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg>';
+      // mousedown — чтобы редактор не снял выделение с фото и не сдвинул курсор
+      docImgBtn.addEventListener("mousedown", function (e) { e.preventDefault(); e.stopPropagation(); });
+      docImgBtn.addEventListener("click", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        var src = docImgTarget && (docImgTarget.currentSrc || docImgTarget.src);
+        var alt = docImgTarget && docImgTarget.alt;
+        docImgBtnHide();
+        if (src) openDocImageViewer(src, alt);
+      });
+      document.body.appendChild(docImgBtn);
+      window.addEventListener("resize", docImgBtnPlace);
+      document.addEventListener("scroll", docImgBtnPlace, true);
+    }
+    docImgTarget = img;
+    docImgBtn.classList.remove("hidden");
+    docImgBtnPlace();
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (docImgBtn && (t === docImgBtn || docImgBtn.contains(t))) return;
+    var img = t && t.closest ? t.closest(DOC_IMG_SEL) : null;
+    if (img && img.tagName === "IMG" && img.closest("#note-editor-overlay, #panel-notes, #note-discussion-sheet-host, .note-discussion-sheet-pane")) {
+      docImgBtnShow(img);
+      return;
+    }
+    docImgBtnHide();
+  }, true);
+
+  function openDocImageViewer(src, alt) {
+    var ov = document.createElement("div");
+    ov.className = "doc-img-viewer";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", alt || "Фото");
+    var stage = document.createElement("div");
+    stage.className = "doc-img-viewer-stage";
+    var pic = document.createElement("img");
+    pic.src = src;
+    pic.alt = alt || "";
+    pic.title = "Нажмите — в натуральную величину";
+    stage.appendChild(pic);
+    var close = document.createElement("button");
+    close.type = "button";
+    close.className = "doc-img-viewer-close";
+    close.setAttribute("aria-label", "Закрыть");
+    close.title = "Закрыть (Esc)";
+    close.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    ov.appendChild(stage);
+    ov.appendChild(close);
+    function done() {
+      document.removeEventListener("keydown", onKey, true);
+      ov.remove();
+    }
+    function onKey(e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        done();
+      }
+    }
+    close.addEventListener("click", done);
+    // Фон — закрыть; само фото — «вписать / в натуральную величину» (мелкий текст на скриншоте).
+    ov.addEventListener("click", function (e) {
+      if (e.target === pic) {
+        ov.classList.toggle("is-actual");
+        pic.title = ov.classList.contains("is-actual") ? "Нажмите — вписать в экран" : "Нажмите — в натуральную величину";
+        return;
+      }
+      if (e.target === ov || e.target === stage) done();
+    });
+    document.addEventListener("keydown", onKey, true);
+    document.body.appendChild(ov);
+    close.focus();
+  }
 
   init();
 })();

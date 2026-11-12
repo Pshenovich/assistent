@@ -77,6 +77,7 @@ class TaskRef:
     closed: bool = False
     responsible: str = ""
     deadline: str = ""
+    responsible_id: str = ""  # id исполнителя в трекере — сверяем с владельцем вебхука («на меня или нет»)
 
     def public(self) -> dict[str, Any]:
         return asdict(self)

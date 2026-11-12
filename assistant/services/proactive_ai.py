@@ -686,6 +686,8 @@ def card_for(
             "tag": "❓ открытый вопрос",
             "urgency": 1,
             "title": f"Не решено: {text}",
+            # Для «В задачу» и перехода к строке: сам вопрос, строка документа и цитата-основание.
+            "_item": {"text": text, "item": item_id, "quote": str(it.get("quote") or "")[:300]},
             "actions": [
                 {
                     "label": "Обсудить",

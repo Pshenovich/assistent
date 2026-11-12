@@ -339,6 +339,7 @@ class Bitrix24Tracker:
             closed=status in ("5", "7"),
             responsible=str(resp.get("name") or "").strip(),
             deadline=str(t.get("deadline") or t.get("DEADLINE") or "")[:10],
+            responsible_id=str(t.get("responsibleId") or t.get("RESPONSIBLE_ID") or resp.get("id") or "").strip(),
         )
 
     def get_task(self, uid: int, external_id: str) -> TaskRef:

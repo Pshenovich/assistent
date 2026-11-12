@@ -72,6 +72,19 @@ def _conn() -> sqlite3.Connection:
             ON external_tasks(owner_user_id, calendar_task_id);
         """
     )
+    cols = {str(r[1]) for r in _CONN.execute("PRAGMA table_info(external_tasks)")}
+    # Что в трекере сейчас (подтягивает assistant/services/tracker_sync.py).
+    for col, ddl in (
+        ("status", "TEXT NOT NULL DEFAULT ''"),
+        ("deadline", "TEXT NOT NULL DEFAULT ''"),
+        ("responsible_id", "TEXT NOT NULL DEFAULT ''"),
+        ("responsible_name", "TEXT NOT NULL DEFAULT ''"),
+        ("closed", "INTEGER NOT NULL DEFAULT 0"),
+        ("synced_at", "TEXT NOT NULL DEFAULT ''"),
+        ("sync_error", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        if col not in cols:
+            _CONN.execute(f"ALTER TABLE external_tasks ADD COLUMN {col} {ddl}")
     _CONN.commit()
     return _CONN
 
@@ -183,6 +196,7 @@ def delete_credentials(uid: Any, provider: str) -> bool:
 _TASK_FIELDS = (
     "id", "provider", "external_id", "url", "title", "board_id", "board_name",
     "stage_id", "stage_name", "note_id", "calendar_task_id", "focus_key", "created_at",
+    "status", "deadline", "responsible_id", "responsible_name", "closed", "synced_at",
 )
 
 
@@ -218,3 +232,44 @@ def tasks_for_calendar_task(uid: Any, calendar_task_id: Any) -> list[dict[str, A
             (str(uid), str(calendar_task_id)),
         ).fetchall()
     return [_task_public(r) for r in rows]
+
+
+def get_task_link(row_id: Any) -> Optional[dict[str, Any]]:
+    with _LOCK:
+        row = _conn().execute("SELECT * FROM external_tasks WHERE id=?", (int(row_id),)).fetchone()
+    return _task_public(row) if row else None
+
+
+def save_sync(row_id: Any, *, title: str, url: str, stage_name: str, status: str, deadline: str,
+              responsible_id: str, responsible_name: str, closed: bool, error: str = "") -> None:
+    """Состояние задачи в трекере на момент сверки (без ошибки) или только время и ошибка."""
+    with _LOCK:
+        c = _conn()
+        if error:
+            c.execute("UPDATE external_tasks SET synced_at=?, sync_error=? WHERE id=?", (_now(), error[:300], int(row_id)))
+        else:
+            c.execute(
+                "UPDATE external_tasks SET title=CASE WHEN ?='' THEN title ELSE ? END, url=CASE WHEN ?='' THEN url ELSE ? END,"
+                " stage_name=?, status=?, deadline=?, responsible_id=?, responsible_name=?, closed=?, synced_at=?, sync_error=''"
+                " WHERE id=?",
+                (title, title[:500], url, url, stage_name[:200], status[:100], deadline[:10], responsible_id[:40],
+                 responsible_name[:200], 1 if closed else 0, _now(), int(row_id)),
+            )
+        c.commit()
+
+
+def links_to_sync(*, older_than: str, limit: int = 100) -> list[dict[str, Any]]:
+    """Дубли, привязанные к задачам Орбиты, которые давно не сверяли (старые — первыми)."""
+    with _LOCK:
+        rows = _conn().execute(
+            "SELECT e.* FROM external_tasks e JOIN tracker_credentials c"
+            " ON c.owner_user_id = e.owner_user_id AND c.provider = e.provider"
+            " WHERE e.calendar_task_id != '' AND e.synced_at < ? ORDER BY e.synced_at, e.id LIMIT ?",
+            (older_than, int(limit)),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = _task_public(r)
+        d["owner_user_id"] = r["owner_user_id"]
+        out.append(d)
+    return out
