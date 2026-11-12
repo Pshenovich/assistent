@@ -1436,7 +1436,7 @@
       var grid = monthGridRange(iso);
       return { from: grid.from, to: grid.to };
     }
-    var dual = isDesktopLayout();
+    var dual = isDesktopLayout() && !av2Split();
     return { from: iso, to: dual ? addDaysIso(iso, 1) : iso };
   }
 
@@ -1930,6 +1930,7 @@
     }
     meetingsViewMode = next;
     persistMeetingsViewMode(next);
+    if (av2Hub()) window.setTimeout(renderAv2Moves, 0); // неделя/месяц — «Фокус» сам сворачивается
     syncMeetingsViewMenu();
     closeMeetingsViewMenu();
     closeCalMenu();
@@ -1986,7 +1987,7 @@
       paintMeetingsRangeSkeleton(document.getElementById("meetings-month"));
       return;
     }
-    var dual = isDesktopLayout();
+    var dual = isDesktopLayout() && !av2Split();
     var rightIso = dual ? addDaysIso(leftIso, 1) : null;
     syncMeetingsHead(leftIso, rightIso);
     paintMeetingsListSkeleton(meetingsUiMain, leftIso);
@@ -4287,7 +4288,7 @@
   }
 
   function syncMeetingsHead(leftIso, rightIso) {
-    var dual = isDesktopLayout();
+    var dual = isDesktopLayout() && !av2Split();
     var head = document.getElementById("meetings-head-title");
     var sub = document.getElementById("meetings-head-sub");
     var prev = document.getElementById("meetings-prev");
@@ -4377,7 +4378,7 @@
   }
 
   function paintMeetingsBoard(leftData, rightData, reminders) {
-    var dual = isDesktopLayout();
+    var dual = isDesktopLayout() && !av2Split();
     if (reminders !== undefined) lastRemindersItems = reminders || [];
     lastMeetingsLeft = leftData || { events: [] };
     lastMeetingsRight = dual ? rightData || { events: [], date: addDaysIso((leftData && leftData.date) || meetingsPageDate, 1) } : null;
@@ -7324,6 +7325,23 @@
   }
 
   var SIDEBAR_COLLAPSED_LS = "leo_sidebar_collapsed";
+
+  // К началу открытого экрана: прокручиваем всё, что на нём листается.
+  function scrollTabToTop() {
+    var panel = document.querySelector("main .tab-panel:not(.hidden)") || document.getElementById("panel-" + currentTab);
+    var list = [document.querySelector(".main-scroll"), document.scrollingElement];
+    if (panel) Array.prototype.forEach.call(panel.querySelectorAll("*"), function (el) {
+      if (el.scrollTop > 0 && el.scrollHeight > el.clientHeight + 2 && el.clientHeight > 200) list.push(el);
+    });
+    list.forEach(function (el) {
+      if (!el || !el.scrollTop) return;
+      try {
+        el.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (_) {
+        el.scrollTop = 0;
+      }
+    });
+  }
 
   function isSidebarCollapsed() {
     return document.documentElement.classList.contains("sidebar-collapsed");
@@ -19297,6 +19315,8 @@
     video: '<rect x="3" y="6.5" width="12.5" height="11" rx="2.5"/><path d="m15.5 10.5 5-3v9l-5-3"/>',
     bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
     list: '<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="m3.5 6.5 1.2 1.2L7 5.4M3.5 12l1.2 1.2L7 10.9M3.5 17.5l1.2 1.2L7 16.4"/>',
+    doc: '<path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5z"/><path d="M14 3.5V8h4M9 12.5h6M9 16h6"/>',
+    link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     hourglass: '<path d="M7 3.5h10M7 20.5h10M8 3.5c0 4.5 8 5 8 8.5s-8 4-8 8.5M16 3.5c0 4.5-8 5-8 8.5"/>',
     ticket: '<path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h13A1.5 1.5 0 0 1 20 7.5V10a2 2 0 0 0 0 4v2.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5V14a2 2 0 0 0 0-4z"/><path d="M14 6v12" stroke-dasharray="2 2"/>',
   };
@@ -24239,7 +24259,7 @@
       tinboxEl(
         "p",
         "fstack-list-sub",
-        !s.items.length ? "Пунктов не осталось." : open.length ? "Осталось " + open.length + " из " + s.items.length + ". Поставить задачу, связать или отложить — «Карточками»." : "Все пункты разобраны."
+        !s.items.length ? "Пунктов не осталось." : open.length ? "Осталось " + open.length + " из " + s.items.length + (av2On() ? ". Связать или отложить — «Карточками»." : ". Поставить задачу, связать или отложить — «Карточками».") : "Все пункты разобраны."
       )
     );
     var rows = tinboxEl("div", "fstack-rows");
@@ -24251,7 +24271,9 @@
       if (meta) txt.appendChild(tinboxEl("span", "fstack-row-meta", meta));
       row.appendChild(txt);
       var acts = tinboxEl("div", "fstack-row-acts");
-      if (f.status === "new") {
+      if (f.status === "new" && av2On()) {
+        av2FstackRowActs(f, acts);
+      } else if (f.status === "new") {
         FSTACK_QUICK.forEach(function (q, i) {
           var b = tinboxEl("button", "fstack-pill" + (i === 0 ? " is-done" : ""), q[0]);
           b.type = "button";
@@ -24309,6 +24331,47 @@
     foot.appendChild(done);
     box.appendChild(foot);
     return box;
+  }
+
+  // Демо v2: в списке у пункта три решения — «Сделано», «В задачу» (беру сам или поручаю) и «Не задача».
+  function av2FstackRowActs(f, acts) {
+    var s = fstack;
+    var aid = fstackAid(f);
+    var me = defaultTaskAssignee();
+    var named = String(f.assignee || "").trim();
+    var mine = !named || /^я$/i.test(named) || named.split(/\s+/)[0].toLowerCase() === String(me.name || "").split(/\s+/)[0].toLowerCase();
+    var btn = function (label, cls, fn) {
+      var b = tinboxEl("button", "fstack-pill" + (cls ? " " + cls : ""), label);
+      b.type = "button";
+      b.disabled = s.busy;
+      b.addEventListener("click", function () { fn(b); });
+      acts.appendChild(b);
+      return b;
+    };
+    var take = function (who) {
+      focusCreateTask(aid, f, { title: f.text || "", due: focusDeadlineIso(f.deadline) || focusDeadlineIso("завтра"), comment: f.comment || "", who: who });
+    };
+    var form = function () {
+      // Исполнителя, срок и текст правим в карточке пункта.
+      s.view = "stack";
+      s.idx = s.items.indexOf(f);
+      Object.assign(focusUiFor(aid), { mode: "task", menu: "", draft: { target: "orbita" } });
+      renderFocusStack();
+    };
+    btn("Сделано", "", function () { fstackOp(f, { op: "done" }); });
+    var task = btn("В задачу", "is-done is-menu", function (b) {
+      var items = [{ label: "Беру себе", fn: function () { take(me); } }];
+      var c = mine ? null : focusAssigneeContact(named);
+      if (c) items.push({ label: "Поручить: " + String(c.name || named), fn: function () { take({ user_id: String(c.user_id || c.telegram_user_id || ""), email: String(c.email || ""), name: String(c.name || "") }); } });
+      items.push({ label: c ? "Поручить другому…" : "Поручить…", fn: form });
+      av2OpenMenu(b, items);
+    });
+    task.insertAdjacentHTML("beforeend", av2Svg("down", 14));
+    btn("Не задача", "is-ghost", function (b) {
+      av2OpenMenu(b, FSTACK_DECLINE.map(function (r) {
+        return { label: r[1], fn: function () { fstackDecline(f, r[0]); } };
+      }));
+    });
   }
 
   function fstackFinish() {
@@ -24525,6 +24588,13 @@
   function renderFocusRow() {
     var host = document.getElementById("actual-focus");
     if (!host) return;
+    if (av2Hub()) {
+      // Вариант В: подсказки Лео живут в общем блоке «Фокус», отдельной ленты карточек нет.
+      host.innerHTML = "";
+      host.classList.add("hidden");
+      renderAv2Moves();
+      return;
+    }
     // Перерисовка (скрыли карточку, обновилась лента) не должна сбрасывать прокрутку к первой карточке.
     var prevRow = host.querySelector(".focus-row");
     var prevLeft = prevRow ? prevRow.scrollLeft : 0;
@@ -24691,6 +24761,7 @@
   }
 
   async function focusOpenAssistant() {
+    av2RightBackToChat();
     if (document.documentElement.classList.contains("actual-assistant-open") && isNoteDiscussionOpen()) {
       return true;
     }
@@ -27280,6 +27351,7 @@
     heroTodayReminders = remindersForDate(active, todayIsoLocal());
     heroPostedCount = postedCount;
     paintActualHero(hero);
+    if (av2On()) renderAv2Moves();
     if (isPostedTasksOpen() && postedTasksTab === "current") {
       renderPostedTasksList(postedItems);
     }
@@ -27372,6 +27444,7 @@
 
   function postedTaskIsOverdue(task, now) {
     if (postedTaskIsDone(task) || postedTaskIsArchived(task)) return false;
+    if (av2On() && av2Pending(task)) return false; // не взято — срок ещё пожелание, а не обещание
     var due = postedTaskDueMs(task);
     return !isNaN(due) && due < (now || Date.now());
   }
@@ -27977,7 +28050,8 @@
           line = "сдал(а) работу";
           cls = "is-done";
         } else {
-          line = "всё по плану";
+          var waitN = av2On() ? g.items.filter(av2Pending).length : 0;
+          line = waitN ? "не взято — " + waitN : "всё по плану";
           cls = "is-ok";
         }
         line = cnt + " · " + line;
@@ -28518,6 +28592,10 @@
   // Карточка поручения в списке: фото, название в две строки, «кто · состояние · срок», справа — действия.
   function renderPostedRow(task, opts) {
     opts = opts || {};
+    if (av2On()) {
+      task._av2Posted = true;
+      return av2KbCard(task, {});
+    }
     var kind = opts.attention ? postedAttention(task) : null;
     var st = postedAssigneeState(task);
     var row = document.createElement("div");
@@ -30917,6 +30995,7 @@
   }
 
   function setPostedTasksScreen(open) {
+    if (av2On()) window.setTimeout(av2SyncSeg, 0);
     var panel = document.getElementById("panel-actual");
     var sub = document.getElementById("actual-posted-tasks");
     if (!panel || !sub) return;
@@ -30993,6 +31072,7 @@
   }
 
   function setMyTasksScreen(open) {
+    if (av2On()) window.setTimeout(av2SyncSeg, 0);
     var panel = document.getElementById("panel-actual");
     var sub = document.getElementById("actual-my-tasks");
     if (!panel || !sub) return;
@@ -31037,6 +31117,10 @@
       myTasksInboxItems = (data && Array.isArray(data.inbox_items)) ? data.inbox_items : [];
     } catch (err) {
       showNoteToast((err && err.message) || "Не удалось загрузить задачи");
+    }
+    if (av2On()) {
+      av2Loaded = true;
+      renderAv2Moves();
     }
     if (isMyTasksOpen()) renderMyTasksScreen();
     scrollMyTasksToInbox(true);
@@ -31392,6 +31476,23 @@
 
   // Своя задача окном (Канбан: правой панели нет) — та же карточка, что справа в списке.
   function openMyOwnSheet(task) {
+    // Демо v2: своя задача сразу открывается полным окном управления, без промежуточной карточки-просмотра.
+    if (av2On()) {
+      // В «Списке» на компьютере окно встаёт справа, на место карточки; в Канбане и Фокусе — по центру.
+      if (isMyTasksOpen() && isDesktopLayout() && !myKanbanOn()) {
+        myTasksSelectedId = String(task.id);
+        av2DockId = "";
+        renderMyTasksSide([{ rows: [task] }]);
+        return;
+      }
+      openTaskModal(myTaskEvent(task), {
+        onSaved: function () {
+          loadMyTasksList();
+          loadActual({ silent: true });
+        },
+      });
+      return;
+    }
     var ov = postedSheetEl();
     ov.classList.remove("hidden");
     document.documentElement.classList.add("pt-sheet-open");
@@ -31476,7 +31577,53 @@
       return;
     }
     postedCardHosts.side = null;
+    if (av2On()) {
+      // Демо v2: своя задача справа — сразу полное окно управления (то же, что открывается из Канбана).
+      side.innerHTML = '<p class="pt-muted-note pt-side-empty">Выберите задачу слева</p>';
+      if (av2DockId !== myTasksSelectedId) av2DockOpen(task, side);
+      return;
+    }
     paintMyOwnCard(side, task);
+  }
+  var av2DockId = "";
+  function av2DockPlace() {
+    var side = document.getElementById("my-tasks-side");
+    var ov = document.getElementById("modal-overlay");
+    if (!side || !ov || !document.documentElement.classList.contains("av2-dock")) return;
+    var r = side.getBoundingClientRect();
+    if (!r.width || ov.classList.contains("hidden") || !isMyTasksOpen()) return av2DockClose();
+    ov.style.left = Math.round(r.left) + "px";
+    ov.style.top = Math.round(Math.max(0, r.top)) + "px";
+    ov.style.width = Math.round(r.width) + "px";
+    // Боковая колонка сама по высоте содержимого — окно занимает всё место до низа экрана.
+    ov.style.height = Math.round(window.innerHeight - Math.max(0, r.top) - 16) + "px";
+  }
+  function av2DockClose() {
+    var ov = document.getElementById("modal-overlay");
+    document.documentElement.classList.remove("av2-dock");
+    if (ov) ov.style.left = ov.style.top = ov.style.width = ov.style.height = "";
+  }
+  function av2DockOpen(task) {
+    av2DockId = String(task.id);
+    openTaskModal(myTaskEvent(task), {
+      onSaved: function () {
+        av2DockId = ""; // после сохранения окно открывается заново со свежими данными
+        loadMyTasksList();
+        loadActual({ silent: true });
+      },
+    });
+    document.documentElement.classList.add("av2-dock");
+    av2DockPlace();
+    if (!av2DockOpen._bound) {
+      av2DockOpen._bound = true;
+      window.addEventListener("resize", av2DockPlace);
+      document.addEventListener("scroll", av2DockPlace, true);
+      // Закрыли окно (крестик, Esc, сохранение) — снимаем «прикрепление», чтобы обычные окна открывались по центру.
+      var ov = document.getElementById("modal-overlay");
+      if (ov && window.MutationObserver) new MutationObserver(function () {
+        if (ov.classList.contains("hidden")) av2DockClose();
+      }).observe(ov, { attributes: true, attributeFilter: ["class"] });
+    }
   }
 
   function myTaskPill(task) {
@@ -31509,7 +31656,17 @@
     var pv = myTaskPill(task);
     pill.className = "pt-pill " + pv.cls;
     pill.textContent = pv.text;
-    head.appendChild(pill);
+    // Демо v2: карточка своей задачи устроена как карточка поручения — шапка «кто», блок со строками «Срок / Статус / Источник».
+    var same = av2On();
+    if (same) {
+      var whoHead = document.createElement("div");
+      whoHead.className = "pt-c-who";
+      var whoName = document.createElement("span");
+      whoName.className = "pt-c-who-name";
+      whoName.textContent = "Своя задача";
+      whoHead.appendChild(whoName);
+      head.appendChild(whoHead);
+    } else head.appendChild(pill);
     host.appendChild(head);
     var body = document.createElement("div");
     body.className = "pt-c-body";
@@ -31519,17 +31676,23 @@
       paintSubtaskCrumb(crumbHost, task.parents, cardCtx);
       body.appendChild(crumbHost);
     }
+    var box = body;
+    if (same) {
+      box = document.createElement("div");
+      box.className = "pt-c-block";
+      body.appendChild(box);
+    }
     var h = document.createElement("h3");
     h.className = "pt-c-title";
     h.textContent = String(task.title || ev.summary || "Задача");
-    body.appendChild(h);
+    box.appendChild(h);
     var who = document.createElement("div");
     who.className = "pt-c-who";
     var due = document.createElement("span");
     due.className = "pt-c-due" + (postedTaskIsOverdue(task) ? " is-late" : "");
     due.textContent = postedDueLong(task) + (task.recurrence ? " · повторяется" : "");
     who.appendChild(due);
-    body.appendChild(who);
+    if (!same) body.appendChild(who);
     var descText = String(task.description || "");
     var srcTitle = "";
     var srcM = descText.match(/(?:^|\n)Из «([^»\n]+)»\s*$/);
@@ -31541,7 +31704,52 @@
       var d = document.createElement("p");
       d.className = "pt-c-desc";
       d.textContent = descText;
-      body.appendChild(d);
+      box.appendChild(d);
+    }
+    var rows = null;
+    if (same) {
+      rows = document.createElement("div");
+      rows.className = "pt-c-rows";
+      var late = postedTaskIsOverdue(task) && !done;
+      var dueRow = document.createElement(done ? "div" : "button");
+      dueRow.className = "pt-c-row pt-c-due-row" + (late ? " is-late" : "");
+      var dueLbl = document.createElement("span");
+      dueLbl.className = "pt-c-row-label";
+      dueLbl.textContent = "Срок";
+      dueRow.appendChild(dueLbl);
+      var dueVal = document.createElement("span");
+      dueVal.className = "pt-c-row-val";
+      var dueTxt = postedDueLong(task).replace(/^срок /, "") + (task.recurrence ? " · повторяется" : "");
+      dueVal.textContent = late ? dueTxt + " · " + postedLateLabel(task).toLowerCase() : dueTxt;
+      dueRow.appendChild(dueVal);
+      if (!done) {
+        dueRow.type = "button";
+        var chev = document.createElement("span");
+        chev.className = "pt-c-row-chev";
+        chev.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+        dueRow.appendChild(chev);
+        dueRow.addEventListener("click", function () {
+          openTaskModal(myTaskEvent(task), {
+            onSaved: function () {
+              loadMyTasksList();
+              loadActual({ silent: true });
+            },
+          });
+        });
+      }
+      rows.appendChild(dueRow);
+      if (!late) {
+        var stRow = document.createElement("div");
+        stRow.className = "pt-c-row";
+        var stLbl = document.createElement("span");
+        stLbl.className = "pt-c-row-label";
+        stLbl.textContent = "Статус";
+        stRow.appendChild(stLbl);
+        if (pv.text === "Своя задача") pill.textContent = "В плане";
+        stRow.appendChild(pill);
+        rows.appendChild(stRow);
+      }
+      box.appendChild(rows);
     }
     var tbOwn = renderTaskBlockers(task, {
       canEdit: !done,
@@ -31549,10 +31757,10 @@
         paintMyOwnCard(host, Object.assign({}, task, t), opts);
       },
     });
-    if (tbOwn) body.appendChild(tbOwn);
+    if (tbOwn) box.appendChild(tbOwn);
     var srcHost = document.createElement("div");
-    srcHost.className = "pt-c-sources hidden";
-    body.appendChild(srcHost);
+    srcHost.className = same ? "pt-c-sources pt-c-row hidden" : "pt-c-sources hidden";
+    (rows || body).appendChild(srcHost);
     mountPostedSources(srcHost, task, srcTitle || task.meeting_title || "", { opts: { inSide: true } });
     var checklist = normalizeReminderChecklist(task.checklist || ev.checklist || []);
     if (checklist.length) {
@@ -31765,6 +31973,1534 @@
   }
 
   // Быстрые действия в строке: у просроченных видны сразу, у остальных — при наведении (компьютер).
+  // ——— Демо «Актуальное v2» (?actual=v2): слева Фокус и «Ваш ход», справа полоса дат и календарь ———
+  // «Ваш ход» — что требуется от меня: разобрать, ответить, принять, сделать. Остальное — в «Все задачи».
+  var AV2_KEY = "orbita.actualV2";
+  var av2Flag = (function () {
+    try {
+      var q = new URLSearchParams(location.search).get("actual");
+      if (q === "v2") localStorage.setItem(AV2_KEY, "1");
+      else if (q === "v2b") localStorage.setItem(AV2_KEY, "b");
+      else if (q === "v2c") localStorage.setItem(AV2_KEY, "c");
+      else if (q === "v1") localStorage.setItem(AV2_KEY, "0");
+      // С 2026-11-12 новое «Актуальное» (вариант В) — у всех; ?actual=v1 возвращает прежний экран в этом браузере.
+      var saved = localStorage.getItem(AV2_KEY);
+      return saved === "0" ? "" : saved || "c";
+    } catch (_) {
+      return "c";
+    }
+  })();
+  if (av2Flag) document.documentElement.classList.add("av2");
+  if (av2Flag === "b") document.documentElement.classList.add("av2-b");
+  if (av2Flag === "c") document.documentElement.classList.add("av2-c");
+  // Вариант В: каркас как в проде, сверху один блок «Фокус» (ждут вас / сделать сегодня / Лео заметил).
+  function av2Hub() {
+    return av2Flag === "c";
+  }
+  function av2On() {
+    return !!av2Flag;
+  }
+  // Вариант Б: календарь главный (два дня, как сейчас), справа узкая лента «Ваш ход».
+  function av2Split() {
+    return av2Flag === "1";
+  }
+  // Переключатель вариантов — только на локальном демо-стенде.
+  if (/(^|\.)localhost$/.test(location.hostname)) {
+    document.addEventListener("DOMContentLoaded", function () {
+      var bar = av2El("div", "av2-demo");
+      bar.appendChild(av2El("span", "", "Демо:"));
+      [["v2", "А · пополам", av2Flag === "1"], ["v2b", "Б · календарь главный", av2Flag === "b"], ["v2c", "В · Фокус сверху", av2Flag === "c"], ["v1", "Как сейчас", !av2Flag]].forEach(function (x) {
+        var a = av2El("a", x[2] ? "is-on" : "", x[1]);
+        a.href = location.pathname + "?actual=" + x[0];
+        bar.appendChild(a);
+      });
+      document.body.appendChild(bar);
+    });
+  }
+
+  var AV2_ICO = {
+    video: '<path d="M15 10l4.5-2.5v9L15 14"/><rect x="3" y="6" width="12" height="12" rx="2.5"/>',
+    doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M5 20c1.5-3.5 4-5 7-5s5.5 1.5 7 5"/>',
+    lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+    repeat: '<path d="M4 12V9a3 3 0 0 1 3-3h12l-3-3M20 12v3a3 3 0 0 1-3 3H5l3 3"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    down: '<path d="M6 9l6 6 6-6"/>',
+    right: '<path d="M9 6l6 6-6 6"/>',
+  };
+  function av2Svg(name, size) {
+    var s = size || 16;
+    return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (AV2_ICO[name] || "") + "</svg>";
+  }
+  function av2El(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  // Путь поручения: «предложено → взято». Пока не взято, срок — пожелание постановщика.
+  var av2FlowCache = {};
+  function av2Flow(task) {
+    if (!task) return {};
+    if (task.flow) av2FlowCache[task.id] = task.flow;
+    return task.flow || av2FlowCache[task.id] || {};
+  }
+  function av2Pending(task) {
+    var d = av2Flow(task).delivery;
+    return !!d && d !== "taken";
+  }
+  function av2DaysSince(iso) {
+    var ms = Date.parse(iso || "");
+    return ms ? Math.max(0, Math.floor((Date.now() - ms) / DAY_MS)) : 0;
+  }
+  function av2DayText(dayIso) {
+    var diff = postedDayDiff(dayIso);
+    if (diff === 0) return "сегодня";
+    if (diff === 1) return "завтра";
+    return postedShortDate(dayIso);
+  }
+  var AV2_DELIVERY = { no_account: "ещё не в Орбите", not_opened: "не открыто", opened: "открыто, без ответа", snoozed: "отложено исполнителем" };
+  // Что ждёт постановщика по этой задаче: перенос срока, «не взято» или обычные вопрос/сдано/просрочено.
+  function av2Kind(task) {
+    if (av2Flow(task).due_request && !postedTaskIsDone(task)) return "due";
+    var k = postedAttention(task);
+    if (!k && av2Pending(task)) return "pending";
+    return k;
+  }
+  // Договорной срок: если дату двигали позже, первую не теряем.
+  function av2AgreedDay(task) {
+    var log = (task && (task.schedule_log || (task.event && task.event.schedule_log))) || [];
+    if (!log.length) return "";
+    var first = String(log[0].from_end || log[0].from_start || "").slice(0, 10);
+    var cur = postedTaskDayIso(task);
+    return first && cur && first < cur ? first : "";
+  }
+
+  // Кто «по ту сторону» задачи: исполнитель (я поставил), постановщик (мне поставили) или никто (своя).
+  function av2Role(task) {
+    if (task && task._av2Posted) return "posted";
+    if (isDelegatedTaskEvent(task)) return "mine-from";
+    return "own";
+  }
+
+  // Слева у строки: аватар человека, значок источника, замок у заблокированной. Пунктир — не разобрано.
+  function av2Lead(task, o) {
+    o = o || {};
+    var role = av2Role(task);
+    var lead;
+    if (taskIsBlocked(task) && !o.inbox) {
+      lead = av2El("span", "av2-lead is-icon");
+      lead.innerHTML = av2Svg("lock");
+    } else if (role === "posted") {
+      lead = postedAvatar(postedAssigneeUid(task), postedTaskAssigneeLabel(task), "s");
+      lead.classList.add("av2-lead");
+    } else if (role === "mine-from" || o.inbox) {
+      lead = postedAvatar(String(task.owner_user_id || ""), task.owner_name || "Постановщик", "s");
+      lead.classList.add("av2-lead");
+    } else {
+      lead = av2El("span", "av2-lead is-icon");
+      var src = task.source || {};
+      lead.innerHTML = av2Svg(task.recurrence ? "repeat" : src.kind === "transcription" ? "video" : src.kind === "note" ? "doc" : "user");
+    }
+    if (o.inbox) lead.classList.add("is-new");
+    return lead;
+  }
+
+  // Подпись: срок (или «срок был …» у заблокированной), один статус, от кого.
+  function av2Meta(task, o) {
+    o = o || {};
+    var line = av2El("p", "av2-meta");
+    function part(text, cls) {
+      if (!text) return;
+      if (line.childNodes.length) line.appendChild(av2El("span", "av2-sep", "·"));
+      line.appendChild(av2El("span", cls || "", text));
+    }
+    var role = av2Role(task);
+    var blocked = taskIsBlocked(task) && !o.inbox;
+    var done = postedTaskIsDone(task);
+    var ds = postedDueShort(task);
+    var kind = role === "posted" ? av2Kind(task) : null;
+    var flow = av2Flow(task);
+    var req = postedTaskIsDone(task) ? null : flow.due_request;
+    if (o.inbox || kind === "pending") {
+      // Не взято: вместо «просрочено» — где застряло и к какому дню хотели.
+      if (kind === "pending") {
+        var n = av2DaysSince(flow.since);
+        part((AV2_DELIVERY[flow.delivery] || "не взято") + (n > 0 && flow.delivery !== "no_account" ? " " + n + " " + pluralRu(n, "день", "дня", "дней") : ""), "");
+      }
+      var want = postedTaskDayIso(task);
+      if (want) part((o.inbox ? "хотят к " : "хотели к ") + postedShortDate(want), "");
+      if (kind === "pending") part(postedFirstName(postedTaskAssigneeLabel(task)), "");
+      if (o.inbox && task.owner_name && !o.noFrom) part("от " + postedFirstName(task.owner_name), "");
+      var nSub0 = (task.bundle_ids || []).length;
+      if (nSub0) part("+ " + nSub0 + " " + pluralRu(nSub0, "подзадача", "подзадачи", "подзадач"), "");
+      return line;
+    }
+    if (kind === "due") part(postedFirstName(postedTaskAssigneeLabel(task)) + " просит перенести на " + av2DayText(req.to), "is-red");
+    else if (req && role !== "posted") part("вы просили перенос на " + av2DayText(req.to) + " — ждём ответа", "");
+    if (kind === "question") part(postedFirstName(postedTaskAssigneeLabel(task)) + " спрашивает", "is-red");
+    else if (kind === "declined") part(postedFirstName(postedTaskAssigneeLabel(task)) + ": не моё", "is-red");
+    else if (kind === "done") part(postedFirstName(postedTaskAssigneeLabel(task)) + " сдал(а)", "");
+    if (blocked) {
+      part(tbRowLine(task).replace(/^заблокировано:?\s*/i, "ждёт: "), "");
+      if (ds.day !== "без срока") part((postedTaskIsOverdue(task) ? "срок был " : "до ") + ds.day, "");
+    } else if (done) {
+      if (kind !== "done") part("выполнено", "");
+    } else if (postedTaskIsOverdue(task) && kind !== "done") {
+      part(postedLateLabel(task).toLowerCase(), role === "posted" && kind !== "late" ? "" : "is-red");
+    } else if (ds.day !== "без срока") {
+      part((kind === "due" ? "срок пока " : "") + ds.day + (ds.time ? ", " + ds.time : ""), "");
+    } else if (!o.compact) part("без срока", "");
+    var agreed = av2AgreedDay(task);
+    if (agreed && !done && role !== "own") part("договаривались на " + postedShortDate(agreed), "");
+    if (role === "posted" && !kind) part(postedFirstName(postedTaskAssigneeLabel(task)), "");
+    if ((role === "mine-from" || o.inbox) && task.owner_name && !o.noFrom) part("от " + postedFirstName(task.owner_name), "");
+    var nSub = (task.bundle_ids || []).length;
+    if (nSub) part("+ " + nSub + " " + pluralRu(nSub, "подзадача", "подзадачи", "подзадач"), "");
+    return line;
+  }
+
+  // Откуда задача — ссылкой на документ/встречу, с текстом пункта, если он есть.
+  function av2Context(task) {
+    var src = task.source;
+    if (!src || !src.id) {
+      if (task.meeting_title) return av2El("p", "av2-ctx", "Встреча «" + task.meeting_title + "»");
+      return null;
+    }
+    var p = av2El("p", "av2-ctx");
+    var a = av2El("button", "av2-ctx-link");
+    a.type = "button";
+    a.innerHTML = av2Svg(src.kind === "transcription" ? "video" : "doc", 13);
+    a.appendChild(av2El("span", "", src.title || "Без названия"));
+    a.addEventListener("click", function (e) {
+      e.stopPropagation();
+      openSourceFragment({ id: src.id, kind: src.kind, title: src.title || "" }, src.item, src.quote);
+    });
+    p.appendChild(a);
+    var quote = String(src.quote || "").trim();
+    var norm = function (s) { return String(s || "").toLowerCase().replace(/[^0-9a-zа-яё]+/g, " ").trim(); };
+    var qn = norm(quote), tn = norm(task.title);
+    if (qn && tn.indexOf(qn) < 0 && qn.indexOf(tn) < 0) {
+      p.appendChild(av2El("span", "av2-ctx-q", "«" + (quote.length > 120 ? quote.slice(0, 117) + "…" : quote) + "»"));
+    }
+    return p;
+  }
+
+  function av2Btn(label, primary, fn) {
+    var b = av2El("button", "av2-btn" + (primary ? " is-primary" : ""));
+    b.type = "button";
+    b.innerHTML = label;
+    b.addEventListener("click", function (e) {
+      e.stopPropagation();
+      fn(b, e);
+    });
+    return b;
+  }
+
+  // Меню «Разобрать ▾»: беру / беру с правкой / позже / не моя / дубль / не задача.
+  var av2MenuEl = null;
+  var av2MenuAnchor = null;
+  function av2CloseMenu() {
+    if (av2MenuEl) av2MenuEl.remove();
+    av2MenuEl = null;
+    av2MenuAnchor = null;
+    document.removeEventListener("pointerdown", av2MenuOutside, true);
+  }
+  function av2MenuOutside(e) {
+    // Нажатие на ту же кнопку закрывает меню само (см. av2MenuToggled) — здесь его не трогаем.
+    // Меню открыто нажатием на карточку — вся карточка работает как его кнопка.
+    var zone = av2MenuAnchor && (av2MenuAnchor.closest(".av2c") || av2MenuAnchor);
+    if (zone && zone.contains(e.target)) return;
+    if (av2MenuEl && !av2MenuEl.contains(e.target)) av2CloseMenu();
+  }
+  // Повторное нажатие на кнопку, открывшую меню, — закрыть его. sub — переход в подменю, не закрытие.
+  function av2MenuToggled(anchor, sub) {
+    var same = !sub && av2MenuEl && av2MenuAnchor === anchor;
+    av2CloseMenu();
+    return same;
+  }
+  function av2PlaceMenu(m, anchor) {
+    document.body.appendChild(m);
+    var r = anchor.getBoundingClientRect();
+    var w = m.offsetWidth;
+    var left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w));
+    var top = r.bottom + 6;
+    if (top + m.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - m.offsetHeight - 6);
+    m.style.left = left + "px";
+    m.style.top = top + "px";
+    av2MenuEl = m;
+    av2MenuAnchor = anchor;
+    window.setTimeout(function () {
+      document.addEventListener("pointerdown", av2MenuOutside, true);
+    }, 0);
+  }
+  // Список поручений карточкой-выпадашкой: название, под ним — что с ним и сколько прошло, справа — «напомнить».
+  // opts.pick — выбрать поручение для действия (переназначить): без колокольчика, нажатие вызывает opts.pick.
+  function av2OpenList(anchor, tasks, opts) {
+    opts = opts || {};
+    if (av2MenuToggled(anchor, opts.sub)) return;
+    var m = av2El("div", "av2-menu av2-list");
+    if (opts.head) m.appendChild(av2El("p", "av2-list-head", opts.head));
+    tasks.forEach(function (t) {
+      var flow = av2Flow(t);
+      var row = av2El("div", "av2-list-row");
+      row.setAttribute("role", "button");
+      row.tabIndex = 0;
+      var main = av2El("div", "av2-list-main");
+      main.appendChild(av2El("p", "av2-list-title", String(t.title || "Задача")));
+      var n = av2DaysSince(flow.since);
+      var bits = [AV2_DELIVERY[flow.delivery] || "не взято"];
+      if (n > 0) bits.push(n + " " + pluralRu(n, "день", "дня", "дней"));
+      var day = postedTaskDayIso(t);
+      if (day) bits.push("хотели к " + postedShortDate(day));
+      main.appendChild(av2El("p", "av2-list-sub", bits.join(" · ")));
+      row.appendChild(main);
+      if (!opts.pick && flow.delivery !== "no_account") {
+        var bell = av2El("button", "av2-list-bell");
+        bell.type = "button";
+        bell.title = "Напомнить";
+        bell.setAttribute("aria-label", "Напомнить");
+        bell.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + POSTED_ACT_ICONS.bell + "</svg>";
+        bell.addEventListener("click", function (e) {
+          e.stopPropagation();
+          bell.disabled = true;
+          nudgePostedTask(t.id).then(function (r) { if (!r.ok) bell.disabled = false; });
+        });
+        row.appendChild(bell);
+      }
+      row.addEventListener("click", function () {
+        av2CloseMenu();
+        if (opts.pick) opts.pick(t);
+        else openPostedCard(t.id);
+      });
+      m.appendChild(row);
+    });
+    av2PlaceMenu(m, anchor);
+  }
+  // Постановщик снимает поручения: исполнитель получает уведомление, задачи уходят в «Принятые».
+  async function av2CancelTasks(tasks, who) {
+    var n = tasks.length;
+    var q = n === 1 ? "Снять поручение «" + String(tasks[0].title || "Задача") + "»?" : "Снять " + n + " " + pluralRu(n, "поручение", "поручения", "поручений") + "?";
+    if (!(await confirmDialog(q + " " + who + " получит уведомление."))) return;
+    var ok = 0;
+    for (var i = 0; i < n; i++) {
+      try {
+        var r = await postedApi(tasks[i].id, "cancel");
+        if (r && r.task) upsertPostedTask(r.task);
+        ok++;
+      } catch (err) {
+        showNoteToast((err && err.message) || "Не получилось снять");
+      }
+    }
+    if (ok) showNoteToast(ok === 1 ? "Поручение снято" : "Снято поручений: " + ok);
+    av2Reload();
+  }
+  function av2OpenMenu(anchor, items, sub) {
+    if (av2MenuToggled(anchor, sub)) return;
+    var m = av2El("div", "av2-menu");
+    m.setAttribute("role", "menu");
+    items.forEach(function (it) {
+      if (it === "-") {
+        m.appendChild(av2El("div", "av2-menu-sep"));
+        return;
+      }
+      var b = av2El("button", "av2-menu-item" + (it.danger ? " is-muted" : ""), it.label);
+      b.type = "button";
+      b.setAttribute("role", "menuitem");
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        av2CloseMenu();
+        it.fn();
+      });
+      if (it.sub) {
+        // Пункт с «›»: нажатие на название — вариант по умолчанию, на стрелку — подменю.
+        var rowEl = av2El("div", "av2-menu-row");
+        rowEl.appendChild(b);
+        var sb = av2El("button", "av2-menu-sub");
+        sb.type = "button";
+        sb.title = "Выбрать, на сколько";
+        sb.setAttribute("aria-label", sb.title);
+        sb.innerHTML = av2Svg("right", 14);
+        sb.addEventListener("click", function (e) {
+          e.stopPropagation();
+          av2OpenMenu(anchor, it.sub, true);
+        });
+        rowEl.appendChild(sb);
+        m.appendChild(rowEl);
+        return;
+      }
+      m.appendChild(b);
+    });
+    av2PlaceMenu(m, anchor);
+  }
+
+  async function av2Triage(task, action, payload, okText) {
+    try {
+      await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/triage", {
+        method: "POST",
+        body: JSON.stringify(Object.assign({ action: action, with_ids: task.bundle_ids || [] }, payload || {})),
+      });
+      showNoteToast(okText || "Готово");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+    }
+    loadMyTasksList();
+    loadFocus(true);
+    loadActual({ silent: true, skipCachePaint: true });
+  }
+
+  function av2TriageMenu(task, anchor, row) {
+    var items = [
+      { label: "Беру", fn: function () { myInboxAccept(task, null, row); } },
+      { label: "Беру, но поправлю…", fn: function () { openTaskInbox({ startId: task.id }); } },
+      { label: "Позже — завтра утром", fn: function () { av2Triage(task, "snooze", {}, "Напомню завтра утром"); } },
+      "-",
+    ];
+    FSTACK_DECLINE.forEach(function (r) {
+      items.push({ label: r[1], danger: true, fn: function () { av2Triage(task, "decline", { note: r[1] }, "Вернули постановщику: " + r[1].toLowerCase()); } });
+    });
+    items.push({ label: "Не моя, с комментарием…", danger: true, fn: function () { openTaskInbox({ startId: task.id, menu: "decline" }); } });
+    av2OpenMenu(anchor, items);
+  }
+
+  // Следующий шаг — одна кнопка.
+  function av2Action(task, o, row) {
+    o = o || {};
+    var role = av2Role(task);
+    if (o.inbox) {
+      return av2Btn("Разобрать " + av2Svg("down", 14), false, function (b) {
+        av2TriageMenu(task, b, row);
+      });
+    }
+    if (postedTaskIsDone(task) && role !== "posted") return null;
+    if (role === "posted") {
+      var kind = av2Kind(task);
+      if (kind === "due") {
+        var rq = av2Flow(task).due_request;
+        return av2Btn("Решить " + av2Svg("down", 14), true, function (b) {
+          av2OpenMenu(b, [
+            { label: "Согласен — до " + av2DayText(rq.to), fn: function () { av2DueAnswer(task, true); } },
+            { label: "Нет, срок прежний — " + postedDueShort(task).day, fn: function () { av2DueAnswer(task, false); } },
+          ]);
+        });
+      }
+      if (kind === "pending") {
+        if (av2Flow(task).delivery === "no_account") return null;
+        return av2Btn("Напомнить", false, function (b) {
+          b.disabled = true;
+          nudgePostedTask(task.id).then(function () { b.disabled = false; });
+        });
+      }
+      if (kind === "question") return av2Btn("Ответить", true, function () { openPostedCard(task.id, { focus: "reply" }); });
+      if (kind === "declined") return av2Btn("Решить", false, function () { openPostedCard(task.id); });
+      if (kind === "done") {
+        return av2Btn("Принять " + av2Svg("down", 14), false, function (b) {
+          av2OpenMenu(b, [
+            { label: "Принять", fn: function () { acceptPostedTask(task.id); } },
+            { label: "Вернуть с комментарием…", fn: function () { openPostedCard(task.id, { focus: "return" }); } },
+          ]);
+        });
+      }
+      if (kind === "late" && !task.assignee_external) return av2Btn("Напомнить", false, function (b) {
+        b.disabled = true;
+        nudgePostedTask(task.id).then(function () { b.disabled = false; });
+      });
+      return null;
+    }
+    if (taskIsBlocked(task)) return null;
+    if (role === "mine-from") {
+      return av2Btn("Сдать " + av2Svg("down", 14), false, function (b) {
+        var items = [{ label: "Сдать результат…", fn: function () { openPostedCard(task.id, { focus: "result", myTasks: true }); } }];
+        if (!av2Flow(task).due_request) items.push({ label: "Попросить перенос срока…", fn: function () { av2DuePrompt(task); } });
+        av2OpenMenu(b, items);
+      });
+    }
+    return av2Btn(av2Svg("check", 14) + "<span>Готово</span>", false, function (b) {
+      row.classList.add("is-done");
+      setMyTaskDone(task, true, b);
+    });
+  }
+
+  function av2Reload() {
+    loadMyTasksList();
+    if (isPostedTasksOpen()) loadPostedTasksList();
+    loadFocus(true);
+    loadActual({ silent: true, skipCachePaint: true });
+  }
+  async function av2DueAnswer(task, ok) {
+    try {
+      await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/due-answer", { method: "POST", body: JSON.stringify({ ok: !!ok }) });
+      delete av2FlowCache[task.id];
+      showNoteToast(ok ? "Срок перенесён" : "Срок остался прежним");
+    } catch (e) {
+      showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+    }
+    av2Reload();
+  }
+  // Исполнитель просит перенос: дата и причина. Срок меняется только после согласия постановщика.
+  function av2DuePrompt(task) {
+    var wrap = av2El("div", "av2-dlg-wrap");
+    var dlg = av2El("div", "av2-dlg");
+    dlg.setAttribute("role", "dialog");
+    dlg.appendChild(av2El("h3", "av2-dlg-h", "Попросить перенос срока"));
+    dlg.appendChild(av2El("p", "av2-dlg-sub", "Срок изменится, когда " + postedFirstName(task.owner_name || "постановщик") + " согласится. До этого действует прежний."));
+    var date = av2El("input", "av2-dlg-in");
+    date.type = "date";
+    var cur = postedTaskDayIso(task);
+    var t = new Date();
+    var today = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
+    date.min = cur && cur > today ? cur : today;
+    var why = av2El("textarea", "av2-dlg-in");
+    why.rows = 2;
+    why.placeholder = "Почему — одной фразой";
+    dlg.appendChild(date);
+    dlg.appendChild(why);
+    var row = av2El("div", "av2-dlg-row");
+    var close = function () { wrap.remove(); };
+    row.appendChild(av2Btn("Отмена", false, close));
+    row.appendChild(av2Btn("Отправить", true, async function (b) {
+      if (!date.value) {
+        date.focus();
+        return;
+      }
+      b.disabled = true;
+      try {
+        await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/due-request", { method: "POST", body: JSON.stringify({ date: date.value, reason: why.value }) });
+        showNoteToast("Просьба отправлена");
+        close();
+        av2Reload();
+      } catch (e) {
+        b.disabled = false;
+        showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+      }
+    }));
+    dlg.appendChild(row);
+    wrap.appendChild(dlg);
+    wrap.addEventListener("click", function (e) { if (e.target === wrap) close(); });
+    document.body.appendChild(wrap);
+    date.focus();
+  }
+
+  function av2Open(task, o) {
+    o = o || {};
+    if (o.inbox) return openTaskInbox({ startId: task.id });
+    if (av2Role(task) === "posted") return openPostedCard(task.id);
+    if (isDelegatedTaskEvent(task)) return openPostedCard(task.id, { myTasks: true });
+    openMyOwnSheet(task);
+  }
+
+  // Строка «Ваш хода» и карточка Канбана — одна разметка: источник, название, подпись, откуда, кнопка.
+  function av2Row(task, o) {
+    o = o || {};
+    var row = av2El("div", "av2-row" + (o.card ? " av2-card" : "") + (o.inbox ? " is-new" : "") + (postedTaskIsDone(task) && av2Role(task) !== "posted" ? " is-done" : ""));
+    row.dataset.taskId = String(task.id);
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.appendChild(av2Lead(task, o));
+    var main = av2El("div", "av2-main");
+    main.appendChild(av2El("p", "av2-title", String(task.title || "Задача")));
+    main.appendChild(av2Meta(task, o));
+    var st = postedAssigneeState(task);
+    var kind = av2Role(task) === "posted" ? av2Kind(task) : null;
+    var rq = av2Flow(task).due_request;
+    if (rq && rq.reason && !postedTaskIsDone(task)) main.appendChild(av2El("p", "av2-quote", rq.reason));
+    if ((kind === "question" || kind === "declined") && st.status_note) main.appendChild(av2El("p", "av2-quote", st.status_note));
+    else if (kind === "done" && task.result) main.appendChild(av2El("p", "av2-quote", task.result));
+    var ctx = av2Context(task);
+    if (ctx) main.appendChild(ctx);
+    row.appendChild(main);
+    var act = o.noAction ? null : av2Action(task, o, row);
+    if (act) row.appendChild(act);
+    row.addEventListener("click", function () { av2Open(task, o); });
+    row.addEventListener("keydown", function (e) {
+      if (e.target === row && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        av2Open(task, o);
+      }
+    });
+    return row;
+  }
+
+  // ——— Данные для «Ваш ход» ———
+  var av2Loaded = false;
+  async function av2LoadMine() {
+    try {
+      var data = await apiFetch("/calendar/tasks/mine", { method: "GET" });
+      myTasksItems = (data && data.items) || [];
+      myTasksInbox = Number((data && data.inbox) || 0);
+      myTasksInboxItems = (data && Array.isArray(data.inbox_items)) ? data.inbox_items : [];
+      av2Loaded = true;
+    } catch (_) {}
+    renderAv2Moves();
+  }
+
+  function av2IsToday(task) {
+    return postedDayDiff(postedTaskDayIso(task)) === 0;
+  }
+
+  var av2Expanded = {};
+  function renderAv2Moves() {
+    var host = document.getElementById("av2-moves");
+    if (!host) return;
+    if (!av2On()) {
+      setHidden(host, true);
+      return;
+    }
+    setHidden(host, false);
+    // Список перерисовывается при каждом обновлении данных — лента не должна прыгать в начало.
+    var oldStrip = host.querySelector(".av2-strip");
+    av2StripLeft = oldStrip ? oldStrip.scrollLeft : av2StripLeft;
+    host.innerHTML = "";
+    var posted = (lastPostedTasksItems || []).filter(function (t) { return !postedTaskIsArchived(t); });
+    posted.forEach(function (t) { t._av2Posted = true; });
+    var decide = [];
+    myTasksInboxItems.forEach(function (t) { decide.push({ t: t, o: { inbox: true }, w: 0 }); });
+    posted.forEach(function (t) {
+      var k = av2Kind(t);
+      if (k === "due") decide.push({ t: t, o: {}, w: 1 });
+      else if (k === "question") decide.push({ t: t, o: {}, w: 1 });
+      else if (k === "declined") decide.push({ t: t, o: {}, w: 2 });
+      else if (k === "done") decide.push({ t: t, o: {}, w: 3 });
+    });
+    decide.sort(function (a, b) { return a.w - b.w; });
+    var doIt = myTasksItems.filter(function (t) {
+      return !postedTaskIsDone(t) && !taskIsBlocked(t) && (postedTaskIsOverdue(t) || av2IsToday(t));
+    });
+    doIt.sort(function (a, b) {
+      var la = postedTaskIsOverdue(a) ? 0 : 1, lb = postedTaskIsOverdue(b) ? 0 : 1;
+      return la - lb || postedTaskDueMs(a) - postedTaskDueMs(b);
+    });
+    var total = decide.length + doIt.length;
+    if (av2Hub()) {
+      av2RenderHub(host, decide, doIt, posted);
+      renderAv2Stickies();
+      return;
+    }
+
+    var head = av2El("div", "av2-head");
+    head.appendChild(av2El("h2", "av2-h", "Ваш ход"));
+    if (total) head.appendChild(av2El("span", "av2-count", String(total)));
+    head.appendChild(av2El("span", "av2-sp"));
+    var all = av2El("button", "av2-link");
+    all.type = "button";
+    all.innerHTML = "Все задачи" + av2Svg("right", 14);
+    all.addEventListener("click", function () { av2OpenAll("mine"); });
+    head.appendChild(all);
+    host.appendChild(head);
+
+    var box = av2El("div", "av2-list");
+    if (!av2Loaded) {
+      box.appendChild(av2El("p", "av2-empty-sub", "Загружаю…"));
+      host.appendChild(box);
+      return;
+    }
+    if (!total) {
+      var em = av2El("div", "av2-empty");
+      em.appendChild(av2El("p", "av2-empty-title", "От вас сейчас ничего не ждут"));
+      em.appendChild(av2El("p", "av2-empty-sub", "Новые поручения, вопросы и сданная работа появятся здесь."));
+      box.appendChild(em);
+    }
+    function group(key, title, list, make) {
+      if (!list.length) return;
+      box.appendChild(av2El("div", "av2-group", title));
+      var limit = av2Expanded[key] ? list.length : 4;
+      list.slice(0, limit).forEach(function (x) { box.appendChild(make(x)); });
+      if (list.length > limit) {
+        var more = av2El("button", "av2-more", "Ещё " + (list.length - limit));
+        more.type = "button";
+        more.addEventListener("click", function () {
+          av2Expanded[key] = true;
+          renderAv2Moves();
+        });
+        box.appendChild(more);
+      }
+    }
+    group("decide", "Ответить и решить", decide, function (x) { return av2Row(x.t, x.o); });
+    group("do", "Сделать сегодня", doIt, function (t) { return av2Row(t, {}); });
+
+    // Поручено другим: одной строкой — сколько и есть ли просрочки. Блокировки не в счёт.
+    var active = posted.filter(function (t) { return !postedTaskIsDone(t); });
+    if (active.length) {
+      var late = {};
+      var waiting = active.filter(av2Pending).length;
+      active.forEach(function (t) {
+        if (postedTaskIsOverdue(t) && !taskIsBlocked(t)) {
+          var n = postedFirstName(postedTaskAssigneeLabel(t));
+          late[n] = (late[n] || 0) + 1;
+        }
+      });
+      var foot = av2El("button", "av2-foot");
+      foot.type = "button";
+      foot.appendChild(av2El("span", "", "Поручено другим: " + active.length));
+      var names = Object.keys(late);
+      if (waiting) {
+        foot.appendChild(av2El("span", "av2-sep", "·"));
+        foot.appendChild(av2El("span", "", "ещё не взято — " + waiting));
+      }
+      if (names.length) {
+        foot.appendChild(av2El("span", "av2-sep", "·"));
+        foot.appendChild(av2El("span", "is-red", names.slice(0, 2).map(function (n) { return n + " — " + late[n]; }).join(", ") + (names.length > 2 ? "…" : "") + " просрочено"));
+      } else if (!waiting) {
+        foot.appendChild(av2El("span", "av2-sep", "·"));
+        foot.appendChild(av2El("span", "", "всё по плану"));
+      }
+      foot.appendChild(av2El("span", "av2-sp"));
+      var go = av2El("span", "av2-link");
+      go.innerHTML = "Смотреть" + av2Svg("right", 14);
+      foot.appendChild(go);
+      foot.addEventListener("click", function () { av2OpenAll("posted"); });
+      box.appendChild(foot);
+    }
+    host.appendChild(box);
+  }
+
+
+  // ——— Вариант В: единый «Фокус» над календарём, сворачивается в одну строку ———
+  var AV2_FOLD_KEY = "orbita.av2Fold.";
+  function av2FoldSlot() {
+    return meetingsViewMode === "day" ? "day" : "wide";
+  }
+  function av2Folded() {
+    var def = av2FoldSlot() === "wide"; // на неделе и месяце календарю нужно место — свёрнуто по умолчанию
+    try {
+      var v = localStorage.getItem(AV2_FOLD_KEY + av2FoldSlot());
+      return v == null ? def : v === "1";
+    } catch (_) {
+      return def;
+    }
+  }
+  function av2SetFolded(on) {
+    try {
+      localStorage.setItem(AV2_FOLD_KEY + av2FoldSlot(), on ? "1" : "0");
+    } catch (_) {}
+    renderAv2Moves();
+  }
+  // Подсказки Лео, которых нет среди задач: поручения, свои просрочки и «поручено другим» уже в соседних колонках.
+  function av2LeoItems() {
+    var skip = { task_inbox: 1, overdue: 1, posted_overdue: 1 };
+    return (focusItems || []).filter(function (it) { return it && !skip[it.type]; });
+  }
+  function av2LeoRow(it) {
+    var row = av2El("div", "av2-row av2-leo");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    var ui = focusCardIcon(it);
+    var lead = av2El("span", "av2-lead is-icon" + (it.urgency >= 3 ? " is-urgent" : ""));
+    lead.innerHTML = DISCUSS_ICONS[ui[0]] || DISCUSS_ICONS.spark;
+    row.appendChild(lead);
+    var main = av2El("div", "av2-main");
+    main.appendChild(av2El("p", "av2-title", String(it.title || "")));
+    var src = focusSplitSource(it.source);
+    var meta = av2El("p", "av2-meta");
+    [focusKindLabel(it.tag), src.due || it.sub || "", src.text].forEach(function (t) {
+      if (!t) return;
+      if (meta.childNodes.length) meta.appendChild(av2El("span", "av2-sep", "·"));
+      meta.appendChild(av2El("span", "", t));
+    });
+    main.appendChild(meta);
+    row.appendChild(main);
+    var all = it.actions || [];
+    var act = all.filter(function (a) { return !FOCUS_OPEN_ACTS[a.act] && a.act !== "mark_done" && a.act !== "mark_done_pick"; })[0];
+    var btn;
+    if (it.type === "topic_link" || it.type === "task_blocking") {
+      btn = av2Btn("Открыть", false, function () { openFocusAll(); });
+    } else if (focusStackable(it)) {
+      btn = av2Btn("Разобрать", false, function () { openFocusStack(it, "stack"); });
+    } else if (act) {
+      var taskAct = focusIsTaskAct(act) && (focusHasItems(it) || (it.commitment_keys && it.commitment_keys.length));
+      btn = av2Btn(escapeHtml(taskAct ? "В задачу" : FOCUS_SHORT_LABEL[act.label] || act.label), false, function (b) {
+        if (taskAct) openFocusStack(it, "stack");
+        else runFocusAction(it, act, b);
+      });
+    } else {
+      btn = av2Btn("Уточнить", false, function (b) { askAboutFocus(it, b); });
+    }
+    row.appendChild(btn);
+    var x = av2El("button", "av2-x");
+    x.type = "button";
+    x.title = "Скрыть";
+    x.setAttribute("aria-label", "Скрыть");
+    x.innerHTML = DISCUSS_ICONS.x;
+    x.addEventListener("click", function (e) {
+      e.stopPropagation();
+      dismissFocus(it);
+    });
+    row.appendChild(x);
+    row.addEventListener("click", function () { openFocusAll(); });
+    return row;
+  }
+  // «Позже»: карточка уходит из Фокуса на 5 часов; «›» — час, 5 часов или до завтра (в демо — память браузера).
+  var AV2_LATER_KEY = "orbita.av2Later";
+  function av2LaterMap() {
+    var map = {};
+    try {
+      map = JSON.parse(localStorage.getItem(AV2_LATER_KEY) || "{}") || {};
+    } catch (_) {}
+    var now = Date.now();
+    Object.keys(map).forEach(function (k) { if (!(map[k] > now)) delete map[k]; });
+    return map;
+  }
+  function av2LaterItem(m) {
+    var hide = function (until, text) {
+      var map = av2LaterMap();
+      map[m.key] = until;
+      try {
+        localStorage.setItem(AV2_LATER_KEY, JSON.stringify(map));
+      } catch (_) {}
+      renderAv2Moves();
+      showNoteToast(text);
+    };
+    var hours = function (n, text) { return function () { hide(Date.now() + n * 3600000, text); }; };
+    var d = new Date();
+    var tomorrow = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 7, 0).getTime();
+    return {
+      label: "Позже", fn: hours(5, "Вернётся в Фокус через 5 часов"),
+      sub: [
+        { label: "Через час", fn: hours(1, "Вернётся в Фокус через час") },
+        { label: "Через 5 часов", fn: hours(5, "Вернётся в Фокус через 5 часов") },
+        { label: "Завтра", fn: function () { hide(tomorrow, "Вернётся в Фокус завтра утром") } },
+      ],
+    };
+  }
+  // Справа открыт документ-источник, а нужен чат с Лео — возвращаем чат.
+  function av2RightBackToChat() {
+    if (noteSheetState.rightMode !== "note" || !document.documentElement.classList.contains("actual-assistant-open")) return;
+    setRightPaneMode("discussion");
+    syncNotePaneModeClass();
+    syncNotePaneHeader();
+  }
+  async function av2OpenSource(note, at, quote) {
+    if (!isDesktopLayout() || currentTab !== "actual") return openSourceFragment(note, at, quote);
+    try {
+      if (!(await focusOpenAssistant())) return openSourceFragment(note, at, quote);
+      await openNoteInRightPane({ id: note.id, kind: "local", title: note.title || "" });
+      // Панель открыта как чат с Лео — её шапка сама на документ не переключается.
+      syncNotePaneModeClass();
+      var lbl = document.getElementById("note-discussion-title-label");
+      if (lbl && noteSheetState.rightNote) lbl.textContent = String(noteSheetState.rightNote.title || note.title || "Документ");
+    } catch (_) {
+      openSourceFragment(note, at, quote);
+    }
+  }
+  // ——— Карточка «Фокуса» (вариант В) ———
+  // Цвет — по смыслу: red — горит у вас, blue — нужно ваше действие, amber — что-то не так у других, violet — заметил Лео.
+  // У каждого типа: главное действие, второе действие и меню «ещё».
+  function av2TaskModel(task, o) {
+    o = o || {};
+    var role = av2Role(task);
+    var kind = role === "posted" ? av2Kind(task) : null;
+    var flow = av2Flow(task);
+    var st = postedAssigneeState(task);
+    var who = role === "posted" ? postedTaskAssigneeLabel(task) : (task.owner_name || "");
+    var first = postedFirstName(who);
+    var ds = postedDueShort(task);
+    var due = ds.day === "без срока" ? "" : ds.day;
+    var src = task.source || {};
+    var quote = String(src.quote || "").trim();
+    var norm = function (x) { return String(x || "").toLowerCase().replace(/[^0-9a-zа-яё]+/g, " ").trim(); };
+    if (quote && (norm(task.title).indexOf(norm(quote)) >= 0 || norm(quote).indexOf(norm(task.title)) >= 0)) quote = "";
+    var desc = String(task.description || (task.event && task.event.description) || "").replace(/\s+/g, " ").trim();
+    if (src.title && desc.indexOf(src.title) >= 0) desc = ""; // «Из встречи …» — источник и так внизу карточки
+    var m = {
+      title: String(task.title || "Задача"),
+      person: role === "posted" ? { uid: postedAssigneeUid(task), name: who } : (role === "mine-from" || o.inbox) ? { uid: String(task.owner_user_id || ""), name: who || "Постановщик" } : null,
+      source: src.id ? { title: src.title || "Без названия", kind: src.kind, open: function () { av2OpenSource({ id: src.id, kind: src.kind, title: src.title || "" }, src.item, src.quote); } } : (task.meeting_title ? { title: task.meeting_title, kind: "transcription" } : null),
+      ctx: quote ? "«" + quote + "»" : desc,
+      open: function () { av2Open(task, o); },
+      menu: [],
+    };
+    m.key = "t:" + task.id + ":" + (o.inbox ? "inbox" : kind || role);
+    // «⋯» у любой карточки задачи: открыть её и «Позже» — убрать карточку из Фокуса до утра.
+    if (!o.inbox) m.menu.push({ label: "Открыть задачу", fn: m.open }, av2LaterItem(m));
+    if (o.inbox) {
+      m.tone = "blue"; m.icon = "taskBox"; m.label = "Новое поручение" + (first ? " от " + first : ""); m.w = 2;
+      m.when = due ? "хотят к " + postedShortDate(postedTaskDayIso(task)) : "без срока";
+      m.main = { label: "Беру", primary: true, fn: function (b, card) { myInboxAccept(task, b, card); } };
+      m.second = { label: "Позже", fn: function () { av2Triage(task, "snooze", {}, "Напомню завтра утром"); } };
+      m.menu.push({ label: "Беру, но поправлю срок…", fn: function () { openTaskInbox({ startId: task.id }); } }, "-");
+      FSTACK_DECLINE.forEach(function (r) {
+        m.menu.push({ label: r[1], danger: true, fn: function () { av2Triage(task, "decline", { note: r[1] }, "Вернули постановщику: " + r[1].toLowerCase()); } });
+      });
+      m.menu.push({ label: "Не моя, с комментарием…", danger: true, fn: function () { openTaskInbox({ startId: task.id, menu: "decline" }); } });
+    } else if (kind === "due") {
+      var rq = flow.due_request;
+      m.tone = "red"; m.icon = "clock"; m.label = first + " просит перенести срок"; m.w = 0;
+      m.when = "на " + av2DayText(rq.to);
+      m.ctx = (rq.reason ? "«" + rq.reason + "»" : "Причина не указана") ;
+      m.note = "Сейчас срок: " + (due || "нет") + (av2AgreedDay(task) ? " · договаривались на " + postedShortDate(av2AgreedDay(task)) : "");
+      m.main = { label: "Согласен", primary: true, fn: function () { av2DueAnswer(task, true); } };
+      m.second = { label: "Не согласен", fn: function () { av2DueAnswer(task, false); } };
+    } else if (kind === "question") {
+      m.tone = "red"; m.icon = "chat"; m.label = "Вопрос от " + first; m.w = 0;
+      m.when = due ? "срок " + due : "";
+      m.ctx = st.status_note ? "«" + st.status_note + "»" : m.ctx;
+      m.main = { label: "Ответить", primary: true, fn: function () { openPostedCard(task.id, { focus: "reply" }); } };
+    } else if (kind === "declined") {
+      m.tone = "red"; m.icon = "alert"; m.label = first + ": «не моё»"; m.w = 0;
+      m.when = due ? "срок " + due : "";
+      m.ctx = st.status_note ? "«" + st.status_note + "»" : m.ctx;
+      m.main = { label: "Переназначить", primary: true, fn: function () { openPostedCard(task.id); } };
+    } else if (kind === "done") {
+      m.tone = "blue"; m.icon = "check"; m.label = first + " сдал(а) работу"; m.w = 3;
+      m.ctx = task.result ? "«" + task.result + "»" : "Результат не описан";
+      m.main = { label: "Принять", primary: true, fn: function () { acceptPostedTask(task.id); } };
+      m.second = { label: "Вернуть", fn: function () { openPostedCard(task.id, { focus: "return" }); } };
+    } else if (kind === "late") {
+      m.tone = "amber"; m.icon = "clock"; m.label = "Просрочено у " + first; m.w = 4;
+      m.when = postedLateLabel(task).toLowerCase().replace(/^просрочено\s*/, "");
+      m.main = { label: "Напомнить", fn: function (b) { b.disabled = true; nudgePostedTask(task.id).then(function () { b.disabled = false; }); } };
+    } else if (kind === "pending") {
+      var n = av2DaysSince(flow.since);
+      m.tone = "amber"; m.icon = "people"; m.label = first + ": " + (AV2_DELIVERY[flow.delivery] || "не взято"); m.w = 5;
+      m.when = n > 0 ? n + " " + pluralRu(n, "день", "дня", "дней") : "";
+      m.note = due ? "Хотели к " + postedShortDate(postedTaskDayIso(task)) : "";
+      if (flow.delivery !== "no_account") m.main = { label: "Напомнить", fn: function (b) { b.disabled = true; nudgePostedTask(task.id).then(function () { b.disabled = false; }); } };
+      else m.main = { label: "Открыть задачу", fn: m.open };
+    }
+    if (kind === "late" || kind === "pending") {
+      m.menu.push("-", { label: "Переназначить…", fn: function () { openPostedTaskEditor(task); } }, { label: "Снять поручение", danger: true, fn: function () { av2CancelTasks([task], first); } });
+    }
+    if (o.inbox || kind) {
+      // ветки ниже — только для своих задач и поручений мне
+    } else if (role === "mine-from") {
+      m.tone = "red"; m.icon = "alert"; m.label = "Просрочено" + (first ? " · ждёт " + first : ""); m.w = 1;
+      m.when = postedLateLabel(task).toLowerCase().replace(/^просрочено\s*/, "");
+      m.main = { label: "Сдать", primary: true, fn: function () { openPostedCard(task.id, { focus: "result", myTasks: true }); } };
+      if (!flow.due_request) m.second = { label: "Перенести…", fn: function () { av2DuePrompt(task); } };
+      else m.note = "Вы просили перенос на " + av2DayText(flow.due_request.to) + " — ждём ответа";
+    } else {
+      m.tone = "red"; m.icon = "alert"; m.label = "Просрочено · своя задача"; m.w = 1;
+      m.when = postedLateLabel(task).toLowerCase().replace(/^просрочено\s*/, "");
+      m.main = { label: "Готово", primary: true, fn: function (b, card) { card.classList.add("is-done"); setMyTaskDone(task, true, b); } };
+      m.second = { label: "Перенести…", fn: m.open };
+    }
+    return m;
+  }
+  // Что постановщик должен понять с одного взгляда: что именно случилось с поручениями и чем это грозит.
+  function av2GroupTitle(n, kind, first) {
+    var p = n + " " + pluralRu(n, "поручение", "поручения", "поручений");
+    if (kind === "snoozed") return p + " " + pluralRu(n, "отложено", "отложены", "отложены") + " на потом";
+    if (kind === "not_opened") return p + " ещё не " + pluralRu(n, "открыто", "открыты", "открыты");
+    if (kind === "opened") return p + " " + pluralRu(n, "открыто", "открыты", "открыты") + ", но ответа нет";
+    if (kind === "no_account") return p + " не " + pluralRu(n, "дошло", "дошли", "дошли") + ": " + first + " ещё не в Орбите";
+    return p + " не " + pluralRu(n, "взято", "взяты", "взяты");
+  }
+  function av2GroupNote(items) {
+    var today = focusLocalIso(new Date()).slice(0, 10);
+    var past = items.filter(function (t) { var d = postedTaskDayIso(t); return d && d < today; }).length;
+    if (past) return "Желаемый срок уже прошёл у " + past + " из " + items.length;
+    var next = items.map(function (t) { return postedTaskDayIso(t) || ""; }).filter(Boolean).sort()[0];
+    return next ? "Ближайший желаемый срок — " + postedShortDate(next) : "Срок не идёт, пока не взято";
+  }
+  function av2GroupModel(g) {
+    var n = g.items.length;
+    var by = {}, oldest = 0;
+    g.items.forEach(function (t) {
+      var f = av2Flow(t);
+      by[f.delivery] = (by[f.delivery] || 0) + 1;
+      oldest = Math.max(oldest, av2DaysSince(f.since));
+    });
+    var kinds = Object.keys(by);
+    var m = {
+      tone: "amber", icon: "people", w: 5, key: "g:" + (g.uid || g.name),
+      label: "Не взято · " + postedFirstName(g.name),
+      when: oldest > 0 ? "ждут " + oldest + " " + pluralRu(oldest, "день", "дня", "дней") : "",
+      title: av2GroupTitle(n, kinds.length === 1 ? kinds[0] : "", postedFirstName(g.name)),
+      note: av2GroupNote(g.items),
+      lines: g.items.slice(0, 2).map(function (t) { return String(t.title || "Задача"); }),
+      more: n > 2 ? "и ещё " + (n - 2) : "",
+      person: { uid: g.uid, name: g.name },
+      menu: [],
+    };
+    // «Список» — именно эти поручения, а не весь экран «Поставленные».
+    m.open = function (anchor) { av2OpenList(anchor, g.items); };
+    m.menu.push(
+      av2LaterItem(m),
+      "-",
+      { label: "Переназначить…", fn: function () {
+        var a = m.moreBtn;
+        if (g.items.length === 1 || !a) openPostedTaskEditor(g.items[0]);
+        else av2OpenList(a, g.items, { pick: openPostedTaskEditor, head: "Какое поручение переназначить?", sub: true });
+      } },
+      { label: "Снять все поручения", danger: true, fn: function () { av2CancelTasks(g.items, postedFirstName(g.name)); } }
+    );
+    if (!by.no_account) {
+      m.main = { label: "Напомнить", fn: async function (b) {
+        b.disabled = true;
+        for (var i = 0; i < g.items.length; i++) await nudgePostedTask(g.items[i].id, { quiet: true });
+        showNoteToast("Напомнили одним сообщением");
+        b.disabled = false;
+      } };
+    }
+    m.second = { label: "Список", fn: function (b) { m.open(b); } };
+    return m;
+  }
+  function av2LeoModel(it) {
+    var src = focusSplitSource(it.source);
+    var all = it.actions || [];
+    var isDone = function (a) { return a.act === "mark_done" || a.act === "mark_done_pick"; };
+    var act = all.filter(function (a) { return !FOCUS_OPEN_ACTS[a.act] && !isDone(a); })[0];
+    var doneAct = all.filter(isDone)[0];
+    var openAct = all.filter(function (a) { return FOCUS_OPEN_ACTS[a.act]; })[0];
+    if (!openAct && it.note && it.note.id) openAct = { act: "open_note", label: "Открыть источник" };
+    // Документ-источник — справа, рядом с «Актуальным»; встреча и задача — своей карточкой.
+    var openSrc = !openAct ? null : function (b) {
+      var meta = it._item || {};
+      if (openAct.act === "open_note" && it.note) av2OpenSource({ id: it.note.id, kind: it.note.kind, title: it.note.title }, meta.item, meta.quote);
+      else runFocusAction(it, openAct, b || null);
+    };
+    var m = {
+      key: "f:" + it.key,
+      tone: it.urgency >= 3 ? "red" : "violet", leo: true, w: it.urgency >= 3 ? 1.5 : 6,
+      iconHtml: DISCUSS_ICONS[focusCardIcon(it)[0]] || DISCUSS_ICONS.spark,
+      label: focusKindLabel(it.tag) || "Подсказка Лео",
+      when: src.due || it.sub || "",
+      title: String(it.title || ""),
+      lines: focusHasItems(it) && !(it.items.length === 1 && String(it.title || "").toLowerCase().indexOf(String(it.items[0].text || "").toLowerCase().slice(0, 40)) >= 0) ? (it.items || []).slice(0, 2).map(function (x) { return String(x.text || ""); }) : null,
+      more: focusHasItems(it) && it.items.length > 2 ? "и ещё " + (it.items.length - 2) : "",
+      source: src.text ? { title: src.text, kind: focusSourceIcon(it) === "mic" ? "transcription" : "note", open: openSrc } : null,
+      open: function () { openFocusAll(); },
+      dismiss: function () { dismissFocus(it); },
+      menu: [],
+    };
+    var ask = { label: "Уточнить", fn: function (b) { askAboutFocus(it, b); } };
+    if (it.type === "no_results") {
+      // Встреча без итогов: надиктовать или приложить запись; сама встреча — в «⋯».
+      m.main = { label: "Надиктовать", fn: function (b) { runFocusAction(it, act || { act: "event_dictate" }, b); } };
+      m.second = { label: "Запись", fn: function (b) { runFocusAction(it, openAct || { act: "open_event" }, b); } };
+      m.open = function () { runFocusAction(it, { act: "open_event" }, null); };
+      m.menu.push({ label: "Открыть встречу", fn: m.open });
+    } else {
+      if (it.type === "topic_link" || it.type === "task_blocking") {
+        m.main = { label: "Открыть", fn: function () { openFocusAll(); } };
+      } else if (focusStackable(it)) {
+        // Несколько пунктов: «Разобрать» — по одному, кнопка с полосками — все пункты списком.
+        m.main = { label: it.type === "summary_tasks" ? "Разобрать " + it.items.length : "Разобрать", fn: function () { openFocusStack(it, "stack"); } };
+        m.iconBtn = { icon: "list", title: "Открыть список", fn: function () { openFocusStack(it, "list"); } };
+      } else if (act) {
+        var taskAct = focusIsTaskAct(act) && (focusHasItems(it) || (it.commitment_keys && it.commitment_keys.length));
+        m.main = { label: taskAct ? "В задачу" : FOCUS_SHORT_LABEL[act.label] || act.label, fn: function (b) {
+          if (taskAct) openFocusStack(it, "stack");
+          else runFocusAction(it, act, b);
+        } };
+      }
+      if (!m.main) m.main = { label: "Уточнить у Лео", fn: ask.fn };
+      else if (it.type !== "discussion") m.second = ask;
+      // Договорённость, срок, открытый вопрос: галочка — «уже сделано».
+      if (doneAct && !m.iconBtn) m.iconBtn = { icon: "check", title: "Готово", fn: function (b) { runFocusAction(it, doneAct, b); } };
+      if (openSrc) m.menu.push({ label: "Открыть источник", fn: function () { openSrc(null); } });
+    }
+    m.menu.push(av2LaterItem(m), { label: "Удалить", danger: true, fn: m.dismiss });
+    return m;
+  }
+  // ——— Карточка Канбана: тот же язык, что в Фокусе. Спокойная задача — серая и без лишних кнопок,
+  // цвет появляется только там, где от вас (или у другого) что-то не так.
+  function av2KbModel(task, o) {
+    o = o || {};
+    var role = av2Role(task);
+    var kind = role === "posted" ? av2Kind(task) : null;
+    var blocked = taskIsBlocked(task) && !o.inbox;
+    var done = postedTaskIsDone(task);
+    var late = !done && !blocked && postedTaskIsOverdue(task);
+    var m = av2TaskModel(task, o);
+    m.kb = true;
+    var nSub = (task.bundle_ids || []).length;
+    var sub = nSub ? "+ " + nSub + " " + pluralRu(nSub, "подзадача", "подзадачи", "подзадач") : "";
+    var hot = o.inbox || (role === "posted" ? !!kind && kind !== "blocked" : late);
+    if (hot && !blocked) {
+      if (sub) m.note = [m.note, sub].filter(Boolean).join(" · ");
+      return m;
+    }
+    var ds = postedDueShort(task);
+    var due = ds.day === "без срока" ? "" : ds.day + (ds.time ? ", " + ds.time : "");
+    var who = postedFirstName(role === "posted" ? postedTaskAssigneeLabel(task) : task.owner_name || "");
+    var st = postedAssigneeState(task);
+    var flow = av2Flow(task);
+    var src = task.source || {};
+    m.tone = "calm";
+    m.icon = "";
+    m.main = m.second = m.iconBtn = null;
+    m.note = "";
+    m.when = due || "без срока";
+    m.menu = [{ label: "Открыть задачу", fn: m.open }];
+    var notes = [];
+    if (blocked) {
+      m.tone = "amber";
+      m.iconHtml = av2Svg("lock", 15);
+      m.label = "Заблокировано" + (role === "posted" && who ? " у " + who : "");
+      m.ctx = tbRowLine(task).replace(/^заблокировано:?\s*/i, "Ждёт: ");
+      m.when = ds.day === "без срока" ? "" : (postedTaskIsOverdue(task) ? "срок был " : "до ") + ds.day;
+      notes.push("Срок на паузе, пока не разблокируют");
+    } else if (done) {
+      m.iconHtml = DISCUSS_ICONS.check;
+      m.label = role === "mine-from" ? (postedTaskIsArchived(task) ? "Принято" + (who ? " · " + who : "") : "Сдано · ждёт приёмки" + (who ? " у " + who : "")) : role === "posted" ? "Принято" : "Сделано";
+      m.when = "";
+      if (task.result) m.ctx = "«" + task.result + "»";
+    } else if (role === "posted") {
+      m.iconHtml = DISCUSS_ICONS.people;
+      m.label = "Делает " + (who || "исполнитель");
+      m.menu.push(
+        { label: "Напомнить", fn: function () { nudgePostedTask(task.id); } },
+        "-",
+        { label: "Переназначить…", fn: function () { openPostedTaskEditor(task); } },
+        { label: "Снять поручение", danger: true, fn: function () { av2CancelTasks([task], who); } }
+      );
+    } else if (role === "mine-from") {
+      m.iconHtml = DISCUSS_ICONS.people;
+      var asked = st.status === "question";
+      m.label = asked ? "Вы спросили · ждём " + (who || "ответа") : "Поручил" + (who ? " " + who : "и вам");
+      if (asked && st.status_note) m.ctx = "«" + st.status_note + "»";
+      m.main = { label: "Сдать", fn: function () { openPostedCard(task.id, { focus: "result", myTasks: true }); } };
+      if (flow.due_request) notes.push("Вы просили перенос на " + av2DayText(flow.due_request.to) + " — ждём ответа");
+      else m.menu.push({ label: "Попросить перенос срока…", fn: function () { av2DuePrompt(task); } });
+    } else {
+      m.iconHtml = av2Svg(task.recurrence ? "repeat" : src.kind === "transcription" ? "video" : src.kind === "note" ? "doc" : "user", 15);
+      m.label = task.recurrence ? "Своя · повторяется" : "Своя задача";
+      m.main = { label: "Готово", fn: function (b, card) { card.classList.add("is-done"); setMyTaskDone(task, true, b); } };
+    }
+    var agreed = av2AgreedDay(task);
+    if (agreed && !done && role !== "own") notes.push("договаривались на " + postedShortDate(agreed));
+    if (sub) notes.push(sub);
+    m.note = notes.join(" · ");
+    return m;
+  }
+  function av2KbCard(task, o) {
+    var card = av2Card(av2KbModel(task, o));
+    card.classList.add("is-kb");
+    card.dataset.taskId = String(task.id);
+    return card;
+  }
+  function av2Card(m) {
+    var card = av2El("div", "av2c is-" + m.tone);
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
+    // 1. Почему это здесь: цветной значок + подпись, справа — когда.
+    var top = av2El("div", "av2c-top");
+    var ico = av2El("span", "av2c-ico");
+    ico.innerHTML = m.iconHtml || DISCUSS_ICONS[m.icon] || DISCUSS_ICONS.spark;
+    top.appendChild(ico);
+    top.appendChild(av2El("span", "av2c-label", m.label));
+    if (m.when) top.appendChild(av2El("span", "av2c-when", m.when));
+    card.appendChild(top);
+    var bare = m.kb && !m.main && !m.second;
+    // 2. О чём речь.
+    card.appendChild(av2El("p", "av2c-title", m.title));
+    // 3. Контекст: слова человека, пункты или пояснение.
+    if (m.lines && m.lines.length) {
+      var ul = av2El("ul", "av2c-lines");
+      m.lines.forEach(function (t) { ul.appendChild(av2El("li", "", t)); });
+      if (m.more) ul.appendChild(av2El("li", "is-more", m.more));
+      card.appendChild(ul);
+    } else if (m.ctx) {
+      card.appendChild(av2El("p", "av2c-ctx" + (/^«/.test(m.ctx) ? " is-quote" : ""), m.ctx));
+    }
+    if (m.note) card.appendChild(av2El("p", "av2c-note", m.note));
+    // 4. Откуда и кто.
+    var foot = av2El("div", "av2c-foot");
+    if (m.source) {
+      var s = av2El(m.source.open ? "button" : "span", "av2c-src");
+      if (m.source.open) {
+        s.type = "button";
+        s.addEventListener("click", function (e) {
+          e.stopPropagation();
+          m.source.open(s);
+        });
+      }
+      s.innerHTML = av2Svg(m.source.kind === "transcription" ? "video" : "doc", 13);
+      s.appendChild(av2El("span", "", m.source.title));
+      foot.appendChild(s);
+    } else {
+      foot.appendChild(av2El("span", "av2c-src is-none", m.leo ? "Лео заметил" : m.person ? m.person.name : "Своя задача"));
+    }
+    if (m.person) {
+      var av = postedAvatar(m.person.uid, m.person.name, "s");
+      av.classList.add("av2c-av");
+      av.title = m.person.name;
+      foot.appendChild(av);
+    } else if (m.leo) {
+      var lv = av2El("span", "av2c-leo");
+      lv.innerHTML = DISCUSS_ICONS.spark;
+      lv.title = "Подсказка Лео";
+      foot.appendChild(lv);
+    }
+    // В Канбане у своей задачи без источника подвал пустой — «Своя задача» уже сказано сверху.
+    if (!(m.kb && !m.source && !m.person)) card.appendChild(foot);
+    // 5. Действия: главное, второе, «ещё».
+    var acts = av2El("div", "av2c-acts");
+    [m.main, m.second].forEach(function (a, i) {
+      if (!a) return;
+      var b = av2El("button", "av2c-btn" + (i === 0 ? " is-main" : "") + (a.primary ? " is-primary" : ""), a.label);
+      b.type = "button";
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        a.fn(b, card);
+      });
+      acts.appendChild(b);
+    });
+    if (m.iconBtn) {
+      var ib = av2El("button", "av2c-btn is-icon");
+      ib.type = "button";
+      ib.title = m.iconBtn.title;
+      ib.setAttribute("aria-label", m.iconBtn.title);
+      ib.innerHTML = DISCUSS_ICONS[m.iconBtn.icon] || "";
+      ib.addEventListener("click", function (e) {
+        e.stopPropagation();
+        m.iconBtn.fn(ib, card);
+      });
+      acts.appendChild(ib);
+    }
+    if (m.menu && m.menu.length) {
+      var more = av2El("button", "av2c-btn is-more");
+      more.type = "button";
+      more.title = "Ещё действия";
+      more.setAttribute("aria-label", "Ещё действия");
+      more.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+      m.moreBtn = more;
+      more.addEventListener("click", function (e) {
+        e.stopPropagation();
+        av2OpenMenu(more, m.menu);
+      });
+      acts.appendChild(more);
+    }
+    if (bare) acts.classList.add("is-bare");
+    card.appendChild(acts);
+    var openCard = function () { m.open(acts.children[1] || acts.firstChild || card); };
+    card.addEventListener("click", openCard);
+    card.addEventListener("keydown", function (e) {
+      if (e.target === card && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        openCard();
+      }
+    });
+    return card;
+  }
+
+  var AV2_VIEW_KEY = "orbita.av2HubView";
+  function av2HubView() {
+    try {
+      return localStorage.getItem(AV2_VIEW_KEY) === "grid" ? "grid" : "strip";
+    } catch (_) {
+      return "strip";
+    }
+  }
+  function av2RenderHub(host, decide, doIt, posted) {
+    // Задачи на сегодня уже стоят в календаре ниже — здесь только «хвосты» с прошлых дней.
+    var you = decide.map(function (x) { return av2TaskModel(x.t, x.o); });
+    doIt.forEach(function (t) {
+      if (postedTaskIsOverdue(t) && !av2IsToday(t)) you.push(av2TaskModel(t, {}));
+    });
+    // Просрочки и «не взято» у других — тоже «ждут вас»: напомнить, переназначить или снять.
+    var byWho = {}, order = [];
+    posted.forEach(function (t) {
+      if (postedTaskIsDone(t) || taskIsBlocked(t)) return;
+      var k = av2Kind(t);
+      if (k === "late") you.push(av2TaskModel(t, {}));
+      if (k !== "pending") return;
+      var uid = postedAssigneeUid(t) || postedTaskAssigneeLabel(t);
+      if (!byWho[uid]) {
+        byWho[uid] = { uid: postedAssigneeUid(t), name: postedTaskAssigneeLabel(t), items: [] };
+        order.push(uid);
+      }
+      byWho[uid].items.push(t);
+    });
+    order.forEach(function (uid) {
+      var g = byWho[uid];
+      you.push(g.items.length === 1 ? av2TaskModel(g.items[0], {}) : av2GroupModel(g));
+    });
+    var leo = av2LeoItems().map(av2LeoModel);
+    var later = av2LaterMap();
+    var notLater = function (m) { return !(m.key && later[m.key]); };
+    you = you.filter(notLater);
+    leo = leo.filter(notLater);
+    var total = you.length + leo.length;
+    var folded = av2Folded();
+    var view = av2HubView();
+    host.classList.toggle("is-folded", folded);
+    var head = av2El("div", "av2-head");
+    head.appendChild(av2El("h2", "av2-h", "Фокус"));
+    if (folded || !total) {
+      var sum = av2El("button", "av2-sum");
+      sum.type = "button";
+      var bits = [];
+      if (you.length) bits.push([you.length + " " + pluralRu(you.length, "ждёт", "ждут", "ждут") + " вас", "is-red"]);
+      if (leo.length) bits.push([leo.length + " от Лео", ""]);
+      if (!bits.length) bits.push([av2Loaded ? "От вас сейчас ничего не ждут" : "Загружаю…", ""]);
+      bits.forEach(function (b, i) {
+        if (i) sum.appendChild(av2El("span", "av2-sep", "·"));
+        sum.appendChild(av2El("span", b[1], b[0]));
+      });
+      if (total) sum.addEventListener("click", function () { av2SetFolded(false); });
+      else sum.disabled = true;
+      head.appendChild(sum);
+    } else {
+      var tabs = av2El("div", "av2-tabs");
+      [["all", "Всё", total], ["you", "Ждут вас", you.length], ["leo", "Лео заметил", leo.length]].forEach(function (x) {
+        var b = av2El("button", "av2-tab" + (av2HubFilter === x[0] ? " is-on" : ""));
+        b.type = "button";
+        b.appendChild(av2El("span", "", x[1]));
+        b.appendChild(av2El("span", "av2-tab-n", String(x[2])));
+        b.addEventListener("click", function () {
+          av2HubFilter = x[0];
+          var st0 = host.querySelector(".av2-strip");
+          if (st0) st0.scrollLeft = 0;
+          av2StripLeft = 0;
+          renderAv2Moves();
+        });
+        tabs.appendChild(b);
+      });
+      head.appendChild(tabs);
+    }
+    head.appendChild(av2El("span", "av2-sp"));
+    var all = av2El("button", "av2-link");
+    all.type = "button";
+    all.innerHTML = "Все задачи" + av2Svg("right", 14);
+    all.addEventListener("click", function () { av2OpenAll("mine"); });
+    head.appendChild(all);
+    var nav = null;
+    if (total && !folded) {
+      if (view === "strip") {
+        nav = av2El("span", "av2-nav");
+        [[-1, "Назад", "M15 6l-6 6 6 6"], [1, "Дальше", "M9 6l6 6-6 6"]].forEach(function (d) {
+          var nb = av2El("button", "av2-icon-btn");
+          nb.type = "button";
+          nb.title = d[1];
+          nb.setAttribute("aria-label", d[1]);
+          nb.dataset.dir = String(d[0]);
+          nb.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d[2] + '"/></svg>';
+          nav.appendChild(nb);
+        });
+        head.appendChild(nav);
+      }
+      var vb = av2El("button", "av2-fold");
+      vb.type = "button";
+      // На телефоне подпись скрыта — остаётся значок: сетка («показать все») или лента.
+      vb.title = view === "strip" ? "Показать все" : "Лентой";
+      vb.setAttribute("aria-label", vb.title);
+      vb.innerHTML = "<span>" + vb.title + "</span>" + '<svg class="av2-view-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (view === "strip" ? '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>' : '<rect x="3" y="6" width="8" height="12" rx="2"/><rect x="13" y="6" width="8" height="12" rx="2"/>') + "</svg>";
+      vb.addEventListener("click", function () {
+        try {
+          localStorage.setItem(AV2_VIEW_KEY, view === "strip" ? "grid" : "strip");
+        } catch (_) {}
+        renderAv2Moves();
+      });
+      head.appendChild(vb);
+    }
+    if (total) {
+      var fold = av2El("button", "av2-fold");
+      fold.type = "button";
+      fold.innerHTML = "<span>" + (folded ? "Развернуть" : "Свернуть") + "</span>" + av2Svg("down", 16);
+      fold.setAttribute("aria-expanded", folded ? "false" : "true");
+      fold.addEventListener("click", function () { av2SetFolded(!folded); });
+      head.appendChild(fold);
+    }
+    host.appendChild(head);
+    if (folded || !total) return;
+
+    // Порядок — по важности: сначала то, что горит у вас, в конце — спокойные подсказки.
+    var cards = (av2HubFilter === "leo" ? [] : you).concat(av2HubFilter === "you" ? [] : leo);
+    cards = cards.map(function (m, i) { return { m: m, i: i }; }).sort(function (a, b) { return a.m.w - b.m.w || a.i - b.i; }).map(function (x) { return x.m; });
+    var box = av2El("div", view === "strip" ? "av2-strip" : "av2-grid2");
+    if (!cards.length) box.appendChild(av2El("p", "av2-col-empty", av2HubFilter === "leo" ? "Подсказок пока нет" : "От вас сейчас ничего не ждут"));
+    cards.forEach(function (m) { box.appendChild(av2Card(m)); });
+    host.appendChild(box);
+    if (view === "strip" && av2StripLeft > 0) {
+      box.style.scrollBehavior = "auto";
+      box.scrollLeft = av2StripLeft;
+      box.style.scrollBehavior = "";
+    }
+    if (nav) {
+      var sync = function () {
+        var max = box.scrollWidth - box.clientWidth;
+        nav.classList.toggle("hidden", max <= 4);
+        nav.firstChild.disabled = box.scrollLeft <= 4;
+        nav.lastChild.disabled = box.scrollLeft >= max - 4;
+      };
+      nav.addEventListener("click", function (e) {
+        var nb = e.target.closest("button");
+        if (!nb) return;
+        var c0 = box.firstElementChild;
+        var step = c0 ? c0.getBoundingClientRect().width + 12 : 320;
+        box.scrollBy({ left: Number(nb.dataset.dir) * Math.max(1, Math.floor((box.clientWidth + 12) / step)) * step, behavior: "smooth" });
+      });
+      box.addEventListener("scroll", sync, { passive: true });
+      if (window.ResizeObserver) new ResizeObserver(sync).observe(box);
+      sync();
+    }
+  }
+  var av2HubFilter = "all";
+  var av2StripLeft = 0;
+  // Несколько невзятых поручений одного человека — одной карточкой и одним напоминанием.
+  function av2GroupRow(g) {
+    var row = av2El("div", "av2-row");
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    var lead = postedAvatar(g.uid, g.name, "s");
+    lead.classList.add("av2-lead");
+    row.appendChild(lead);
+    var n = g.items.length;
+    var main = av2El("div", "av2-main");
+    main.appendChild(av2El("p", "av2-title", postedFirstName(g.name) + ": " + n + " " + pluralRu(n, "поручение", "поручения", "поручений") + " не взято"));
+    var by = {}, oldest = 0;
+    g.items.forEach(function (t) {
+      var f = av2Flow(t);
+      by[f.delivery] = (by[f.delivery] || 0) + 1;
+      oldest = Math.max(oldest, av2DaysSince(f.since));
+    });
+    var meta = av2El("p", "av2-meta");
+    var parts = Object.keys(by).map(function (k) { return (AV2_DELIVERY[k] || "не взято") + (Object.keys(by).length > 1 ? " — " + by[k] : ""); });
+    if (oldest > 0) parts.push("самому давнему " + oldest + " " + pluralRu(oldest, "день", "дня", "дней"));
+    parts.forEach(function (t, i) {
+      if (i) meta.appendChild(av2El("span", "av2-sep", "·"));
+      meta.appendChild(av2El("span", "", t));
+    });
+    main.appendChild(meta);
+    row.appendChild(main);
+    if (!by.no_account) {
+      row.appendChild(av2Btn("Напомнить", false, async function (b) {
+        b.disabled = true;
+        for (var i = 0; i < g.items.length; i++) await nudgePostedTask(g.items[i].id, { quiet: true });
+        showNoteToast("Напомнили одним сообщением");
+        b.disabled = false;
+      }));
+    }
+    row.addEventListener("click", function () { av2OpenAll("posted"); });
+    return row;
+  }
+
+  // Стикеры: «бумажки на мониторе» — без срока, всегда на виду рядом с датой. В демо хранятся в браузере.
+  var AV2_STICKY_KEY = "orbita.av2Stickies";
+  function av2Stickies() {
+    try {
+      var v = JSON.parse(localStorage.getItem(AV2_STICKY_KEY) || "null");
+      return Array.isArray(v) ? v : ["Пример стикера: пароль от Wi-Fi в переговорке — у офис-менеджера"];
+    } catch (_) {
+      return [];
+    }
+  }
+  function av2SaveStickies(list) {
+    try {
+      localStorage.setItem(AV2_STICKY_KEY, JSON.stringify(list));
+    } catch (_) {}
+    renderAv2Stickies();
+  }
+  var av2StickyIdx = 0;
+  function renderAv2Stickies(focus) {
+    var inner = document.querySelector("#actual-hero .hero-inner");
+    if (!inner || !av2Hub()) return;
+    var old = inner.querySelector(".av2-stickies");
+    if (old) old.remove();
+    var wrap = av2El("div", "av2-stickies");
+    var list = av2Stickies();
+    var n = list.length;
+    av2StickyIdx = Math.max(0, Math.min(av2StickyIdx, n - 1));
+    var i = av2StickyIdx;
+    var iconBtn = function (title, svg, fn) {
+      var b = av2El("button", "av2-sticky-btn");
+      b.type = "button";
+      b.title = title;
+      b.setAttribute("aria-label", title);
+      b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + svg + "</svg>";
+      b.addEventListener("click", function (e) {
+        e.stopPropagation();
+        fn();
+      });
+      return b;
+    };
+    var addSticky = function () {
+      var l = av2Stickies();
+      l.push("");
+      av2StickyIdx = l.length - 1;
+      try { localStorage.setItem(AV2_STICKY_KEY, JSON.stringify(l)); } catch (_) {}
+      renderAv2Stickies(true);
+    };
+    var ADD = '<path d="M20 12V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7"/><path d="M18 15v6M15 18h6"/>';
+    if (!n) {
+      var add0 = av2El("button", "av2-sticky-add");
+      add0.type = "button";
+      add0.title = "Новый стикер";
+      add0.setAttribute("aria-label", "Новый стикер");
+      add0.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ADD + "</svg>";
+      add0.addEventListener("click", addSticky);
+      wrap.appendChild(add0);
+    } else {
+      // Стопка: верхний стикер — рабочий, из-под него выглядывают следующие (до двух); нажатие на край — листать.
+      var deck = av2El("div", "av2-deck" + (n > 1 ? " has-2" : "") + (n > 2 ? " has-3" : ""));
+      var flip = function (d) {
+        av2StickyIdx = (av2StickyIdx + d + n) % n;
+        renderAv2Stickies();
+      };
+      if (n > 1) {
+        var under = av2El("button", "av2-deck-under");
+        under.type = "button";
+        under.title = "Следующий стикер";
+        under.setAttribute("aria-label", "Следующий стикер");
+        under.addEventListener("click", function () { flip(1); });
+        deck.appendChild(under);
+      }
+      var st = av2El("div", "av2-sticky");
+      var head = av2El("div", "av2-sticky-head");
+      var pin = av2El("span", "av2-sticky-pin");
+      head.appendChild(pin);
+      head.appendChild(av2El("span", "av2-sticky-cap", n > 1 ? "Стикер " + (i + 1) + " из " + n : "Стикер"));
+      head.appendChild(av2El("span", "av2-sp"));
+      if (n > 1) {
+        head.appendChild(iconBtn("Предыдущий", '<path d="M15 6l-6 6 6 6"/>', function () { flip(-1); }));
+        head.appendChild(iconBtn("Следующий", '<path d="M9 6l6 6-6 6"/>', function () { flip(1); }));
+      }
+      if (n < 8) head.appendChild(iconBtn("Новый стикер", ADD, addSticky));
+      head.appendChild(iconBtn("Снять стикер", '<path d="M6 6l12 12M18 6L6 18"/>', function () {
+        var l = av2Stickies();
+        l.splice(i, 1);
+        av2SaveStickies(l);
+      }));
+      st.appendChild(head);
+      var ta = av2El("textarea", "av2-sticky-text");
+      ta.value = list[i];
+      ta.rows = 2;
+      ta.maxLength = 200;
+      ta.placeholder = "Что не забыть?";
+      ta.setAttribute("aria-label", "Стикер");
+      ta.addEventListener("change", function () {
+        var l = av2Stickies();
+        l[i] = ta.value.trim();
+        try { localStorage.setItem(AV2_STICKY_KEY, JSON.stringify(l)); } catch (_) {}
+      });
+      st.appendChild(ta);
+      deck.appendChild(st);
+      wrap.appendChild(deck);
+      if (focus) window.setTimeout(function () { ta.focus(); }, 0);
+    }
+    var next = inner.querySelector(".hero-next");
+    if (next) inner.insertBefore(wrap, next);
+    else inner.appendChild(wrap);
+  }
+
+  // «Все задачи»: Канбан с новыми карточками; сверху — «Мои / Поручил я».
+  function av2OpenAll(which) {
+    av2CloseMenu();
+    if (which === "posted") {
+      if (postedView !== "kanban") setPostedView("kanban");
+      setPostedTasksScreen(true);
+    } else {
+      if (!myKanbanOn()) setMyTasksView("kanban");
+      setMyTasksScreen(true);
+    }
+    av2SyncSeg();
+  }
+  function av2SyncSeg() {
+    document.querySelectorAll("[data-av2-go]").forEach(function (b) {
+      var on = b.getAttribute("data-av2-go") === "posted" ? isPostedTasksOpen() : isMyTasksOpen();
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var b = e.target && e.target.closest ? e.target.closest("[data-av2-go]") : null;
+    if (!b) return;
+    av2OpenAll(b.getAttribute("data-av2-go"));
+  });
+
   function renderMyTaskActs(task, late) {
     var acts = document.createElement("div");
     acts.className = "pt-row-acts";
@@ -31810,6 +33546,7 @@
   // Поручение мне, которое ещё не разобрано: «Не разобрано», кто поставил, срок; «Не моё» / «Разобрать» / «Беру».
   // Клик по строке — стопка разбора, начиная с этой задачи (там же «Позже», «Сделано», «Изменить»).
   function renderMyInboxRow(task) {
+    if (av2On()) return av2KbCard(task, { inbox: true });
     var row = document.createElement("div");
     row.className = "pt-row pt-row--inbox";
     row.dataset.taskId = String(task.id);
@@ -31922,6 +33659,7 @@
 
   function renderMyTaskRow(task, opts) {
     opts = opts || {};
+    if (av2On()) return av2KbCard(task, {});
     var done = postedTaskIsDone(task);
     var row = document.createElement("div");
     row.className = "pt-row" + (done ? " is-done" : "") + (opts.late && !done ? " pt-row--late" : "") + (String(task.id) === myTasksSelectedId ? " is-selected" : "");
@@ -31997,9 +33735,10 @@
     window.setTimeout(restoreActualAssistant, 400);
     opts = opts || {};
     loadFocus(!!opts.silent);
+    if (av2On()) av2LoadMine();
     const errP = document.getElementById("posted-tasks-error");
     const errM = document.getElementById("meetings-error");
-    var dual = isDesktopLayout();
+    var dual = isDesktopLayout() && !av2Split();
     var leftIso = meetingsPageDate || todayIsoLocal();
     var loadGen = ++meetingsLoadGen;
     var range = meetingsVisibleRange(leftIso);
@@ -38527,6 +40266,23 @@
     var self = linkKey(item);
     host.innerHTML = "";
     host.classList.toggle("hidden", !bundles.length && !opts.alwaysShow);
+    // В окне задачи «Связи» — полноценная строка свойств: значок, подпись, действие справа.
+    var asProp = !!host.closest(".sheet-props");
+    host.classList.toggle("linked-items--prop", asProp);
+    if (asProp && !bundles.length && opts.alwaysShow) {
+      host.innerHTML = sheetPropRowHtml("", "link", "Связи", "<span>Связать с…</span>");
+      host.firstChild.removeAttribute("id");
+      host.firstChild.addEventListener("click", function () {
+        openLinkPicker({ source: item });
+      });
+      return;
+    }
+    if (asProp && bundles.length) {
+      var propHead = document.createElement("span");
+      propHead.className = "sheet-prop-label linked-prop-head";
+      propHead.innerHTML = sheetRowIcon("link") + '<span class="event-sheet-row-label">Связи</span>';
+      host.appendChild(propHead);
+    }
     if (!bundles.length) {
       if (opts.alwaysShow) {
         var add0 = document.createElement("button");
@@ -39021,7 +40777,14 @@
         var label = document.createElement("span");
         label.className = "event-sheet-row-label";
         label.textContent = items.length > 1 ? "Документы" : "Документ";
-        host.appendChild(label);
+        if (host.closest(".sheet-props")) {
+          // В окне задачи — как остальные строки свойств: значок слева от подписи.
+          var lblWrap = document.createElement("span");
+          lblWrap.className = "sheet-prop-label";
+          lblWrap.innerHTML = sheetRowIcon("doc");
+          lblWrap.appendChild(label);
+          host.appendChild(lblWrap);
+        } else host.appendChild(label);
         var chips = document.createElement("span");
         chips.className = "note-backlinks";
         items.forEach(function (it) {
@@ -40185,6 +41948,11 @@
     };
     function onScroll() {
       void ticking;
+      // Переключатель теперь закреплён всегда (position: sticky) — плавающий режим не нужен.
+      if (row) {
+        setFloating(false);
+        return;
+      }
       if (row._suppressUntil && Date.now() < row._suppressUntil) {
         lastY = scrollY();
         return;
@@ -63112,9 +64880,23 @@
     document.querySelectorAll(".tabbar-btn").forEach(function (btn) {
       btn.addEventListener("click", function (e) {
         if (e.target && e.target.closest && e.target.closest("[data-sidebar-toggle]")) return;
+        var same = currentTab === btn.getAttribute("data-tab");
         setTab(btn.getAttribute("data-tab"), { fromTabbar: true });
+        // Нажали на уже открытый раздел — к началу экрана.
+        if (same) scrollTabToTop();
       });
     });
+    var sidebarLogo = document.querySelector(".sidebar-logo");
+    if (sidebarLogo) {
+      sidebarLogo.setAttribute("role", "button");
+      sidebarLogo.setAttribute("title", "Актуальное");
+      sidebarLogo.addEventListener("click", function () {
+        if (currentTab === "actual") scrollTabToTop();
+        else setTab("actual", { fromTabbar: true });
+      });
+    }
+    var sidebarExpand = document.getElementById("sidebar-expand");
+    if (sidebarExpand) sidebarExpand.addEventListener("click", function () { toggleSidebarCollapsed(); });
     bindPullToRefresh();
 
     var sidebarToggle = document.getElementById("sidebar-toggle");

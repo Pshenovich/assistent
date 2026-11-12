@@ -1741,6 +1741,7 @@ def _assignee_task(viewer_id: int | str, task_id: int | str) -> Optional[dict[st
 EVENT_KINDS = (
     "created", "seen", "in_progress", "message", "nudge", "done", "returned", "accepted", "cancelled",
     "taken", "snoozed", "declined", "insisted", "rated", "blocked", "unblocked", "blocker_resolved",
+    "due_request", "due_ok", "due_no",
 )
 RATINGS = ("good", "ok", "bad")
 RATING_LABEL = {"good": "Хорошо", "ok": "Нормально", "bad": "Плохо"}

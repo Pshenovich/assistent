@@ -6579,6 +6579,157 @@ def _self_task_emails(uid: int) -> list[str]:
     return [e for e in out if e]
 
 
+def _task_source_api(viewer_id: int, task: dict[str, Any], notes_cache: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """Откуда задача: документ или встреча (если зритель может открыть) + строка встречи и её текст."""
+    from assistant.stores import notes as notes_store
+
+    nid = str(task.get("note_id") or "").strip()
+    if not nid.isdigit():
+        return None
+    if nid not in notes_cache:
+        try:
+            notes_cache[nid] = notes_store.get_accessible_note(viewer_id, int(nid), with_sharing=False)
+        except Exception as e:
+            print(f"[tasks] source note task={task.get('id')} err={e!r}")
+            notes_cache[nid] = None
+    note = notes_cache[nid]
+    if not note:
+        return None
+    src: dict[str, Any] = {
+        "id": int(nid),
+        "title": str(note.get("title") or "") or "Без названия",
+        "kind": "transcription" if note.get("role") == "transcription" else "note",
+    }
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    for t in meta.get("tasks") or []:
+        link = t.get("link") if isinstance(t, dict) and isinstance(t.get("link"), dict) else {}
+        if t.get("id") and str(link.get("task_id") or "") == str(task.get("id")):
+            src["item"] = str(t["id"])
+            src["quote"] = str(t.get("task") or "")[:300]
+            break
+    return src
+
+
+def _task_flow_api(task: dict[str, Any], profiles: dict[str, bool]) -> dict[str, Any]:
+    """Где поручение на пути «предложено → взято» и есть ли просьба о переносе срока (демо av2)."""
+    from assistant.stores import calendar_tasks as cts
+    from assistant.stores import note_members
+
+    out: dict[str, Any] = {}
+    try:
+        row = cts._get_task_row(int(task.get("id") or 0))
+    except (TypeError, ValueError):
+        row = None
+    if not row or not cts.task_is_delegated(row):
+        return out
+    aid = str(row.get("assignee_user_id") or "")
+    triage = str(row.get("assignee_triage") or "")
+    if not row.get("assignee_external") and not row.get("done"):
+        if triage in ("inbox", "snoozed"):
+            if aid not in profiles:
+                try:
+                    profiles[aid] = bool(aid.isdigit() and note_members.get_profile(int(aid)))
+                except Exception:
+                    profiles[aid] = True
+            if not profiles[aid]:
+                out["delivery"] = "no_account"
+            elif triage == "snoozed":
+                out["delivery"] = "snoozed"
+            elif row.get("assignee_seen_at"):
+                out["delivery"] = "opened"
+            else:
+                out["delivery"] = "not_opened"
+            out["since"] = str(row.get("created_at") or "")
+        else:
+            out["delivery"] = "taken"
+    pending = None
+    for ev in cts.list_events(row):
+        if ev["kind"] == "due_request":
+            pending = ev
+        elif ev["kind"] in ("due_ok", "due_no"):
+            pending = None
+    if pending and not row.get("done"):
+        out["due_request"] = {
+            "to": str((pending.get("meta") or {}).get("to") or ""),
+            "reason": str(pending.get("text") or ""),
+            "by_name": str(pending.get("actor_name") or ""),
+            "at": str(pending.get("at") or ""),
+        }
+    return out
+
+
+class _MiniappDueRequestBody(BaseModel):
+    date: str = ""
+    reason: str = ""
+
+
+class _MiniappDueAnswerBody(BaseModel):
+    ok: bool = False
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/due-request")
+async def miniapp_calendar_tasks_due_request(
+    task_id: int,
+    body: _MiniappDueRequestBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Исполнитель просит перенести срок: дата не меняется, пока постановщик не согласится."""
+    from assistant.stores import calendar_tasks as cts
+
+    uid = int(principal.telegram_user_id)
+    task = await run_in_threadpool(cts._assignee_task, uid, task_id)
+    if not task:
+        raise HTTPException(status_code=400, detail="Попросить перенос может исполнитель поручения")
+    try:
+        day = date.fromisoformat(str(body.date or "").strip()[:10])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Укажите дату") from e
+    await run_in_threadpool(
+        partial(cts.add_event, task_id, "due_request", actor_user_id=uid,
+                actor_name=_principal_display_name(principal), text=str(body.reason or "").strip(),
+                meta={"to": day.isoformat()}, notify=False)
+    )
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True}
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/due-answer")
+async def miniapp_calendar_tasks_due_answer(
+    task_id: int,
+    body: _MiniappDueAnswerBody,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Постановщик отвечает на просьбу о переносе: согласен — срок меняется, нет — остаётся прежним."""
+    from assistant.services.calendar import _tz_for
+    from assistant.stores import calendar_tasks as cts
+
+    uid = int(principal.telegram_user_id)
+    tz = _tz_for(uid)
+    name = _principal_display_name(principal)
+    task = await run_in_threadpool(cts.get_task, uid, task_id)
+    if not task:
+        raise HTTPException(status_code=400, detail="Ответить на просьбу может постановщик")
+    req = _task_flow_api(task, {}).get("due_request")
+    if not req or not req.get("to"):
+        raise HTTPException(status_code=400, detail="Просьбы о переносе нет")
+
+    def _apply() -> None:
+        if body.ok:
+            start = datetime.fromisoformat(str(task["start_at"]))
+            end = datetime.fromisoformat(str(task["end_at"]))
+            shift = date.fromisoformat(req["to"]) - end.astimezone(tz).date()
+            cts.update_task(uid, task_id, start_at=start + shift, end_at=end + shift, tz=tz, actor_name=name)
+        cts.add_event(task_id, "due_ok" if body.ok else "due_no", actor_user_id=uid, actor_name=name,
+                      meta={"to": req["to"]}, notify=False)
+
+    try:
+        await run_in_threadpool(_apply)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _FOCUS_CACHE.pop(uid, None)
+    return {"ok": True}
+
+
 @miniapp_router.get("/calendar/tasks/posted")
 async def miniapp_calendar_tasks_posted(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
@@ -6607,12 +6758,18 @@ async def miniapp_calendar_tasks_posted(
         from assistant.stores import notes as notes_store
 
         titles: dict[str, str] = {}
+        notes_cache: dict[str, Any] = {}
+        profiles: dict[str, bool] = {}
         for it in items:
             try:
                 it["tracker_links"] = trackers_store.tasks_for_calendar_task(uid, it.get("id"))
             except Exception as e:  # бейдж трекера — не повод не показать список
                 print(f"[posted] tracker links failed task={it.get('id')} err={e!r}")
                 it["tracker_links"] = []
+            src = _task_source_api(uid, it, notes_cache)
+            if src:
+                it["source"] = src
+            it["flow"] = _task_flow_api(it, profiles)
             nid = str(it.get("note_id") or "")
             if nid.isdigit():  # поручение из встречи — «из «Синк по запуску»» в строке списка
                 if nid not in titles:
@@ -6648,6 +6805,8 @@ async def miniapp_calendar_tasks_mine(
         )
         names: dict[str, str] = {}
         titles: dict[str, str] = {}
+        notes_cache: dict[str, Any] = {}
+        profiles: dict[str, bool] = {}
         items = []
         for r in rows:
             it = _task_api(r, tz=tz, viewer_id=uid)
@@ -6656,6 +6815,10 @@ async def miniapp_calendar_tasks_mine(
                 if owner not in names:
                     names[owner] = owner_display_name(owner)
                 it["owner_name"] = names[owner]
+            src = _task_source_api(uid, r, notes_cache)
+            if src:
+                it["source"] = src
+            it["flow"] = _task_flow_api(r, profiles)
             nid = str(r.get("note_id") or "")
             if nid.isdigit():  # задача из встречи — «из «Синк по запуску»»
                 if nid not in titles:

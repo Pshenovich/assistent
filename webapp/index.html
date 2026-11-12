@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261111-inboxlist" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261112-av3n" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261111-comps2" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261111-connect1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -159,6 +159,7 @@
       <section id="panel-actual" class="panel" role="tabpanel">
         <div id="actual-hero" class="hero-card"></div>
         <div id="actual-focus" data-tour="focus" class="actual-focus hidden" aria-label="Фокус"></div>
+        <div id="av2-moves" class="av2-moves hidden" aria-label="Ваш ход"></div>
         <p id="posted-tasks-error" class="error hidden"></p>
         <div id="actual-posted-tasks" class="actual-subscreen hidden">
           <div class="detail-toolbar detail-toolbar--subscreen">
@@ -185,6 +186,7 @@
                 </button>
               </div>
             </div>
+            <div class="av2-seg" role="group" aria-label="Чьи задачи"><button type="button" data-av2-go="mine">Мои</button><button type="button" data-av2-go="posted">Поручил я</button></div>
             <input type="search" id="posted-tasks-search" class="pt-search hidden" placeholder="Найти по названию или человеку" autocomplete="off" />
             <div id="posted-tasks-team" class="pt-team" role="toolbar" aria-label="Исполнители"></div>
             <div class="pt-layout">
@@ -221,6 +223,7 @@
                 </button>
               </div>
             </div>
+            <div class="av2-seg" role="group" aria-label="Чьи задачи"><button type="button" data-av2-go="mine">Мои</button><button type="button" data-av2-go="posted">Поручил я</button></div>
             <div id="my-tasks-team" class="pt-team" role="toolbar" aria-label="От кого"></div>
             <div class="pt-layout">
               <div class="pt-main">
@@ -2027,6 +2030,13 @@
           </span>
           <span class="tabbar-label">База знаний</span>
         </button>
+        <button type="button" class="sidebar-expand" id="sidebar-expand" aria-controls="app-sidebar" aria-label="Развернуть меню" title="Развернуть меню">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
+            <path d="M9 3v18" />
+            <path d="m13 9 3 3-3 3" />
+          </svg>
+        </button>
         <button type="button" class="tabbar-btn" data-tab="profile" role="tab" aria-selected="false">
           <span class="tabbar-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2808,7 +2818,7 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261111-comps2" defer></script>
+  <script src="/webapp/app.js?v=20261112-av3n" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261111-compose" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>
