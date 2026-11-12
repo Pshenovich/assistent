@@ -389,6 +389,26 @@ def test_external_by_name_goes_to_posted_not_my_tasks(store):
     assert not upd["assignee_external"]
 
 
+def test_external_by_name_from_task_window(client, store):
+    """Окно задачи: вписали имя не из команды — задача «не из команды», выбрали себя — отметка снимается."""
+    t = store.create_task(OWNER, title="Группа для связи", start_at=datetime(2026, 10, 20, 15, 0, tzinfo=TZ),
+                          assignee_user_id=OWNER, tz=TZ)
+    base = f"/api/miniapp/calendar/tasks/{t['id']}"
+    r = client.patch(base, json={"assignee_user_id": "", "assignee_email": "", "assignee_name": "Василиса",
+                                 "assignee_external": True}, headers=_headers(OWNER))
+    assert r.status_code == 200, r.text
+    row = store.get_task_for_user(OWNER, t["id"])
+    assert row["assignee_external"] and row["assignee_name"] == "Василиса"
+    assert r.json()["task"]["event"]["assignee"]["external"] is True
+    # то же окно без смены исполнителя (флаг пришёл из задачи) — отметка остаётся
+    client.patch(base, json={"assignee_user_id": str(OWNER), "assignee_email": "", "assignee_name": "Василиса",
+                             "assignee_external": True, "title": "Группа"}, headers=_headers(OWNER))
+    assert store.get_task_for_user(OWNER, t["id"])["assignee_external"]
+    client.patch(base, json={"assignee_user_id": str(OWNER), "assignee_email": "", "assignee_name": "Я",
+                             "assignee_external": False}, headers=_headers(OWNER))
+    assert not store.get_task_for_user(OWNER, t["id"])["assignee_external"]
+
+
 def test_external_controller_moves_task(store):
     t = store.create_task(OWNER, title="Договор", start_at=datetime(2026, 10, 20, 15, 0, tzinfo=TZ),
                           assignee_name="Ирина", assignee_external=True, tz=TZ)

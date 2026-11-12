@@ -17353,6 +17353,8 @@
       user_id: String((initial && (initial.user_id || initial.assignee_user_id)) || "") || fallback.user_id,
       email: String((initial && (initial.email || initial.assignee_email)) || "") || fallback.email,
       name: String((initial && (initial.name || initial.assignee_name)) || "") || fallback.name,
+      // Человек не из команды (клиент, подрядчик): задача остаётся у постановщика, он и следит.
+      external: !!(initial && (initial.external || initial.assignee_external)),
     };
     if (!host) {
       return {
@@ -17394,11 +17396,12 @@
       );
       var text = document.createElement("span");
       text.className = "meeting-attendee-chip-text";
-      text.textContent = selected.name || selected.email || "Я";
+      var label = (selected.name || selected.email || "Я") + (selected.external ? " · не из команды" : "");
+      text.textContent = label;
       chip.appendChild(text);
       chips.appendChild(chip);
       var sum = opts && "summaryEl" in opts ? opts.summaryEl : document.getElementById("m-task-assignee-summary");
-      if (sum) sum.textContent = selected.name || selected.email || "Я";
+      if (sum) sum.textContent = label;
     }
 
     function pick(person) {
@@ -17410,6 +17413,8 @@
           .trim()
           .replace(/^@/, ""),
       };
+      // Ни почты, ни аккаунта — человек не из команды: Орбита ему не пишет, следит постановщик.
+      selected.external = !!(person && person.external) || (!selected.user_id && !selected.email);
       if (!selected.name) selected.name = selected.email || "Я";
       input.value = "";
       suggest.classList.add("hidden");
@@ -17464,12 +17469,12 @@
         var custom = document.createElement("button");
         custom.type = "button";
         custom.className = "meeting-attendee-suggest-item";
-        custom.textContent = q;
+        custom.textContent = q + " — не из команды";
         custom.addEventListener("mousedown", function (e) {
           e.preventDefault();
         });
         custom.addEventListener("click", function () {
-          pick({ name: q, email: "", user_id: "" });
+          pick({ name: q, email: "", user_id: "", external: true });
         });
         suggest.appendChild(custom);
       }
@@ -17676,6 +17681,7 @@
           // По умолчанию — ответственный за общую задачу; поменять можно в строке подзадачи.
           assignee_user_id: String(parent.assignee_user_id || ""),
           assignee_name: String(parent.assignee_name || ""),
+          assignee_external: !!parent.assignee_external,
           note_id: String(parent.note_id || ""),
         }).then(function () {
           var again = host.querySelector(".st-add-input");
@@ -17817,6 +17823,7 @@
       body.assignee_user_id = assignee.user_id || "";
       body.assignee_email = assignee.email || "";
       body.assignee_name = assignee.name || "";
+      body.assignee_external = !!assignee.external;
     }
     return body;
   }
@@ -24064,7 +24071,7 @@
     var contact = d.assignee || focusAssigneeContact(f.assignee);
     var assApi = mountTaskAssignee(
       assHost,
-      contact ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" } : null,
+      contact ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "", external: !!contact.external } : null,
       { anchorHost: true }
     );
     var assInput = assHost.querySelector("input");
@@ -25177,7 +25184,7 @@
       ov.querySelector(".leo-prompt-ok").addEventListener("click", function () {
         var a = api.getAssignee();
         var me = defaultTaskAssignee();
-        if (!a || (!a.email && (!a.user_id || a.user_id === me.user_id))) {
+        if (!a || (!a.external && !a.email && (!a.user_id || a.user_id === me.user_id))) {
           showNoteToast("Выберите, кому поручить");
           return;
         }
@@ -53810,7 +53817,7 @@
     var assApi = mountTaskAssignee(
       assHost,
       contact
-        ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "" }
+        ? { user_id: contact.user_id || contact.telegram_user_id || "", email: contact.email || "", name: contact.name || "", external: !!contact.external }
         : null
     );
     label("Срок");
@@ -53882,6 +53889,7 @@
         assignee_user_id: String(who.user_id || ""),
         assignee_email: String(who.email || ""),
         assignee_name: String(who.name || ""),
+        assignee_external: !!who.external,
         note_id: src.kind === "note" && src.id ? String(src.id) : "",
         // пункт задач встречи: поставится, только если его ещё никто не взял
         meeting_item: src.kind === "note" && src.id && src.item ? String(src.item) : undefined,

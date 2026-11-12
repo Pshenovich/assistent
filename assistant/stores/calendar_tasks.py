@@ -674,6 +674,7 @@ def as_calendar_event(
             "user_id": str(task.get("assignee_user_id") or ""),
             "email": str(task.get("assignee_email") or ""),
             "name": str(task.get("assignee_name") or ""),
+            "external": bool(task.get("assignee_external")),
         },
         "owner_user_id": owner,
         "is_owner": is_owner,

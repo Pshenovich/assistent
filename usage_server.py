@@ -7753,7 +7753,8 @@ async def miniapp_calendar_tasks_patch(
                 },
                 tz=tz,
                 actor_name=_principal_display_name(principal),
-                assignee_external=True if body.assignee_external else None,
+                # Окно задачи шлёт флаг всегда: выбрали себя или коллегу — «не из команды» снимаем.
+                assignee_external=bool(body.assignee_external) if patch_assignee else None,
             )
         )
     except ValueError as e:
