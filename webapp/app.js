@@ -29237,6 +29237,9 @@
     dueVal.className = "pt-c-row-val";
     var dueTxt = postedDueLong(task).replace(/^срок /, "");
     dueVal.textContent = late ? dueTxt + " · " + postedLateLabel(task).toLowerCase() : dueTxt;
+    // Исполнитель уже выбрал новую дату — показываем её здесь же, пока постановщик не ответил.
+    var dueAsk = av2On() && !done && !archived ? av2Flow(task).due_request : null;
+    if (dueAsk && dueAsk.to) dueVal.textContent += " → " + av2DayText(dueAsk.to) + (isOwner ? " · просит перенести" : " · ждём согласия");
     dueRow.appendChild(dueVal);
     if (canMoveDue) {
       var chev = document.createElement("span");
@@ -29247,6 +29250,11 @@
         e.stopPropagation();
         if (isOwner) {
           openPostedTaskEditor(task, state, { expandWhen: true });
+          return;
+        }
+        if (av2On()) {
+          // Исполнитель переносит срок сам; постановщик видит это в истории задачи.
+          av2DuePrompt(task, function () { refreshPostedCard(state); });
           return;
         }
         setPostedCardMode(state, "");
@@ -32412,7 +32420,7 @@
     if (role === "mine-from") {
       return av2Btn("Сдать " + av2Svg("down", 14), false, function (b) {
         var items = [{ label: "Сдать результат…", fn: function () { openPostedCard(task.id, { focus: "result", myTasks: true }); } }];
-        if (!av2Flow(task).due_request) items.push({ label: "Попросить перенос срока…", fn: function () { av2DuePrompt(task); } });
+        if (!av2Flow(task).due_request) items.push({ label: "Перенести срок…", fn: function () { av2DuePrompt(task); } });
         av2OpenMenu(b, items);
       });
     }
@@ -32439,40 +32447,52 @@
     av2Reload();
   }
   // Исполнитель просит перенос: дата и причина. Срок меняется только после согласия постановщика.
-  function av2DuePrompt(task) {
+  // Исполнитель переносит срок поручения сам, без согласования: постановщик видит перенос в истории задачи
+  // («Срок перенесён: … → … · кто»), договорная дата остаётся в подписи «договаривались на …».
+  function av2DuePrompt(task, onDone) {
     var wrap = av2El("div", "av2-dlg-wrap");
     var dlg = av2El("div", "av2-dlg");
     dlg.setAttribute("role", "dialog");
-    dlg.appendChild(av2El("h3", "av2-dlg-h", "Попросить перенос срока"));
-    dlg.appendChild(av2El("p", "av2-dlg-sub", "Срок изменится, когда " + postedFirstName(task.owner_name || "постановщик") + " согласится. До этого действует прежний."));
+    var boss = postedFirstName(task.owner_name || "") || "Постановщик";
+    dlg.appendChild(av2El("h3", "av2-dlg-h", "Перенести срок"));
+    dlg.appendChild(av2El("p", "av2-dlg-sub", "Срок изменится сразу. " + boss + " увидит перенос в истории задачи."));
     var date = av2El("input", "av2-dlg-in");
     date.type = "date";
     var cur = postedTaskDayIso(task);
-    var t = new Date();
-    var today = t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0") + "-" + String(t.getDate()).padStart(2, "0");
-    date.min = cur && cur > today ? cur : today;
-    var why = av2El("textarea", "av2-dlg-in");
-    why.rows = 2;
-    why.placeholder = "Почему — одной фразой";
+    var today = focusLocalIso(new Date()).slice(0, 10);
+    date.min = today;
+    date.value = cur && cur > today ? cur : today;
     dlg.appendChild(date);
-    dlg.appendChild(why);
     var row = av2El("div", "av2-dlg-row");
     var close = function () { wrap.remove(); };
     row.appendChild(av2Btn("Отмена", false, close));
-    row.appendChild(av2Btn("Отправить", true, async function (b) {
+    row.appendChild(av2Btn("Перенести", true, async function (b) {
       if (!date.value) {
         date.focus();
         return;
       }
+      if (date.value === cur) return close();
       b.disabled = true;
       try {
-        await apiFetch("/calendar/tasks/" + encodeURIComponent(task.id) + "/due-request", { method: "POST", body: JSON.stringify({ date: date.value, reason: why.value }) });
-        showNoteToast("Просьба отправлена");
+        var url = "/calendar/tasks/" + encodeURIComponent(String(task.id));
+        var got = await apiFetch(url, { method: "GET" });
+        var tk = (got && (got.task || got.item)) || got || {};
+        var st = new Date(String(tk.start_at || tk.start || task.start_at || ""));
+        var en = new Date(String(tk.end_at || tk.end || task.end_at || ""));
+        var ok = !isNaN(st.getTime());
+        var dur = ok && !isNaN(en.getTime()) ? Math.max(15, Math.round((en - st) / 60000)) : 30;
+        // День — выбранный, время и длительность — прежние.
+        var p = date.value.split("-");
+        var ns = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), ok ? st.getHours() : 12, ok ? st.getMinutes() : 0);
+        var res = await apiFetch(url, { method: "PATCH", body: JSON.stringify({ start: focusLocalIso(ns), end: focusLocalIso(new Date(ns.getTime() + dur * 60000)) }) });
+        if (res && res.task) syncMyTask(res.task);
+        showNoteToast("Срок перенесён на " + av2DayText(date.value));
         close();
         av2Reload();
+        if (onDone) onDone();
       } catch (e) {
         b.disabled = false;
-        showNoteToast((e && e.message) || "Не получилось — попробуйте ещё раз");
+        showNoteToast((e && e.message) || "Не получилось перенести — попробуйте ещё раз");
       }
     }));
     dlg.appendChild(row);
@@ -33053,7 +33073,7 @@
       if (asked && st.status_note) m.ctx = "«" + st.status_note + "»";
       m.main = { label: "Сдать", fn: function () { openPostedCard(task.id, { focus: "result", myTasks: true }); } };
       if (flow.due_request) notes.push("Вы просили перенос на " + av2DayText(flow.due_request.to) + " — ждём ответа");
-      else m.menu.push({ label: "Попросить перенос срока…", fn: function () { av2DuePrompt(task); } });
+      else m.menu.push({ label: "Перенести срок…", fn: function () { av2DuePrompt(task); } });
     } else {
       m.iconHtml = av2Svg(task.recurrence ? "repeat" : src.kind === "transcription" ? "video" : src.kind === "note" ? "doc" : "user", 15);
       m.label = task.recurrence ? "Своя · повторяется" : "Своя задача";

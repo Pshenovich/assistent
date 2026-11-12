@@ -430,3 +430,55 @@ def test_external_never_pushed_to_google(store, monkeypatch):
     monkeypatch.setattr(google_tasks, "delete_remote", lambda uid, task: removed.append(task["google_task_id"]))
     google_tasks.push_unsynced_in_window(OWNER, datetime(2026, 10, 19, tzinfo=TZ), datetime(2026, 10, 22, tzinfo=TZ))
     assert removed == ["g1"] and store._get_task_row(t["id"])["google_task_id"] == ""
+
+
+def test_due_request_and_answer(client, store, sent):
+    """Исполнитель сам выбирает новую дату; срок меняется только после согласия постановщика."""
+    t = _delegated(store)
+    tid = t["id"]
+    # постановщик попросить перенос не может
+    r = client.post(f"/api/miniapp/calendar/tasks/{tid}/due-request", headers=_headers(OWNER), json={"date": "2026-10-23"})
+    assert r.status_code == 400
+    r = client.post(
+        f"/api/miniapp/calendar/tasks/{tid}/due-request",
+        headers=_headers(ASSIGNEE),
+        json={"date": "2026-10-23", "reason": "жду данные"},
+    )
+    assert r.status_code == 200, r.text
+    assert store.get_task(OWNER, tid)["start_at"] == t["start_at"]  # до ответа срок прежний
+    posted = client.get("/api/miniapp/calendar/tasks/posted", headers=_headers(OWNER)).json()["items"]
+    req = [x for x in posted if x["id"] == tid][0]["flow"]["due_request"]
+    assert req["to"] == "2026-10-23" and req["reason"] == "жду данные"
+    # отказ: срок прежний, просьба снята
+    r = client.post(f"/api/miniapp/calendar/tasks/{tid}/due-answer", headers=_headers(OWNER), json={"ok": False})
+    assert r.status_code == 200, r.text
+    assert store.get_task(OWNER, tid)["start_at"] == t["start_at"]
+    posted = client.get("/api/miniapp/calendar/tasks/posted", headers=_headers(OWNER)).json()["items"]
+    assert not [x for x in posted if x["id"] == tid][0]["flow"].get("due_request")
+    # новая просьба (без причины) и согласие: день сдвинулся, время то же
+    r = client.post(f"/api/miniapp/calendar/tasks/{tid}/due-request", headers=_headers(ASSIGNEE), json={"date": "2026-10-24"})
+    assert r.status_code == 200, r.text
+    # исполнитель ответить сам себе не может
+    r = client.post(f"/api/miniapp/calendar/tasks/{tid}/due-answer", headers=_headers(ASSIGNEE), json={"ok": True})
+    assert r.status_code == 400
+    r = client.post(f"/api/miniapp/calendar/tasks/{tid}/due-answer", headers=_headers(OWNER), json={"ok": True})
+    assert r.status_code == 200, r.text
+    moved = datetime.fromisoformat(store.get_task(OWNER, tid)["start_at"]).astimezone(TZ)
+    assert (moved.date().isoformat(), moved.hour) == ("2026-10-24", 15)
+
+
+def test_assignee_moves_due_himself(client, store, sent):
+    """Исполнитель переносит срок сам, без согласования; перенос виден в истории с его именем."""
+    t = _delegated(store)
+    tid = t["id"]
+    r = client.patch(
+        f"/api/miniapp/calendar/tasks/{tid}",
+        headers=_headers(ASSIGNEE),
+        json={"start": "2026-10-23T15:00", "end": "2026-10-23T16:00"},
+    )
+    assert r.status_code == 200, r.text
+    moved = datetime.fromisoformat(store.get_task(OWNER, tid)["start_at"]).astimezone(TZ)
+    assert (moved.date().isoformat(), moved.hour) == ("2026-10-23", 15)
+    task = client.get(f"/api/miniapp/calendar/tasks/{tid}", headers=_headers(OWNER)).json()["task"]
+    log = task.get("schedule_log") or (task.get("event") or {}).get("schedule_log") or []
+    assert log and str(log[-1].get("from_start") or log[-1].get("from_end") or "").startswith("2026-10-20")
