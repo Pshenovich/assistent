@@ -306,6 +306,8 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "parse_voice_command": "Голосовая команда",
     "parse_day_plan": "Разбор дня (знакомство)",
     "chat_alerts": "Срочное из чатов",
+    "chat_rules": "Правила чатов",
+    "chat_rules_check": "Правила чатов: проверка",
     "chat_thread_title": "Название чата",
     "meeting_followup": "Письмо после встречи",
     "model_probe": "Проверка модели",

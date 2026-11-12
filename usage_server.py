@@ -10358,12 +10358,76 @@ async def miniapp_digest_overview(principal: _MiniappPrincipal = Depends(require
 @miniapp_router.get("/digest/chats/{chat_id}")
 async def miniapp_digest_chat(chat_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """Отчёт чата лентой по дням + «Ждут вашего ответа» (те же пункты, что в «Фокусе»)."""
-    from assistant.services import digest_overview
+    from assistant.services import digest_overview, scenarios
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        out = digest_overview.chat(uid, chat_id)
+        try:  # находки по личным правилам чата и сколько правил включено
+            out["rule_hits"] = scenarios.chat_hits(uid, chat_id)
+            out["rules_count"] = scenarios.rules_count_by_chat(uid).get(int(chat_id), 0)
+        except Exception as e:
+            print(f"[scenarios] chat hits failed uid={uid} chat={chat_id} err={e!r}")
+        return out
 
     try:
-        return {"ok": True, **await run_in_threadpool(digest_overview.chat, int(principal.telegram_user_id), chat_id)}
+        return {"ok": True, **await run_in_threadpool(_run)}
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+# Личные правила чата «Если → То» (сценарии). Ошибки прав и ввода — 400 (не 403: миниапп показал бы «Доступ ограничен»).
+async def _scenarios_call(fn, *args):
+    try:
+        return await run_in_threadpool(partial(fn, *args))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@miniapp_router.get("/digest/chats/{chat_id}/rules")
+async def miniapp_digest_rules(chat_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import scenarios
+
+    return {"ok": True, **await _scenarios_call(scenarios.rules_view, int(principal.telegram_user_id), chat_id)}
+
+
+@miniapp_router.post("/digest/chats/{chat_id}/rules")
+async def miniapp_digest_rule_create(chat_id: int, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import scenarios
+
+    return {"ok": True, "rule": await _scenarios_call(scenarios.create_rule, int(principal.telegram_user_id), chat_id, body or {})}
+
+
+@miniapp_router.post("/digest/chats/{chat_id}/rules/check")
+async def miniapp_digest_rule_check(chat_id: int, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Проверить»: что правило нашло бы в последних сообщениях чата (ничего не сохраняет)."""
+    from assistant.services import scenarios
+
+    return {"ok": True, **await _scenarios_call(scenarios.dry_run, int(principal.telegram_user_id), chat_id, body or {})}
+
+
+@miniapp_router.patch("/digest/rules/{rule_id}")
+async def miniapp_digest_rule_update(rule_id: int, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import scenarios
+
+    return {"ok": True, "rule": await _scenarios_call(scenarios.update_rule, int(principal.telegram_user_id), rule_id, body or {})}
+
+
+@miniapp_router.delete("/digest/rules/{rule_id}")
+async def miniapp_digest_rule_delete(rule_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.services import scenarios
+
+    await _scenarios_call(scenarios.delete_rule, int(principal.telegram_user_id), rule_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/digest/rule-hits/{hit_id}")
+async def miniapp_digest_rule_hit(hit_id: int, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Находка правила: «Сделано» (done) / «Не то» (hide) / вернуть (undo)."""
+    from assistant.services import scenarios
+
+    return {"ok": True, "hit": await _scenarios_call(scenarios.hit_op, int(principal.telegram_user_id), hit_id, str((body or {}).get("op") or ""))}
 
 
 @miniapp_router.post("/digest/item")

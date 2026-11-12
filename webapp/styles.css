@@ -22802,6 +22802,164 @@ form.pf-list .pf-add-row .pf-row-body {
   color: var(--accent);
 }
 
+/* Правила чата «Если → То» (личные сценарии) */
+.dgx-btn--rules.is-on {
+  border-color: var(--accent-border);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+.dgx.is-wide .dgx-back--always,
+.dgx-back--always {
+  display: inline-block;
+}
+.dgx-box--rules {
+  border-color: var(--accent-border);
+}
+.dgx-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.75rem;
+  font-size: 0.8125rem;
+}
+.dgx-hint {
+  margin: 0;
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.dgx-sub {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+.dgx-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.dgx-rule.is-off .dgx-rule-main {
+  opacity: 0.55;
+}
+.dgx-rule-main {
+  display: grid;
+  flex: 1;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+.dgx-rule-main b {
+  font-weight: 600;
+}
+.dgx-rule-main .dgx-muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dgx-switch {
+  position: relative;
+  flex: none;
+  width: 2.25rem;
+  height: 1.3rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--border-strong);
+  cursor: pointer;
+}
+.dgx-switch::after {
+  content: "";
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--on-accent);
+  transition: transform 0.15s ease;
+}
+.dgx-switch.is-on {
+  background: var(--accent);
+}
+.dgx-switch.is-on::after {
+  transform: translateX(0.95rem);
+}
+.dgx-btn--wide {
+  width: 100%;
+  padding: 0.6rem 1rem;
+}
+.dgx-field {
+  display: grid;
+  gap: 0.3rem;
+}
+.dgx-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--surface-muted);
+  outline: none;
+  resize: vertical;
+}
+.dgx-input:focus {
+  box-shadow: 0 0 0 1px var(--accent-border);
+}
+.dgx-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+}
+.dgx-stepn {
+  flex: none;
+  min-width: 2.6rem;
+  margin-top: 0.4rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+.dgx-stepb {
+  display: grid;
+  flex: 1;
+  gap: 0.4rem;
+  min-width: 0;
+}
+.dgx-acts--form .dgx-btn {
+  flex: 1;
+  padding: 0.6rem 1rem;
+}
+.dgx-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.dgx-linkdanger {
+  justify-self: center;
+  padding: 0.3rem;
+  border: 0;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--danger-text);
+  background: transparent;
+  cursor: pointer;
+}
+
 /* Рынок — журнальный выпуск */
 .mkt {
   display: grid;

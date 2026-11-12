@@ -144,6 +144,7 @@ def _openrouter_chat_url() -> str:
 _BACKGROUND_OPERATIONS = frozenset(
     {
         "chat_alerts",
+        "chat_rules",
         "proactive_insights",
         "proactive_chat_insights",
         "mail_insights",

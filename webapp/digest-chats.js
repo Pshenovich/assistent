@@ -20,7 +20,8 @@
     if (app().toast) app().toast(t);
   }
 
-  var st = { data: null, filter: "all", q: "", open: null, chat: null, expanded: {}, loading: false };
+  // rules — окно «Правила» чата: { chat_id, loading, data, error, edit }; edit — форма правила.
+  var st = { data: null, filter: "all", q: "", open: null, chat: null, expanded: {}, loading: false, rules: null };
   var COLORS = ["#7a6ff0", "#d6455b", "#e8833a", "#2fa4b8", "#3fb27f", "#c05bd6", "#3d8ee8", "#b8962f"];
   var MON = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
   var WD = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
@@ -91,6 +92,7 @@
   }
 
   async function loadChat(id) {
+    if (st.rules && st.rules.chat_id !== id) st.rules = null;
     st.open = id;
     var same = !!(st.chat && st.chat.chat_id === id && !st.chat.loading);
     if (!same) st.chat = { chat_id: id, loading: true };
@@ -216,11 +218,14 @@
     var c = st.chat;
     if (!c) return '<div class="dgx-detail"><div class="dgx-empty dgx-empty--big">Выберите чат слева</div></div>';
     var title = c.title || ((st.data && (st.data.chats || []).filter(function (x) { return x.chat_id === c.chat_id; })[0]) || {}).title || "Чат";
+    if (st.rules && st.rules.chat_id === c.chat_id) return '<div class="dgx-detail">' + rulesHtml(title) + "</div>";
     var h = '<div class="dgx-detail">';
     h +=
       '<div class="dgx-dhead"><button type="button" class="dgx-back" data-dgx="back" aria-label="Назад">←</button>' + ava(title, c.chat_id) +
       '<div class="dgx-dtitle"><b>' + esc(title) + "</b><span>" + (c.days ? "отчёты за " + c.days.length + " " + (c.days.length === 1 ? "день" : c.days.length < 5 ? "дня" : "дней") : "") + "</span></div>" +
       (c.url ? '<button type="button" class="dgx-btn" data-dgx="tg" data-url="' + esc(c.url) + '">Открыть в Telegram</button>' : "") +
+      '<button type="button" class="dgx-btn dgx-btn--rules' + (c.rules_count ? " is-on" : "") + '" data-dgx="rules" title="Что Лео ищет в этом чате для вас">' +
+      "Правила" + (c.rules_count ? " · " + c.rules_count : "") + "</button>" +
       '<button type="button" class="dgx-btn dgx-btn--leo" data-dgx="leo">Обсудить с Лео</button></div>';
     h += '<div class="dgx-body">';
     if (c.loading) h += '<div class="dgx-empty">Загружаю отчёт…</div>';
@@ -248,11 +253,241 @@
         });
         h += "</div>";
       }
+      h += hitsHtml(c);
       (c.days || []).forEach(function (day, i) {
         h += dayHtml(c, day, i === 0 || st.expanded[c.chat_id + ":" + day.date]);
       });
     }
     return h + "</div></div>";
+  }
+
+  function hhmm(iso) {
+    var t = new Date(iso);
+    return isNaN(t) ? "" : ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2);
+  }
+
+  function fieldsHtml(f) {
+    var keys = Object.keys(f || {});
+    if (!keys.length) return "";
+    return '<div class="dgx-fields">' + keys.map(function (k) {
+      return '<span><span class="dgx-muted">' + esc(k) + ":</span> " + esc(f[k]) + "</span>";
+    }).join("") + "</div>";
+  }
+
+  // Находки личных правил чата (видит только автор правил).
+  function hitsHtml(c) {
+    var hits = (c.rule_hits || []).filter(function (x) {
+      return x.status === "new";
+    });
+    if (!hits.length) return "";
+    var h = '<div class="dgx-box dgx-box--rules"><div class="dgx-boxh">Нашёл Лео по вашим правилам<span class="dgx-infocus">видите только вы</span></div>';
+    hits.forEach(function (x) {
+      var when = hhmm(x.ts_utc);
+      h +=
+        '<div class="dgx-q"><span class="dgx-who">' + esc(x.rule ? "«" + x.rule + "»" : "Правило") +
+        (x.who ? " · " + esc(x.who) : "") + (when ? ", " + when : "") + "</span>" +
+        "<div>" + esc(x.summary) + "</div>" + fieldsHtml(x.fields) +
+        '<div class="dgx-acts">' +
+        (x.url ? '<button type="button" class="dgx-btn" data-dgx="tg" data-url="' + esc(x.url) + '">Открыть в Telegram</button>' : "") +
+        '<button type="button" class="dgx-btn" data-dgx="hit" data-op="done" data-id="' + x.id + '">Сделано</button>' +
+        '<button type="button" class="dgx-btn" data-dgx="hit" data-op="hide" data-id="' + x.id + '">Не то</button></div></div>';
+    });
+    return h + "</div>";
+  }
+
+  function rulesHead(back, title, sub) {
+    return (
+      '<div class="dgx-dhead"><button type="button" class="dgx-back dgx-back--always" data-dgx="' + back + '" aria-label="Назад">←</button>' +
+      '<div class="dgx-dtitle"><b>' + esc(title) + "</b>" + (sub ? "<span>" + esc(sub) + "</span>" : "") + "</div></div>"
+    );
+  }
+
+  // «Правила» чата: личные «Если → То». Лео находит, что делать — решает код.
+  function rulesHtml(title) {
+    var R = st.rules;
+    if (R.edit) return ruleFormHtml();
+    var h = rulesHead("rules-close", "Правила для чата", title + " · видите только вы");
+    h += '<div class="dgx-body">';
+    if (R.loading) return h + '<div class="dgx-empty">Загружаю…</div></div>';
+    if (R.error) return h + '<div class="dgx-empty">' + esc(R.error) + "</div></div>";
+    var d = R.data || {};
+    if (!(d.rules || []).length)
+      h += '<p class="dgx-hint">Опишите своими словами, что Лео искать в этом чате, — он будет показывать находки здесь. Например, сообщения об оплатах или просьбы к вам.</p>';
+    (d.rules || []).forEach(function (r) {
+      h +=
+        '<div class="dgx-rule' + (r.enabled ? "" : " is-off") + '">' +
+        '<button type="button" class="dgx-rule-main" data-dgx="rule-edit" data-id="' + r.id + '"><b>' + esc(r.title) + "</b>" +
+        '<span class="dgx-muted">' + esc(r.instruction) + " → " + esc(r.action_label) + "</span></button>" +
+        '<button type="button" class="dgx-switch' + (r.enabled ? " is-on" : "") + '" role="switch" aria-checked="' + !!r.enabled +
+        '" aria-label="Включено" data-dgx="rule-toggle" data-id="' + r.id + '"></button></div>';
+    });
+    h += '<button type="button" class="dgx-btn dgx-btn--p dgx-btn--wide" data-dgx="rule-new">+ Новое правило</button>';
+    if ((d.templates || []).length) {
+      h += '<div class="dgx-sub">Или начните с готового</div><div class="dgx-chips">';
+      d.templates.forEach(function (t, i) {
+        h += '<button type="button" class="dgx-chip" data-dgx="rule-tpl" data-i="' + i + '">' + esc(t.title) + "</button>";
+      });
+      h += "</div>";
+    }
+    h += '<p class="dgx-hint dgx-muted">Лео видит сообщения, которые получает бот в группе. Чтобы он видел все, сделайте бота администратором чата.</p>';
+    return h + "</div>";
+  }
+
+  function ruleFormHtml() {
+    var R = st.rules;
+    var E = R.edit;
+    var d = R.data || {};
+    var h = rulesHead("rule-cancel", E.id ? "Правило" : "Новое правило", "");
+    h += '<div class="dgx-body">';
+    h += '<label class="dgx-field"><span class="dgx-sub">Название</span><input type="text" class="dgx-input" data-rf="title" maxlength="80" placeholder="Например: Оплаты" value="' + esc(E.title) + '" /></label>';
+    h +=
+      '<div class="dgx-step"><span class="dgx-stepn">Если</span><div class="dgx-stepb">' +
+      '<textarea class="dgx-input" data-rf="instruction" rows="3" maxlength="1500" placeholder="Например: бухгалтер пишет, что пришла оплата — кто, сколько и когда">' + esc(E.instruction) + "</textarea>" +
+      '<div class="dgx-sub">От кого</div><div class="dgx-chips">' +
+      '<button type="button" class="dgx-chip' + (E.from.length ? "" : " is-on") + '" data-dgx="rf-from" data-id="">Любой</button>';
+    (d.authors || []).slice(0, 15).forEach(function (a) {
+      var on = E.from.indexOf(a.user_id) >= 0;
+      h += '<button type="button" class="dgx-chip' + (on ? " is-on" : "") + '" data-dgx="rf-from" data-id="' + a.user_id + '">' + esc(a.name) + (a.bot ? " · бот" : "") + "</button>";
+    });
+    h += "</div></div></div>";
+    h += '<div class="dgx-step"><span class="dgx-stepn">То</span><div class="dgx-stepb"><div class="dgx-chips">';
+    (d.actions || []).forEach(function (a) {
+      h += '<button type="button" class="dgx-chip' + (E.action === a.id ? " is-on" : "") + '" data-dgx="rf-action" data-id="' + esc(a.id) + '">' + esc(a.label) + "</button>";
+    });
+    h += '</div><span class="dgx-muted">Скоро: строка в таблицу документа, задача</span></div></div>';
+    if (E.checking) h += '<div class="dgx-box"><span class="dgx-muted">Лео читает последние сообщения…</span></div>';
+    else if (E.check) {
+      var ch = E.check;
+      h += '<div class="dgx-box"><div class="dgx-boxh">Проверка на последних сообщениях</div>';
+      if (ch.error) h += '<span class="dgx-muted">' + esc(ch.error) + "</span>";
+      else if (!(ch.hits || []).length)
+        h += '<span class="dgx-muted">Из ' + ch.checked + " подходящих по условиям сообщений ничего не нашлось. Попробуйте описать иначе.</span>";
+      else {
+        h += '<span class="dgx-muted">Нашёл ' + ch.hits.length + " из " + ch.checked + " сообщений:</span>";
+        ch.hits.forEach(function (x) {
+          h += '<div class="dgx-q"><span class="dgx-who">' + esc(x.who) + (hhmm(x.ts_utc) ? ", " + hhmm(x.ts_utc) : "") + "</span><div>" + esc(x.summary) + "</div>" + fieldsHtml(x.fields) + "</div>";
+        });
+      }
+      h += "</div>";
+    }
+    h +=
+      '<div class="dgx-acts dgx-acts--form"><button type="button" class="dgx-btn" data-dgx="rule-check"' + (E.checking ? " disabled" : "") + ">Проверить</button>" +
+      '<button type="button" class="dgx-btn dgx-btn--p" data-dgx="rule-save"' + (E.saving ? " disabled" : "") + ">Сохранить</button></div>";
+    if (E.id) h += '<button type="button" class="dgx-linkdanger" data-dgx="rule-delete">Удалить правило</button>';
+    return h + "</div>";
+  }
+
+  async function openRules(chatId) {
+    st.rules = { chat_id: chatId, loading: true, edit: null };
+    render();
+    try {
+      var d = await api("/digest/chats/" + encodeURIComponent(chatId) + "/rules");
+      if (!st.rules || st.rules.chat_id !== chatId) return;
+      st.rules.data = d;
+    } catch (e) {
+      if (st.rules) st.rules.error = (e && e.message) || "Не удалось загрузить правила";
+    }
+    if (st.rules) st.rules.loading = false;
+    render();
+  }
+
+  function ruleBody(E) {
+    return { title: E.title, instruction: E.instruction, conditions: { from_user_ids: E.from }, action: E.action };
+  }
+
+  async function onRulesClick(act, b) {
+    var R = st.rules;
+    if (!R) return;
+    var E = R.edit;
+    var d = R.data || {};
+    if (act === "rules-close") {
+      st.rules = null;
+      return loadChat(st.chat.chat_id);
+    }
+    if (act === "rule-new" || act === "rule-tpl") {
+      var t = act === "rule-tpl" ? (d.templates || [])[Number(b.getAttribute("data-i"))] || {} : {};
+      R.edit = { title: t.title || "", instruction: t.instruction || "", from: [], action: "show" };
+      return render();
+    }
+    if (act === "rule-edit") {
+      var r = (d.rules || []).filter(function (x) {
+        return String(x.id) === b.getAttribute("data-id");
+      })[0];
+      if (!r) return;
+      R.edit = { id: r.id, title: r.title, instruction: r.instruction, from: ((r.conditions || {}).from_user_ids || []).slice(), action: r.action };
+      return render();
+    }
+    if (act === "rule-cancel") {
+      R.edit = null;
+      return render();
+    }
+    if (act === "rule-toggle") {
+      var id = b.getAttribute("data-id");
+      var on = b.getAttribute("aria-checked") !== "true";
+      b.disabled = true;
+      try {
+        var res = await api("/digest/rules/" + encodeURIComponent(id), { method: "PATCH", body: JSON.stringify({ enabled: on }) });
+        (d.rules || []).forEach(function (x) {
+          if (String(x.id) === String(id)) x.enabled = res.rule.enabled;
+        });
+      } catch (err) {
+        toast((err && err.message) || "Не получилось");
+      }
+      return render();
+    }
+    if (!E) return;
+    if (act === "rf-from") {
+      var uid = b.getAttribute("data-id");
+      if (!uid) E.from = [];
+      else {
+        uid = Number(uid);
+        var i = E.from.indexOf(uid);
+        if (i >= 0) E.from.splice(i, 1);
+        else E.from.push(uid);
+      }
+      return render();
+    }
+    if (act === "rf-action") {
+      E.action = b.getAttribute("data-id");
+      return render();
+    }
+    if (act === "rule-check") {
+      if (String(E.instruction || "").trim().length < 5) return toast("Опишите, что Лео искать");
+      E.checking = true;
+      E.check = null;
+      render();
+      try {
+        E.check = await api("/digest/chats/" + encodeURIComponent(R.chat_id) + "/rules/check", { method: "POST", body: JSON.stringify(ruleBody(E)) });
+      } catch (err) {
+        E.check = { error: (err && err.message) || "Не получилось проверить" };
+      }
+      E.checking = false;
+      return render();
+    }
+    if (act === "rule-save") {
+      if (String(E.instruction || "").trim().length < 5) return toast("Опишите, что Лео искать");
+      E.saving = true;
+      render();
+      try {
+        if (E.id) await api("/digest/rules/" + encodeURIComponent(E.id), { method: "PATCH", body: JSON.stringify(ruleBody(E)) });
+        else await api("/digest/chats/" + encodeURIComponent(R.chat_id) + "/rules", { method: "POST", body: JSON.stringify(ruleBody(E)) });
+        toast(E.id ? "Правило сохранено" : "Правило включено — Лео смотрит новые сообщения");
+        return openRules(R.chat_id);
+      } catch (err) {
+        E.saving = false;
+        toast((err && err.message) || "Не получилось сохранить");
+        return render();
+      }
+    }
+    if (act === "rule-delete") {
+      if (!(await app().confirm("Удалить правило «" + (E.title || "без названия") + "»?"))) return;
+      try {
+        await api("/digest/rules/" + encodeURIComponent(E.id), { method: "DELETE" });
+        return openRules(R.chat_id);
+      } catch (err) {
+        toast((err && err.message) || "Не получилось удалить");
+      }
+    }
   }
 
   function render() {
@@ -284,6 +519,7 @@
     if (act === "back") {
       st.open = null;
       st.chat = null;
+      st.rules = null;
       return render();
     }
     if (act === "expand") {
@@ -291,6 +527,19 @@
       return render();
     }
     if (act === "tg") return app().openLink(b.getAttribute("data-url"));
+    if (act === "rules") return openRules(st.chat.chat_id);
+    if (/^(rules-|rule-|rf-)/.test(act)) return onRulesClick(act, b);
+    if (act === "hit") {
+      b.disabled = true;
+      try {
+        await api("/digest/rule-hits/" + encodeURIComponent(b.getAttribute("data-id")), { method: "POST", body: JSON.stringify({ op: b.getAttribute("data-op") }) });
+        if (b.getAttribute("data-op") === "hide") toast("Скрыто. Если Лео часто ошибается — уточните правило");
+        return loadChat(st.chat.chat_id);
+      } catch (err) {
+        b.disabled = false;
+        return toast((err && err.message) || "Не получилось");
+      }
+    }
     if (act === "task") {
       var step = findStep(b.getAttribute("data-key"));
       if (!step) return;
@@ -349,6 +598,11 @@
 
   function onInput(e) {
     var t = e.target;
+    var rf = t && t.getAttribute && t.getAttribute("data-rf");
+    if (rf && st.rules && st.rules.edit) {
+      st.rules.edit[rf] = t.value; // без перерисовки — курсор остаётся в поле
+      return;
+    }
     if (t && t.hasAttribute && t.hasAttribute("data-dgx-q")) {
       st.q = t.value;
       var pos = t.selectionStart;

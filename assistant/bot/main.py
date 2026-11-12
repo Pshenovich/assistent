@@ -32,6 +32,7 @@ from assistant.bot.digest_auto_job import register_digest_auto_jobs
 from assistant.bot.market_digest_job import register_market_digest_jobs
 from assistant.bot.gcal_push_job import register_gcal_push_jobs
 from assistant.bot.tracker_sync_job import register_tracker_sync_jobs
+from assistant.bot.scenarios_job import register_scenarios_jobs
 from assistant.bot.calendar_mirror_job import register_calendar_mirror_jobs
 from assistant.bot.heartbeat_job import register_heartbeat_jobs
 from assistant.bot.spend_alert_job import register_spend_alert_jobs
@@ -96,6 +97,7 @@ def register_background_jobs(app: Application) -> None:
     register_digest_auto_jobs(app)
     register_market_digest_jobs(app)
     register_chat_alert_jobs(app)
+    register_scenarios_jobs(app)
     register_spend_alert_jobs(app)
     register_vault_watch_jobs(app)
     register_gcal_push_jobs(app)

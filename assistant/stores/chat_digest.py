@@ -759,6 +759,36 @@ def messages_after_rowid(chat_id: int, rowid: int, *, limit: int = 400) -> list[
     return [dict(r) for r in rs]
 
 
+def recent_messages(chat_id: int, *, limit: int = 100) -> list[dict[str, Any]]:
+    """Последние сообщения чата в порядке записи (с rid) — для «Проверить» в правилах чата."""
+    with _LOCK:
+        rs = _conn().execute(
+            "SELECT rowid AS rid, * FROM leo_chat_messages WHERE chat_id = ? ORDER BY rowid DESC LIMIT ?",
+            (int(chat_id), int(limit)),
+        ).fetchall()
+    return [dict(r) for r in reversed(rs)]
+
+
+def chat_authors(chat_id: int, *, limit: int = 60) -> list[dict[str, Any]]:
+    """Кто писал в чате (люди и боты), последнее имя — для условия «от кого» в правилах."""
+    with _LOCK:
+        rs = _conn().execute(
+            """
+            SELECT m.user_id, m.username, m.display_name, m.is_auto, MAX(m.rowid) AS rid
+            FROM leo_chat_messages m
+            WHERE m.chat_id = ? AND m.user_id IS NOT NULL
+            GROUP BY m.user_id ORDER BY rid DESC LIMIT ?
+            """,
+            (int(chat_id), int(limit)),
+        ).fetchall()
+    out = []
+    for r in rs:
+        name = str(r["display_name"] or "").strip() or (f"@{r['username']}" if r["username"] else f"id {r['user_id']}")
+        bot = bool(r["is_auto"]) or str(r["username"] or "").lower().endswith("bot")
+        out.append({"user_id": int(r["user_id"]), "name": name, "bot": bot})
+    return out
+
+
 def thread_tail(chat_id: int, thread_id: int | None, before_ts: str, *, limit: int = 25) -> list[dict[str, Any]]:
     """Последние сообщения топика до before_ts — контекст для новых."""
     with _LOCK:
