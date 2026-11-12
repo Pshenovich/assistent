@@ -129,3 +129,94 @@ def test_message_url_supergroup_and_topic():
     assert svc.message_url(-1001234, {"message_id": 7}) == "https://t.me/c/1234/7"
     assert svc.message_url(-1001234, {"message_id": 7, "thread_id": 3}) == "https://t.me/c/1234/3/7"
     assert svc.message_url(-55, {"message_id": 7}) == ""
+
+
+# ---------- строка в таблицу документа ----------
+
+TABLE_DOC = (
+    "<h2>Оплаты 2026</h2><table><tbody><tr><th><p>Кто</p></th><th><p>Сумма</p></th><th><p>Дата</p></th></tr>"
+    "<tr><td><p>ИП Сидоров</p></td><td><p>45 000</p></td><td><p>08.11.2026</p></td></tr></tbody></table><p>конец</p>"
+)
+
+
+def test_note_table_append_lib():
+    from assistant.lib import note_table_append as nta
+
+    assert nta.parse_note_ref("https://getorbita.me/webapp/?b=1&note=42&sheet=7") == (42, "7")
+    assert nta.parse_note_ref("42") == (42, "")
+    assert nta.parse_note_ref("https://example.com/") == (None, "")
+    t = nta.tables_in(TABLE_DOC)
+    assert t == [{"index": 0, "label": "Оплаты 2026", "columns": ["Кто", "Сумма", "Дата"], "rows": 1}]
+    html, cols = nta.append_row(TABLE_DOC, 0, {"Кто": "ООО <Ромашка>", "Сумма": "120 000"}, item_id="iabcdef0123",
+                                source=nta.source_html("https://t.me/c/1/2", "сообщение"))
+    assert cols == ["Кто", "Сумма", "Дата", "Источник"]
+    assert html.endswith("<p>конец</p>") and "ООО &lt;Ромашка&gt;" in html
+    assert nta.tables_in(html)[0]["columns"][-1] == "Источник" and nta.tables_in(html)[0]["rows"] == 2
+    assert 'data-leo-item="iabcdef0123"' in html and 'href="https://t.me/c/1/2"' in html
+    back, found = nta.remove_row(html, "iabcdef0123")
+    assert found and "Ромашка" not in back and "ИП Сидоров" in back
+    assert nta.check_value("Сумма", "много") == "" and nta.check_value("Сумма", "120к") == "120к"
+    assert nta.check_value("Кто", "Ромашка") == "Ромашка"
+    with pytest.raises(LookupError):
+        nta.append_row(TABLE_DOC, 3, {}, item_id="i0000000000", source="")
+
+
+def _doc(owner=ME, body=TABLE_DOC):
+    from assistant.stores import notes as notes_store
+
+    return notes_store.create_note(owner, "Оплаты 2026", body)
+
+
+def test_table_rule_writes_row_and_removes(env):
+    cd, store, svc, fake, calls = env
+    from assistant.stores import notes as notes_store
+
+    note = _doc()
+    nid = int(note["id"])
+    with pytest.raises(ValueError):
+        svc.create_rule(ME, CHAT, {"instruction": "Оплаты", "action": "table_row", "action_data": {}})
+    with pytest.raises(ValueError):  # чужой документ без доступа
+        svc.resolve_target(OTHER, nid)
+    target = svc.resolve_target(ME, f"https://x/webapp/?note={nid}")
+    assert target["sheets"][0]["tables"][0]["columns"] == ["Кто", "Сумма", "Дата"]
+    r = svc.create_rule(ME, CHAT, {"instruction": "Оплаты", "action": "table_row",
+                                   "action_data": {"note_id": nid, "sheet_id": "main", "table_index": 0,
+                                                   "column_hints": {"Кто": "плательщик", "Лишний": "x"}}})
+    assert r["action_data"]["columns"] == ["Кто", "Сумма", "Дата"] and r["action_data"]["column_hints"] == {"Кто": "плательщик"}
+    assert r["action_label"] == "строка в «Оплаты 2026»"
+    sc = store.get(ME, r["id"])
+    _msg(cd, 10, OTHER, "Пришло 120к от ООО Ромашка")
+    _msg(cd, 11, OTHER, "Ромашка обещала заплатить")
+    fake.answer = json.dumps({"hits": [
+        {"msg": 10, "summary": "Ромашка 120 000", "fields": {"кто": "ООО Ромашка", "Сумма": "120 000", "Дата": "12.11.2026", "Счёт": "45"}},
+        {"msg": 11, "summary": "без суммы", "fields": {"Сумма": "скоро"}},  # пустая строка — не пишем
+    ]})
+    assert svc.run_rule(sc) == 1
+    assert "columns" in calls[-1]["user"] and calls[-1]["user"]["column_hints"] == {"Кто": "плательщик"}
+    body = notes_store.get_note(ME, nid)["body"]
+    from assistant.lib import note_table_append as nta
+
+    t = nta.tables_in(body)[0]
+    assert t["columns"] == ["Кто", "Сумма", "Дата", "Источник"] and t["rows"] == 2
+    assert "ООО Ромашка" in body and "Счёт" not in body and "Лео · " in body and "t.me/c/9/10" in body
+    hit = svc.chat_hits(ME, CHAT)[0]
+    assert hit["status"] == "done" and hit["note_id"] == nid and hit["doc_title"] == "Оплаты 2026"
+    svc.hit_op(ME, hit["id"], "remove")
+    assert "ООО Ромашка" not in notes_store.get_note(ME, nid)["body"]
+    assert svc.chat_hits(ME, CHAT) == []
+
+
+def test_table_changed_pauses_rule(env):
+    cd, store, svc, fake, calls = env
+    from assistant.stores import notes as notes_store
+
+    nid = int(_doc()["id"])
+    r = svc.create_rule(ME, CHAT, {"instruction": "Оплаты", "action": "table_row",
+                                   "action_data": {"note_id": nid, "table_index": 0}})
+    notes_store.update_note(ME, nid, body="<p>таблицу удалили</p>")
+    _msg(cd, 20, OTHER, "Пришло 5 000")
+    fake.answer = '{"hits":[{"msg":20,"summary":"5 000","fields":{"Сумма":"5 000"}}]}'
+    svc.run_rule(store.get(ME, r["id"]))
+    rule = svc.rules_view(ME, CHAT)["rules"][0]
+    assert rule["enabled"] is False and "изменилась" in rule["action_data"]["error"]
+    assert svc.chat_hits(ME, CHAT)[0]["status"] == "failed"

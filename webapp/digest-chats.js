@@ -277,7 +277,7 @@
   // Находки личных правил чата (видит только автор правил).
   function hitsHtml(c) {
     var hits = (c.rule_hits || []).filter(function (x) {
-      return x.status === "new";
+      return x.action === "table_row" ? x.status === "done" || x.status === "failed" : x.status === "new";
     });
     if (!hits.length) return "";
     var h = '<div class="dgx-box dgx-box--rules"><div class="dgx-boxh">Нашёл Лео по вашим правилам<span class="dgx-infocus">видите только вы</span></div>';
@@ -286,11 +286,24 @@
       h +=
         '<div class="dgx-q"><span class="dgx-who">' + esc(x.rule ? "«" + x.rule + "»" : "Правило") +
         (x.who ? " · " + esc(x.who) : "") + (when ? ", " + when : "") + "</span>" +
-        "<div>" + esc(x.summary) + "</div>" + fieldsHtml(x.fields) +
+        (x.action === "table_row"
+          ? (x.status === "failed"
+              ? '<div class="dgx-err">Не смог записать: ' + esc(x.error || "ошибка") + "</div><div>" + esc(x.summary) + "</div>"
+              : "<div>Добавил строку в «" + esc(x.doc_title || "документ") + "»</div>")
+          : "<div>" + esc(x.summary) + "</div>") +
+        fieldsHtml(x.fields) +
         '<div class="dgx-acts">' +
-        (x.url ? '<button type="button" class="dgx-btn" data-dgx="tg" data-url="' + esc(x.url) + '">Открыть в Telegram</button>' : "") +
-        '<button type="button" class="dgx-btn" data-dgx="hit" data-op="done" data-id="' + x.id + '">Сделано</button>' +
-        '<button type="button" class="dgx-btn" data-dgx="hit" data-op="hide" data-id="' + x.id + '">Не то</button></div></div>';
+        (x.action === "table_row"
+          ? (x.status === "done" && x.note_id
+              ? '<button type="button" class="dgx-btn" data-dgx="hit-doc" data-note="' + esc(x.note_id) + '">Открыть документ</button>' +
+                '<button type="button" class="dgx-btn" data-dgx="hit" data-op="remove" data-id="' + x.id + '">Убрать</button>'
+              : "") +
+            (x.url ? '<button type="button" class="dgx-btn" data-dgx="tg" data-url="' + esc(x.url) + '">Сообщение</button>' : "") +
+            '<button type="button" class="dgx-btn" data-dgx="hit" data-op="hide" data-id="' + x.id + '">Понятно</button>'
+          : (x.url ? '<button type="button" class="dgx-btn" data-dgx="tg" data-url="' + esc(x.url) + '">Открыть в Telegram</button>' : "") +
+            '<button type="button" class="dgx-btn" data-dgx="hit" data-op="done" data-id="' + x.id + '">Сделано</button>' +
+            '<button type="button" class="dgx-btn" data-dgx="hit" data-op="hide" data-id="' + x.id + '">Не то</button>') +
+        "</div></div>";
     });
     return h + "</div>";
   }
@@ -317,7 +330,8 @@
       h +=
         '<div class="dgx-rule' + (r.enabled ? "" : " is-off") + '">' +
         '<button type="button" class="dgx-rule-main" data-dgx="rule-edit" data-id="' + r.id + '"><b>' + esc(r.title) + "</b>" +
-        '<span class="dgx-muted">' + esc(r.instruction) + " → " + esc(r.action_label) + "</span></button>" +
+        '<span class="dgx-muted">' + esc(r.instruction) + " → " + esc(r.action_label) + "</span>" +
+        ((r.action_data || {}).error ? '<span class="dgx-err">На паузе: ' + esc(r.action_data.error) + "</span>" : "") + "</button>" +
         '<button type="button" class="dgx-switch' + (r.enabled ? " is-on" : "") + '" role="switch" aria-checked="' + !!r.enabled +
         '" aria-label="Включено" data-dgx="rule-toggle" data-id="' + r.id + '"></button></div>';
     });
@@ -354,7 +368,7 @@
     (d.actions || []).forEach(function (a) {
       h += '<button type="button" class="dgx-chip' + (E.action === a.id ? " is-on" : "") + '" data-dgx="rf-action" data-id="' + esc(a.id) + '">' + esc(a.label) + "</button>";
     });
-    h += '</div><span class="dgx-muted">Скоро: строка в таблицу документа, задача</span></div></div>';
+    h += "</div>" + (E.action === "table_row" ? targetHtml(E) : '<span class="dgx-muted">Скоро: создать задачу</span>') + "</div></div>";
     if (E.checking) h += '<div class="dgx-box"><span class="dgx-muted">Лео читает последние сообщения…</span></div>';
     else if (E.check) {
       var ch = E.check;
@@ -363,8 +377,15 @@
       else if (!(ch.hits || []).length)
         h += '<span class="dgx-muted">Из ' + ch.checked + " подходящих по условиям сообщений ничего не нашлось. Попробуйте описать иначе.</span>";
       else {
-        h += '<span class="dgx-muted">Нашёл ' + ch.hits.length + " из " + ch.checked + " сообщений:</span>";
-        ch.hits.forEach(function (x) {
+        h += '<span class="dgx-muted">Нашёл ' + ch.hits.length + " из " + ch.checked + " сообщений" + ((ch.columns || []).length ? " — так Лео заполнит строки:" : ":") + "</span>";
+        if ((ch.columns || []).length) {
+          h += '<div class="dgx-tablewrap"><table class="dgx-table"><tr>' + ch.columns.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") + "<th>Источник</th></tr>";
+          ch.hits.forEach(function (x) {
+            h += "<tr>" + ch.columns.map(function (c) { return "<td>" + esc((x.fields || {})[c] || "") + "</td>"; }).join("") +
+              '<td class="dgx-muted">Лео · ' + esc(x.who) + "</td></tr>";
+          });
+          h += "</table></div>";
+        } else ch.hits.forEach(function (x) {
           h += '<div class="dgx-q"><span class="dgx-who">' + esc(x.who) + (hhmm(x.ts_utc) ? ", " + hhmm(x.ts_utc) : "") + "</span><div>" + esc(x.summary) + "</div>" + fieldsHtml(x.fields) + "</div>";
         });
       }
@@ -375,6 +396,104 @@
       '<button type="button" class="dgx-btn dgx-btn--p" data-dgx="rule-save"' + (E.saving ? " disabled" : "") + ">Сохранить</button></div>";
     if (E.id) h += '<button type="button" class="dgx-linkdanger" data-dgx="rule-delete">Удалить правило</button>';
     return h + "</div>";
+  }
+
+  // «Куда добавлять»: документ → лист → таблица → как Лео заполнит столбцы.
+  function targetHtml(E) {
+    var h = '<div class="dgx-target">';
+    if (!E.target) {
+      h += '<div class="dgx-sub">Куда добавлять</div>' +
+        '<input type="search" class="dgx-input" data-rf-q placeholder="Найти документ или вставить ссылку" value="' + esc(E.q || "") + '" />' +
+        '<div class="dgx-docs">' + docsHtml(E) + "</div>";
+      return h + "</div>";
+    }
+    var T = E.target;
+    h += '<div class="dgx-doc is-sel"><span class="dgx-doc-t">' + esc(T.title) + '</span><button type="button" class="dgx-linkbtn" data-dgx="rf-doc-clear">Сменить</button></div>';
+    var sheets = T.sheets || [];
+    var sh = sheets.filter(function (x) { return x.id === E.sheet_id; })[0] || sheets[0];
+    if (sheets.length > 1) {
+      h += '<div class="dgx-sub">Лист</div><div class="dgx-chips">';
+      sheets.forEach(function (x) {
+        h += '<button type="button" class="dgx-chip' + (sh && x.id === sh.id ? " is-on" : "") + '" data-dgx="rf-sheet" data-id="' + esc(x.id) + '">' + esc(x.title) + "</button>";
+      });
+      h += "</div>";
+    }
+    var tables = (sh && sh.tables) || [];
+    if (!tables.length) return h + '<span class="dgx-err">На этом листе нет таблицы. Добавьте в документ таблицу с шапкой — первая строка называет столбцы.</span></div>';
+    var tb = tables[E.table_index] || tables[0];
+    if (tables.length > 1) {
+      h += '<div class="dgx-sub">Таблица</div><div class="dgx-chips">';
+      tables.forEach(function (x) {
+        h += '<button type="button" class="dgx-chip' + (x.index === tb.index ? " is-on" : "") + '" data-dgx="rf-table" data-i="' + x.index + '">' + esc(x.label) + "</button>";
+      });
+      h += "</div>";
+    }
+    h += '<div class="dgx-sub">Как Лео заполнит столбцы — понимает сам, можно подсказать</div><div class="dgx-cols">';
+    (tb.columns || []).forEach(function (c) {
+      if (!c || /^источник$/i.test(c)) return;
+      h += '<label class="dgx-col"><span>' + esc(c) + '</span><input type="text" class="dgx-input dgx-input--sm" maxlength="200" data-rf-hint="' + esc(c) +
+        '" placeholder="подсказка, если нужно" value="' + esc((E.hints || {})[c] || "") + '" /></label>';
+    });
+    h += '<div class="dgx-col"><span>Источник</span><span class="dgx-muted">«Лео · сообщение» со ссылкой — ставит Орбита</span></div>';
+    return h + "</div></div>";
+  }
+
+  function docsHtml(E) {
+    if (E.docsLoading) return '<span class="dgx-muted">Ищу…</span>';
+    if (E.docsError) return '<span class="dgx-err">' + esc(E.docsError) + "</span>";
+    var docs = E.docs || [];
+    if (!docs.length) return '<span class="dgx-muted">' + (E.q ? "Ничего не нашлось" : "Документов пока нет") + "</span>";
+    return (E.q ? "" : '<span class="dgx-sub">Недавние</span>') + docs.map(function (d) {
+      return '<button type="button" class="dgx-doc" data-dgx="rf-doc" data-id="' + d.id + '"><span class="dgx-doc-t">' + esc(d.title) + "</span></button>";
+    }).join("");
+  }
+
+  var docsTimer = null;
+  function loadDocs(E, q) {
+    E.q = q;
+    if (docsTimer) clearTimeout(docsTimer);
+    docsTimer = setTimeout(async function () {
+      if (/note=\d+/.test(q)) return pickDoc(E, q.trim());
+      E.docsLoading = true;
+      E.docsError = "";
+      paintDocs(E);
+      try {
+        var d = await api("/digest/rules/targets?q=" + encodeURIComponent(q || ""));
+        if (E.q !== q) return;
+        E.docs = d.items || [];
+      } catch (err) {
+        E.docsError = (err && err.message) || "Не удалось найти";
+      }
+      E.docsLoading = false;
+      paintDocs(E);
+    }, q ? 300 : 0);
+  }
+
+  function paintDocs(E) {
+    var box = root() && root().querySelector(".dgx-docs");
+    if (box && st.rules && st.rules.edit === E) box.innerHTML = docsHtml(E);
+  }
+
+  async function pickDoc(E, ref, keep) {
+    E.docsLoading = true;
+    paintDocs(E);
+    try {
+      var t = await api("/digest/rules/target?ref=" + encodeURIComponent(ref));
+      E.target = t;
+      if (!keep) {
+        E.sheet_id = t.sheet_id || "main";
+        if (!(t.sheets || []).some(function (x) { return x.id === E.sheet_id && (x.tables || []).length; })) {
+          var withTable = (t.sheets || []).filter(function (x) { return (x.tables || []).length; })[0];
+          if (withTable) E.sheet_id = withTable.id;
+        }
+        E.table_index = 0;
+        E.hints = {};
+      }
+    } catch (err) {
+      E.docsError = (err && err.message) || "Не удалось открыть документ";
+    }
+    E.docsLoading = false;
+    if (st.rules && st.rules.edit === E) render();
   }
 
   async function openRules(chatId) {
@@ -392,7 +511,12 @@
   }
 
   function ruleBody(E) {
-    return { title: E.title, instruction: E.instruction, conditions: { from_user_ids: E.from }, action: E.action };
+    var b = { title: E.title, instruction: E.instruction, conditions: { from_user_ids: E.from }, action: E.action };
+    if (E.action === "table_row")
+      b.action_data = E.target
+        ? { note_id: E.target.note_id, sheet_id: E.sheet_id || "main", table_index: E.table_index || 0, column_hints: E.hints || {} }
+        : {};
+    return b;
   }
 
   async function onRulesClick(act, b) {
@@ -414,8 +538,12 @@
         return String(x.id) === b.getAttribute("data-id");
       })[0];
       if (!r) return;
-      R.edit = { id: r.id, title: r.title, instruction: r.instruction, from: ((r.conditions || {}).from_user_ids || []).slice(), action: r.action };
-      return render();
+      var ad = r.action_data || {};
+      R.edit = { id: r.id, title: r.title, instruction: r.instruction, from: ((r.conditions || {}).from_user_ids || []).slice(), action: r.action,
+                 sheet_id: ad.sheet_id || "main", table_index: ad.table_index || 0, hints: Object.assign({}, ad.column_hints || {}) };
+      render();
+      if (r.action === "table_row" && ad.note_id) pickDoc(R.edit, String(ad.note_id), true);
+      return;
     }
     if (act === "rule-cancel") {
       R.edit = null;
@@ -449,6 +577,27 @@
     }
     if (act === "rf-action") {
       E.action = b.getAttribute("data-id");
+      E.check = null;
+      render();
+      if (E.action === "table_row" && !E.target && !E.docs) loadDocs(E, "");
+      return;
+    }
+    if (act === "rf-doc") return pickDoc(E, b.getAttribute("data-id"));
+    if (act === "rf-doc-clear") {
+      E.target = null;
+      E.check = null;
+      render();
+      return loadDocs(E, E.q || "");
+    }
+    if (act === "rf-sheet") {
+      E.sheet_id = b.getAttribute("data-id");
+      E.table_index = 0;
+      E.check = null;
+      return render();
+    }
+    if (act === "rf-table") {
+      E.table_index = Number(b.getAttribute("data-i")) || 0;
+      E.check = null;
       return render();
     }
     if (act === "rule-check") {
@@ -528,12 +677,15 @@
     }
     if (act === "tg") return app().openLink(b.getAttribute("data-url"));
     if (act === "rules") return openRules(st.chat.chat_id);
+    if (act === "hit-doc") return app().openNote(b.getAttribute("data-note"));
     if (/^(rules-|rule-|rf-)/.test(act)) return onRulesClick(act, b);
     if (act === "hit") {
       b.disabled = true;
       try {
         await api("/digest/rule-hits/" + encodeURIComponent(b.getAttribute("data-id")), { method: "POST", body: JSON.stringify({ op: b.getAttribute("data-op") }) });
-        if (b.getAttribute("data-op") === "hide") toast("Скрыто. Если Лео часто ошибается — уточните правило");
+        var op = b.getAttribute("data-op");
+        if (op === "hide" && b.textContent !== "Понятно") toast("Скрыто. Если Лео часто ошибается — уточните правило");
+        if (op === "remove") toast("Строку убрал из документа");
         return loadChat(st.chat.chat_id);
       } catch (err) {
         b.disabled = false;
@@ -602,6 +754,15 @@
     if (rf && st.rules && st.rules.edit) {
       st.rules.edit[rf] = t.value; // без перерисовки — курсор остаётся в поле
       return;
+    }
+    if (t && t.hasAttribute && st.rules && st.rules.edit) {
+      if (t.hasAttribute("data-rf-q")) return loadDocs(st.rules.edit, t.value);
+      var hc = t.getAttribute("data-rf-hint");
+      if (hc) {
+        st.rules.edit.hints = st.rules.edit.hints || {};
+        st.rules.edit.hints[hc] = t.value;
+        return;
+      }
     }
     if (t && t.hasAttribute && t.hasAttribute("data-dgx-q")) {
       st.q = t.value;

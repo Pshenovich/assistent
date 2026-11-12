@@ -10422,9 +10422,25 @@ async def miniapp_digest_rule_delete(rule_id: int, principal: _MiniappPrincipal 
     return {"ok": True}
 
 
+@miniapp_router.get("/digest/rules/targets")
+async def miniapp_digest_rule_targets(q: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Документы для «Добавить строку в таблицу»: поиск или последние."""
+    from assistant.services import scenarios
+
+    return {"ok": True, "items": await _scenarios_call(scenarios.doc_targets, int(principal.telegram_user_id), q)}
+
+
+@miniapp_router.get("/digest/rules/target")
+async def miniapp_digest_rule_target(ref: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """Документ по ссылке или номеру → листы и таблицы со столбцами."""
+    from assistant.services import scenarios
+
+    return {"ok": True, **await _scenarios_call(scenarios.resolve_target, int(principal.telegram_user_id), ref)}
+
+
 @miniapp_router.post("/digest/rule-hits/{hit_id}")
 async def miniapp_digest_rule_hit(hit_id: int, body: dict[str, Any], principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
-    """Находка правила: «Сделано» (done) / «Не то» (hide) / вернуть (undo)."""
+    """Находка правила: «Сделано» (done) / «Не то» (hide) / вернуть (undo) / убрать строку из таблицы (remove)."""
     from assistant.services import scenarios
 
     return {"ok": True, "hit": await _scenarios_call(scenarios.hit_op, int(principal.telegram_user_id), hit_id, str((body or {}).get("op") or ""))}

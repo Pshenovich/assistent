@@ -22949,6 +22949,95 @@ form.pf-list .pf-add-row .pf-row-body {
   opacity: 0.55;
   cursor: default;
 }
+.dgx-err {
+  font-size: 0.8125rem;
+  color: var(--danger-text);
+}
+.dgx-target {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+.dgx-docs {
+  display: grid;
+  gap: 0.25rem;
+}
+.dgx-doc {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.875rem;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+}
+.dgx-doc.is-sel {
+  border-color: var(--accent-border);
+  background: var(--accent-subtle);
+  cursor: default;
+}
+.dgx-doc-t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dgx-linkbtn {
+  flex: none;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-size: 0.8125rem;
+  color: var(--accent);
+  background: transparent;
+  cursor: pointer;
+}
+.dgx-cols {
+  display: grid;
+  gap: 0.4rem;
+}
+.dgx-col {
+  display: grid;
+  grid-template-columns: minmax(5rem, 30%) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+.dgx-col > span:first-child {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+}
+.dgx-input--sm {
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8125rem;
+}
+.dgx-tablewrap {
+  overflow-x: auto;
+}
+.dgx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+.dgx-table th,
+.dgx-table td {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+.dgx-table th {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
 .dgx-linkdanger {
   justify-self: center;
   padding: 0.3rem;

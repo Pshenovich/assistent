@@ -269,3 +269,19 @@ def set_hit_status(user_id: int, hit_id: int, status: str) -> Optional[dict[str,
         if not cur.rowcount:
             return None
     return get_hit(user_id, hit_id)
+
+
+def update_hit(user_id: int, hit_id: int, *, status: Optional[str] = None, data: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+    """Статус и/или данные срабатывания (data сливается с прежними)."""
+    h = get_hit(user_id, hit_id)
+    if not h:
+        return None
+    merged = {**(h.get("data") or {}), **(data or {})}
+    with _LOCK:
+        conn = _conn()
+        conn.execute(
+            "UPDATE scenario_hits SET status = ?, data_json = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+            (status or h["status"], json.dumps(merged, ensure_ascii=False), _now(), int(hit_id), int(user_id)),
+        )
+        conn.commit()
+    return get_hit(user_id, hit_id)
