@@ -11091,8 +11091,10 @@
   function setSelfAvatarBlob(me, blob) {
     var ids = profileSelfIds(me);
     var cache = noteCollabState.photoBlobs;
+    if (!noteCollabState.photoBust) noteCollabState.photoBust = {};
     [ids.uid, ids.unameKey].forEach(function (key) {
       if (!key) return;
+      noteCollabState.photoBust[key] = Date.now();
       delete noteCollabState.photoMiss[key];
       if (blob) cache[key] = URL.createObjectURL(blob);
       else delete cache[key];
@@ -42312,9 +42314,12 @@
         .then(function (res) {
           return res.ok ? res.blob() : null;
         })
+      // Своё фото только что поменяли или удалили — мимо кэша браузера (фото кэшируется на 10 минут).
+      var bust = (noteCollabState.photoBust || {})[key];
         .then(function (blob) {
           var ok = setBlob(key, blob);
           if (!ok) noteCollabState.photoMiss[key] = 1;
+        cache: bust ? "reload" : "default",
           return ok;
         })
         .catch(function () {
@@ -57927,6 +57932,7 @@
           encodeURIComponent(wrap._shareId) +
           "/comments",
         {
+      wrap._lastFooterFileIds = fileIds || []; // PAIE после этого сообщения читает те же файлы
           method: "POST",
           body: JSON.stringify(
             Object.assign(
@@ -58201,7 +58207,8 @@
     setTimeout(tick, 2500);
   }
 
-  function startNotePaei() {
+  function startNotePaei(opts) {
+    opts = opts || {};
     var wrap = document.getElementById("note-editor-more-wrap");
     var path = notePaeiPath();
     if (!wrap || !path || wrap._paeiRunning) return;
@@ -58221,7 +58228,7 @@
           method: "POST",
           body: JSON.stringify(
             Object.assign(
-              { model: selectedPaieModelId() },
+              { model: selectedPaieModelId(), file_ids: opts.fileIds || [] },
               discussionKnowledgeFields(),
               discussChatFields()
             )
@@ -58283,16 +58290,18 @@
         ? api.paieThreadRootId((panel && panel._allComments) || [])
         : null;
     if (!rootId) {
-      if (body) {
+      if (body || discussPendingFiles().length) {
+        wrap._lastFooterFileIds = [];
         submitNoteFooterComment(body).then(function () {
-          startNotePaei();
+          var lw = document.getElementById("note-editor-more-wrap");
+          startNotePaei({ fileIds: (lw && lw._lastFooterFileIds) || [] });
         });
         return;
       }
       startNotePaei();
       return;
     }
-    if (!body) return;
+    if (!body && !discussPendingFiles().length) return;
     var draft = wrap._commentDraft;
     var replyToId = wrap._commentChairId || null;
     var kind = wrap._shareKind;
@@ -58321,9 +58330,14 @@
           body: JSON.stringify(
             Object.assign(
               {
-                reply: body,
+                reply: body || "Разбери прикреплённые файлы",
+                file_ids: fileIds || [],
                 parent_id: rootId,
                 reply_to_id: replyToId,
+        return uploadDiscussPendingFiles(kind, itemId);
+      })
+      .then(function (fileIds) {
+        clearDiscussPendingFiles();
                 quote: (draft && draft.quote) || "",
                 model: selectedPaieModelId(),
               },
@@ -58561,9 +58575,14 @@
           body: JSON.stringify(
             Object.assign(
               {
-                reply: body,
+                reply: body || (fileIds && fileIds.length ? "Разбери прикреплённые файлы" : ""),
+                file_ids: fileIds || [],
                 quote: quote,
                 model: selectedResearchModelId(),
+        return uploadDiscussPendingFiles(kind, itemId);
+      })
+      .then(function (fileIds) {
+        clearDiscussPendingFiles();
               },
               discussionKnowledgeFields(),
               discussChatFields()
@@ -62088,6 +62107,8 @@
   }
 
   function exitNotesSelectMode() {
+    // Документ развёрнут на весь экран — сворачиваем к списку: выбирают карточки списка.
+    notesSplitCollapse();
     notesSelect.on = false;
     notesSelect.ids = {};
     document.documentElement.classList.remove("notes-select-on");
@@ -62105,6 +62126,17 @@
     else delete notesSelect.ids[id];
     document.querySelectorAll('.nl-card[data-note-id="' + id + '"]').forEach(function (c) {
       c.classList.toggle("is-selected", on);
+  // Esc — выйти из выбора (как «Готово»).
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape" || !notesSelect.on) return;
+    if (document.querySelector(".doc-img-viewer")) return;
+    var ov = document.getElementById("modal-overlay");
+    if (ov && !ov.classList.contains("hidden")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    exitNotesSelectMode();
+  }, true);
+
     });
     syncNotesSelectUi();
   }

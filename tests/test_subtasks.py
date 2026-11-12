@@ -156,3 +156,17 @@ def test_checklist_becomes_subtasks_and_old_ones_migrate(store, tmp_path):
     store._CONN = None
     assert [k["title"] for k in store.list_subtasks(t["id"])] == ["раз", "два", "три"]
     assert store._get_task_row(t["id"])["checklist"] == []
+
+
+def test_api_subtask_of_task_from_document(client, store):
+    """У общей задачи есть документ: подзадача с тем же документом и временем — новая, а не сама общая задача."""
+    top = store.create_task(OWNER, title="Из встречи", start_at=START, tz=TZ, note_id="77")
+    got = client.get(f"/api/miniapp/calendar/tasks/{top['id']}", headers=_headers(OWNER)).json()["task"]
+    r = client.post("/api/miniapp/calendar/tasks", headers=_headers(OWNER), json={
+        "title": "Проверить макет", "parent_id": got["id"], "start": got["start_at"], "all_day": False,
+        "assignee_user_id": str(got["assignee_user_id"]), "assignee_name": got.get("assignee_name") or "",
+        "note_id": "77",
+    })
+    assert r.status_code == 200 and r.json()["task"]["id"] != top["id"]
+    got = client.get(f"/api/miniapp/calendar/tasks/{top['id']}", headers=_headers(OWNER)).json()["task"]
+    assert [x["title"] for x in got["subtasks"]] == ["Проверить макет"]

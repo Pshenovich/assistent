@@ -2951,6 +2951,7 @@ class _MiniappNotePaeiStart(BaseModel):
     context_note_ids: Optional[list[str]] = None
     chat_id: Optional[int] = None
     model: Optional[str] = None
+    file_ids: Optional[list[int]] = None  # файлы, прикреплённые к этому запросу в чате документа
 
 
 class _MiniappNoteResearchStart(_MiniappNotePaeiStart):
@@ -3346,6 +3347,81 @@ def _resolve_post_chat(
     if not note_chats.can_view(chat, uid):
         raise HTTPException(status_code=404, detail="Чат не найден")
     return int(chat_id)
+
+
+def _discuss_files_text(uid: int | str, file_ids: Any, *, limit: int = 60000) -> str:
+    """Текст файлов, прикреплённых к запросу PAIE / Research: «Файл «x»: …» (как к чату с Лео, только текстом)."""
+    from assistant.stores import comment_files
+
+    out: list[str] = []
+    me = str(int(uid))
+    for raw in list(file_ids or [])[:8]:
+        try:
+            fid = int(raw)
+        except (TypeError, ValueError):
+            continue
+        item = comment_files.get_file(fid)
+        if not item or (item.get("author_user_id") != me and item.get("owner_user_id") != me):
+            continue
+        if not _comment_file_visible(item, me):
+            continue
+        label = str(item.get("filename") or "file")
+        preview = ""
+        try:
+            preview = (
+                _pdf_text(comment_files.disk_path(fid), limit=limit)
+                if comment_files.is_pdf(item)
+                else comment_files.extract_text_preview(item, limit=limit)
+            )
+        except Exception as e:  # noqa: BLE001 — один файл не должен ронять запуск
+            print(f"[discuss_files] preview fid={fid} err={e!r}")
+        if preview:
+            out.append(f"Файл «{label}»:\n{preview}")
+        else:
+            out.append(f"Прикреплён файл «{label}», но его текст прочитать не удалось — скажи об этом и не выдумывай содержимое.")
+    return "\n\n".join(out).strip()
+
+
+def _pdf_text(path: Any, *, limit: int = 60000) -> str:
+    """Текст PDF постранично (без OCR: скан без текстового слоя даст пусто)."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    if not path or not path.is_file():
+        return ""
+    reader = PdfReader(str(path))
+    parts: list[str] = []
+    total = 0
+    for i, page in enumerate(reader.pages[:200]):
+        text = (page.extract_text() or "").strip()
+        if not text:
+            continue
+        parts.append(f"[стр. {i + 1}]\n{text}")
+        total += len(text)
+        if total >= limit:
+            break
+    return "\n\n".join(parts)[:limit].strip()
+
+
+def _with_files_text(attached_notes: str, files_text: str) -> str:
+    if not files_text:
+        return attached_notes
+    return ((attached_notes or "").strip() + "\n\nПРИКРЕПЛЁННЫЕ ФАЙЛЫ:\n" + files_text).strip()
+
+
+def _link_files_to_comment(file_ids: Any, comment: dict[str, Any] | None, *, owner: Any, kind: str, item_id: Any, author: Any) -> None:
+    if not comment or not file_ids:
+        return
+    try:
+        from assistant.stores import comment_files
+
+        ids = [int(x) for x in list(file_ids)[:8] if str(x).isdigit()]
+        if ids:
+            comment_files.link_to_comment(ids, comment_id=int(comment["id"]), owner_user_id=owner,
+                                          item_kind=kind, item_id=item_id, author_user_id=author)
+    except Exception as e:  # noqa: BLE001
+        print(f"[discuss_files] link comment={comment.get('id')} err={e!r}")
 
 
 def _comment_file_visible(item: dict[str, Any], uid: str) -> bool:
@@ -7528,7 +7604,9 @@ async def miniapp_calendar_tasks_create(
     meeting_item = str(body.meeting_item or "").strip()
     if meeting_item and not str(body.note_id or "").isdigit():
         raise HTTPException(status_code=400, detail="Пункт встречи — только вместе с документом")
-    if not meeting_item:
+    # Подзадача берёт у общей задачи и документ, и время — «та же задача из документа» нашла бы саму
+    # общую задачу и вернула её вместо новой подзадачи (поле очищалось, ничего не добавлялось).
+    if not meeting_item and not body.parent_id:
         reused = await run_in_threadpool(
             _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
         )
@@ -16801,8 +16879,11 @@ async def miniapp_user_photo(
     if not blob:
         blob = await run_in_threadpool(note_members.cached_profile_photo, int(user_id))
     if not blob:
-        raise HTTPException(status_code=404, detail="Фото недоступно")
-    return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})
+        # «Фото нет» не кэшируем: иначе после удаления своего фото браузер держал бы старое.
+        raise HTTPException(status_code=404, detail="Фото недоступно", headers={"Cache-Control": "no-store"})
+    # Своё фото меняют прямо сейчас — проверяем каждый раз; чужие — кэш на 10 минут.
+    cache = "private, no-cache" if viewer == int(user_id) else "private, max-age=600"
+    return Response(content=blob, media_type="image/jpeg", headers={"Cache-Control": cache})
 
 
 def _viewer_may_see_username_photo(viewer: int, username: str) -> bool:
@@ -18305,7 +18386,9 @@ async def miniapp_note_paei_start(
         ctx_ids = [str(x).strip() for x in ctx_ids if str(x).strip()]
     from assistant.nlu.ask_context import pack_attached_notes
 
-    attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
+    attached_notes = await run_in_threadpool(pack_attached_notes, int(principal.telegram_user_id), ctx_ids)
+    files_text = await run_in_threadpool(_discuss_files_text, uid, payload.file_ids)
+    attached_notes = _with_files_text(attached_notes, files_text)
     from assistant.stores import note_chats
     from assistant.stores import user_agents as user_agents_store
 
@@ -18345,7 +18428,7 @@ async def miniapp_note_paei_start(
                 reply_to_id = tid
         user_parent = reply_to_id or root_id
         try:
-            await run_in_threadpool(
+            user_comment = await run_in_threadpool(
                 share_comments_store.add_comment,
                 owner,
                 kind,
@@ -18361,6 +18444,10 @@ async def miniapp_note_paei_start(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         try:
+        await run_in_threadpool(
+            partial(_link_files_to_comment, payload.file_ids, user_comment, owner=owner, kind=kind,
+                    item_id=item_id, author=author_id)
+        )
             await run_in_threadpool(
                 partial(
                     _notify_discussion_comment,
@@ -18491,7 +18578,9 @@ async def miniapp_note_research_start(
         ctx_ids = [str(x).strip() for x in ctx_ids if str(x).strip()]
     from assistant.nlu.ask_context import pack_attached_notes
 
-    attached_notes = pack_attached_notes(int(principal.telegram_user_id), ctx_ids)
+    attached_notes = await run_in_threadpool(pack_attached_notes, int(principal.telegram_user_id), ctx_ids)
+    files_text = await run_in_threadpool(_discuss_files_text, int(principal.telegram_user_id), payload.file_ids)
+    attached_notes = _with_files_text(attached_notes, files_text)
     from assistant.stores import user_agents as user_agents_store
 
     requested_model = ""
@@ -18545,6 +18634,10 @@ async def miniapp_note_research_start(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         try:
+        await run_in_threadpool(
+            partial(_link_files_to_comment, payload.file_ids, saved, owner=owner, kind=kind,
+                    item_id=item_id, author=author_id)
+        )
             await run_in_threadpool(
                 partial(
                     _notify_discussion_comment,

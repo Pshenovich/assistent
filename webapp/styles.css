@@ -17455,6 +17455,11 @@ html.notes-select-on #notes-create-btn, html.notes-select-on #notes-create-menu 
   .notes-select-bar { left: calc(var(--sidebar-w, 244px) + 24px); right: auto; bottom: 24px; width: 420px; }
 }
 html.notes-select-on .notes-pane--stack { padding-bottom: 96px; }
+/* Документ открыт справа: полосы выбора — только над колонкой списка, иначе «Готово» и часть действий под документом. */
+@media (min-width: 960px) {
+  html.notes-split .notes-select-top { right: calc(100vw - var(--notes-split-left, 660px) + 16px); max-width: none; }
+  html.notes-split .notes-select-bar { width: auto; right: calc(100vw - var(--notes-split-left, 660px) + 16px); }
+}
 .nl-card mark { background: color-mix(in srgb, var(--warning) 28%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 .notes-load-more { grid-column: 1 / -1; }
 
@@ -25830,3 +25835,12 @@ html.av2-dock #modal-overlay .modal { width: 100%; max-width: none; height: 100%
 .doc-img-viewer.is-actual .doc-img-viewer-stage img { max-width: none; max-height: none; cursor: zoom-out; }
 .doc-img-viewer-close { position: absolute; top: 12px; right: 12px; width: 40px; height: 40px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 50%; background: var(--media-viewer-btn); color: var(--media-viewer-fg); cursor: pointer; }
 .doc-img-viewer-close:hover { background: var(--media-viewer-btn-hover); }
+
+/* Окна поверх открытого документа (#note-editor-overlay, z-index 100): раньше были на том же уровне
+   и прятались под документ — «Управление проектами» не было видно, пока не закроешь документ. */
+#tags-manage-overlay,
+#teams-manage-overlay,
+#notes-trash-overlay,
+#contacts-form-overlay,
+#contact-share-overlay,
+#contacts-bulk-overlay { z-index: 280; }

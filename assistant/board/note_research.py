@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import json
 import os
 import threading
@@ -536,7 +538,10 @@ async def run_note_research_job(
         _update_job(key, progress=payload)
 
     try:
-        result = run_note_research(
+        # Поиск в интернете и модель — минуты синхронной работы: в отдельном потоке, иначе весь сервер
+        # стоит (страница ловит «сервер молчит», уходит на запасной адрес и перезагружается).
+        result = await asyncio.to_thread(
+            run_note_research,
             user_id=user_id,
             kind=kind,
             item_id=item_id,
