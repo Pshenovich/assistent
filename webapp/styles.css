@@ -24331,6 +24331,11 @@ ol.note-discuss-md-list { list-style: decimal; }
 #note-discussion-share.hidden { display: none; }
 #note-discussion-share.is-active { color: var(--vkui--color_text_accent); }
 #note-discussion-share:active { opacity: 0.85; transform: scale(0.98); }
+/* «Развернуть документ» — такая же круглая кнопка, как «Поделиться» и чаты рядом. */
+#note-discussion-expand { width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; color: var(--text); background: var(--overlay-3); }
+#note-discussion-expand.hidden { display: none; }
+#note-discussion-expand:hover { background: var(--overlay-6); }
+#note-discussion-expand:active { opacity: 0.85; transform: scale(0.98); }
 
 /* «Надиктовать» к прошедшей встрече: плашка записи внизу экрана → транскрипция встречи. */
 .ev-rec { position: fixed; left: 50%; bottom: max(20px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 400; display: flex; align-items: center; gap: 12px; width: min(520px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 10px 10px 16px; border: 1px solid var(--border-strong, var(--border)); border-radius: 16px; background: var(--surface-elevated); box-shadow: 0 12px 32px color-mix(in srgb, var(--shadow-color) 35%, transparent); color: var(--text); }
@@ -24878,6 +24883,18 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   grid-row: 1;
   margin: 0;
   flex-wrap: nowrap;
+}
+
+/* Плашка встречи и блоки дайджеста вставляются в эту же сетку — во всю ширину под вкладками,
+   с теми же краями, что вкладки и текст (иначе попадали в узкую ячейку колонки заголовка). */
+#note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-pad--title-in-body > .note-meeting-plaque,
+#note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-pad--title-in-body > .digest-people,
+#note-editor-overlay .note-editor-sheet.note-head-inline .note-editor-pad--title-in-body > .digest-important {
+  grid-column: 1 / -1;
+  grid-row: auto;
+  min-width: 0;
+  margin-left: calc(var(--note-editor-pad-x, 16px) - var(--head-l, 52px));
+  margin-right: calc(var(--note-editor-pad-x, 16px) - var(--head-r, 134px));
 }
 
 /* Вкладки — на прежнем месте (с полем заметки), независимо от отступов строки заголовка. */

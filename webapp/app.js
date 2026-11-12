@@ -7936,6 +7936,7 @@
   function setTab(name, options) {
     if (name !== currentTab && isPostedCardOpen()) closePostedCard();
     if (name !== currentTab) av2DockDismiss();
+    if (name !== "notes") noteReturnToActual = ""; // ушли из документа сами — дальше «Назад» как обычно
     if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
     if (name !== "notes" && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
     if (name === "notes" && currentTab !== "notes") notesSplitAutoOpened = false;
@@ -32816,12 +32817,25 @@
   }
   // Документ-источник, открытый справа из Фокуса: «Развернуть» откроет его на весь экран на той же строке.
   var av2RightSource = null;
+  // Документ развернули из «Актуального» — «Назад» в нём возвращает на «Актуальное», а не в «Сохранённое».
+  var noteReturnToActual = "";
   function av2ExpandRightNote() {
     var rn = noteSheetState.rightNote;
     if (!rn || !rn.id) return;
     var src = av2RightSource && String(av2RightSource.note.id) === String(rn.id) ? av2RightSource : { note: { id: rn.id, kind: "local", title: rn.title || "" } };
     av2RightBackToChat(); // вернёмся на «Актуальное» — справа снова чат с Лео, а не этот документ
     openSourceFragment({ id: src.note.id, kind: src.note.kind || "local", title: src.note.title || rn.title || "" }, src.at, src.quote);
+    noteReturnToActual = String(src.note.id);
+  }
+  // true — «Назад» обработан: закрыли документ и вернулись на «Актуальное».
+  function noteBackToActual() {
+    if (!noteReturnToActual || String(currentOpenNoteId()) !== noteReturnToActual) return false;
+    handleNoteEditorModalClose().then(function (closed) {
+      if (!closed) return; // «Отмена» в вопросе о несохранённом — остаёмся в документе
+      noteReturnToActual = "";
+      setTab("actual");
+    });
+    return true;
   }
   async function av2OpenSource(note, at, quote) {
     if (!isDesktopLayout() || currentTab !== "actual") return openSourceFragment(note, at, quote);
@@ -34109,6 +34123,7 @@
       closeNoteDiscussion();
       return true;
     }
+    if (noteBackToActual()) return true;
     if (isNoteEditorModalOpen()) {
       handleNoteEditorModalClose();
       return true;
@@ -65000,6 +65015,7 @@
     var noteEditorWebBack = document.getElementById("note-editor-web-back");
     if (noteEditorWebBack) {
       noteEditorWebBack.addEventListener("click", function () {
+        if (noteBackToActual()) return;
         if (notesSplitCollapse()) return;
         handleNoteEditorModalClose();
       });
