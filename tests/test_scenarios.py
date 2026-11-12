@@ -54,7 +54,7 @@ def test_rule_crud_and_access(env):
     _msg(cd, 1, OTHER, "привет")
     r = svc.create_rule(ME, CHAT, {"instruction": "Сообщения о поступивших оплатах", "conditions": {"from_user_ids": [OTHER, 999]}})
     assert r["title"].startswith("Сообщения о") and r["action"] == "show" and r["enabled"]
-    assert r["conditions"] == {"from_user_ids": [OTHER]}  # чужой id, которого нет в чате, отброшен
+    assert r["conditions"]["from_user_ids"] == [OTHER]  # чужой id, которого нет в чате, отброшен
     view = svc.rules_view(ME, CHAT)
     assert [x["id"] for x in view["rules"]] == [r["id"]] and view["authors"][0]["user_id"] == OTHER
     # чужие правила не видны и не меняются
@@ -220,3 +220,44 @@ def test_table_changed_pauses_rule(env):
     rule = svc.rules_view(ME, CHAT)["rules"][0]
     assert rule["enabled"] is False and "изменилась" in rule["action_data"]["error"]
     assert svc.chat_hits(ME, CHAT)[0]["status"] == "failed"
+
+
+
+# ---------- этап 3: слова-фильтр, топики, «Мои сценарии» ----------
+
+
+def test_prefilter_words_skip_model(env):
+    cd, store, svc, fake, calls = env
+    svc._PREFILTER_MEMO.clear()
+    fake.answer = '{"words":["оплат","поступ","₽","Пришл", "x"]}'
+    r = svc.create_rule(ME, CHAT, {"instruction": "Сообщения о поступивших оплатах"})
+    assert r["conditions"]["words"] == ["оплат", "поступ", "₽", "пришл"]  # нижний регистр, короткие — прочь
+    assert calls[-1]["operation"] == "chat_rules_filter"
+    n = len(calls)
+    # переименовали — текст тот же, модель за словами не ходим
+    svc.update_rule(ME, r["id"], {"title": "Оплаты", "conditions": {"from_user_ids": []}})
+    assert len(calls) == n
+    sc = store.get(ME, r["id"])
+    _msg(cd, 30, OTHER, "Кто идёт обедать?")
+    fake.answer = '{"hits":[]}'
+    assert svc.run_rule(sc) == 0 and len(calls) == n  # ни одного слова — модель не зовём
+    _msg(cd, 31, OTHER, "Пришло 10 000 от Ромашки")
+    svc.run_rule(sc)
+    assert len(calls) == n + 1 and "#31 " in calls[-1]["user"]["messages"] and "#30 " not in calls[-1]["user"]["messages"]
+    # «читать все сообщения» — слов нет
+    r2 = svc.update_rule(ME, r["id"], {"conditions": {"prefilter_off": True}})
+    assert r2["conditions"]["words"] == [] and r2["conditions"]["prefilter_off"] is True
+
+
+def test_topic_condition_and_all_rules(env):
+    cd, store, svc, fake, calls = env
+    cd.upsert_topic(CHAT, 7, "Оплаты")
+    view = svc.rules_view(ME, CHAT)
+    assert view["topics"] == [{"id": 0, "name": "General"}, {"id": 7, "name": "Оплаты"}]
+    r = svc.create_rule(ME, CHAT, {"instruction": "Оплаты клиентов", "conditions": {"thread_ids": [7, 99]}})
+    assert r["conditions"]["thread_ids"] == [7]
+    assert svc.passes_conditions(r["conditions"], {"text": "оплата", "thread_id": 7})
+    assert not svc.passes_conditions(r["conditions"], {"text": "оплата", "thread_id": None})
+    rows = svc.all_rules(ME)
+    assert len(rows) == 1 and rows[0]["chat_title"] == "Бухгалтерия" and rows[0]["chat_id"] == CHAT
+    assert svc.all_rules(OTHER) == []

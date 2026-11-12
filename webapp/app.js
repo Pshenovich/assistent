@@ -9570,6 +9570,7 @@
       });
       syncDigestChatsListOff(enabled);
       loadProfileTopics();
+      if (window.LeoDigestChats && window.LeoDigestChats.renderScenarios) window.LeoDigestChats.renderScenarios();
       if (demoBtn) {
         setHidden(demoBtn, !(data && data.miniapp_dev));
       }

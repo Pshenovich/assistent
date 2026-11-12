@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261112-rules2" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261112-rules3" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261111-comps2" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261111-connect1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -1396,6 +1396,11 @@
                 <p class="pf-group-title">Чаты с Лео</p>
                 <div id="profile-chats-list" class="pf-list pf-skel-list"><div class="pf-row"><span class="pf-row-body"></span></div><div class="pf-row"><span class="pf-row-body"></span></div><div class="pf-row"><span class="pf-row-body"></span></div></div>
                 <p class="pf-hint">Чат появляется здесь после первого сообщения в нём. Чтобы добавить чат — пригласите бота Orbita в группу.</p>
+              </div>
+              <div class="pf-group hidden" id="profile-scenarios-group">
+                <p class="pf-group-title">Мои сценарии</p>
+                <div id="profile-scenarios-list" class="pf-list"></div>
+                <p class="pf-hint">Правила «Если → То»: что Лео ищет в чатах и что делает с найденным. Видите только вы. Новое правило — в Дайджесте, кнопка «Правила» у чата.</p>
               </div>
               <div class="pf-group hidden" id="profile-topics-group">
                 <p class="pf-group-title">Темы встреч</p>
@@ -2826,10 +2831,10 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261112-rdraft1" defer></script>
+  <script src="/webapp/app.js?v=20261112-rules3" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261111-compose" defer></script>
-  <script src="/webapp/digest-chats.js?v=20261112-rules2" defer></script>
+  <script src="/webapp/digest-chats.js?v=20261112-rules3" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261111-pfgroups" defer></script>
   <script src="/webapp/metrics.js?v=20261111-silent1" defer></script>

@@ -10350,9 +10350,23 @@ async def miniapp_digest_reports(
 @miniapp_router.get("/digest/overview")
 async def miniapp_digest_overview(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """«Дайджест» → «Чаты»: список по чатам (только отмеченные в профиле; /digest/chats — список для настроек) — последняя главная мысль и метки (ждут ответа, эскалация, вы обещали)."""
-    from assistant.services import digest_overview
+    from assistant.services import digest_overview, scenarios
 
-    return {"ok": True, **await run_in_threadpool(digest_overview.overview, int(principal.telegram_user_id))}
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        out = digest_overview.overview(uid)
+        try:  # значок «правила · N» у чата
+            counts = scenarios.rules_count_by_chat(uid)
+            for c in out.get("chats") or []:
+                n = counts.get(int(c.get("chat_id") or 0), 0)
+                if n:
+                    c["rules_count"] = n
+        except Exception as e:
+            print(f"[scenarios] overview counts failed uid={uid} err={e!r}")
+        return out
+
+    return {"ok": True, **await run_in_threadpool(_run)}
 
 
 @miniapp_router.get("/digest/chats/{chat_id}")
@@ -10420,6 +10434,14 @@ async def miniapp_digest_rule_delete(rule_id: int, principal: _MiniappPrincipal 
 
     await _scenarios_call(scenarios.delete_rule, int(principal.telegram_user_id), rule_id)
     return {"ok": True}
+
+
+@miniapp_router.get("/digest/rules")
+async def miniapp_digest_rules_all(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Мои сценарии» в Профиле: все личные правила по чатам."""
+    from assistant.services import scenarios
+
+    return {"ok": True, "rules": await _scenarios_call(scenarios.all_rules, int(principal.telegram_user_id))}
 
 
 @miniapp_router.get("/digest/rules/targets")

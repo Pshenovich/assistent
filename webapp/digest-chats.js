@@ -86,6 +86,14 @@
       st.data = { error: (e && e.message) || "Не удалось загрузить дайджест" };
     }
     st.loading = false;
+    if (st.pendingRules) {
+      var want = st.pendingRules;
+      st.pendingRules = null;
+      st.open = want;
+      render();
+      await loadChat(want);
+      return openRules(want);
+    }
     if (!st.open && isWide() && st.data.chats && st.data.chats.length) st.open = st.data.chats[0].chat_id;
     render();
     if (st.open) loadChat(st.open);
@@ -148,10 +156,12 @@
         ava(c.title, c.chat_id) +
         '<span class="dgx-rmain"><span class="dgx-rtop"><b>' + esc(c.title) + '</b><span class="dgx-time">' + esc(shortDay(c.last_date)) + "</span></span>" +
         '<span class="dgx-snip">' + esc(c.brief) + "</span>" +
-        ((c.labels || []).length
-          ? '<span class="dgx-tags">' + c.labels.map(function (l) {
+        ((c.labels || []).length || c.rules_count
+          ? '<span class="dgx-tags">' + (c.labels || []).map(function (l) {
               return '<span class="dgx-tag dgx-tag--' + esc(l.kind) + '">' + esc(l.text) + "</span>";
-            }).join("") + "</span>"
+            }).join("") +
+            (c.rules_count ? '<span class="dgx-tag dgx-tag--rules" title="Ваши правила в этом чате">правила · ' + c.rules_count + "</span>" : "") +
+            "</span>"
           : "") +
         "</span></button>";
     });
@@ -363,7 +373,16 @@
       var on = E.from.indexOf(a.user_id) >= 0;
       h += '<button type="button" class="dgx-chip' + (on ? " is-on" : "") + '" data-dgx="rf-from" data-id="' + a.user_id + '">' + esc(a.name) + (a.bot ? " · бот" : "") + "</button>";
     });
-    h += "</div></div></div>";
+    h += "</div>";
+    if ((d.topics || []).length) {
+      h += '<div class="dgx-sub">В топике</div><div class="dgx-chips">' +
+        '<button type="button" class="dgx-chip' + (E.topics.length ? "" : " is-on") + '" data-dgx="rf-topic" data-id="">Любой</button>';
+      d.topics.forEach(function (t) {
+        h += '<button type="button" class="dgx-chip' + (E.topics.indexOf(t.id) >= 0 ? " is-on" : "") + '" data-dgx="rf-topic" data-id="' + t.id + '">' + esc(t.name) + "</button>";
+      });
+      h += "</div>";
+    }
+    h += prefilterHtml(E) + "</div></div>";
     h += '<div class="dgx-step"><span class="dgx-stepn">То</span><div class="dgx-stepb"><div class="dgx-chips">';
     (d.actions || []).forEach(function (a) {
       h += '<button type="button" class="dgx-chip' + (E.action === a.id ? " is-on" : "") + '" data-dgx="rf-action" data-id="' + esc(a.id) + '">' + esc(a.label) + "</button>";
@@ -375,7 +394,8 @@
       h += '<div class="dgx-box"><div class="dgx-boxh">Проверка на последних сообщениях</div>';
       if (ch.error) h += '<span class="dgx-muted">' + esc(ch.error) + "</span>";
       else if (!(ch.hits || []).length)
-        h += '<span class="dgx-muted">Из ' + ch.checked + " подходящих по условиям сообщений ничего не нашлось. Попробуйте описать иначе.</span>";
+        h += '<span class="dgx-muted">' + (ch.checked ? "Из " + ch.checked + " подходящих по условиям сообщений ничего не нашлось. Попробуйте описать иначе."
+          : "Среди последних " + ch.total + " сообщений нет подходящих по условиям" + ((ch.words || []).length ? " и словам-фильтру" : "") + ".") + "</span>";
       else {
         h += '<span class="dgx-muted">Нашёл ' + ch.hits.length + " из " + ch.checked + " сообщений" + ((ch.columns || []).length ? " — так Лео заполнит строки:" : ":") + "</span>";
         if ((ch.columns || []).length) {
@@ -395,6 +415,19 @@
       '<div class="dgx-acts dgx-acts--form"><button type="button" class="dgx-btn" data-dgx="rule-check"' + (E.checking ? " disabled" : "") + ">Проверить</button>" +
       '<button type="button" class="dgx-btn dgx-btn--p" data-dgx="rule-save"' + (E.saving ? " disabled" : "") + ">Сохранить</button></div>";
     if (E.id) h += '<button type="button" class="dgx-linkdanger" data-dgx="rule-delete">Удалить правило</button>';
+    return h + "</div>";
+  }
+
+  // Слова-фильтр: сообщения без них модель не читает (экономия). Подбирает Лео при сохранении / проверке.
+  function prefilterHtml(E) {
+    var h = '<div class="dgx-prefilter">';
+    if (E.prefilter_off) h += '<span class="dgx-muted">Лео читает все сообщения, подходящие по условиям выше.</span>';
+    else if ((E.words || []).length)
+      h += '<span class="dgx-muted">Чтобы не тратить лишнее, Лео читает только сообщения со словами: ' +
+        E.words.map(function (w) { return "«" + esc(w) + "»"; }).join(", ") + ".</span>";
+    else if (E.words) h += '<span class="dgx-muted">По словам такие сообщения не отобрать — Лео читает все, подходящие по условиям.</span>';
+    else h += '<span class="dgx-muted">При проверке и сохранении Лео подберёт слова-фильтр, чтобы не читать лишнее.</span>';
+    h += '<label class="dgx-checkline"><input type="checkbox" data-dgx="rf-prefilter"' + (E.prefilter_off ? " checked" : "") + " /> Читать все сообщения (дороже)</label>";
     return h + "</div>";
   }
 
@@ -511,7 +544,8 @@
   }
 
   function ruleBody(E) {
-    var b = { title: E.title, instruction: E.instruction, conditions: { from_user_ids: E.from }, action: E.action };
+    var b = { title: E.title, instruction: E.instruction, action: E.action,
+              conditions: { from_user_ids: E.from, thread_ids: E.topics || [], prefilter_off: !!E.prefilter_off } };
     if (E.action === "table_row")
       b.action_data = E.target
         ? { note_id: E.target.note_id, sheet_id: E.sheet_id || "main", table_index: E.table_index || 0, column_hints: E.hints || {} }
@@ -530,7 +564,7 @@
     }
     if (act === "rule-new" || act === "rule-tpl") {
       var t = act === "rule-tpl" ? (d.templates || [])[Number(b.getAttribute("data-i"))] || {} : {};
-      R.edit = { title: t.title || "", instruction: t.instruction || "", from: [], action: "show" };
+      R.edit = { title: t.title || "", instruction: t.instruction || "", from: [], topics: [], action: "show" };
       return render();
     }
     if (act === "rule-edit") {
@@ -539,7 +573,9 @@
       })[0];
       if (!r) return;
       var ad = r.action_data || {};
-      R.edit = { id: r.id, title: r.title, instruction: r.instruction, from: ((r.conditions || {}).from_user_ids || []).slice(), action: r.action,
+      var rc = r.conditions || {};
+      R.edit = { id: r.id, title: r.title, instruction: r.instruction, from: (rc.from_user_ids || []).slice(), action: r.action,
+                 topics: (rc.thread_ids || []).slice(), prefilter_off: !!rc.prefilter_off, words: rc.words || null,
                  sheet_id: ad.sheet_id || "main", table_index: ad.table_index || 0, hints: Object.assign({}, ad.column_hints || {}) };
       render();
       if (r.action === "table_row" && ad.note_id) pickDoc(R.edit, String(ad.note_id), true);
@@ -575,6 +611,23 @@
       }
       return render();
     }
+    if (act === "rf-topic") {
+      var tid = b.getAttribute("data-id");
+      if (tid === "") E.topics = [];
+      else {
+        tid = Number(tid);
+        var ti = E.topics.indexOf(tid);
+        if (ti >= 0) E.topics.splice(ti, 1);
+        else E.topics.push(tid);
+      }
+      E.check = null;
+      return render();
+    }
+    if (act === "rf-prefilter") {
+      E.prefilter_off = !!b.checked;
+      E.check = null;
+      return render();
+    }
     if (act === "rf-action") {
       E.action = b.getAttribute("data-id");
       E.check = null;
@@ -607,6 +660,7 @@
       render();
       try {
         E.check = await api("/digest/chats/" + encodeURIComponent(R.chat_id) + "/rules/check", { method: "POST", body: JSON.stringify(ruleBody(E)) });
+        if (!E.prefilter_off) E.words = E.check.words || [];
       } catch (err) {
         E.check = { error: (err && err.message) || "Не получилось проверить" };
       }
@@ -637,6 +691,62 @@
         toast((err && err.message) || "Не получилось удалить");
       }
     }
+  }
+
+  // «Мои сценарии» в Профиле (экран «Чаты с Лео»): все правила, вкл/выкл, переход к правилам чата.
+  async function renderScenarios() {
+    var group = document.getElementById("profile-scenarios-group");
+    var list = document.getElementById("profile-scenarios-list");
+    if (!group || !list) return;
+    var rules = [];
+    try {
+      rules = (await api("/digest/rules")).rules || [];
+    } catch (e) {
+      rules = [];
+    }
+    group.classList.toggle("hidden", !rules.length);
+    list.innerHTML = rules.map(function (r) {
+      var err = (r.action_data || {}).error;
+      return (
+        '<div class="pf-row dgx-sc-row' + (r.enabled ? "" : " is-off") + '">' +
+        '<button type="button" class="pf-row-body dgx-sc-open" data-sc-chat="' + r.chat_id + '"><span class="pf-row-text">' +
+        '<span class="pf-row-title">' + esc(r.title) + "</span>" +
+        '<span class="pf-row-sub">' + esc(r.chat_title) + " · " + esc(r.action_label) + "</span>" +
+        (err ? '<span class="pf-row-sub dgx-err">На паузе: ' + esc(err) + "</span>" : "") +
+        "</span></button>" +
+        '<input type="checkbox" class="pf-switch dgx-sc-switch" aria-label="Включено" data-sc-toggle="' + r.id + '"' + (r.enabled ? " checked" : "") + " /></div>"
+      );
+    }).join("");
+  }
+
+  document.addEventListener("change", async function (e) {
+    var t = e.target;
+    var id = t && t.getAttribute && t.getAttribute("data-sc-toggle");
+    if (!id) return;
+    t.disabled = true;
+    try {
+      var res = await api("/digest/rules/" + encodeURIComponent(id), { method: "PATCH", body: JSON.stringify({ enabled: t.checked }) });
+      t.checked = !!res.rule.enabled;
+      toast(t.checked ? "Правило включено" : "Правило выключено");
+    } catch (err) {
+      t.checked = !t.checked;
+      toast((err && err.message) || "Не получилось");
+    }
+    t.disabled = false;
+    renderScenarios();
+  });
+
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest && e.target.closest("[data-sc-chat]");
+    if (b) openRulesFor(Number(b.getAttribute("data-sc-chat")));
+  });
+
+  // Открыть «Правила» чата из другого места (Профиль): вкладка «Дайджест» → «Чаты» → чат → правила.
+  function openRulesFor(chatId) {
+    st.pendingRules = chatId;
+    if (app().setTab) app().setTab("digest");
+    var sub = document.querySelector('[data-digest-subtab="chats"]');
+    if (sub) sub.click();
   }
 
   function render() {
@@ -753,6 +863,7 @@
     var rf = t && t.getAttribute && t.getAttribute("data-rf");
     if (rf && st.rules && st.rules.edit) {
       st.rules.edit[rf] = t.value; // без перерисовки — курсор остаётся в поле
+      if (rf === "instruction") st.rules.edit.words = null; // текст другой — слова подберутся заново
       return;
     }
     if (t && t.hasAttribute && st.rules && st.rules.edit) {
@@ -787,5 +898,5 @@
 
   document.addEventListener("click", onClick);
   document.addEventListener("input", onInput);
-  window.LeoDigestChats = { show: show };
+  window.LeoDigestChats = { show: show, renderScenarios: renderScenarios, openRulesFor: openRulesFor };
 })();

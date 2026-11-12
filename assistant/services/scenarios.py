@@ -94,7 +94,67 @@ def _conditions(chat_id: int, raw: Any) -> dict[str, Any]:
             continue
         if v in known and v not in ids:
             ids.append(v)
-    return {"from_user_ids": ids[:20]}
+    topics = set(digest_store.topic_names(int(chat_id))) | {0}
+    tids: list[int] = []
+    for x in raw.get("thread_ids") or []:
+        try:
+            v = int(x)
+        except (TypeError, ValueError):
+            continue
+        if v in topics and v not in tids:
+            tids.append(v)
+    return {"from_user_ids": ids[:20], "thread_ids": tids[:20] if len(topics) > 1 else [],
+            "prefilter_off": bool(raw.get("prefilter_off"))}
+
+
+# ---------- предфильтр: слова, без которых модель сообщение не читает ----------
+
+PREFILTER_SYSTEM = """Пользователь описал, какие сообщения рабочего чата искать. Составь список слов и корней,
+по которым код отберёт сообщения-кандидаты до чтения моделью (простое вхождение подстроки, без учёта регистра).
+Бери широко, чтобы не пропустить нужное: корни вместо форм («оплат», «поступ», «перевел», «перечисл»), синонимы,
+сокращения и символы («₽», «руб», «тыс»). 5–25 элементов, каждый 2–30 символов, нижний регистр.
+Если по словам такие сообщения не отобрать (например, «просьбы ко мне», «всё важное», «риски») — words пустой.
+Ответ строго JSON: {"words":["..."]}"""
+
+_PREFILTER_MEMO: dict[str, list[str]] = {}
+
+
+def build_prefilter(uid: int, instruction: str) -> list[str]:
+    """Один вызов модели на текст правила (при сохранении): слова-кандидаты. Не вышло — пусто (читаем всё)."""
+    from assistant.integrations.openrouter_client import set_openrouter_usage_telegram_user
+    from assistant.lib.llm_json import strip_json_from_markdown
+    from assistant.nlu import llm
+
+    key = " ".join(instruction.lower().split())
+    if key in _PREFILTER_MEMO:
+        return _PREFILTER_MEMO[key]
+    set_openrouter_usage_telegram_user(telegram_user_id=uid)
+    try:
+        raw = llm._chat(PREFILTER_SYSTEM, json.dumps({"rule": instruction}, ensure_ascii=False),
+                        operation="chat_rules_filter", model=llm._model_chat_digest(), timeout=40,
+                        temperature=0.0, max_tokens=300)
+        obj = json.loads(strip_json_from_markdown(raw or ""))
+    except Exception as e:
+        print(f"[scenarios] prefilter failed uid={uid} err={e!r}")
+        return []
+    words: list[str] = []
+    for w in (obj.get("words") if isinstance(obj, dict) else None) or []:
+        w = " ".join(str(w or "").lower().split())
+        ok = 2 <= len(w) <= 30 or (len(w) == 1 and not w.isalnum())  # «₽», «$» — можно, одна буква — нет
+        if ok and w not in words:
+            words.append(w)
+    words = words[:30]
+    _PREFILTER_MEMO[key] = words
+    return words
+
+
+def _with_prefilter(uid: int, instruction: str, cond: dict[str, Any], current: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if cond.get("prefilter_off"):
+        return {**cond, "words": []}
+    cur = current or {}
+    if cur.get("instruction") == instruction and "words" in (cur.get("conditions") or {}):
+        return {**cond, "words": list(cur["conditions"]["words"] or [])}  # текст тот же — слова прежние
+    return {**cond, "words": build_prefilter(uid, instruction)}
 
 
 def _validated(uid: int, chat_id: int, body: dict[str, Any], *, partial: bool = False,
@@ -128,6 +188,10 @@ def _validated(uid: int, chat_id: int, body: dict[str, Any], *, partial: bool = 
         out["action_data"] = _table_target(uid, current.get("action_data"))
     if "enabled" in body:
         out["enabled"] = bool(body.get("enabled"))
+    if "instruction" in out or "conditions" in out:
+        instruction = out.get("instruction") or (current or {}).get("instruction") or ""
+        cond = out.get("conditions") or {k: v for k, v in ((current or {}).get("conditions") or {}).items() if k != "words"}
+        out["conditions"] = _with_prefilter(uid, instruction, cond, current)
     return out
 
 
@@ -236,9 +300,35 @@ def rules_view(uid: int, chat_id: int) -> dict[str, Any]:
         "title": chat.get("title") or "Чат",
         "rules": [_public(s) for s in store.list_for_source(uid, SOURCE_CHAT, str(int(chat_id)))],
         "authors": digest_store.chat_authors(int(chat_id)),
+        "topics": _topics(int(chat_id)),
         "actions": [{"id": k, "label": v} for k, v in ACTIONS.items()],
         "templates": TEMPLATES,
     }
+
+
+def _topics(chat_id: int) -> list[dict[str, Any]]:
+    names = digest_store.topic_names(chat_id)
+    if not names:
+        return []
+    return [{"id": 0, "name": "General"}] + [{"id": k, "name": v or f"Топик #{k}"} for k, v in sorted(names.items())]
+
+
+def all_rules(uid: int) -> list[dict[str, Any]]:
+    """«Мои сценарии» в Профиле: все правила пользователя по чатам, где он ещё участник."""
+    member = digest_store.member_chat_ids(int(uid))
+    out = []
+    for sc in store.list_for_user(uid):
+        if sc["source_type"] != SOURCE_CHAT:
+            continue
+        try:
+            cid = int(sc["source_id"])
+        except ValueError:
+            continue
+        if cid not in member:
+            continue
+        chat = digest_store.get_chat(cid) or {}
+        out.append({**_public(sc), "chat_id": cid, "chat_title": chat.get("title") or f"Чат {cid}"})
+    return out
 
 
 def create_rule(uid: int, chat_id: int, body: dict[str, Any]) -> dict[str, Any]:
@@ -301,6 +391,14 @@ def passes_conditions(conditions: dict[str, Any], m: dict[str, Any]) -> bool:
     ids = conditions.get("from_user_ids") or []
     if ids and (m.get("user_id") is None or int(m["user_id"]) not in {int(x) for x in ids}):
         return False
+    tids = conditions.get("thread_ids") or []
+    if tids and int(m.get("thread_id") or 0) not in {int(x) for x in tids}:
+        return False
+    words = conditions.get("words") or []
+    if words and not conditions.get("prefilter_off"):
+        low = str(m.get("text") or "").lower()
+        if not any(w in low for w in words):
+            return False  # нет ни одного слова-кандидата — модель не читает
     return True
 
 
@@ -461,6 +559,7 @@ def dry_run(uid: int, chat_id: int, body: dict[str, Any]) -> dict[str, Any]:
     hits = _detect(uid, {**chat, "chat_id": int(chat_id)}, v["instruction"], v["conditions"], msgs,
                    operation="chat_rules_check", table=table)
     return {"checked": checked, "total": len(msgs), "columns": (table or {}).get("columns") or [],
+            "words": v["conditions"].get("words") or [],
             "hits": [_hit_view(chat_id, h) for h in hits]}
 
 
