@@ -42307,19 +42307,19 @@
           return ok;
         });
       }
+      // Своё фото только что поменяли или удалили — мимо кэша браузера (фото кэшируется на 10 минут).
+      var bust = (noteCollabState.photoBust || {})[key];
       var req = fetch(API + path, {
         credentials: "same-origin",
         headers: authHeaders(),
+        cache: bust ? "reload" : "default",
       })
         .then(function (res) {
           return res.ok ? res.blob() : null;
         })
-      // Своё фото только что поменяли или удалили — мимо кэша браузера (фото кэшируется на 10 минут).
-      var bust = (noteCollabState.photoBust || {})[key];
         .then(function (blob) {
           var ok = setBlob(key, blob);
           if (!ok) noteCollabState.photoMiss[key] = 1;
-        cache: bust ? "reload" : "default",
           return ok;
         })
         .catch(function () {
@@ -57924,6 +57924,7 @@
     try {
       await ensureDiscussChat();
       var fileIds = await uploadDiscussPendingFiles(wrap._shareKind, wrap._shareId);
+      wrap._lastFooterFileIds = fileIds || []; // PAIE после этого сообщения читает те же файлы
       clearDiscussPendingContextNotes();
       var footSaved = await apiFetch(
         "/notes/" +
@@ -57932,7 +57933,6 @@
           encodeURIComponent(wrap._shareId) +
           "/comments",
         {
-      wrap._lastFooterFileIds = fileIds || []; // PAIE после этого сообщения читает те же файлы
           method: "POST",
           body: JSON.stringify(
             Object.assign(
@@ -58325,6 +58325,10 @@
     ensureDiscussionKnowledgeNotes()
       .then(ensureDiscussChat)
       .then(function () {
+        return uploadDiscussPendingFiles(kind, itemId);
+      })
+      .then(function (fileIds) {
+        clearDiscussPendingFiles();
         return apiFetch(path, {
           method: "POST",
           body: JSON.stringify(
@@ -58334,10 +58338,6 @@
                 file_ids: fileIds || [],
                 parent_id: rootId,
                 reply_to_id: replyToId,
-        return uploadDiscussPendingFiles(kind, itemId);
-      })
-      .then(function (fileIds) {
-        clearDiscussPendingFiles();
                 quote: (draft && draft.quote) || "",
                 model: selectedPaieModelId(),
               },
@@ -58570,6 +58570,10 @@
     ensureDiscussionKnowledgeNotes()
       .then(ensureDiscussChat)
       .then(function () {
+        return uploadDiscussPendingFiles(kind, itemId);
+      })
+      .then(function (fileIds) {
+        clearDiscussPendingFiles();
         return apiFetch(path, {
           method: "POST",
           body: JSON.stringify(
@@ -58579,10 +58583,6 @@
                 file_ids: fileIds || [],
                 quote: quote,
                 model: selectedResearchModelId(),
-        return uploadDiscussPendingFiles(kind, itemId);
-      })
-      .then(function (fileIds) {
-        clearDiscussPendingFiles();
               },
               discussionKnowledgeFields(),
               discussChatFields()
@@ -62099,6 +62099,8 @@
 
   function enterNotesSelectMode() {
     if (notesSelect.on) return;
+    // Документ развёрнут на весь экран — сворачиваем к списку: выбирают карточки списка.
+    notesSplitCollapse();
     notesSelect.on = true;
     notesSelect.ids = {};
     document.documentElement.classList.add("notes-select-on");
@@ -62107,8 +62109,6 @@
   }
 
   function exitNotesSelectMode() {
-    // Документ развёрнут на весь экран — сворачиваем к списку: выбирают карточки списка.
-    notesSplitCollapse();
     notesSelect.on = false;
     notesSelect.ids = {};
     document.documentElement.classList.remove("notes-select-on");
@@ -62118,14 +62118,6 @@
     syncNotesSelectUi();
   }
 
-  function toggleNotesSelected(id, force) {
-    id = String(id || "");
-    if (!id) return;
-    var on = force != null ? !!force : !notesSelect.ids[id];
-    if (on) notesSelect.ids[id] = true;
-    else delete notesSelect.ids[id];
-    document.querySelectorAll('.nl-card[data-note-id="' + id + '"]').forEach(function (c) {
-      c.classList.toggle("is-selected", on);
   // Esc — выйти из выбора (как «Готово»).
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape" || !notesSelect.on) return;
@@ -62137,6 +62129,14 @@
     exitNotesSelectMode();
   }, true);
 
+  function toggleNotesSelected(id, force) {
+    id = String(id || "");
+    if (!id) return;
+    var on = force != null ? !!force : !notesSelect.ids[id];
+    if (on) notesSelect.ids[id] = true;
+    else delete notesSelect.ids[id];
+    document.querySelectorAll('.nl-card[data-note-id="' + id + '"]').forEach(function (c) {
+      c.classList.toggle("is-selected", on);
     });
     syncNotesSelectUi();
   }

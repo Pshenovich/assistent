@@ -18443,11 +18443,11 @@ async def miniapp_note_paei_start(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        try:
         await run_in_threadpool(
             partial(_link_files_to_comment, payload.file_ids, user_comment, owner=owner, kind=kind,
                     item_id=item_id, author=author_id)
         )
+        try:
             await run_in_threadpool(
                 partial(
                     _notify_discussion_comment,
@@ -18633,11 +18633,11 @@ async def miniapp_note_research_start(
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        try:
         await run_in_threadpool(
             partial(_link_files_to_comment, payload.file_ids, saved, owner=owner, kind=kind,
                     item_id=item_id, author=author_id)
         )
+        try:
             await run_in_threadpool(
                 partial(
                     _notify_discussion_comment,
