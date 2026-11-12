@@ -86,6 +86,21 @@
     return data;
   }
 
+  // Шифр файла из сейфа — байтами (apiFetch разбирает JSON)
+  async function apiBytes(path) {
+    await ready;
+    var r = await fetch("/api/miniapp" + path, { credentials: "same-origin", cache: "no-store" });
+    if (r.status === 401) showLogin(true);
+    if (!r.ok) {
+      var data = await r.json().catch(function () { return {}; });
+      var e = new Error((data && data.detail) || "Не получилось — попробуйте ещё раз");
+      e.detail = data && data.detail;
+      e.status = r.status;
+      throw e;
+    }
+    return new Uint8Array(await r.arrayBuffer());
+  }
+
   // ---------- сообщения, вопросы ----------
 
   var toastTimer = null;
@@ -100,6 +115,7 @@
 
   window.LeoApp = {
     apiFetch: apiFetch,
+    apiBytes: apiBytes,
     toast: toast,
     confirm: function (msg) { return Promise.resolve(window.confirm(msg)); },
     promptDialog: function (title, value) { return Promise.resolve(window.prompt(title, value || "")); },

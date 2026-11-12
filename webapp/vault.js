@@ -46,7 +46,10 @@
     site: { label: "Сайт или админка", fields: [["address", "Ссылка", "https://"], ["login", "Логин", "name@company.ru"], ["password", "Пароль", "", "secret"], ["note", "Заметка", "", "text-secret"]] },
     api: { label: "API-ключ", fields: [["address", "Сервис", "openrouter.ai"], ["password", "Ключ", "", "secret"], ["expires", "Действует до", "", "date"], ["note", "Заметка", "", "text-secret"]] },
     note: { label: "Заметка", fields: [["note", "Текст", "", "text-secret"]] },
+    file: { label: "Файл", fields: [["note", "Описание", "", "text-secret"]] },
   };
+  var FILE_MAX = 20 * 1024 * 1024 - 64; // сервер принимает шифр до 20 МБ (+29 байт на шифрование)
+  var ITEM_FILES_MAX = 10;
   var ROLE_LABEL = { viewer: "Смотрит", editor: "Правит", owner: "Владелец" };
   var RANK = { viewer: 1, editor: 2, owner: 3 };
 
@@ -72,6 +75,9 @@
     back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 6-6 6 6 6"/></svg>',
     alert: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17h.01"/></svg>',
     key: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l3 3"/></svg>',
+    file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5 12.6 20a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>',
+    download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+    close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   };
 
   // ---------- общие мелочи ----------
@@ -107,6 +113,12 @@
     var m10 = n % 10, m100 = n % 100;
     var w = m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
     return n + " " + w;
+  }
+  function fileSize(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + " Б";
+    if (n < 1024 * 1024) return Math.round(n / 1024) + " КБ";
+    return (n / 1024 / 1024).toFixed(n < 10 * 1024 * 1024 ? 1 : 0).replace(".", ",") + " МБ";
   }
   function when(iso) {
     var t = Date.parse(iso || "");
@@ -933,7 +945,8 @@
       var prev = d.id ? itemOf(v.id, d.id) : null;
       var iuid = (prev && prev.uid) || (v.fmt === 2 ? CR.newUid() : "");
       var blob = await CR.sealItem(st.vk[v.id], v.id, data, itemCtx(v, st.vkVer[v.id], iuid));
-      var body = { blob: blob, key_version: st.vkVer[v.id], uid: d.id ? undefined : iuid };
+      var fileIds = (d.data.files || []).map(function (f) { return f.id; });
+      var body = { blob: blob, key_version: st.vkVer[v.id], uid: d.id ? undefined : iuid, file_ids: fileIds };
       var r = d.id
         ? await api("/" + v.id + "/items/" + d.id, json("PUT", body))
         : await api("/" + v.id + "/items", json("POST", body));
@@ -959,6 +972,100 @@
     }
     st.busy = false;
     refresh();
+  }
+
+  // ---------- файлы записи ----------
+  // Файл шифруется здесь своим ключом и уходит на сервер шифром; ключ, имя и размер — в данных записи.
+  // К записи файл привязывается при «Сохранить» (file_ids); загруженный без сохранения сервер удалит через сутки.
+
+  function attachFiles() {
+    var form = container() && container().querySelector(".vlt-form");
+    if (form) readForm(form);
+    var inp = document.createElement("input");
+    inp.type = "file";
+    inp.multiple = true;
+    inp.style.display = "none";
+    inp.addEventListener("change", function () {
+      var files = Array.prototype.slice.call(inp.files || []);
+      inp.remove();
+      if (files.length) uploadFiles(files);
+    });
+    document.body.appendChild(inp);
+    inp.click();
+  }
+
+  async function uploadFiles(files) {
+    var v = vaultOf(st.vaultId);
+    var d = st.draft;
+    if (!v || !d || st.busy) return;
+    d.data.files = d.data.files || [];
+    st.busy = true;
+    st.uploading = files.length;
+    paint();
+    try {
+      if (v.rotate) {
+        await rotateVault(v);
+        v = vaultOf(v.id) || v;
+        if (v.rotate) throw new Error("Не удалось сменить ключ сейфа — откройте сейф заново");
+      }
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        if (d.data.files.length >= ITEM_FILES_MAX) throw new Error("В записи — до " + ITEM_FILES_MAX + " файлов");
+        if (f.size > FILE_MAX) throw new Error("«" + f.name + "» больше 20 МБ — такой файл не поместится");
+        var fk = CR.newFileKey();
+        var fuid = CR.newUid();
+        var sealed = await CR.sealFile(fk, new Uint8Array(await f.arrayBuffer()), fuid);
+        var r = await api("/" + v.id + "/files", { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: sealed });
+        d.data.files.push({ id: r.id, uid: fuid, name: String(f.name || "файл").slice(0, 200), size: f.size, mime: String(f.type || "").slice(0, 100), key: CR.b64u(fk) });
+        fk.fill(0);
+        if (!String(d.data.title || "").trim()) d.data.title = String(f.name || "").slice(0, 120);
+        st.uploading = files.length - i - 1;
+        if (st.draft === d) paint();
+      }
+    } catch (e) {
+      toast(errText(e));
+    }
+    st.busy = false;
+    st.uploading = 0;
+    refresh();
+  }
+
+  function removeDraftFile(idx) {
+    var d = st.draft;
+    if (!d || !d.data.files) return;
+    var form = container() && container().querySelector(".vlt-form");
+    if (form) readForm(form);
+    d.data.files.splice(idx, 1);
+    paint();
+  }
+
+  async function downloadFile(iid, idx) {
+    var v = vaultOf(st.vaultId);
+    var it = v && itemOf(v.id, iid);
+    var f = it && it.data.files && it.data.files[idx];
+    if (!f || st.busy) return;
+    st.busy = true;
+    toast("Скачиваю и расшифровываю…");
+    try {
+      var bytes = app().apiBytes
+        ? await app().apiBytes("/vaults/" + v.id + "/files/" + f.id)
+        : new Uint8Array(await (await fetch("/api/miniapp/vaults/" + v.id + "/files/" + f.id, { credentials: "same-origin" })).arrayBuffer());
+      var plain = await CR.openFile(CR.unb64u(f.key), bytes, f.uid);
+      var url = URL.createObjectURL(new Blob([plain], { type: f.mime || "application/octet-stream" }));
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = f.name || "файл";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+      delete st.log[iid];
+    } catch (e) {
+      toast(/decrypt|OperationError|повреж/i.test(String(e && (e.name + e.message))) ? "Файл не расшифровался — возможно, он повреждён" : errText(e));
+    }
+    st.busy = false;
+    paint();
   }
 
   async function deleteItem(iid) {
@@ -1468,13 +1575,15 @@
     html += departuresHtml(v, items);
     html += '<p class="kb-label">В сейфе · ' + items.length + "</p>";
     if (!items.length) {
-      html += '<div class="kb-table"><div class="vlt-empty"><b>Пока пусто</b><span>Добавьте доступ к серверу, сайту или API-ключ.</span>' +
+      html += '<div class="kb-table"><div class="vlt-empty"><b>Пока пусто</b><span>Добавьте доступ к серверу, сайту, API-ключ или файл.</span>' +
         (canEdit(v) ? btn("Запись", 'data-v="new"', "kb-btn--primary", IC.plus) : "") + "</div></div>";
     } else {
       html += '<div class="kb-table vlt-table"><div class="kb-row kb-row--head" aria-hidden="true"><span></span><span>Название</span><span>Логин</span><span>Изменена</span><span></span></div>';
       items.slice().sort(function (a, b) { return String(a.data.title || "").localeCompare(String(b.data.title || ""), "ru"); }).forEach(function (it) {
         var d = it.data;
-        var sub = esc(typeOf(it).label + (d.address ? " · " + d.address : "")) + expiresHtml(d);
+        var nf = (d.files && d.files.length) || 0;
+        var sub = esc(typeOf(it).label + (d.address ? " · " + d.address : "") + (nf && d.type !== "file" ? " · " + count(nf, "файл", "файла", "файлов") : "") +
+          (nf === 1 && d.type === "file" ? " · " + fileSize(d.files[0].size) : nf > 1 && d.type === "file" ? " · " + count(nf, "файл", "файла", "файлов") : "")) + expiresHtml(d);
         html += '<div class="kb-row" role="button" tabindex="0" data-v="open" data-id="' + it.id + '">' +
           '<span class="kb-row-ico">' + icoOf(it) + '</span><span class="kb-row-title"><b>' + esc(d.title || "Без названия") + "</b><span>" + sub + "</span></span>" +
           '<span class="kb-row-c vlt-mono">' + esc(d.login || "") + '</span><span class="kb-row-c">' + esc(when(it.updated_at)) + "</span>" +
@@ -1621,11 +1730,17 @@
         "</span></span></div>";
     });
     html += "</div>";
+    if (d.files && d.files.length) {
+      html += '<p class="kb-label">Файлы</p><div class="vlt-files">' + d.files.map(function (f, i) {
+        return '<div class="vlt-file"><span class="vlt-file-ico">' + IC.file + '</span><span class="vlt-file-name"><b>' + esc(f.name || "файл") + "</b><span>" + esc(fileSize(f.size)) + "</span></span>" +
+          '<button type="button" class="kb-btn" data-v="file-get" data-id="' + it.id + '" data-i="' + i + '"' + busyAttr() + ">" + IC.download + "<span>Скачать</span></button></div>";
+      }).join("") + "</div>";
+    }
     var log = st.log[it.id];
     html += '<p class="kb-label">Кто открывал</p>';
     if (log === "loading" || !log) html += '<p class="pf-hint">Загружаю…</p>';
     else {
-      var words = { copy: "скопировал(а) пароль", reveal: "открыл(а) пароль", create: "создал(а) запись", update: "изменил(а) запись" };
+      var words = { copy: "скопировал(а) пароль", reveal: "открыл(а) пароль", create: "создал(а) запись", update: "изменил(а) запись", download: "скачал(а) файл" };
       html += '<div class="kb-lines">' + log.slice(0, 12).map(function (l) {
         return '<div class="kb-line vlt-logline"><span class="kb-line-ico">' + IC.user + '</span><span class="kb-line-text"><b>' + esc(l.name || "Кто-то") + "</b><span>" +
           esc(words[l.action] || l.action) + '</span></span><span></span><span class="kb-line-right">' + esc(when(l.at)) + "</span></div>";
@@ -1663,6 +1778,14 @@
         html += '<label class="vlt-input"><span class="vlt-label">' + esc(f[1]) + '</span><input class="pf-input' + (key === "login" || key === "address" ? " vlt-mono" : "") + '" name="' + key + '" type="' + (kind === "date" ? "date" : "text") + '" value="' + esc(val) + '" placeholder="' + esc(f[2] || "") + '" spellcheck="false" /></label>';
       }
     });
+    var files = d.data.files || [];
+    html += '<div class="vlt-input"><span class="vlt-label">Файлы</span><div class="vlt-files">' + files.map(function (f, i) {
+      return '<div class="vlt-file"><span class="vlt-file-ico">' + IC.file + '</span><span class="vlt-file-name"><b>' + esc(f.name || "файл") + "</b><span>" + esc(fileSize(f.size)) + "</span></span>" +
+        '<button type="button" class="vlt-ibtn" data-v="file-rm" data-i="' + i + '" title="Убрать файл" aria-label="Убрать файл ' + esc(f.name || "") + '">' + IC.close + "</button></div>";
+    }).join("") +
+      (st.uploading ? '<p class="pf-hint">Шифрую и загружаю… осталось ' + esc(count(st.uploading, "файл", "файла", "файлов")) + "</p>" : "") +
+      (files.length < ITEM_FILES_MAX ? '<div><button type="button" class="kb-btn" data-v="attach"' + busyAttr() + ">" + IC.file + "<span>Прикрепить файл</span></button></div>" : "") +
+      '</div><span class="pf-hint">До 20 МБ на файл, до ' + ITEM_FILES_MAX + " файлов в записи. Файл шифруется на этом устройстве — сервер не видит ни содержимое, ни имя.</span></div>";
     html += '<div class="vlt-actions vlt-left">' + btn("Отмена", 'data-v="cancel"', "kb-btn--ghost") +
       '<button type="submit" class="kb-btn kb-btn--primary"' + busyAttr() + ">Сохранить</button></div>";
     html += '<p class="pf-hint">Запись шифруется в браузере до отправки. Сервер хранит только шифр.</p>';
@@ -1762,6 +1885,9 @@
         paint();
         break;
       case "delete": deleteItem(id); break;
+      case "attach": attachFiles(); break;
+      case "file-rm": removeDraftFile(Number(b.getAttribute("data-i"))); break;
+      case "file-get": downloadFile(id, Number(b.getAttribute("data-i"))); break;
       case "access": openAccess(st.vaultId); break;
       case "vault-more": vaultMenu(b); break;
       case "dismiss-deps": dismissDepartures(st.vaultId); break;

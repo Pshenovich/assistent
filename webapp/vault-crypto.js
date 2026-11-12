@@ -217,6 +217,33 @@
     return JSON.parse(dec.decode(await open(vk, blob, itemAad(vaultId, ctx))));
   }
 
+  // ---------- файлы записей ----------
+  // У каждого файла свой случайный ключ (FK). FK, номер файла, имя и размер лежат в данных записи —
+  // то есть под ключом сейфа: смена ключа сейфа перешифровывает только записи, сами файлы не трогает.
+  // Шифр файла — байты [версия 1][iv 12][шифр + тег], AAD — номер файла (сервер не подменит один файл другим).
+  var FILE_V = 1;
+  function newFileKey() {
+    return rand(32);
+  }
+  function fileAad(fileUid) {
+    return enc.encode("orbita-vault:file|" + fileUid);
+  }
+  async function sealFile(fk, bytes, fileUid) {
+    var iv = rand(12);
+    var ct = new Uint8Array(await S.encrypt({ name: "AES-GCM", iv: iv, additionalData: fileAad(fileUid) }, await aes(fk), bytes));
+    var out = new Uint8Array(1 + 12 + ct.length);
+    out[0] = FILE_V;
+    out.set(iv, 1);
+    out.set(ct, 13);
+    return out;
+  }
+  async function openFile(fk, sealed, fileUid) {
+    var u8 = sealed instanceof Uint8Array ? sealed : new Uint8Array(sealed);
+    if (u8.length < 29 || u8[0] !== FILE_V) throw new Error("Файл повреждён");
+    var p = { name: "AES-GCM", iv: u8.slice(1, 13), additionalData: fileAad(fileUid) };
+    return new Uint8Array(await S.decrypt(p, await aes(fk), u8.subarray(13)));
+  }
+
   // ---------- генератор паролей ----------
 
   function generatePassword(len) {
@@ -257,6 +284,7 @@
     wrapUmkRecovery: wrapUmkRecovery, unwrapUmkRecovery: unwrapUmkRecovery,
     newVaultKey: newVaultKey, sealEnvelope: sealEnvelope, openEnvelope: openEnvelope,
     sealItem: sealItem, openItem: openItem, generatePassword: generatePassword,
+    newFileKey: newFileKey, sealFile: sealFile, openFile: openFile,
     supported: !!(S && C.getRandomValues),
   };
   root.LeoVaultCrypto = api;

@@ -9305,6 +9305,7 @@ class _VaultItem(BaseModel):
     blob: str
     key_version: Optional[int] = None
     uid: str = ""  # номер записи от браузера (формат 2)
+    file_ids: Optional[list[int]] = None  # файлы записи после сохранения; None — не трогать
 
 
 class _VaultRotateItem(BaseModel):
@@ -9685,7 +9686,7 @@ async def miniapp_vault_item_add(vault_id: int, body: _VaultItem, principal: _Mi
     from assistant.stores import vaults
 
     uid = int(principal.telegram_user_id)
-    res = await _org_call(vaults.add_item, uid, vault_id, body.blob, body.key_version, body.uid)
+    res = await _org_call(vaults.add_item, uid, vault_id, body.blob, body.key_version, body.uid, body.file_ids)
     _track(uid, "vault.item_add")
     return {"ok": True, **res}
 
@@ -9694,7 +9695,39 @@ async def miniapp_vault_item_add(vault_id: int, body: _VaultItem, principal: _Mi
 async def miniapp_vault_item_update(vault_id: int, item_id: int, body: _VaultItem, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
     from assistant.stores import vaults
 
-    return {"ok": True, **(await _org_call(vaults.update_item, int(principal.telegram_user_id), vault_id, item_id, body.blob, body.key_version))}
+    return {"ok": True, **(await _org_call(vaults.update_item, int(principal.telegram_user_id), vault_id, item_id, body.blob,
+                                           body.key_version, body.file_ids))}
+
+
+@miniapp_router.post("/vaults/{vault_id}/files")
+async def miniapp_vault_file_add(vault_id: int, request: Request, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> dict[str, Any]:
+    """Шифр файла записи (байты тела запроса). Шифрует браузер; имя и ключ файла — в шифре записи."""
+    from assistant.stores import vaults
+
+    limit = vaults.FILE_MAX
+    try:
+        declared = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        declared = 0
+    if declared > limit:
+        raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > limit:
+            raise HTTPException(status_code=413, detail=f"Файл больше {limit // (1024 * 1024)} МБ")
+    uid = int(principal.telegram_user_id)
+    res = await _org_call(vaults.add_file, uid, vault_id, bytes(buf))
+    _track(uid, "vault.file_add")
+    return {"ok": True, **res}
+
+
+@miniapp_router.get("/vaults/{vault_id}/files/{file_id}")
+async def miniapp_vault_file_get(vault_id: int, file_id: int, principal: _MiniappPrincipal = Depends(_require_vault_user)) -> Response:
+    from assistant.stores import vaults
+
+    data = await _org_call(vaults.read_file, int(principal.telegram_user_id), vault_id, file_id)
+    return Response(content=data, media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
 
 @miniapp_router.delete("/vaults/{vault_id}/items/{item_id}")

@@ -75,6 +75,18 @@ const out = {};
   out.env2AsV1 = await V.openEnvelope(env2, priv, me.publicKey).then(() => false, () => true);
   out.uid = /^[A-Za-z0-9_-]{20,}$/.test(V.newUid());
 
+  // файл записи: свой ключ, номер файла в AAD; шифр без открытого текста
+  const fk = V.newFileKey(), fuid = V.newUid();
+  const plain = new TextEncoder().encode("договор с подрядчиком: секрет-123");
+  const sealedFile = await V.sealFile(fk, plain, fuid);
+  out.fileHead = sealedFile[0] === 1 && sealedFile.length === plain.length + 29;
+  out.fileNoPlain = !Buffer.from(sealedFile).toString("latin1").includes("123");
+  out.fileOk = Buffer.from(await V.openFile(fk, sealedFile, fuid)).equals(Buffer.from(plain));
+  out.fileOtherUid = await V.openFile(fk, sealedFile, V.newUid()).then(() => false, () => true);
+  out.fileOtherKey = await V.openFile(V.newFileKey(), sealedFile, fuid).then(() => false, () => true);
+  const bad = sealedFile.slice(); bad[bad.length - 1] ^= 1;
+  out.fileTampered = await V.openFile(fk, bad, fuid).then(() => false, () => true);
+
   const pw = V.generatePassword(20);
   out.pw = pw.length === 20 && /[a-z]/.test(pw) && /[A-Z]/.test(pw) && /[0-9]/.test(pw);
   console.log(JSON.stringify(out));

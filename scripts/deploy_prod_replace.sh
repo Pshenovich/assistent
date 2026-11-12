@@ -614,6 +614,19 @@ if [[ -f deploy/nginx-vault.getorbita.me.conf && ! -e /etc/nginx/sites-enabled/v
     echo "WARN: nginx vault.getorbita.me: nginx -t failed, сайт снят" >&2
   fi
 fi
+# Файлы в сейфах (2026-11-12): шифр файла до 20 МБ — живой конфиг (его правил certbot) поднимаем с 4m до 22m.
+_vng=/etc/nginx/sites-available/vault.getorbita.me
+if [[ -f "$_vng" ]] && grep -q "client_max_body_size 4m;" "$_vng"; then
+  cp -f "$_vng" "$_vng.bak-files"
+  sed -i 's/client_max_body_size 4m;/client_max_body_size 22m;/' "$_vng"
+  if nginx -t; then
+    systemctl reload nginx
+    echo "vault.getorbita.me: client_max_body_size 22m"
+  else
+    cp -f "$_vng.bak-files" "$_vng"
+    echo "WARN: vault.getorbita.me: nginx -t failed после 22m — вернул как было, файлы больше 4 МБ не загрузятся" >&2
+  fi
+fi
 
 # Живые nginx-конфиги (их ставит только первая выкатка, дальше правит certbot): gzip для text/javascript,
 # буферизация прокси, лимиты тела — идемпотентно, с откатом, если nginx -t не прошёл.

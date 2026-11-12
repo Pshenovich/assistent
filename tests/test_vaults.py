@@ -123,6 +123,71 @@ class VaultsTests(unittest.TestCase):
         iid = vaults.add_item(BACK, self.vault, "Y3Q")["id"]
         self.assertEqual([i["id"] for i in vaults.items(self.vault, MANAGER)], [iid])
 
+    # --- файлы записей ---
+
+    SEALED = bytes([1]) + b"\x00" * 12 + b"ciphertext-and-tag-16b"
+
+    def test_files_bind_download_log_and_cleanup(self) -> None:
+        vaults.set_access(OWNER, self.vault, f"u:{MANAGER}", "viewer")
+        with self.assertRaises(OrgError):
+            vaults.add_file(MANAGER, self.vault, self.SEALED)  # смотрящий не загружает
+        with self.assertRaises(OrgError):
+            vaults.add_file(OUTSIDER, self.vault, self.SEALED)
+        with self.assertRaises(OrgError):
+            vaults.add_file(BACK, self.vault, b"plain text, not sealed")  # без заголовка шифра — нет
+        f1 = vaults.add_file(BACK, self.vault, self.SEALED)["id"]
+        f2 = vaults.add_file(BACK, self.vault, self.SEALED + b"2")["id"]
+        # чужая незаконченная загрузка: ни привязать, ни скачать
+        with self.assertRaises(OrgError):
+            vaults.add_item(BACK2, self.vault, "Y3Q", file_ids=[f1])
+        with self.assertRaises(OrgError):
+            vaults.read_file(BACK2, self.vault, f1)
+        self.assertEqual(vaults.read_file(BACK, self.vault, f1), self.SEALED)
+        iid = vaults.add_item(BACK, self.vault, "Y3Q", file_ids=[f1, f2])["id"]
+        # смотрящий скачивает — в журнале записи
+        self.assertEqual(vaults.read_file(MANAGER, self.vault, f2), self.SEALED + b"2")
+        self.assertIn("download", [x["action"] for x in vaults.item_log(MANAGER, self.vault, iid)])
+        # другой записи этот файл не отдать
+        other = vaults.add_item(BACK, self.vault, "Y3Q")["id"]
+        with self.assertRaises(OrgError):
+            vaults.update_item(BACK, self.vault, other, "Y3Q", file_ids=[f1])
+        # правка без file_ids файлы не трогает; убранный из списка — удаляется с диска
+        vaults.update_item(BACK, self.vault, iid, "Y3Q2")
+        self.assertTrue(vaults._file_path(f1).exists())
+        vaults.update_item(BACK, self.vault, iid, "Y3Q3", file_ids=[f2])
+        self.assertFalse(vaults._file_path(f1).exists())
+        with self.assertRaises(OrgError):
+            vaults.read_file(BACK, self.vault, f1)
+        # запись удалили — файл тоже
+        vaults.delete_item(BACK, self.vault, iid)
+        self.assertFalse(vaults._file_path(f2).exists())
+
+    def test_files_limits_orphans_and_vault_delete(self) -> None:
+        with self.assertRaises(OrgError):
+            vaults.add_item(BACK, self.vault, "Y3Q", file_ids=[12345])
+        with mock.patch.object(vaults, "FILE_MAX", 40):
+            with self.assertRaises(OrgError) as e:
+                vaults.add_file(BACK, self.vault, self.SEALED + b"x" * 40)
+            self.assertEqual(e.exception.code, 413)
+        with mock.patch.object(vaults, "VAULT_FILES_MAX", len(self.SEALED) * 2):
+            vaults.add_file(BACK, self.vault, self.SEALED)
+            orphan = vaults.add_file(BACK, self.vault, self.SEALED)["id"]
+            with self.assertRaises(OrgError):
+                vaults.add_file(BACK, self.vault, self.SEALED)  # место кончилось
+            # незаконченные загрузки старше суток удаляются при следующей загрузке
+            with vaults._LOCK:
+                conn = vaults._conn()
+                conn.execute("UPDATE vault_files SET created_at = '2020-01-01T00:00:00+00:00'")
+                conn.commit()
+            kept = vaults.add_file(BACK, self.vault, self.SEALED)["id"]
+        self.assertFalse(vaults._file_path(orphan).exists())
+        with self.assertRaises(OrgError):
+            vaults.add_item(BACK, self.vault, "Y3Q", file_ids=list(range(vaults.ITEM_FILES_MAX + 1)))
+        iid = vaults.add_item(BACK, self.vault, "Y3Q", file_ids=[kept])["id"]
+        self.assertTrue(iid)
+        vaults.delete(OWNER, self.vault)
+        self.assertFalse(vaults._file_path(kept).exists())
+
     # --- конверты ---
 
     def test_pending_envelopes_flow(self) -> None:

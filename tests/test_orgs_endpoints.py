@@ -378,6 +378,17 @@ def test_vaults_api_flag_and_flow(env, monkeypatch):
     assert c.post(f"/api/miniapp/vaults/{vid}/items/{iid}/log", headers=_vh(guest), json={"action": "copy"}).status_code == 200
     mine = c.get("/api/miniapp/vaults", headers=_vh(guest)).json()
     assert mine["vaults"][0]["envelope"] == '{"v":1,"g":1}'
+    # файл записи: шифр байтами туда и обратно, смотрящий скачивает, но не загружает
+    sealed = bytes([1]) + b"\x00" * 12 + b"0123456789abcdef-ct"
+    r = c.post(f"/api/miniapp/vaults/{vid}/files", headers={**_vh(owner), "Content-Type": "application/octet-stream"}, content=sealed)
+    assert r.status_code == 200, r.text
+    fid = r.json()["id"]
+    assert c.post(f"/api/miniapp/vaults/{vid}/files", headers={**_vh(guest), "Content-Type": "application/octet-stream"}, content=sealed).status_code == 400
+    r = c.put(f"/api/miniapp/vaults/{vid}/items/{iid}", headers=_vh(owner), json={"blob": '{"v":1,"iv":"aXY","ct":"Zg"}', "file_ids": [fid]})
+    assert r.status_code == 200, r.text
+    r = c.get(f"/api/miniapp/vaults/{vid}/files/{fid}", headers=_vh(guest))
+    assert r.status_code == 200 and r.content == sealed
+    assert r.headers["content-type"] == "application/octet-stream"
 
 
 def test_vaults_api_request_and_rotate(env, monkeypatch):

@@ -9,7 +9,10 @@
 * у сейфа свой ключ (VK). Для каждого, кому открыт сейф, лежит «конверт» — VK, запечатанный открытым
   ключом этого человека (``vault_envelopes``);
 * записи сейфа зашифрованы VK (``vault_items``). Название сейфа — открытым текстом (нужно для списка
-  и доступа), названия и поля записей — только в шифре.
+  и доступа), названия и поля записей — только в шифре;
+* файлы записей (``vault_files``, байты — на диске рядом с базой): у каждого файла свой случайный ключ,
+  он лежит внутри шифра записи вместе с именем файла. Сервер видит только размер. Смена ключа сейфа
+  перешифровывает записи (а с ними ключи файлов), сами файлы не трогает.
 
 Конверт новому участнику кладёт браузер того, у кого конверт уже есть: сервер ключа не знает. Поэтому
 сервер считает, кому сейф открыт по правам, и отдаёт участникам список «ждут конверт» с открытыми
@@ -26,8 +29,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import secrets
 import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from assistant.stores import org_groups, orgs_store
@@ -42,8 +49,13 @@ NAME_MAX = 80
 BLOB_MAX = 64 * 1024  # шифр одной записи
 KEY_MAX = 8 * 1024  # открытый ключ, конверт, обёртка UMK
 UNLOCKERS_MAX = 10
+FILE_MAX = 20 * 1024 * 1024  # шифр одного файла
+VAULT_FILES_MAX = 200 * 1024 * 1024  # все файлы одного сейфа
+ITEM_FILES_MAX = 10
+ORPHAN_TTL_S = 24 * 3600  # загрузили, но запись так и не сохранили
+FILE_HEAD = 1 + 12 + 16  # версия + iv + тег AES-GCM
 LOG_ACTIONS = ("reveal", "copy")
-VAULT_TABLES = ("vault_items", "vault_envelopes", "vault_acl", "vault_log", "vault_departures", "vault_requests")
+VAULT_TABLES = ("vault_files", "vault_items", "vault_envelopes", "vault_acl", "vault_log", "vault_departures", "vault_requests")
 _B64 = re.compile(r"^[A-Za-z0-9_\-+/=]+$")
 
 _SCHEMA_CONN: Optional[sqlite3.Connection] = None
@@ -95,6 +107,10 @@ def _conn() -> sqlite3.Connection:
             label TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, sealed TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL, decided_at TEXT, notified INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS idx_vault_links_user ON vault_links(user_id, status);
+        CREATE TABLE IF NOT EXISTS vault_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, vault_id INTEGER NOT NULL, item_id INTEGER,
+            size INTEGER NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_vault_files_vault ON vault_files(vault_id, item_id);
         """
     )
     _add_column(conn, "vaults", "key_version", "INTEGER NOT NULL DEFAULT 1")
@@ -893,6 +909,7 @@ def delete(user_id: int | str, vault_id: int) -> None:
     _require(vault_id, user_id, "owner")
     with _LOCK:
         conn = _conn()
+        _unlink_files(conn, "vault_id = ?", (int(vault_id),))
         for table in VAULT_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE vault_id = ?", (int(vault_id),))
         conn.execute("DELETE FROM vaults WHERE id = ?", (int(vault_id),))
@@ -904,6 +921,7 @@ def delete_org(org_id: int) -> None:
     conn = _conn()
     ids = [int(r["id"]) for r in conn.execute("SELECT id FROM vaults WHERE org_id = ?", (int(org_id),))]
     for vid in ids:
+        _unlink_files(conn, "vault_id = ?", (vid,))
         for table in VAULT_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE vault_id = ?", (vid,))
     conn.execute("DELETE FROM vaults WHERE org_id = ?", (int(org_id),))
@@ -1066,7 +1084,7 @@ def items(vault_id: int, user_id: int | str) -> list[dict[str, Any]]:
 
 
 def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional[int] = None,
-             item_uid: str = "") -> dict[str, Any]:
+             item_uid: str = "", file_ids: Optional[list[int]] = None) -> dict[str, Any]:
     _require(vault_id, user_id, "editor")
     _check_writable(vault_id)
     uid = _uid(user_id)
@@ -1084,8 +1102,10 @@ def add_item(user_id: int | str, vault_id: int, blob: str, key_version: Optional
             "INSERT INTO vault_items (vault_id, blob, created_by, created_at, updated_by, updated_at, uid) VALUES (?,?,?,?,?,?,?)",
             (int(vault_id), data, uid, now, uid, now, iuid),
         )
-        conn.commit()
         iid = int(cur.lastrowid)
+        if file_ids is not None:
+            _bind_files(conn, vault_id, iid, file_ids, uid)
+        conn.commit()
     return {"id": iid, "uid": iuid, "updated_at": now}
 
 
@@ -1099,7 +1119,8 @@ def _item(conn: sqlite3.Connection, vault_id: int, item_id: int) -> sqlite3.Row:
 
 
 def update_item(user_id: int | str, vault_id: int, item_id: int, blob: str,
-                key_version: Optional[int] = None) -> dict[str, Any]:
+                key_version: Optional[int] = None, file_ids: Optional[list[int]] = None) -> dict[str, Any]:
+    """``file_ids`` — все файлы записи после правки (None — файлы не трогать). Убранные из списка удаляются."""
     _require(vault_id, user_id, "editor")
     _check_writable(vault_id)
     data = _blob(blob, "blob", BLOB_MAX)
@@ -1112,6 +1133,8 @@ def update_item(user_id: int | str, vault_id: int, item_id: int, blob: str,
             "UPDATE vault_items SET blob = ?, updated_by = ?, updated_at = ? WHERE id = ?",
             (data, _uid(user_id), now, int(item_id)),
         )
+        if file_ids is not None:
+            _bind_files(conn, vault_id, item_id, file_ids, _uid(user_id))
         conn.commit()
     return {"id": int(item_id), "updated_at": now}
 
@@ -1123,7 +1146,131 @@ def delete_item(user_id: int | str, vault_id: int, item_id: int) -> None:
         _item(conn, vault_id, item_id)
         conn.execute("DELETE FROM vault_items WHERE id = ?", (int(item_id),))
         conn.execute("DELETE FROM vault_log WHERE item_id = ?", (int(item_id),))
+        _unlink_files(conn, "vault_id = ? AND item_id = ?", (int(vault_id), int(item_id)))
         conn.commit()
+
+
+# ---------- файлы записей ----------
+# Байты файла шифрует браузер своим ключом файла (AES-GCM), ключ и имя — внутри шифра записи.
+# Здесь — только шифр, размер и к какой записи он относится (чтобы удалить вместе с ней).
+
+
+def files_dir() -> Path:
+    from assistant.stores import notes as notes_store
+
+    return notes_store._db_path().parent / "vault_files"  # type: ignore[attr-defined]
+
+
+def _file_path(file_id: int) -> Path:
+    return files_dir() / f"{int(file_id)}.bin"
+
+
+def _unlink_files(conn: sqlite3.Connection, where: str, args: tuple) -> None:
+    """Удалить строки vault_files по условию и их байты с диска (зовётся под замком)."""
+    ids = [int(r["id"]) for r in conn.execute(f"SELECT id FROM vault_files WHERE {where}", args)]
+    if not ids:
+        return
+    conn.execute(f"DELETE FROM vault_files WHERE {where}", args)
+    for fid in ids:
+        try:
+            _file_path(fid).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _bind_files(conn: sqlite3.Connection, vault_id: int, item_id: int, file_ids: list[int], uid: str) -> None:
+    """Файлы записи — ровно ``file_ids``. Чужой сейф, чужая запись, чужая незаконченная загрузка — ошибка."""
+    want = []
+    for x in file_ids:
+        try:
+            fid = int(x)
+        except (TypeError, ValueError):
+            raise OrgError("Файл не найден — загрузите заново", 400)
+        if fid not in want:
+            want.append(fid)
+    if len(want) > ITEM_FILES_MAX:
+        raise OrgError(f"В записи — до {ITEM_FILES_MAX} файлов", 400)
+    for fid in want:
+        r = conn.execute("SELECT vault_id, item_id, created_by FROM vault_files WHERE id = ?", (fid,)).fetchone()
+        if not r or int(r["vault_id"]) != int(vault_id):
+            raise OrgError("Файл не найден — загрузите заново", 400)
+        if r["item_id"] is None:
+            if str(r["created_by"]) != uid:
+                raise OrgError("Файл не найден — загрузите заново", 400)
+        elif int(r["item_id"]) != int(item_id):
+            raise OrgError("Файл относится к другой записи", 400)
+    marks = ",".join("?" * len(want))
+    if want:
+        conn.execute(f"UPDATE vault_files SET item_id = ? WHERE id IN ({marks})", (int(item_id), *want))
+        _unlink_files(conn, f"vault_id = ? AND item_id = ? AND id NOT IN ({marks})", (int(vault_id), int(item_id), *want))
+    else:
+        _unlink_files(conn, "vault_id = ? AND item_id = ?", (int(vault_id), int(item_id)))
+
+
+def add_file(user_id: int | str, vault_id: int, data: bytes) -> dict[str, Any]:
+    """Положить шифр файла. К записи он привяжется при её сохранении (``file_ids``), иначе удалится через сутки."""
+    _require(vault_id, user_id, "editor")
+    _check_writable(vault_id)
+    raw = bytes(data or b"")
+    if len(raw) < FILE_HEAD or raw[0] != 1:
+        raise OrgError("Файл не зашифрован — обновите страницу", 400)
+    if len(raw) > FILE_MAX:
+        raise OrgError(f"Файл больше {FILE_MAX // (1024 * 1024)} МБ", 413)
+    uid = _uid(user_id)
+    files_dir().mkdir(parents=True, exist_ok=True)
+    tmp = files_dir() / f".up-{uid}-{os.getpid()}-{secrets.token_hex(6)}"
+    tmp.write_bytes(raw)  # пишем до замка: 20 МБ на диск не держат остальных
+    try:
+        with _LOCK:
+            conn = _conn()
+            old = datetime.now(timezone.utc).timestamp() - ORPHAN_TTL_S
+            stale = [int(r["id"]) for r in conn.execute(
+                "SELECT id, created_at FROM vault_files WHERE vault_id = ? AND item_id IS NULL", (int(vault_id),)
+            ) if _ts(r["created_at"]) < old]
+            if stale:
+                _unlink_files(conn, f"id IN ({','.join('?' * len(stale))})", tuple(stale))
+            used = int(conn.execute("SELECT COALESCE(SUM(size), 0) FROM vault_files WHERE vault_id = ?",
+                                    (int(vault_id),)).fetchone()[0])
+            if used + len(raw) > VAULT_FILES_MAX:
+                raise OrgError(f"В сейфе кончилось место для файлов ({VAULT_FILES_MAX // (1024 * 1024)} МБ)", 413)
+            cur = conn.execute(
+                "INSERT INTO vault_files (vault_id, item_id, size, created_by, created_at) VALUES (?,?,?,?,?)",
+                (int(vault_id), None, len(raw), uid, _now()),
+            )
+            fid = int(cur.lastrowid)
+            os.replace(tmp, _file_path(fid))
+            conn.commit()
+    finally:
+        tmp.unlink(missing_ok=True)
+    return {"id": fid, "size": len(raw)}
+
+
+def read_file(user_id: int | str, vault_id: int, file_id: int) -> bytes:
+    """Шифр файла участнику сейфа. Скачивание файла записи попадает в журнал «Кто открывал»."""
+    _require(vault_id, user_id, "viewer")
+    uid = _uid(user_id)
+    with _LOCK:
+        conn = _conn()
+        r = conn.execute("SELECT * FROM vault_files WHERE id = ? AND vault_id = ?", (int(file_id), int(vault_id))).fetchone()
+        if not r or (r["item_id"] is None and str(r["created_by"]) != uid):
+            raise OrgError("Файл не найден", 404)
+        if r["item_id"] is not None:
+            conn.execute(
+                "INSERT INTO vault_log (vault_id, item_id, user_id, action, at) VALUES (?,?,?,?,?)",
+                (int(vault_id), int(r["item_id"]), uid, "download", _now()),
+            )
+            conn.commit()
+    try:
+        return _file_path(int(file_id)).read_bytes()
+    except OSError:
+        raise OrgError("Файл не найден на сервере", 404)
+
+
+def _ts(iso: str) -> float:
+    try:
+        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 # ---------- журнал ----------
