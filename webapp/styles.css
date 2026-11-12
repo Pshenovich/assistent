@@ -25340,7 +25340,11 @@ button.tb-chip-main:disabled .tb-chip-text { text-decoration: none; }
 .fb-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .fb-more { font-size: 0.78rem; color: var(--text-tertiary); }
 @media (min-width: 960px) {
-  #actual-my-tasks.actual-subscreen.pt-is-kanban { max-width: 1480px; }
+  /* Экран задач: на больших мониторах — во всю ширину (список сам держит 1180px по центру, Канбан тянется). */
+  .main-scroll > #panel-actual.panel-actual--mytasks,
+  .main-scroll > #panel-actual.panel-actual--posted { max-width: none; }
+  #actual-my-tasks.actual-subscreen.pt-is-kanban,
+  #actual-posted-tasks.actual-subscreen.pt-is-kanban { max-width: none; }
 }
 
 /* ——— Демо «Актуальное v2» (?actual=v2): слева Фокус и «Ваш ход», справа полоса дат и календарь ——— */

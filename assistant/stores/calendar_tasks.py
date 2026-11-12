@@ -1986,6 +1986,8 @@ def post_message(
     now = _now_iso()
     if task.get("assignee_status") == "blocked":
         return _get_task_row(tid)  # переписка не снимает «Заблокировано»
+    if task.get("done") or str(task.get("outcome") or "") or task.get("owner_archived"):
+        return _get_task_row(tid)  # закрытая задача: переписка есть, но статус не меняется
     if viewer == str(task.get("assignee_user_id") or ""):
         return _set_columns(tid, {
             "assignee_status": "question",

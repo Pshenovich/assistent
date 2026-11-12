@@ -354,7 +354,7 @@ async def _transcribe_and_route(update: Update, context: ContextTypes.DEFAULT_TY
         from assistant.bot import task_reply
 
         # «Ответить» / свайп-ответ на сообщение по задаче — голосовое это текст ответа, не команда.
-        replying = task_reply.reply_target(update, context) is not None
+        replying = task_reply.any_reply_target(update, context)
         if voice_uid:
             from assistant.stores import voice_prefs
 

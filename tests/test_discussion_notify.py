@@ -34,7 +34,7 @@ def test_solo_owner_ai_notifies_owner(monkeypatch):
         "assistant.stores.user_prefs.discussion_notify_web_push",
         lambda uid: True,
     )
-    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text: sent_tg.append(uid))
+    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text, markup=None: sent_tg.append(uid))
     monkeypatch.setattr(
         dn, "send_web_push", lambda uid, payload: sent_wp.append(uid) or 1
     )
@@ -71,7 +71,7 @@ def test_human_author_is_skipped(monkeypatch):
         "assistant.stores.user_prefs.discussion_notify_web_push",
         lambda uid: False,
     )
-    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text: sent.append(uid))
+    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text, markup=None: sent.append(uid))
     monkeypatch.setattr(dn, "send_web_push", lambda uid, payload: 0)
 
     out = dn.notify_discussion_comment(
@@ -95,7 +95,7 @@ def test_present_recipient_is_skipped(monkeypatch):
         lambda *a, **k: [{"user_id": "7"}],
     )
     monkeypatch.setattr(dp, "present_user_ids", lambda *a, **k: {"7"})
-    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text: sent.append(uid))
+    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text, markup=None: sent.append(uid))
     monkeypatch.setattr(dn, "send_web_push", lambda uid, payload: 1)
 
     out = dn.notify_discussion_comment(
@@ -130,7 +130,7 @@ def test_telegram_only_skips_web_push(monkeypatch):
         "assistant.stores.user_prefs.discussion_notify_web_push",
         lambda uid: False,
     )
-    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text: sent_tg.append(uid))
+    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text, markup=None: sent_tg.append(uid))
     monkeypatch.setattr(
         dn, "send_web_push", lambda uid, payload: sent_wp.append(uid) or 1
     )
@@ -168,7 +168,7 @@ def test_web_push_only_skips_telegram(monkeypatch):
         "assistant.stores.user_prefs.discussion_notify_web_push",
         lambda uid: True,
     )
-    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text: sent_tg.append(uid))
+    monkeypatch.setattr(dn, "_send_telegram", lambda uid, text, markup=None: sent_tg.append(uid))
     monkeypatch.setattr(
         dn, "send_web_push", lambda uid, payload: sent_wp.append(uid) or 1
     )

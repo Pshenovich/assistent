@@ -93,7 +93,8 @@ def notify_task_owner_done(
             result = result[:600].rstrip() + "…"
         text += f"\nРезультат: {html.escape(result)}"
     try:
-        send_message(owner, text)
+        # «Принять задачу» — как кнопка «Принять» в приложении; «Ответить» — уточнить, не открывая Орбиту.
+        send_message(owner, text, reply_markup=task_done_keyboard(task.get("id") or 0))
     except Exception as e:
         print(f"[calendar_tasks] notify_owner_done uid={owner} err={e!r}")
 
@@ -156,6 +157,18 @@ TASK_REPLY_CALLBACK_PREFIX = "tsk:reply:"
 def task_reply_keyboard(task_id: int | str) -> dict[str, Any]:
     """Кнопка «Ответить» (Bot API reply_markup) — разбирает assistant/bot/task_reply.py."""
     return {"inline_keyboard": [[{"text": "↩️ Ответить", "callback_data": f"{TASK_REPLY_CALLBACK_PREFIX}{_int_uid(task_id)}"}]]}
+
+
+TASK_ACCEPT_CALLBACK_PREFIX = "tsk:accept:"
+
+
+def task_done_keyboard(task_id: int | str) -> dict[str, Any]:
+    """Под «X выполнил(а) задачу»: принять одним нажатием или ответить (assistant/bot/task_reply.py)."""
+    tid = _int_uid(task_id)
+    return {"inline_keyboard": [[
+        {"text": "✅ Принять задачу", "callback_data": f"{TASK_ACCEPT_CALLBACK_PREFIX}{tid}"},
+        {"text": "↩️ Ответить", "callback_data": f"{TASK_REPLY_CALLBACK_PREFIX}{tid}"},
+    ]]}
 
 
 def _send_task_push(to_uid: Any, text: str, tag: str, *, reply_markup: dict[str, Any] | None = None) -> None:

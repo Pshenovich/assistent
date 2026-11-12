@@ -7935,6 +7935,7 @@
 
   function setTab(name, options) {
     if (name !== currentTab && isPostedCardOpen()) closePostedCard();
+    if (name !== currentTab) av2DockDismiss();
     if (name !== "notes" && notesSelect.on) exitNotesSelectMode();
     if (name !== "notes" && notesSplitCurrentId && isNoteEditorModalOpen()) closeNoteEditorModal();
     if (name === "notes" && currentTab !== "notes") notesSplitAutoOpened = false;
@@ -27255,6 +27256,9 @@
     hero = hero || document.getElementById("actual-hero");
     if (!hero) return;
     if (heroTodayEvents) heroTodayEventsDate = todayIsoLocal();
+    // Стикеры живут внутри hero: переносим тот же узел, иначе ежеминутная перерисовка их стирала.
+    var keepStickies = hero.querySelector(".av2-stickies");
+    if (keepStickies) keepStickies.remove();
     hero.innerHTML = "";
     var inner = document.createElement("div");
     inner.className = "hero-inner";
@@ -27296,12 +27300,18 @@
     syncPostedHeroLate(chips.lastChild, postedOverdueCountFromItems(lastPostedTasksItems));
     left.appendChild(chips);
     inner.appendChild(left);
+    if (keepStickies) inner.appendChild(keepStickies);
     var nextBox = renderHeroNext();
     if (nextBox) inner.appendChild(nextBox);
     hero.appendChild(inner);
+    if (!keepStickies) renderAv2Stickies();
     if (!heroTimer) {
       heroTimer = window.setInterval(function () {
-        if (currentTab === "actual" && !document.hidden) paintActualHero();
+        if (currentTab !== "actual" || document.hidden) return;
+        // Пока человек пишет на стикере — не трогаем hero, чтобы не сбить курсор.
+        var ae = document.activeElement;
+        if (ae && ae.closest && ae.closest("#actual-hero .av2-stickies")) return;
+        paintActualHero();
       }, 60000);
     }
   }
@@ -29330,7 +29340,8 @@
 
     var foot = document.createElement("div");
     foot.className = "pt-c-foot";
-    if (!archived || isOwner) foot.appendChild(renderPostedComposer(state, otherName, draft));
+    // Писать можно и в закрытой задаче — обеим сторонам (вопрос по результату, «спасибо», уточнение).
+    foot.appendChild(renderPostedComposer(state, otherName, draft));
     var bar = document.createElement("div");
     bar.className = "modal-sheet-actions pt-card-actions";
     if (isOwner && !archived && !done && st.triage === "declined") {
@@ -31081,6 +31092,7 @@
 
   function setMyTasksScreen(open) {
     if (av2On()) window.setTimeout(av2SyncSeg, 0);
+    av2DockDismiss();
     var panel = document.getElementById("panel-actual");
     var sub = document.getElementById("actual-my-tasks");
     if (!panel || !sub) return;
@@ -31107,6 +31119,7 @@
   }
 
   function setMyTasksTab(tab) {
+    av2DockDismiss();
     myTasksTab = tab === "done" ? "done" : "open";
     myTasksFrom = "";
     myTasksSelectedId = "";
@@ -31371,6 +31384,7 @@
     } catch (_) {}
     myTasksSelectedId = "";
     postedCardHosts.side = null;
+    av2DockDismiss();
     if (myTasksView === "kanban" && !myTasksDoneLoaded) loadMyTasksDone();
     renderMyTasksScreen();
   }
@@ -31599,7 +31613,8 @@
     var ov = document.getElementById("modal-overlay");
     if (!side || !ov || !document.documentElement.classList.contains("av2-dock")) return;
     var r = side.getBoundingClientRect();
-    if (!r.width || ov.classList.contains("hidden") || !isMyTasksOpen()) return av2DockClose();
+    if (ov.classList.contains("hidden")) return av2DockClose();
+    if (!r.width || !isMyTasksOpen() || myKanbanOn()) return av2DockDismiss();
     ov.style.left = Math.round(r.left) + "px";
     ov.style.top = Math.round(Math.max(0, r.top)) + "px";
     ov.style.width = Math.round(r.width) + "px";
@@ -31610,6 +31625,15 @@
     var ov = document.getElementById("modal-overlay");
     document.documentElement.classList.remove("av2-dock");
     if (ov) ov.style.left = ov.style.top = ov.style.width = ov.style.height = "";
+  }
+  // Окно задачи, прикреплённое справа к «Списку», живёт только вместе со списком: ушли на другой экран,
+  // переключили на Канбан или «Выполненные» — закрываем его, а не оставляем висеть поверх.
+  function av2DockDismiss() {
+    av2DockId = "";
+    if (!document.documentElement.classList.contains("av2-dock")) return;
+    av2DockClose();
+    var ov = document.getElementById("modal-overlay");
+    if (ov && !ov.classList.contains("hidden")) closeModal();
   }
   function av2DockOpen(task) {
     av2DockId = String(task.id);
@@ -32790,15 +32814,26 @@
     syncNotePaneModeClass();
     syncNotePaneHeader();
   }
+  // Документ-источник, открытый справа из Фокуса: «Развернуть» откроет его на весь экран на той же строке.
+  var av2RightSource = null;
+  function av2ExpandRightNote() {
+    var rn = noteSheetState.rightNote;
+    if (!rn || !rn.id) return;
+    var src = av2RightSource && String(av2RightSource.note.id) === String(rn.id) ? av2RightSource : { note: { id: rn.id, kind: "local", title: rn.title || "" } };
+    av2RightBackToChat(); // вернёмся на «Актуальное» — справа снова чат с Лео, а не этот документ
+    openSourceFragment({ id: src.note.id, kind: src.note.kind || "local", title: src.note.title || rn.title || "" }, src.at, src.quote);
+  }
   async function av2OpenSource(note, at, quote) {
     if (!isDesktopLayout() || currentTab !== "actual") return openSourceFragment(note, at, quote);
     try {
       if (!(await focusOpenAssistant())) return openSourceFragment(note, at, quote);
+      av2RightSource = { note: note, at: at, quote: quote };
       await openNoteInRightPane({ id: note.id, kind: "local", title: note.title || "" });
       // Панель открыта как чат с Лео — её шапка сама на документ не переключается.
       syncNotePaneModeClass();
       var lbl = document.getElementById("note-discussion-title-label");
       if (lbl && noteSheetState.rightNote) lbl.textContent = String(noteSheetState.rightNote.title || note.title || "Документ");
+      syncNoteExpandBtn();
     } catch (_) {
       openSourceFragment(note, at, quote);
     }
@@ -48027,7 +48062,24 @@
     if (rightBtn) rightBtn.classList.remove("is-open");
   }
 
+  function syncNoteExpandBtn() {
+    var expandBtn = document.getElementById("note-discussion-expand");
+    if (expandBtn) {
+      // Документ справа на «Актуальном» (источник карточки Фокуса) — можно открыть целиком, как из «Сохранённого».
+      var canExpand = noteSheetState.rightMode === "note" && !!(noteSheetState.rightNote && noteSheetState.rightNote.id) && currentTab === "actual";
+      expandBtn.classList.toggle("hidden", !canExpand);
+      if (!expandBtn._bound) {
+        expandBtn._bound = true;
+        expandBtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          av2ExpandRightNote();
+        });
+      }
+    }
+  }
+
   function syncNotePaneHeader() {
+    syncNoteExpandBtn();
     var label = document.getElementById("note-discussion-title-label");
     var btn = document.getElementById("note-discussion-title");
     var wrap = document.getElementById("note-editor-more-wrap");

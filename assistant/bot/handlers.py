@@ -558,7 +558,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(
         CallbackQueryHandler(
             task_reply.handle_reply_callback,
-            pattern=r"^tsk:(reply:\d+|rcancel)$",
+            pattern=r"^(tsk:(reply:\d+|accept:\d+|rcancel)|dsc:reply:\d+)$",
         )
     )
     app.add_handler(

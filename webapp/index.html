@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261112-av3p" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261112-expand" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261111-comps2" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261111-connect1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -2743,6 +2743,14 @@
           <div id="note-pane-switch-menu" class="note-pane-switch-menu hidden" role="menu"></div>
         </div>
         <div class="note-chats-wrap">
+          <button type="button" class="modal-header-btn hidden" id="note-discussion-expand" aria-label="Развернуть документ" title="Открыть документ на весь экран">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 3h6v6" />
+              <path d="M9 21H3v-6" />
+              <path d="M21 3l-7 7" />
+              <path d="M3 21l7-7" />
+            </svg>
+          </button>
           <button type="button" class="modal-header-btn hidden" id="note-discussion-share" aria-label="Поделиться чатом" title="Поделиться: ссылка и участники">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M4 12v7a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-7" />
@@ -2818,7 +2826,7 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261112-av3p" defer></script>
+  <script src="/webapp/app.js?v=20261112-expand" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261111-compose" defer></script>
   <script src="/webapp/digest-chats.js?v=20261106-empty1" defer></script>

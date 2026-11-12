@@ -3470,6 +3470,9 @@ def _safe_share_return_path(raw: str | None) -> str | None:
     return f"/share/{token}"
 
 
+_SHARE_DOC_BODY_MAX = 30_000_000  # предохранитель; обычный документ с картинками — до нескольких МБ
+
+
 def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
     from assistant.lib.rich_html import sanitize_rich_html
     from assistant.stores import share_links as share_links_store
@@ -3497,15 +3500,18 @@ def _public_share_payload(link: dict[str, Any]) -> dict[str, Any] | None:
             return None  # листы ссылки удалены
         canvases = note_sheets_store.list_share_canvases(note, sheet_ids)
         boards = note_sheets_store.list_share_boards(note, sheet_ids)
+        # Не режем на 120 тыс.: вставленные картинки (data:image) весят сотни тысяч символов,
+        # и обрезка съедала конец основного листа и все следующие листы ссылки.
+        body = body[:_SHARE_DOC_BODY_MAX]
         return {
             "kind": "local",
             "operation": None,
             "label": _SHARE_KIND_LABELS["local"],
             "title": title[:500],
-            "body": sanitize_rich_html(body[:120000]),
+            "body": sanitize_rich_html(body),
             "canvases": canvases,
             "boards": boards,
-            "board_embeds": note_sheets_store.share_board_embeds(note, body[:120000]),
+            "board_embeds": note_sheets_store.share_board_embeds(note, body),
             "updated_at": note.get("updated_at"),
             "access": share_links_store.normalize_access(link.get("access")),
             "item_id": item_id,
@@ -4052,6 +4058,7 @@ def _notify_discussion_comment(
     body: str,
     is_assistant: bool,
     chat_id: int | None = None,
+    comment_id: int | None = None,
 ) -> None:
     """Пуш участникам, у которых сейчас не открыто это обсуждение."""
     from assistant.services.discussion_notify import notify_discussion_comment_safe
@@ -4066,6 +4073,7 @@ def _notify_discussion_comment(
         body=body,
         is_assistant=is_assistant,
         chat_id=chat_id,
+        comment_id=comment_id,
     )
 
 
@@ -17056,6 +17064,7 @@ async def miniapp_share_comments_create(
                 body=text,
                 is_assistant=is_assistant,
                 chat_id=row.get("chat_id"),
+                comment_id=row.get("id"),
             )
         )
     except Exception as e:

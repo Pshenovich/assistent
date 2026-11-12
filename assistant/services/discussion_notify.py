@@ -139,10 +139,18 @@ def _preview(body: str, *, limit: int = 180) -> str:
     return text or "Новое сообщение"
 
 
-def _send_telegram(user_id: int, text: str) -> None:
+DISCUSSION_REPLY_CALLBACK_PREFIX = "dsc:reply:"
+
+
+def discussion_reply_keyboard(comment_id: int | str) -> dict[str, Any]:
+    """Кнопка «Ответить» — следующий текст/голосовое уходит ответом в это обсуждение (assistant/bot/task_reply.py)."""
+    return {"inline_keyboard": [[{"text": "↩️ Ответить", "callback_data": f"{DISCUSSION_REPLY_CALLBACK_PREFIX}{int(comment_id)}"}]]}
+
+
+def _send_telegram(user_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
     from assistant.lib.telegram_notify import send_message
 
-    send_message(int(user_id), text)
+    send_message(int(user_id), text, reply_markup=reply_markup)
 
 
 _VAPID_WARNED = False
@@ -264,9 +272,11 @@ def notify_discussion_comment(
     body: str = "",
     is_assistant: bool = False,
     chat_id: int | None = None,
+    comment_id: int | None = None,
 ) -> list[str]:
     """Пуш участникам, у которых сейчас не открыто это обсуждение.
 
+    ``comment_id`` — сообщение человека: под ним в Telegram кнопка «Ответить».
     Возвращает user_id тех, кому ушло хотя бы в один канал.
     """
     from assistant.stores import note_members
@@ -326,7 +336,8 @@ def notify_discussion_comment(
             continue
         if want_tg:
             try:
-                _send_telegram(uid, telegram_text)
+                markup = discussion_reply_keyboard(comment_id) if comment_id and not is_assistant else None
+                _send_telegram(uid, telegram_text, markup)
                 sent = True
             except Exception as e:
                 print(f"[discuss_notify] telegram_fail uid={mid} err={e!r}")
