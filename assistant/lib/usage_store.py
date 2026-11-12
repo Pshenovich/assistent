@@ -316,6 +316,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "summary_task_verify": "Проверка задач из саммари",
     "market_digest": "Рынок: выпуск",
     "bulk_map": "Большие данные по ссылке",
+    "task_result_draft": "Описание результата задачи",
 }
 
 

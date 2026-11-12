@@ -8176,6 +8176,7 @@
       mail_draft: "Черновик ответа на письмо",
       mail_summary: "Саммари переписки",
       market_insight: "Рынок: что это значит для вас",
+      task_result_draft: "Описание результата задачи",
     };
     const key = String(op || "").trim();
     if (!key) return "—";
@@ -17936,7 +17937,12 @@
     bindSheetTitleArea(document.getElementById("m-ev-sum"));
     document.getElementById("m-task-desc").value = ev.description || "";
     var resultEl = document.getElementById("m-task-result");
-    if (resultEl) resultEl.value = ev.result || (ev.event && ev.event.result) || "";
+    if (resultEl) {
+      resultEl.value = ev.result || (ev.event && ev.event.result) || "";
+      // Черновик — когда человек пришёл к полю (окно открывают часто, Лео зря не зовём).
+      var resultDraftRow = existing && !resultEl.value ? mountResultDraft(resultEl, taskId, { lazy: true }) : null;
+      if (resultDraftRow) resultEl.insertAdjacentElement("afterend", resultDraftRow);
+    }
     document.getElementById("m-ev-start").value = startLocal;
     document.getElementById("m-ev-end").value = endLocal;
     document.getElementById("modal-task-note-id").value = ev.note_id || currentOpenNoteId() || "";
@@ -23353,6 +23359,8 @@
       res.rows = 3;
       res.placeholder = "Что получилось — увидит " + owner;
       wrap.appendChild(res);
+      var resDraft = mountResultDraft(res, task.id);
+      if (resDraft) wrap.appendChild(resDraft);
       submit = { label: "Сдать работу", run: function () { tinboxApply("done", { result: res.value.trim() }, "right"); } };
     } else if (mode === "decline") {
       wrap.appendChild(tinboxEl("label", "tinbox-label", "Комментарий — увидит " + owner));
@@ -30354,6 +30362,83 @@
     paintPostedCard(state);
   }
 
+  // Серый черновик результата от Лео: видно как подсказку в пустом поле, «Взять» или Tab — вставить для правки.
+  // Не взяли — в результат ничего не уходит. Черновик видит только исполнитель (у остальных сервер отвечает 400).
+  var resultDraftCache = {};
+  var RESULT_DRAFT_CAPTION = "Что получилось — Лео потом расскажет об этом тем, кто спросит";
+  function fetchResultDraft(taskId) {
+    var key = String(taskId || "");
+    if (!key) return Promise.resolve("");
+    if (resultDraftCache[key]) return resultDraftCache[key];
+    var p = apiFetch("/calendar/tasks/" + encodeURIComponent(key) + "/result-draft", { method: "POST", body: "{}" })
+      .then(function (r) { return String((r && r.draft) || "").trim(); })
+      .catch(function () { return ""; });
+    resultDraftCache[key] = p;
+    // Кэш браузера короткий: сервер сам держит черновик до нового события в ленте.
+    setTimeout(function () { if (resultDraftCache[key] === p) delete resultDraftCache[key]; }, 60000);
+    return p;
+  }
+
+  function mountResultDraft(ta, taskId, opts) {
+    opts = opts || {};
+    if (!ta || !taskId || ta._leoDraftMounted) return null;
+    ta._leoDraftMounted = true;
+    var row = document.createElement("div");
+    row.className = "leo-rdraft";
+    var cap = document.createElement("span");
+    cap.className = "leo-rdraft-cap";
+    cap.textContent = opts.noCaption ? "" : RESULT_DRAFT_CAPTION;
+    var take = document.createElement("button");
+    take.type = "button";
+    take.className = "leo-rdraft-take hidden";
+    take.textContent = "Взять";
+    take.title = "Вставить черновик Лео (Tab)";
+    row.appendChild(cap);
+    row.appendChild(take);
+    var basePlaceholder = ta.placeholder || "";
+    var draft = "";
+    function sync() {
+      var show = !!draft && !String(ta.value || "").trim();
+      ta.classList.toggle("has-leo-draft", show);
+      ta.placeholder = show ? draft : basePlaceholder;
+      take.classList.toggle("hidden", !show);
+      if (opts.noCaption) cap.textContent = show ? "Черновик Лео — Tab, чтобы взять" : "";
+      row.classList.toggle("is-empty", !show && !cap.textContent);
+      if (opts.onSync) opts.onSync();
+    }
+    function accept() {
+      if (!draft || String(ta.value || "").trim()) return;
+      ta.value = draft;
+      sync();
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+      ta.focus();
+      try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_e) { /* поле без выделения */ }
+    }
+    take.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    take.addEventListener("click", accept);
+    ta.addEventListener("input", sync);
+    ta.addEventListener("keydown", function (e) {
+      if (e.key === "Tab" && !e.shiftKey && draft && !String(ta.value || "").trim()) {
+        e.preventDefault();
+        accept();
+      }
+    });
+    var loaded = false;
+    function load() {
+      if (loaded || String(ta.value || "").trim()) return;
+      loaded = true;
+      ta.classList.add("is-leo-drafting");
+      fetchResultDraft(taskId).then(function (d) {
+        ta.classList.remove("is-leo-drafting");
+        draft = d;
+        sync();
+      });
+    }
+    if (opts.lazy) ta.addEventListener("focus", load);
+    else load();
+    return row;
+  }
+
   // Поле — как у ассистента (тот же вид и поведение), без выбора агента и листов:
   // «+» (файл или фото, задача, заметка, транскрипция, встреча), @упоминание, диктовка, вложения над полем.
   function renderPostedComposer(state, otherName, draft) {
@@ -30365,7 +30450,7 @@
     if (mode === "return" || mode === "result") {
       var lbl = document.createElement("div");
       lbl.className = "pt-composer-label";
-      lbl.textContent = mode === "return" ? "Что доработать — исполнитель получит в Telegram" : "Что получилось — постановщик получит в Telegram";
+      lbl.textContent = mode === "return" ? "Что доработать — исполнитель получит в Telegram" : RESULT_DRAFT_CAPTION;
       var x = document.createElement("button");
       x.type = "button";
       x.className = "pt-composer-x";
@@ -30413,6 +30498,10 @@
     if (mode) {
       send.classList.add("pt-send-text");
       send.textContent = mode === "return" ? "Вернуть" : "Сдать";
+    }
+    if (mode === "result") {
+      var draftRow = mountResultDraft(ta, state.taskId, { noCaption: true, onSync: function () { grow(); } });
+      if (draftRow) wrap.appendChild(draftRow);
     }
     function syncSend() {
       var ready = !!(String(ta.value || "").trim() || cmp.files.length || cmp.refs.length || mode);

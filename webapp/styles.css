@@ -16067,6 +16067,32 @@ html.notes-chats-tab.chats-split-open #note-discussion-close {
 }
 .pt-composer.is-return .pt-composer-label { color: var(--pt-q); }
 .pt-composer.is-result .pt-composer-label { color: var(--pt-ok); }
+/* Серый черновик результата от Лео: подсказка в пустом поле, «Взять» / Tab вставляет. */
+.leo-rdraft {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.leo-rdraft.is-empty { display: none; }
+.leo-rdraft-cap { min-width: 0; }
+.leo-rdraft-take {
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.leo-rdraft-take:hover { border-color: var(--accent); color: var(--accent); }
+textarea.has-leo-draft { min-height: 4.6em; }
+textarea.has-leo-draft::placeholder { color: var(--text-tertiary); font-style: italic; opacity: 1; }
+textarea.is-leo-drafting::placeholder { opacity: 0.5; }
 .pt-composer-x { border: none; background: none; color: var(--text-secondary); font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 0 4px; }
 .pt-composer { position: relative; }
 .pt-composer-box {

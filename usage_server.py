@@ -7313,6 +7313,94 @@ async def miniapp_calendar_tasks_events(
     return {"ok": True, "events": events}
 
 
+def _task_files_text(task: dict[str, Any], file_ids: list[int], *, limit: int = 6000) -> str:
+    """Текст файлов из обсуждения задачи (только файлы этой задачи) — как для PAIE/Research."""
+    from assistant.stores import comment_files
+
+    owner = str(task.get("owner_user_id") or "")
+    out: list[str] = []
+    for fid in file_ids[:8]:
+        row = comment_files.get_file(fid)
+        if not (
+            row
+            and str(row.get("owner_user_id") or "") == owner
+            and str(row.get("item_kind") or "") == "task"
+            and str(row.get("item_id") or "") == str(task["id"])
+        ):
+            continue
+        preview = ""
+        try:
+            preview = (
+                _pdf_text(comment_files.disk_path(fid), limit=limit)
+                if comment_files.is_pdf(row)
+                else comment_files.extract_text_preview(row, limit=limit)
+            )
+        except Exception as e:  # noqa: BLE001 — один файл не должен ронять черновик
+            print(f"[result_draft] preview fid={fid} err={e!r}")
+        if preview:
+            out.append(f"Файл «{row.get('filename') or 'file'}»:\n{preview}")
+    return "\n\n".join(out).strip()
+
+
+def _task_result_material(uid: int, task: dict[str, Any], events: list[dict[str, Any]]) -> str:
+    from assistant.nlu.ask_context import pack_attached_notes
+    from assistant.services import bundle_access
+    from assistant.services import task_result_draft as trd
+
+    files_text = _task_files_text(task, trd.event_file_ids(events))
+    note_ids = trd.event_note_ids(events)
+    try:
+        bundles = bundle_access.bundles_for_item(uid, "task", str(task["id"]))
+    except Exception as e:  # noqa: BLE001
+        print(f"[result_draft] bundles task={task.get('id')} err={e!r}")
+        bundles = []
+    for sid in trd.bundle_note_ids(bundles):
+        if sid not in note_ids:
+            note_ids.append(sid)
+    docs_text = pack_attached_notes(uid, note_ids[:6], budget=6000, each=2000) if note_ids else ""
+    return trd.build_material(task=task, chat=trd.chat_text(events), files_text=files_text, docs_text=docs_text)
+
+
+def _task_result_draft_as(uid: int, material: str) -> str:
+    """Черновик с расходом на исполнителя — в дашборде отдельной строкой «Описание результата задачи»."""
+    from assistant.integrations.openrouter_client import usage_user
+    from assistant.services import task_result_draft as trd
+
+    with usage_user(uid):
+        return trd.draft_from_material(material)
+
+
+@miniapp_router.post("/calendar/tasks/{task_id}/result-draft")
+async def miniapp_calendar_tasks_result_draft(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Серый черновик «что получилось» для поля результата — только исполнителю задачи."""
+    from assistant.services import task_result_draft as trd
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    uid = int(principal.telegram_user_id)
+    task = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    if not task or trd.executor_id(task) != str(uid):
+        raise HTTPException(status_code=400, detail="Черновик результата — только для исполнителя задачи")
+    events = await run_in_threadpool(calendar_tasks_store.list_events, task)
+    marker = trd.events_marker(events)
+    hit = trd.cached(int(task["id"]), marker)
+    if hit is not None:
+        return {"ok": True, "draft": hit, "cached": True}
+    material = await run_in_threadpool(_task_result_material, uid, task, events)
+    draft = ""
+    if material:
+        _track(principal.telegram_user_id, "ai.task_result_draft")
+        try:
+            draft = await run_in_threadpool(_task_result_draft_as, uid, material)
+        except Exception as e:  # noqa: BLE001 — черновик необязателен
+            print(f"[result_draft] task={task_id} err={e!r}")
+            return {"ok": True, "draft": "", "cached": False}
+    trd.remember(int(task["id"]), marker, draft)
+    return {"ok": True, "draft": draft, "cached": False}
+
+
 @miniapp_router.post("/calendar/tasks/{task_id}/messages")
 async def miniapp_calendar_tasks_message(
     task_id: int,
