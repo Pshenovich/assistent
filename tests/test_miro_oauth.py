@@ -78,6 +78,19 @@ class MiroOAuthTests(unittest.TestCase):
         # Новый refresh_token не пришёл — старый остаётся.
         self.assertIn('"refresh_token": "R1"', miro_oauth.user_token_path(5).read_text())
 
+    def test_non_expiring_token(self) -> None:
+        # Бессрочный ключ: Miro присылает expires_in 0 и без refresh_token — ключ действует.
+        state = miro_oauth.register_oauth_state(3)
+        with mock.patch.object(miro_oauth.requests, "post", return_value=_Resp(200, {"access_token": "NE", "expires_in": 0})):
+            miro_oauth.exchange_code_and_save_token("C", state)
+        self.assertNotIn("expires_at", miro_oauth.user_token_path(3).read_text())
+        self.assertEqual(miro_oauth.get_access_token(3), "NE")
+        # Старый файл с уже прошедшим сроком и без refresh_token (так сохранил первый вход на проде) — тоже ключ.
+        miro_oauth.user_token_path(3).write_text('{"access_token": "OLD", "expires_at": 1}')
+        with mock.patch.object(miro_oauth.requests, "post") as post:
+            self.assertEqual(miro_oauth.get_access_token(3), "OLD")
+            post.assert_not_called()
+
     def test_bad_state_and_errors(self) -> None:
         with self.assertRaises(ValueError):
             miro_oauth.exchange_code_and_save_token("C", "../x")

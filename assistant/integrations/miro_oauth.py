@@ -130,11 +130,14 @@ def _store_from(body: dict[str, Any], prev: Optional[dict[str, Any]] = None) -> 
     rt = str(body.get("refresh_token") or "").strip() or str((prev or {}).get("refresh_token") or "")
     if rt:
         store["refresh_token"] = rt
+    # Бессрочный ключ (в приложении Miro выключено «Expire user authorization token»): Miro присылает
+    # срок 0 или не присылает вовсе — срока нет. Иначе ключ считался истёкшим сразу после входа.
     try:
-        if body.get("expires_in") is not None:
-            store["expires_at"] = time.time() + int(body["expires_in"]) - TOKEN_EXPIRY_SKEW_SEC
+        exp_in = int(body.get("expires_in") or 0)
     except (TypeError, ValueError):
-        pass
+        exp_in = 0
+    if exp_in > TOKEN_EXPIRY_SKEW_SEC and rt:
+        store["expires_at"] = time.time() + exp_in - TOKEN_EXPIRY_SKEW_SEC
     for k in ("team_id", "user_id", "scope"):
         if body.get(k) is not None:
             store[k] = str(body[k])
@@ -180,10 +183,9 @@ def get_access_token(user_id: int) -> Optional[str]:
     if not store:
         return None
     exp = store.get("expires_at")
-    if exp is not None and time.time() >= float(exp):
-        rt = str(store.get("refresh_token") or "")
-        if not rt:
-            return None
+    rt = str(store.get("refresh_token") or "")
+    # Обновить нечем — отдаём как есть: просрочен ли ключ, решит сам Miro (доска тогда попросит подключить заново).
+    if exp is not None and rt and time.time() >= float(exp):
         try:
             store = _store_from(_token_request({"grant_type": "refresh_token", "refresh_token": rt}), store)
         except RuntimeError:
