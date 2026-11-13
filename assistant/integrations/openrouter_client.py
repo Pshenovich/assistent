@@ -75,8 +75,17 @@ def get_openrouter_usage_telegram_user() -> tuple[str | None, str | None]:
     return _current_tg_user_id.get(), _current_tg_user_username.get()
 
 
+def comet_enabled() -> bool:
+    """Запасной CometAPI выключен по умолчанию: для него нельзя запретить хранение и обучение на запросах
+    (у OpenRouter — provider.data_collection=deny), а через Лео идут данные Google (Limited Use).
+    COMET_FALLBACK_ENABLED=1 — включить обратно."""
+    return os.getenv("COMET_FALLBACK_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def comet_api_key() -> str:
-    """Ключ CometAPI (фолбэк). В .env встречается под разными именами."""
+    """Ключ CometAPI (фолбэк). В .env встречается под разными именами. Пусто, если фолбэк выключен."""
+    if not comet_enabled():
+        return ""
     for name in ("COMET_API_KEY", "COMETA_APIKEY", "COMET_APIKEY", "COMETA_API_KEY"):
         v = os.getenv(name, "").strip()
         if v:

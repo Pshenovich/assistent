@@ -10,6 +10,7 @@ OK = {"choices": [{"message": {"content": "ок"}}], "usage": {}}
 def calls(monkeypatch):
     for k in ("COMET_API_KEY", "COMETA_APIKEY", "COMET_APIKEY", "COMETA_API_KEY"):
         monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("COMET_FALLBACK_ENABLED", "1")  # по умолчанию фолбэк выключен — здесь проверяем его работу
     monkeypatch.setenv("OPENROUTER_KEY", "or")
     monkeypatch.setenv("OPENROUTER_API_URL", "http://proxy/v1/chat/completions")
     monkeypatch.delenv("OPENROUTER_API_URLS", raising=False)
@@ -129,3 +130,9 @@ def test_background_limit_does_not_block_user_calls(calls, monkeypatch):
     # слот освобождён и не «утёк»
     assert sem.acquire(timeout=0.1)
     sem.release()
+
+
+def test_comet_off_by_default(monkeypatch):
+    monkeypatch.delenv("COMET_FALLBACK_ENABLED", raising=False)
+    monkeypatch.setenv("COMET_API_KEY", "cm")
+    assert oc.comet_api_key() == ""
