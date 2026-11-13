@@ -105,5 +105,41 @@ assert.equal(IMP.fromHtml("<p>просто текст</p>", () => "x"), null);
   assert.deepEqual([line.start.el, line.end.el, line.waypoints], [sticky.id, dia.id, [[-10500, -5300]]]);
   assert.equal(r.skipped, 1);
 }
+// Стикеры и вид связей — как в буфере настоящей доски Miro (2026-11-13): цвет в sbc, виды связей 4/5/8/24.
+{
+  const stick = (id, x, sbc) => ({ id, widgetData: { type: "sticker", json: {
+    _position: { offsetPx: { x, y: 0 } }, size: { width: 200, height: 200 }, scale: { scale: 1 },
+    text: "<p>s</p>", style: JSON.stringify({ fs: 0, ta: "c", sbc }),
+  } } });
+  const link = (id, a, b, t, points) => ({ id, widgetData: { type: "line", json: {
+    primary: { point: { x: 1, y: 0.5 }, widgetIndex: a }, secondary: { point: { x: 0, y: 0.5 }, widgetIndex: b },
+    points: points || [], style: JSON.stringify({ lc: 3355443, ls: 2, t, a_end: 9 }),
+  } } });
+  let m = 0;
+  const r = IMP.fromHtml(miroHtml([
+    stick(0, 0, 7004301), stick(1, 400, 1381653), stick(2, 800, 15988215),
+    link(3, 0, 1, 4), link(4, 1, 2, 8, [{ x: 600, y: 0 }, { x: 600, y: 50 }]), link(5, 0, 2, 5), link(6, 0, 1, 24),
+    link(7, 1, 0, 77, [{ x: 10, y: 10 }, { x: 10, y: 90 }]), link(8, 2, 0, 77, [{ x: 10, y: 10 }, { x: 90, y: 90 }]),
+  ]), () => "s" + ++m);
+  const st = r.elements.filter((e) => e.type === "sticky");
+  assert.deepEqual(st.map((e) => e.style.fill), ["#6ae08d", "#151515", "#f3f5f7"]);
+  assert.equal(st[0].style.textColor, undefined);
+  assert.equal(st[1].style.textColor, "#ffffff"); // тёмный стикер — белый текст
+  const routes = r.elements.filter((e) => e.type === "line").map((e) => e.route);
+  assert.deepEqual(routes, ["curve", "elbow", "elbow", "elbow", "elbow", "straight"]);
+  r.elements.filter((e) => e.type === "line").forEach((e) => assert.equal(e.arrowEnd, true));
+}
+// Заглушка картинки помнит, где картинка в Miro (доска подтянет её по ключу), и обрезку — долями исходника.
+{
+  const img = (id, crop) => ({ id, widgetData: { type: "image", json: {
+    _position: { offsetPx: { x: 0, y: 0 } }, scale: { scale: 1 }, crop,
+    resource: { id: "3458764517723531304", boardId: "uXjVIjX7OTM=", width: 722, height: 310 },
+  } } });
+  let m = 0;
+  const r = IMP.fromHtml(miroHtml([img(0, { x: 0, y: 0, width: 722, height: 310 }), img(1, { x: 72.2, y: 0, width: 361, height: 155 })]), () => "i" + ++m);
+  assert.equal(r.imageSlots, 2);
+  assert.deepEqual(r.elements[0].miro, { board: "uXjVIjX7OTM=", res: "3458764517723531304" });
+  assert.deepEqual(r.elements[1].miro.crop, [0.1, 0, 0.5, 0.5]);
+}
 assert.equal(IMP.fromHtml('<span data-meta="<--(miro-data-v1)!!!(/miro-data-v1)-->">', () => "x"), null);
 console.log("board import ok");

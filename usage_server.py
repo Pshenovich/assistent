@@ -563,6 +563,39 @@ async def todoist_oauth_callback(
     )
 
 
+@app.get("/oauth/miro/callback")
+@app.get("/oauth/miro/callback/", include_in_schema=False)
+async def miro_oauth_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+) -> HTMLResponse:
+    """OAuth redirect от Miro: ключ для картинок при вставке схем из Miro на доску (webapp/board.js)."""
+    del request
+
+    def _err(msg: str, status: int) -> HTMLResponse:
+        return HTMLResponse(
+            f"<html><head><meta charset=\"utf-8\"/></head><body><p>Miro: {html_lib.escape(msg)}</p></body></html>",
+            status_code=status,
+        )
+
+    if error:
+        return _err("доступ не выдан" if error == "access_denied" else str(error), 400)
+    if not code or not state:
+        return _err("не хватает параметров авторизации", 400)
+    try:
+        from assistant.integrations.miro_oauth import exchange_code_and_save_token
+
+        await asyncio.to_thread(exchange_code_and_save_token, code, state)
+    except ValueError as e:
+        return _err(str(e), 400)
+    except Exception as e:
+        print(f"[oauth] miro_callback err={type(e).__name__}: {str(e)[:200]}")
+        return _err("не удалось подключить, попробуйте ещё раз", 502)
+    return _oauth_done_page("Miro")
+
+
 @app.get("/oauth/yandex-disk/callback")
 @app.get("/oauth/yandex-disk/callback/", include_in_schema=False)
 async def yandex_disk_oauth_callback(
@@ -19266,6 +19299,39 @@ async def miniapp_oauth_todoist_start(
 
     state = register_oauth_state(int(principal.telegram_user_id))
     return {"url": build_authorization_url(state)}
+
+
+@miniapp_router.post("/oauth/miro/start")
+async def miniapp_oauth_miro_start(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    from assistant.integrations import miro_oauth
+
+    if not miro_oauth.is_configured():
+        raise HTTPException(status_code=400, detail="Подключение Miro пока не настроено")
+    state = miro_oauth.register_oauth_state(int(principal.telegram_user_id))
+    return {"url": miro_oauth.build_authorization_url(state)}
+
+
+@miniapp_router.get("/miro/token")
+async def miniapp_miro_token(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    """Ключ Miro для доски: картинки из Miro качает браузер (сервер Miro не пускает). Только свой ключ."""
+    from assistant.integrations import miro_oauth
+
+    token = await asyncio.to_thread(miro_oauth.get_access_token, int(principal.telegram_user_id))
+    return {"configured": miro_oauth.is_configured(), "connected": bool(token), "token": token or ""}
+
+
+@miniapp_router.post("/oauth/miro/disconnect")
+async def miniapp_oauth_miro_disconnect(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict:
+    from assistant.integrations import miro_oauth
+
+    miro_oauth.remove_user_token(int(principal.telegram_user_id))
+    return {"ok": True}
 
 
 @miniapp_router.post("/oauth/zoom/start")

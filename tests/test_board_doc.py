@@ -34,6 +34,14 @@ class BoardDocTests(unittest.TestCase):
         self.assertEqual(board_doc._clean_element("l", dict(L, labelT=7))["labelT"], 1)
         self.assertNotIn("labelT", board_doc._clean_element("l", L))
 
+    def test_miro_image_slot_kept(self) -> None:
+        # Заглушка картинки из Miro: где картинка в Miro — доска подтянет её по ключу.
+        raw = dict(A, miro={"board": "uXjVIjX7OTM=", "res": "3458764517723531304", "crop": [0.1, 0, 2, "x"]})
+        el = board_doc._clean_element("a", raw)
+        self.assertEqual(el["miro"], {"board": "uXjVIjX7OTM=", "res": "3458764517723531304", "crop": [0.1, 0, 1, 0]})
+        self.assertNotIn("miro", board_doc._clean_element("a", dict(A, miro={"board": "", "res": "1"})))
+        self.assertNotIn("miro", board_doc._clean_element("b", dict(B, miro={"board": "x", "res": "1"})))
+
     def test_plain_text_order_and_links(self) -> None:
         text = board_doc.board_plain_text(_board(C, B, A, L))
         lines = text.split("\n")

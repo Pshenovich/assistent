@@ -517,6 +517,15 @@ def _clean_element(eid: str, raw: Any) -> Optional[dict[str, Any]]:
             el["d"] = d  # путь, посчитанный клиентом (изгиб, излом) — для SVG без клиента
     elif etype == "pen":
         el["points"] = _points(raw.get("points"))
+    elif etype == "rect" and isinstance(raw.get("miro"), dict):
+        # Заглушка картинки из Miro: где картинка в Miro — доска подтянет её по ключу (webapp/board.js).
+        mi = raw["miro"]
+        board, res = _str(mi.get("board"), 64), _str(mi.get("res"), 64)
+        if board and res:
+            el["miro"] = {"board": board, "res": res}
+            crop = mi.get("crop")
+            if isinstance(crop, list) and len(crop) == 4:
+                el["miro"]["crop"] = [_num(v, 0, 0, 1) for v in crop]
     elif etype == "image":
         src = str(raw.get("src") or "")
         if not src.lower().startswith(_IMAGE_PREFIXES):

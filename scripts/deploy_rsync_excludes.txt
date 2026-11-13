@@ -18,6 +18,8 @@ yandex_disk_oauth_pending/
 bitrix_mcp_user_tokens/
 telemost_user_tokens/
 telemost_oauth_pending/
+miro_user_tokens/
+miro_oauth_pending/
 contacts_user/
 contacts.json
 assistant/stores/contacts_user/

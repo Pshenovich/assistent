@@ -2781,3 +2781,127 @@ html:has(.leo-board) body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Картинки из Miro: окно с ключом и ходом загрузки (board.js, renderMiro). */
+.lb-miro {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(360px, calc(100% - 32px));
+  padding: 14px 16px;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 14px;
+  background: var(--lb-panel);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--shadow-color, #000) 28%, transparent);
+  color: var(--lb-text);
+  font-size: 14px;
+  line-height: 1.4;
+  transform: translateX(-50%);
+}
+
+.lb-miro.is-chip {
+  width: auto;
+  padding: 0;
+  border-radius: 999px;
+}
+
+.lb-miro-title {
+  font-weight: 600;
+}
+
+.lb-miro-text,
+.lb-miro-note {
+  color: var(--lb-muted);
+}
+
+.lb-miro-note {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.lb-miro-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.lb-miro-input:focus {
+  border-color: var(--lb-accent);
+  outline: none;
+}
+
+.lb-miro-how summary {
+  color: var(--lb-accent);
+  cursor: pointer;
+}
+
+.lb-miro-how ol {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: var(--lb-muted);
+}
+
+.lb-miro-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--lb-accent-soft);
+}
+
+.lb-miro-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--lb-accent);
+  transition: width 0.2s;
+}
+
+.lb-miro-acts {
+  display: flex;
+  gap: 8px;
+}
+
+.lb-miro-btn,
+.lb-miro-chip {
+  padding: 7px 12px;
+  border: 1px solid var(--lb-panel-border);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.lb-miro-btn.is-primary {
+  border-color: var(--lb-accent);
+  background: var(--lb-accent);
+  color: var(--lb-on-accent, #fff);
+}
+
+.lb-miro-chip {
+  border: 0;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.lb-miro-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lb-muted);
+  font: inherit;
+  font-size: 12px;
+  text-decoration: underline;
+  cursor: pointer;
+}

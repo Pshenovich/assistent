@@ -36,6 +36,8 @@
   var CULL_MARGIN_PX = 400;
   // Выделено больше — рамка одна общая, без контура у каждого объекта.
   var OUTLINE_MAX = 150;
+  // Линия на экране не тоньше этого (px) при любом отдалении.
+  var MIN_LINE_PX = 1.2;
   var GRID = 20;
   // Фигуры блок-схем (доска): капсула, цилиндр, треугольники, параллелограммы — как ромб, свой контур.
   var FLOW = ["pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
@@ -651,6 +653,11 @@
     });
     if (el.name && el.type !== "frame") o.name = String(el.name).slice(0, 120);
     if (el.ratio) o.ratio = true;
+    // Заглушка картинки из Miro: где картинка лежит в Miro (подтягивается по ключу, board.js miroFill).
+    if (el.miro && el.miro.res && el.miro.board && el.type === "rect") {
+      o.miro = { board: String(el.miro.board).slice(0, 64), res: String(el.miro.res).slice(0, 64) };
+      if (Array.isArray(el.miro.crop) && el.miro.crop.length === 4) o.miro.crop = el.miro.crop.map(Number);
+    }
     if (el.text) o.text = String(el.text);
     if (el.style) {
       var st = {};
@@ -1177,6 +1184,7 @@
       renderOverlay();
       renderProps();
       scheduleMinimap();
+      scheduleMiroRefresh();
     }
 
     function applyView() {
@@ -1367,7 +1375,7 @@
         svg:
           '<svg class="lb-shape" width="1" height="1" overflow="visible">' +
           '<path d="' + path.d + '" fill="none" stroke="transparent" stroke-width="' + Math.max(14, sw + 12) + '" pointer-events="stroke" class="lb-hit" stroke-linecap="round" stroke-linejoin="round"/>' +
-          '<path d="' + path.d + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"' +
+          '<path class="lb-stroke" d="' + path.d + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"' +
           (dash ? ' stroke-dasharray="' + dash + '"' : "") + ' stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>' +
           heads + "</svg>",
         bounds: G.boundsOf(path.poly || []),
@@ -1429,6 +1437,7 @@
       if (el.type !== "line") drawnBounds.set(id, G.elBounds(el, getEl));
       // className перезаписан при отрисовке — отметки «не рисовать» ставим заново.
       node.lbCulled = node.lbTiny = false;
+      node.lbStrokeW = undefined;
       cullOne(id, node, cullBox());
     }
 
@@ -1470,6 +1479,16 @@
       if (node.lbTiny !== tiny) {
         node.lbTiny = tiny;
         node.classList.toggle("is-tiny", tiny);
+      }
+      // Линия издалека — не тоньше ~1px на экране (как в Miro), иначе на большой схеме стрелки пропадают.
+      if (!off && el && el.type === "line") {
+        var sw = Number(el.style && el.style.strokeWidth) || 2;
+        var want = sw * view.z < MIN_LINE_PX ? r2(MIN_LINE_PX / view.z) + "px" : "";
+        if (node.lbStrokeW !== want) {
+          node.lbStrokeW = want;
+          var sp = node.querySelector(".lb-stroke");
+          if (sp) sp.style.strokeWidth = want;
+        }
       }
     }
 
@@ -1635,7 +1654,12 @@
           "left:" + el.x + "px;top:" + el.y + "px;width:" + Math.max(1, el.w) + "px;height:" + Math.max(1, el.h) + "px;" +
           (el.rot ? "transform:rotate(" + el.rot + "deg);" : "");
         replaceShape(node, shapeSvg(el));
-        if (el.type === "image" || el.type === "vector") return;
+        if (el.type === "image" || el.type === "vector") {
+          // Заглушка стала картинкой на месте (картинки из Miro) — её надпись не должна остаться поверх.
+          var leftover = node.querySelector(":scope > .lb-text");
+          if (leftover) leftover.remove();
+          return;
+        }
         textEl = ensureText(node);
         if (el.type === "sticky") renderAuthor(node, el.author);
       }
@@ -3718,7 +3742,399 @@
         return x.type !== "line";
       }).length;
       notify("Вставлено из " + imp.source + ": " + nBoxes + " " + pluralBlocks(nBoxes) + (imp.skipped ? " · не перенеслось: " + imp.skipped : "") +
-        (imp.imageSlots ? " · картинки — заглушки: выделите и вставьте картинку" : ""));
+        (imp.imageSlots ? " · картинок: " + imp.imageSlots : ""));
+    }
+
+    // ---- картинки из Miro: заглушки (el.miro) заполняются по ключу Miro ----
+    // Miro кладёт в буфер только номер картинки; файл отдаёт его API по ключу. Сервер Орбиты Miro
+    // не пускает (403 по стране), а браузер пускает (CORS открыт), поэтому качает браузер. Ключ — из
+    // подключения Miro (o.miro: вход по OAuth, ключ хранит сервер) или введённый вручную (только в этом
+    // браузере, localStorage).
+    var MIRO_KEY = "leo-miro-token";
+    var MIRO_SIDE = 1000;
+    var miroRun = null;
+    var miroPanel = null;
+    var miroDismissed = false;
+    var miroChipTimer = 0;
+    var miroWait = null;
+    var miroAskInfo = {};
+
+    /** Ключ: из подключения Miro, иначе введённый вручную. configured — подключение по OAuth доступно. */
+    function miroAuth() {
+      var local = miroToken();
+      if (!o.miro || typeof o.miro.status !== "function") return Promise.resolve({ token: local, configured: false, source: "local" });
+      return o.miro.status().then(function (st) {
+        st = st || {};
+        if (st.token) return { token: st.token, configured: !!st.configured, source: "oauth" };
+        return { token: local, configured: !!st.configured, source: "local" };
+      }, function () {
+        return { token: local, configured: false, source: "local" };
+      });
+    }
+
+    function miroToken() {
+      try {
+        return localStorage.getItem(MIRO_KEY) || "";
+      } catch (_) {
+        return "";
+      }
+    }
+
+    function setMiroToken(t) {
+      try {
+        if (t) localStorage.setItem(MIRO_KEY, t);
+        else localStorage.removeItem(MIRO_KEY);
+      } catch (_) {}
+    }
+
+    function miroSlots() {
+      var out = [];
+      els.forEach(function (e) {
+        if (e.type === "rect" && e.miro && e.miro.res && e.miro.board) out.push(e);
+      });
+      return out;
+    }
+
+    function miroPanelEl() {
+      if (!miroPanel) {
+        miroPanel = document.createElement("div");
+        miroPanel.className = "lb-miro hidden";
+        root.appendChild(miroPanel);
+        miroPanel.addEventListener("click", onMiroClick);
+        miroPanel.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && e.target && e.target.matches("input")) {
+            e.preventDefault();
+            miroStartFromInput();
+          }
+        });
+      }
+      return miroPanel;
+    }
+
+    /** Состояние окна: ask (нужен ключ), run (качаем), done (итог), chip (свёрнуто), hidden. */
+    function renderMiro(state, info) {
+      var p = miroPanelEl();
+      info = info || {};
+      var n = info.total != null ? info.total : miroSlots().length;
+      var h = "";
+      if (state === "ask" && info.configured && !info.manual) {
+        h =
+          '<div class="lb-miro-title">Картинки из Miro: ' + n + "</div>" +
+          '<div class="lb-miro-text">' + (info.bad
+            ? "Miro больше не даёт доступ к картинкам — подключите его заново."
+            : "Miro не кладёт сами картинки в буфер. Один раз разрешите Орбите читать ваши доски Miro — и картинки встанут на место.") + "</div>" +
+          '<div class="lb-miro-acts"><button type="button" class="lb-miro-btn is-primary" data-miro="connect">Подключить Miro</button>' +
+          '<button type="button" class="lb-miro-btn" data-miro="later">Не сейчас</button></div>' +
+          '<button type="button" class="lb-miro-link" data-miro="manual">Ввести ключ Miro вручную</button>';
+      } else if (state === "wait") {
+        h =
+          '<div class="lb-miro-title">Подключаю Miro</div>' +
+          '<div class="lb-miro-text">Разрешите доступ во вкладке Miro, которая открылась, и вернитесь сюда — картинки подтянутся сами.</div>' +
+          '<div class="lb-miro-acts"><button type="button" class="lb-miro-btn" data-miro="later">Отмена</button></div>';
+      } else if (state === "ask") {
+        h =
+          '<div class="lb-miro-title">Картинки из Miro: ' + n + "</div>" +
+          '<div class="lb-miro-text">' + (info.bad
+            ? "Miro не принял ключ. Проверьте, что скопировали его целиком, и вставьте ещё раз."
+            : "Miro не кладёт сами картинки в буфер. Доска скачает их из Miro по вашему ключу — один раз на этом устройстве.") + "</div>" +
+          '<input type="password" class="lb-miro-input" placeholder="Ключ Miro" autocomplete="off" spellcheck="false">' +
+          '<details class="lb-miro-how"><summary>Как получить ключ</summary><ol>' +
+          "<li>miro.com → аватарка → Settings → вкладка <b>Your apps</b></li>" +
+          "<li><b>Create new app</b>, название — любое</li>" +
+          "<li>В Permissions отметьте <b>boards:read</b></li>" +
+          "<li><b>Install app and get OAuth token</b> → выберите свою команду</li>" +
+          "<li>Скопируйте ключ и вставьте сюда</li></ol>" +
+          '<div class="lb-miro-note">Ключ хранится только в этом браузере.</div></details>' +
+          '<div class="lb-miro-acts"><button type="button" class="lb-miro-btn is-primary" data-miro="start">Подтянуть картинки</button>' +
+          '<button type="button" class="lb-miro-btn" data-miro="later">Не сейчас</button></div>';
+      } else if (state === "run") {
+        h =
+          '<div class="lb-miro-title">Подтягиваю картинки из Miro</div>' +
+          '<div class="lb-miro-text">' + info.done + " из " + info.total + (info.failed ? " · не вышло: " + info.failed : "") + "</div>" +
+          '<div class="lb-miro-bar"><span style="width:' + Math.round((100 * (info.done + info.failed)) / Math.max(1, info.total)) + '%"></span></div>' +
+          '<div class="lb-miro-acts"><button type="button" class="lb-miro-btn" data-miro="stop">Остановить</button></div>';
+      } else if (state === "done") {
+        h =
+          '<div class="lb-miro-title">' + (info.failed ? "Подтянуто картинок: " + info.done + " из " + info.total : "Готово: картинки из Miro на месте") + "</div>" +
+          (info.failed
+            ? '<div class="lb-miro-text">' + (info.offline
+              ? "Miro не открывается с этого устройства — проверьте, открывается ли miro.com, и повторите."
+              : "Не удалось: " + info.failed + ". Эти остались заглушками — можно повторить или вставить картинку вручную.") + "</div>"
+            : "") +
+          '<div class="lb-miro-acts">' + (info.failed ? '<button type="button" class="lb-miro-btn is-primary" data-miro="start">Повторить</button>' : "") +
+          '<button type="button" class="lb-miro-btn" data-miro="close">' + (info.failed ? "Закрыть" : "Хорошо") + "</button></div>";
+      } else if (state === "chip") {
+        h = '<button type="button" class="lb-miro-chip" data-miro="open">Картинки из Miro: ' + n + " · подтянуть</button>";
+      }
+      p.className = "lb-miro" + (state === "chip" ? " is-chip" : "") + (h ? "" : " hidden");
+      p.setAttribute("data-state", h ? state : "");
+      p.innerHTML = h;
+      if (state === "ask" || state === "wait") miroAskInfo = info;
+      if (state === "ask") {
+        var inp = p.querySelector("input");
+        if (inp) setTimeout(function () {
+          inp.focus({ preventScroll: true });
+        }, 0);
+      }
+    }
+
+    /** После вставки из Miro и при изменениях: есть заглушки — свёрнутая кнопка (или окно сразу после вставки). */
+    function refreshMiro(justPasted) {
+      if (readOnly || destroyed) return;
+      if (miroRun) return;
+      var n = miroSlots().length;
+      var st = miroPanel && miroPanel.getAttribute("data-state");
+      if (!n) {
+        if (st === "chip" || st === "ask") renderMiro("");
+        return;
+      }
+      if (justPasted) {
+        miroDismissed = false;
+        miroOpen();
+        return;
+      }
+      if (st === "ask" || st === "done" || st === "wait") return;
+      renderMiro("chip");
+    }
+
+    function scheduleMiroRefresh() {
+      if (miroChipTimer || readOnly) return;
+      miroChipTimer = setTimeout(function () {
+        miroChipTimer = 0;
+        refreshMiro(false);
+      }, 400);
+    }
+
+    function onMiroClick(e) {
+      var b = e.target.closest && e.target.closest("[data-miro]");
+      if (!b) return;
+      var a = b.getAttribute("data-miro");
+      if (a === "start") {
+        if (miroPanel.querySelector("input")) miroStartFromInput();
+        else miroFill();
+      } else if (a === "later" || a === "close") {
+        miroDismissed = true;
+        miroStopWait();
+        renderMiro(miroSlots().length ? "chip" : "");
+      } else if (a === "stop") {
+        if (miroRun) miroRun.stopped = true;
+      } else if (a === "open") {
+        miroOpen();
+      } else if (a === "manual") {
+        renderMiro("ask", Object.assign({}, miroAskInfo, { manual: true, bad: false }));
+      } else if (a === "connect") {
+        miroConnect();
+      }
+    }
+
+    /** Есть ключ — качаем; нет — окно «Подключить Miro» (или поле для ключа, если подключения нет). */
+    function miroOpen() {
+      miroAuth().then(function (st) {
+        if (destroyed) return;
+        if (st.token) miroFill(st);
+        else renderMiro("ask", { configured: st.configured });
+      });
+    }
+
+    function miroStopWait() {
+      if (miroWait) clearInterval(miroWait.timer);
+      miroWait = null;
+    }
+
+    /** Вход в Miro во вкладке; здесь ждём, пока сервер получит ключ (до 5 минут), и качаем. */
+    function miroConnect() {
+      if (!o.miro || typeof o.miro.connect !== "function") return;
+      miroStopWait();
+      var p;
+      try {
+        p = o.miro.connect();
+      } catch (err) {
+        p = Promise.reject(err);
+      }
+      renderMiro("wait", miroAskInfo);
+      var w = { started: Date.now(), timer: 0, busy: false };
+      miroWait = w;
+      w.timer = setInterval(function () {
+        if (miroWait !== w || destroyed) return clearInterval(w.timer);
+        if (Date.now() - w.started > 5 * 60 * 1000) {
+          miroStopWait();
+          renderMiro("ask", { configured: true });
+          return;
+        }
+        if (w.busy) return;
+        w.busy = true;
+        o.miro.status().then(function (st) {
+          w.busy = false;
+          if (miroWait !== w || !st || !st.token) return;
+          miroStopWait();
+          miroFill({ token: st.token, configured: true, source: "oauth" });
+        }, function () {
+          w.busy = false;
+        });
+      }, 2000);
+      Promise.resolve(p).catch(function (err) {
+        if (miroWait !== w) return;
+        miroStopWait();
+        notify("Miro: " + ((err && err.message) || "не удалось открыть вход"));
+        renderMiro("ask", Object.assign({}, miroAskInfo, { manual: true }));
+      });
+    }
+
+    function miroStartFromInput() {
+      var inp = miroPanel && miroPanel.querySelector("input");
+      var t = String((inp && inp.value) || "").replace(/^\s*(Bearer\s+)?/i, "").trim();
+      if (!t) {
+        if (inp) inp.focus();
+        return;
+      }
+      setMiroToken(t);
+      miroFill({ token: t, configured: !!miroAskInfo.configured, source: "local" });
+    }
+
+    /** Файл картинки → обрезка как в Miro (доли исходника) → не больше MIRO_SIDE по стороне → data URL. */
+    function miroPicture(blob, crop) {
+      var url = URL.createObjectURL(blob);
+      return loadImage(url).then(function (img) {
+        URL.revokeObjectURL(url);
+        if (!img) return null;
+        var W = img.naturalWidth || img.width;
+        var H = img.naturalHeight || img.height;
+        if (!W || !H) return null;
+        var c = Array.isArray(crop) && crop.length === 4 ? crop : [0, 0, 1, 1];
+        var sx = c[0] * W;
+        var sy = c[1] * H;
+        var sw = Math.max(1, Math.min(W - sx, c[2] * W));
+        var sh = Math.max(1, Math.min(H - sy, c[3] * H));
+        var k = Math.min(1, MIRO_SIDE / Math.max(sw, sh));
+        var cw = Math.max(1, Math.round(sw * k));
+        var ch = Math.max(1, Math.round(sh * k));
+        var canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        var ctx = canvas.getContext("2d");
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cw, ch);
+        // Прозрачность есть — PNG, иначе JPEG (скриншоты из Miro почти всегда непрозрачны: в разы меньше).
+        var alpha = false;
+        if (!/jpe?g/i.test(blob.type || "")) {
+          try {
+            var px = ctx.getImageData(0, 0, cw, ch).data;
+            for (var i = 3; i < px.length; i += 16) {
+              if (px[i] < 250) {
+                alpha = true;
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+        return alpha ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", 0.84);
+      });
+    }
+
+    function miroFetch(slot, token) {
+      var m = slot.miro;
+      var api = "https://api.miro.com/v2/boards/" + encodeURIComponent(m.board) + "/resources/images/" +
+        encodeURIComponent(m.res) + "?format=original&redirect=false";
+      return fetch(api, { headers: { Authorization: "Bearer " + token }, credentials: "omit" })
+        .then(function (r) {
+          if (r.status === 401) throw { auth: true };
+          if (!r.ok) throw { status: r.status };
+          return r.json();
+        })
+        .then(function (j) {
+          if (!j || !j.url) throw { status: 0 };
+          return fetch(j.url, { credentials: "omit" });
+        })
+        .then(function (r) {
+          if (!r.ok) throw { status: r.status };
+          return r.blob();
+        })
+        .then(function (blob) {
+          return miroPicture(blob, m.crop);
+        });
+    }
+
+    /** Качаем по 6 сразу; готовые ставим на место заглушки пачками (каждая пачка — шаг отмены).
+     * Заглушка становится картинкой с тем же id: стрелки, привязанные к ней в Miro, остаются на месте. */
+    function miroFill(auth) {
+      if (miroRun || readOnly) return;
+      if (!auth) {
+        miroOpen();
+        return;
+      }
+      var token = auth.token;
+      if (!token) {
+        renderMiro("ask", { configured: auth.configured });
+        return;
+      }
+      var queue = miroSlots();
+      if (!queue.length) {
+        renderMiro("");
+        return;
+      }
+      var run = { total: queue.length, done: 0, failed: 0, net: 0, stopped: false, ready: [], auth: false };
+      miroRun = run;
+      renderMiro("run", run);
+      var place = function () {
+        if (!run.ready.length) return;
+        var batch = run.ready.splice(0);
+        begin();
+        batch.forEach(function (it) {
+          var cur = getEl(it.id);
+          if (!cur || cur.type !== "rect" || !cur.miro) return;
+          var pic = Object.assign({}, cur, { type: "image", src: it.src });
+          delete pic.miro;
+          delete pic.text;
+          delete pic.style;
+          put(pic);
+        });
+        commit();
+      };
+      var flushTimer = setInterval(place, 700);
+      var next = function () {
+        if (run.stopped || run.auth || destroyed || !queue.length) return Promise.resolve();
+        var slot = queue.shift();
+        return miroFetch(slot, token)
+          .then(function (src) {
+            if (!src) throw { status: 0 };
+            run.done++;
+            run.ready.push({ id: slot.id, src: src });
+          })
+          .catch(function (err) {
+            if (err && err.auth) {
+              run.auth = true;
+              return;
+            }
+            run.failed++;
+            // TypeError у fetch — до Miro не достучались (нет сети, блокировка), а не ошибка Miro.
+            if (err instanceof TypeError) run.net++;
+          })
+          .then(function () {
+            if (!run.auth && !destroyed) renderMiro("run", run);
+            return next();
+          });
+      };
+      var workers = [];
+      for (var i = 0; i < 6; i++) workers.push(next());
+      Promise.all(workers).then(function () {
+        clearInterval(flushTimer);
+        if (destroyed) return;
+        place();
+        miroRun = null;
+        if (run.auth) {
+          // Ключ отозван или неверный: ручной — забываем; из подключения — просим подключить заново.
+          if (auth.source === "local") setMiroToken("");
+          else if (o.miro && typeof o.miro.disconnect === "function") o.miro.disconnect().catch(function () {});
+          renderMiro("ask", { bad: true, configured: auth.configured, total: miroSlots().length });
+          return;
+        }
+        if (run.stopped) {
+          renderMiro(miroSlots().length ? "chip" : "");
+          return;
+        }
+        run.failed = miroSlots().length;
+        run.offline = run.failed > 0 && run.net >= run.failed;
+        renderMiro("done", run);
+      });
     }
 
     function pluralBlocks(n) {
@@ -7770,6 +8186,7 @@
       if (imp && imp.elements.length) {
         placeImported(imp.elements);
         notifyImported(imp);
+        if (imp.imageSlots) refreshMiro(true);
         return;
       }
       if (files.length) {

@@ -200,9 +200,9 @@
     "/webapp/board-geom.js?v=20261113-bigboard",
     "/webapp/board-blocks.js?v=20261103-boardtpl",
     "/webapp/board-templates.js?v=20261104-doctype2",
-    "/webapp/board-import.js?v=20261112-miroframes",
+    "/webapp/board-import.js?v=20261113-miro4",
     "/webapp/board-figma.js?v=20261111-comps2",
-    "/webapp/board.js?v=20261113-bigboard",
+    "/webapp/board.js?v=20261113-miro4",
   ];
   let boardScriptsPromise = null;
 
@@ -38007,6 +38007,42 @@
     };
   }
 
+  /** Подключение Miro для доски: status → {configured, token}; connect открывает вход в Miro. */
+  function boardMiroAuth() {
+    return {
+      status: function () {
+        return apiFetch("/miro/token")
+          .then(function (d) {
+            return { configured: !!(d && d.configured), token: d && d.connected ? String(d.token || "") : "" };
+          })
+          .catch(function () {
+            return { configured: false, token: "" };
+          });
+      },
+      // Вкладку открываем сразу (по нажатию), адрес — после ответа сервера: иначе браузер её заблокирует.
+      connect: function () {
+        var tg = window.Telegram && window.Telegram.WebApp;
+        var useTg = !!(tg && tg.openLink && tg.initData);
+        var w = useTg ? null : window.open("about:blank", "_blank");
+        return apiFetch("/oauth/miro/start", { method: "POST" })
+          .then(function (d) {
+            var url = d && d.url;
+            if (!url) throw new Error("Miro: нет ссылки для входа");
+            if (w) w.location.href = url;
+            else if (useTg) tg.openLink(url);
+            else window.open(url, "_blank");
+          })
+          .catch(function (e) {
+            if (w) w.close();
+            throw e;
+          });
+      },
+      disconnect: function () {
+        return apiFetch("/oauth/miro/disconnect", { method: "POST" });
+      },
+    };
+  }
+
   function boardSheetOptions(sheet) {
     var sid = String(sheet.id);
     return {
@@ -38043,6 +38079,8 @@
           body: payload ? JSON.stringify(payload) : undefined,
         });
       },
+      // Картинки при вставке схемы из Miro: ключ из подключения Miro (качает браузер, webapp/board.js).
+      miro: boardMiroAuth(),
       // Автор новых стикеров (подпись внизу стикера) и его фото — как в комментариях.
       me: boardAuthorMe(),
       decorateAvatar: function (img, author) {

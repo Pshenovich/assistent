@@ -34,6 +34,10 @@
 
   /** Почти чёрный и белый — цвета темы доски («ink» / «white»): в светлой теме как в оригинале,
    * в тёмной не пропадают на фоне. Остальные цвета — точные. */
+  function lum(h) {
+    return 0.2126 * parseInt(h.slice(1, 3), 16) + 0.7152 * parseInt(h.slice(3, 5), 16) + 0.0722 * parseInt(h.slice(5, 7), 16);
+  }
+
   function themed(h) {
     var r = parseInt(h.slice(1, 3), 16);
     var g = parseInt(h.slice(3, 5), 16);
@@ -124,6 +128,22 @@
     if (near(y, 0.5) && near(x, 0)) return { side: "left" };
     if (near(y, 0.5) && near(x, 1)) return { side: "right" };
     return { anchor: [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))] };
+  }
+
+  /** Вид связи Miro (style.t) → наш. Сверено с буфером настоящей доски (2026-11-13): у 2, 5, 8 и 24
+   * изломы строго по горизонтали и вертикали — ломаные (варианты наконечников и обхода);
+   * 4 — без изломов и наискосок — изогнутая (связь Miro по умолчанию), 1 — изогнутая, 0 — прямая.
+   * Незнакомый вид: изломы под прямым углом — ломаная, иначе прямая. */
+  var MIRO_ROUTES = { 0: "straight", 1: "curve", 4: "curve", 2: "elbow", 5: "elbow", 8: "elbow", 24: "elbow" };
+
+  function miroRoute(t, wps) {
+    var known = MIRO_ROUTES[Number(t)];
+    if (known) return known;
+    if (wps.length < 2) return "straight";
+    for (var i = 1; i < wps.length; i++) {
+      if (Math.abs(wps[i][0] - wps[i - 1][0]) > 0.5 && Math.abs(wps[i][1] - wps[i - 1][1]) > 0.5) return "straight";
+    }
+    return "elbow";
   }
 
   /** Блок-схема Miro (stencil, ns:diagrammingNotation) → наша фигура. */
@@ -233,10 +253,13 @@
         if (t.bg) el.style.highlight = t.bg;
         if (Number(st.b) || t.bold) el.style.bold = true;
       } else if (w.type === "sticker" || w.type === "sticky_note") {
-        el = Object.assign(base, {
-          type: "sticky", text: t.text,
-          style: { fill: hex(st.sc) || hex(st.bc) || "yellow", fontSize: Math.round((Number(st.fs) || 14) * k) },
-        });
+        // Цвет стикера: сейчас Miro кладёт его в sbc, раньше — sc / bc. Точный, без подмены на цвет
+        // темы: «почти чёрный» стикер иначе стал бы ключом ink, которого нет у стикеров (→ жёлтый).
+        var sfillHex = exact(st.sbc) || exact(st.sc) || exact(st.bc);
+        var sstyle = { fill: sfillHex || "yellow", fontSize: Math.round((Number(st.fs) || 14) * k) };
+        // На тёмном стикере — белый текст, как в Miro.
+        if (sfillHex && lum(sfillHex) < 110) sstyle.textColor = "#ffffff";
+        el = Object.assign(base, { type: "sticky", text: t.text, style: sstyle });
       } else if (w.type === "image") {
         // Сам файл в буфер не попадает (только id в Miro) — заглушка того же размера: выделить
         // её и вставить картинку («Копировать как изображение» в Miro), и та встанет на место.
@@ -249,6 +272,22 @@
           text: "Картинка из Miro\nвыделите и вставьте её сюда (в Miro: «Копировать как изображение»)",
           style: { fill: "gray", stroke: "gray", strokeWidth: 2, dash: "dashed", radius: 8, fontSize: Math.max(14, Math.round(iw / 22)), textColor: "gray" },
         });
+        // Где картинка в Miro: по этому доска сама скачает её с ключом Miro (board.js, miroFill).
+        // crop — видимая часть исходного файла в его пикселях (в Miro картинку можно обрезать).
+        if (res.id != null && res.boardId) {
+          el.miro = { board: String(res.boardId), res: String(res.id) };
+          var rw = Number(res.width) || 0;
+          var rh = Number(res.height) || 0;
+          var cx = Number(crop.x) || 0;
+          var cy = Number(crop.y) || 0;
+          var cw = Number(crop.width) || 0;
+          var ch = Number(crop.height) || 0;
+          if (cw > 0 && ch > 0 && rw > 0 && rh > 0 && (cx > 0.5 || cy > 0.5 || Math.abs(cw - rw) > 0.5 || Math.abs(ch - rh) > 0.5)) {
+            el.miro.crop = [cx / rw, cy / rh, cw / rw, ch / rh].map(function (v) {
+              return Math.round(Math.max(0, Math.min(1, v)) * 10000) / 10000;
+            });
+          }
+        }
         imageSlots++;
       } else if (w.type === "code") {
         // Блок кода — текст моноширинным шрифтом на светлой подложке.
@@ -316,7 +355,7 @@
       var ln = {
         id: uid(), type: "line", x: 0, y: 0, w: 0, h: 0, points: [[0, 0], [1, 1]],
         start: ends[0], end: ends[1],
-        route: st.t === 2 ? "elbow" : st.t === 1 ? "curve" : "straight",
+        route: "straight",
         style: { stroke: hex(st.lc) || "ink", strokeWidth: Math.max(1, Number(st.ls) || 2) },
       };
       // Изломы ломаной — точки на доске Miro (та же система координат, что у блоков).
@@ -325,6 +364,7 @@
       }).slice(0, 32).map(function (q) {
         return [Math.round(q.x * 10) / 10, Math.round(q.y * 10) / 10];
       });
+      ln.route = miroRoute(st.t, wps);
       if (wps.length) ln.waypoints = wps;
       if (Number(st.a_start)) ln.arrowStart = true;
       if (Number(st.a_end)) ln.arrowEnd = true;

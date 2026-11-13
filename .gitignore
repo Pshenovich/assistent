@@ -20,6 +20,8 @@ meeting_reminders_sent.json
 reminders.json
 google_user_tokens/
 google_oauth_pending/
+miro_user_tokens/
+miro_oauth_pending/
 contacts_user/
 contacts.json
 calendar_pending.json
