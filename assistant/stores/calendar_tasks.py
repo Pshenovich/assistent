@@ -808,6 +808,12 @@ def create_task(
     assert item is not None
     if parent_id is not None:
         _parent_changed(int(parent_id), actor_user_id=uid)
+    try:
+        from assistant.services import project_inherit
+
+        project_inherit.on_task_created(item)  # из документа проекта / подзадача — в те же проекты
+    except Exception as e:
+        print(f"[calendar_tasks] project inherit task={tid} err={e!r}")
     return item
 
 

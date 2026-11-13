@@ -167,6 +167,12 @@ def link(owner_user_id: Any, note_id: Any, meeting: dict[str, Any], *, source: s
     from assistant.services import meeting_share
 
     meeting_share.schedule_auto_share(owner_user_id, int(note_id))  # у саммари встречи — участники
+    try:
+        from assistant.services import project_inherit
+
+        project_inherit.on_meeting_linked(int(note_id), m)  # встреча/серия/тема в проекте → саммари туда же
+    except Exception as e:
+        print(f"[meeting_links] project inherit note={note_id} err={e!r}")
     return out
 
 

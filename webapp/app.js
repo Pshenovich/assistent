@@ -8218,6 +8218,7 @@
       mail_summary: "Саммари переписки",
       market_insight: "Рынок: что это значит для вас",
       task_result_draft: "Описание результата задачи",
+      project_passport: "Паспорт проекта",
     };
     const key = String(op || "").trim();
     if (!key) return "—";
@@ -8507,62 +8508,26 @@
             });
           }
         } else {
-          var groups = groupItemsByProject(sec.items || []);
-          if (!groups.length) {
+          // Проекты — отдельный раздел меню (projects.js); здесь документы простым списком.
+          var docs = (sec.items || []).slice(0, 40);
+          if (!docs.length) {
             var empty2 = document.createElement("p");
             empty2.className = "sidebar-tree-empty";
             empty2.textContent = "Пусто";
             kids.appendChild(empty2);
           } else {
-            appendSidebarProjectBranch(kids, sec.id, groups, sec.kind, sec.openItem);
-          }
-          if (sec.id === "notes" && (userBundlesCache || []).length) {
-            var bOpen = !!sidebarTreeState.sections.bundles;
-            kids.appendChild(
-              makeSidebarTreeRow({
-                depth: 1,
-                expandable: true,
-                expanded: bOpen,
-                label: "Связки",
-                onToggle: function () {
-                  sidebarTreeState.sections.bundles = !bOpen;
-                  renderSidebarTrees();
-                },
-                onClick: function () {
-                  sidebarTreeState.sections.bundles = !bOpen;
-                  renderSidebarTrees();
-                },
-              })
-            );
-            if (bOpen) {
-              userBundlesCache.forEach(function (b) {
-                kids.appendChild(
-                  makeSidebarTreeRow({
-                    depth: 2,
-                    leaf: true,
-                    label: b.title,
-                    onClick: function () {
-                      openBundlePage(b.id);
-                    },
-                  })
-                );
-              });
-            }
-          }
-          if (sec.id === "notes") {
-            kids.appendChild(
-              makeSidebarTreeRow({
-                depth: 1,
-                leaf: true,
-                action: true,
-                label: "+ Создать проект",
-                onClick: function () {
-                  setTab("notes", { noAnim: true });
-                  setNotesSubTab("notes");
-                  openTagsManageSheet();
-                },
-              })
-            );
+            docs.forEach(function (item) {
+              kids.appendChild(
+                makeSidebarTreeRow({
+                  depth: 1,
+                  leaf: true,
+                  label: sidebarItemTitle(item, sec.kind),
+                  onClick: function () {
+                    sec.openItem(item);
+                  },
+                })
+              );
+            });
           }
         }
         branch.appendChild(kids);
@@ -16478,6 +16443,8 @@
   var taskAssigneeApi = null;
   var taskModalOnSaved = null;
   var taskModalOnDeleted = null;
+  var taskModalProjectId = null; // проект задачи в окне: null — не трогали, 0 — без проекта, N — проект
+  var taskModalProjectsShown = []; // проекты задачи, как их показал сервер
   var taskModalMeetingItem = ""; // пункт задач встречи: задача ставится, только если его ещё никто не взял
   var MEETING_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i;
 
@@ -17952,6 +17919,61 @@
     return { reload: load };
   }
 
+  // Строка «Проект» в окне задачи: новая — выбранный (или проект страницы, откуда создают);
+  // созданная — проекты задачи с сервера, смена — при сохранении (project_id в PATCH).
+  function paintTaskProjectRow() {
+    var el = document.getElementById("m-task-project-summary");
+    if (!el) return;
+    var names = [];
+    if (taskModalProjectId === 0) names = [];
+    else if (taskModalProjectId) {
+      var all = (window.LeoProjects && window.LeoProjects.list()) || [];
+      var hit = all.filter(function (p) { return Number(p.id) === Number(taskModalProjectId); })[0];
+      names = [hit ? hit.title : "Проект"];
+    } else names = taskModalProjectsShown.map(function (p) { return p.title; });
+    el.textContent = names.length ? names.join(", ") : "Нет";
+  }
+
+  function mountTaskProjectRow(taskId) {
+    var row = document.getElementById("m-task-project-row");
+    if (!row) return;
+    if (!window.LeoProjects) {
+      row.classList.add("hidden");
+      return;
+    }
+    window.LeoProjects.loadList().then(paintTaskProjectRow).catch(function () {});
+    if (taskId) {
+      apiFetch("/calendar/tasks/" + encodeURIComponent(taskId), { method: "GET" })
+        .then(function (r) {
+          if (String((document.getElementById("modal-event-id") || {}).value || "") !== taskId) return;
+          taskModalProjectsShown = (r && r.task && r.task.projects) || [];
+          paintTaskProjectRow();
+        })
+        .catch(function () {});
+    }
+    paintTaskProjectRow();
+    row.addEventListener("click", function () {
+      var all = window.LeoProjects.active().filter(function (p) {
+        return p.role === "owner" || p.role === "editor";
+      });
+      var cur = taskModalProjectId !== null ? Number(taskModalProjectId) : Number((taskModalProjectsShown[0] || {}).id || 0);
+      var items = [{ label: "Без проекта", icon: cur ? "" : "check", active: !cur, onClick: function () { taskModalProjectId = 0; paintTaskProjectRow(); } }];
+      all.forEach(function (p) {
+        items.push({
+          label: p.title,
+          icon: Number(p.id) === cur ? "check" : "folder",
+          active: Number(p.id) === cur,
+          onClick: function () {
+            taskModalProjectId = Number(p.id);
+            paintTaskProjectRow();
+          },
+        });
+      });
+      if (!all.length) items.push({ label: "Проектов пока нет — создайте в разделе «Проекты»", onClick: function () {} });
+      openNotesActionSheet("Проект задачи", items, row);
+    });
+  }
+
   function taskPayloadFromModal(opts) {
     opts = opts || {};
     syncHiddenFromEventPills("start");
@@ -17972,6 +17994,9 @@
       note_id: noteEl ? String(noteEl.value || "") : "",
     };
     if (taskModalMeetingItem) body.meeting_item = taskModalMeetingItem;
+    if (taskModalProjectId !== null) body.project_id = taskModalProjectId;
+    var spentInModal = document.getElementById("m-task-spent");
+    if (spentInModal && spentInModal.getValue && spentInModal.getValue()) body.spent = spentInModal.getValue();
     var resultEl = document.getElementById("m-task-result");
     if (resultEl) body.result = String(resultEl.value || "");
     var alldayEl = document.getElementById("m-task-allday");
@@ -18036,6 +18061,8 @@
     taskModalOnSaved = typeof opts.onSaved === "function" ? opts.onSaved : null;
     taskModalOnDeleted = typeof opts.onDeleted === "function" ? opts.onDeleted : null;
     taskModalMeetingItem = !existing && opts.meetingItem ? String(opts.meetingItem) : "";
+    taskModalProjectId = !existing && opts.projectId ? Number(opts.projectId) : null;
+    taskModalProjectsShown = [];
     var st = ev.start || {};
     var en = ev.end || {};
     var sRaw = st.dateTime || ev.start_at || (st.date ? st.date + "T09:00:00" : "");
@@ -18060,6 +18087,7 @@
       sheetWhenHtml({ task: true, label: "Срок" }) +
       '<div id="m-task-assignee-slot"></div>' +
       (existing ? "" : '<div id="m-task-target-slot"></div>') +
+      sheetPropRowHtml("m-task-project-row", "folder", "Проект", '<span id="m-task-project-summary">Нет</span>') +
       '<div id="m-ev-color-host"></div>' +
       "</div>" +
       '<div class="event-sheet-group sheet-desc-group">' +
@@ -18096,6 +18124,7 @@
       "task",
       existing ? { source: { kind: "task", id: String(taskId), calendarId: "leo-tasks" } } : {}
     );
+    mountTaskProjectRow(existing ? String(taskId) : "");
     document.getElementById("m-ev-sum").value =
       ev.summary || ev.title || (opts.quote ? String(opts.quote) : "") || "";
     bindSheetTitleArea(document.getElementById("m-ev-sum"));
@@ -18106,6 +18135,11 @@
       // Черновик — когда человек пришёл к полю (окно открывают часто, Лео зря не зовём).
       var resultDraftRow = existing && !resultEl.value ? mountResultDraft(resultEl, taskId, { lazy: true }) : null;
       if (resultDraftRow) resultEl.insertAdjacentElement("afterend", resultDraftRow);
+      if (existing) {
+        var taskSpent = mountSpentField(taskId);
+        taskSpent.id = "m-task-spent";
+        resultEl.parentNode.appendChild(taskSpent);
+      }
     }
     document.getElementById("m-ev-start").value = startLocal;
     document.getElementById("m-ev-end").value = endLocal;
@@ -19517,6 +19551,7 @@
     doc: '<path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 19V5A1.5 1.5 0 0 1 7.5 3.5z"/><path d="M14 3.5V8h4M9 12.5h6M9 16h6"/>',
     link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     hourglass: '<path d="M7 3.5h10M7 20.5h10M8 3.5c0 4.5 8 5 8 8.5s-8 4-8 8.5M16 3.5c0 4.5-8 5-8 8.5"/>',
+    folder: '<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
     ticket: '<path d="M4 7.5A1.5 1.5 0 0 1 5.5 6h13A1.5 1.5 0 0 1 20 7.5V10a2 2 0 0 0 0 4v2.5a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5V14a2 2 0 0 0 0-4z"/><path d="M14 6v12" stroke-dasharray="2 2"/>',
   };
 
@@ -20574,9 +20609,11 @@
     syncAppOverlay();
   }
 
-  function openEventModal(ev) {
+  var eventModalProject = null; // { id, onSaved } — новая встреча со страницы проекта
+  function openEventModal(ev, opts) {
     clearCalendarGestureState();
     ev = ev || {};
+    eventModalProject = !ev.id && opts && opts.projectId ? { id: String(opts.projectId), onSaved: opts.onSaved } : null;
     if (calendarEntryIsTask(ev)) {
       openTaskModal(ev);
       return;
@@ -21279,6 +21316,18 @@
             });
         var savedEvent = savedEv && savedEv.event;
         noteOrbitaInviteMail(savedEv && savedEv.invite_mail);
+        if (!id && eventModalProject && savedEvent && savedEvent.id) {
+          // Встреча со страницы проекта: повторяющаяся — вся серия, иначе — эта встреча.
+          var pj = eventModalProject;
+          eventModalProject = null;
+          var evKey = String(savedEvent.calendar_id || calId || "primary") + ":" + String(savedEvent.id);
+          apiFetch("/projects/" + encodeURIComponent(pj.id) + "/items", {
+            method: "POST",
+            body: JSON.stringify({ items: [{ kind: recurrence && recurrence.length ? "series" : "event", id: evKey, label: String(body.title || "Встреча") }] }),
+          })
+            .then(function () { if (typeof pj.onSaved === "function") pj.onSaved(); })
+            .catch(function (pe) { showCalendarToast((pe && pe.message) || "Встреча сохранена, но не попала в проект"); });
+        }
         var colorTarget = {
           id: (savedEvent && savedEvent.id) || id,
           calendar_id: (savedEvent && savedEvent.calendar_id) || calId,
@@ -21331,6 +21380,8 @@
     var donePatch = { done: true };
     var resultEl = document.getElementById("m-task-result");
     if (resultEl) donePatch.result = String(resultEl.value || "");
+    var spentEl = document.getElementById("m-task-spent");
+    if (spentEl && spentEl.getValue && spentEl.getValue()) donePatch.spent = spentEl.getValue();
     try {
       var r = await apiFetch("/calendar/tasks/" + encodeURIComponent(id), {
         method: "PATCH",
@@ -22971,7 +23022,7 @@
     loadFocus(false);
   });
 
-  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, open_my_tasks: 1, open_posted: 1, url: 1 };
+  var FOCUS_OPEN_ACTS = { open_note: 1, open_event: 1, open_task: 1, open_tasks: 1, open_my_tasks: 1, open_posted: 1, url: 1, open_project: 1 };
 
   // Карточки с пунктами (договорённости, задачи из саммари, важное из чатов) разбираются в чате.
   function focusHasItems(it) {
@@ -23593,7 +23644,16 @@
       wrap.appendChild(res);
       var resDraft = mountResultDraft(res, task.id);
       if (resDraft) wrap.appendChild(resDraft);
-      submit = { label: "Сдать работу", run: function () { tinboxApply("done", { result: res.value.trim() }, "right"); } };
+      var tinSpent = mountSpentField(task.id);
+      wrap.appendChild(tinSpent);
+      submit = {
+        label: "Сдать работу",
+        run: function () {
+          var pl = { result: res.value.trim() };
+          if (tinSpent.getValue()) pl.spent = tinSpent.getValue();
+          tinboxApply("done", pl, "right");
+        },
+      };
     } else if (mode === "decline") {
       wrap.appendChild(tinboxEl("label", "tinbox-label", "Комментарий — увидит " + owner));
       var note = document.createElement("input");
@@ -26196,6 +26256,24 @@
         if (it.note) openSourceFragment({ id: it.note.id, kind: it.note.kind, title: it.note.title }, itMeta.item, itMeta.quote);
       } else if (act === "url") {
         if (p.url) openExternal(p.url);
+      } else if (act === "open_project") {
+        if (window.LeoProjects && p.project_id) window.LeoProjects.openPage(p.project_id);
+      } else if (act === "project_add" || act === "project_reject") {
+        // «Добавить в проект?»: всё сразу или «не сюда» (эти элементы этому проекту больше не предложим)
+        await apiFetch("/proactive/project", {
+          method: "POST",
+          body: JSON.stringify({
+            op: act === "project_add" ? "add" : "reject",
+            key: it.key,
+            project_id: p.project_id,
+            items: (p.items || []).map(function (x) { return { kind: x.kind, id: String(x.id), label: x.title || "" }; }),
+          }),
+        });
+        focusItems = focusItems.filter(function (x) { return x.key !== it.key; });
+        renderFocusRow();
+        renderFocusPanel();
+        showNoteToast(act === "project_add" ? "Добавлено в «" + ((it.project || {}).title || "проект") + "»" : "Больше не предложу");
+        if (act === "project_add" && window.LeoProjects) window.LeoProjects.loadList(true).catch(function () {});
       } else if (act === "mark_done") {
         try {
           await apiFetch("/proactive/done", {
@@ -30913,6 +30991,76 @@
 
   // Поле — как у ассистента (тот же вид и поведение), без выбора агента и листов:
   // «+» (файл или фото, задача, заметка, транскрипция, встреча), @упоминание, диктовка, вложения над полем.
+  // «Сколько ушло» при сдаче (необязательно): подсказка Лео серым (время в календаре или как обычно
+  // у человека), быстрые кнопки. Пусто — ничего не отправляем. getValue() — строка для поля spent.
+  var SPENT_CHIPS = [[15, "15 мин"], [30, "30 мин"], [60, "1 ч"], [120, "2 ч"], [240, "4 ч"], [480, "день"]];
+  function spentText(m) {
+    m = Number(m || 0);
+    if (!m) return "";
+    if (m === 480) return "день";
+    var h = Math.floor(m / 60);
+    var mm = m % 60;
+    return (h ? h + " ч" : "") + (h && mm ? " " : "") + (mm ? mm + " мин" : "");
+  }
+  function mountSpentField(taskId) {
+    var box = document.createElement("div");
+    box.className = "spent-field";
+    var inputId = "spent-" + String(taskId) + "-" + Math.random().toString(36).slice(2, 7);
+    box.innerHTML =
+      '<label class="spent-label" for="' + inputId + '"><span>Сколько ушло</span><small>можно не заполнять</small></label>' +
+      '<div class="spent-row"><input id="' + inputId + '" type="text" class="spent-input" autocomplete="off" placeholder="например, 1,5 ч" />' +
+      '<span class="spent-hint"></span></div>' +
+      '<div class="spent-chips">' + SPENT_CHIPS.map(function (c) {
+        return '<button type="button" class="spent-chip" data-min="' + c[0] + '" aria-pressed="false">' + c[1] + "</button>";
+      }).join("") + "</div>";
+    var input = box.querySelector("input");
+    var hintEl = box.querySelector(".spent-hint");
+    var hintMin = 0;
+    function syncChips() {
+      var v = String(input.value || "").trim();
+      box.querySelectorAll(".spent-chip").forEach(function (b) {
+        var on = v && v === spentText(Number(b.getAttribute("data-min")));
+        b.classList.toggle("is-on", !!on);
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+      });
+    }
+    box.addEventListener("click", function (e) {
+      var b = e.target.closest(".spent-chip");
+      if (!b) return;
+      e.preventDefault();
+      input.value = spentText(Number(b.getAttribute("data-min")));
+      syncChips();
+    });
+    input.addEventListener("input", syncChips);
+    input.addEventListener("keydown", function (e) {
+      // Tab по пустому полю — взять подсказку Лео (как с черновиком результата)
+      if (e.key === "Tab" && !e.shiftKey && !input.value && hintMin) {
+        e.preventDefault();
+        input.value = spentText(hintMin);
+        syncChips();
+      }
+    });
+    apiFetch("/calendar/tasks/" + encodeURIComponent(String(taskId)) + "/spent", { method: "GET" })
+      .then(function (r) {
+        if (r && r.minutes) {
+          input.value = spentText(r.minutes);
+          syncChips();
+          return;
+        }
+        var h = (r && r.hint) || {};
+        if (h.minutes) {
+          hintMin = Number(h.minutes);
+          input.placeholder = spentText(hintMin);
+          hintEl.textContent = "Лео: " + spentText(hintMin) + (h.why === "calendar" ? " — по времени задачи в календаре" : " — как обычно у вас") + ". Tab — взять";
+        }
+      })
+      .catch(function () {});
+    box.getValue = function () {
+      return String(input.value || "").trim();
+    };
+    return box;
+  }
+
   function renderPostedComposer(state, otherName, draft) {
     var mode = state.mode || "";
     if (!state.compose) state.compose = { files: [], refs: [], mentions: [] };
@@ -30971,9 +31119,12 @@
       send.classList.add("pt-send-text");
       send.textContent = mode === "return" ? "Вернуть" : "Сдать";
     }
+    var spentBox = null;
     if (mode === "result") {
       var draftRow = mountResultDraft(ta, state.taskId, { noCaption: true, onSync: function () { grow(); } });
       if (draftRow) wrap.appendChild(draftRow);
+      spentBox = mountSpentField(state.taskId);
+      wrap.appendChild(spentBox);
     }
     function syncSend() {
       var ready = !!(String(ta.value || "").trim() || cmp.files.length || cmp.refs.length || mode);
@@ -31307,7 +31458,9 @@
         var r;
         if (mode === "return") r = await postedApi(state.taskId, "return", { text: text });
         else if (mode === "result") {
-          r = await patchPostedTask(state.taskId, { done: true, result: text });
+          var donePatchP = { done: true, result: text };
+          if (spentBox && spentBox.getValue()) donePatchP.spent = spentBox.getValue();
+          r = await patchPostedTask(state.taskId, donePatchP);
           r = { task: r && r.task };
         } else {
           r = await postedApi(state.taskId, "messages", {
@@ -36648,6 +36801,10 @@
   }
 
   function openTagsManageSheet() {
+    if (window.LeoProjects && window.LeoProjects.openList) {
+      window.LeoProjects.openList();
+      return;
+    }
     var ov = document.getElementById("tags-manage-overlay");
     if (!ov) return;
     ov.classList.remove("hidden");
@@ -40516,7 +40673,7 @@
   };
   var LINK_KIND_TAB = [
     ["", "Всё"],
-    ["bundle", "Связки"],
+    ["bundle", "Проекты"],
     ["note", "Документы"],
     ["meeting", "Встречи"],
     ["task", "Задачи"],
@@ -40559,7 +40716,7 @@
               kind: "bundle",
               id: String(b.id),
               title: b.title,
-              subtitle: "Связка · " + bundleCountHint(b) + (names.length ? " · " + names.join(", ") : ""),
+              subtitle: "Проект · " + bundleCountHint(b) + (names.length ? " · " + names.join(", ") : ""),
               items: b.items || [],
             };
           });
@@ -40756,7 +40913,7 @@
     ov._tab = "";
     ov._picked = {};
     ov._busy = false;
-    ov.querySelector(".link-pick-title").textContent = opts.title || (opts.bundleId ? "Добавить в связку" : "Связать с…");
+    ov.querySelector(".link-pick-title").textContent = opts.title || (opts.bundleId ? "Добавить в проект" : "Связать с…");
     ov.querySelector(".link-pick-search").value = "";
     // Вкладка «Связки» — только когда связываем элемент и у человека есть именованные связки.
     var bundleTab = ov.querySelector('.link-pick-tab[data-tab="bundle"]');
@@ -41006,7 +41163,7 @@
     box.className = "notes-bundle-hits";
     var h = document.createElement("div");
     h.className = "notes-bundle-hits-title";
-    h.textContent = "Связки";
+    h.textContent = "Проекты";
     box.appendChild(h);
     hits.forEach(function (b) {
       var row = document.createElement("button");
@@ -41086,7 +41243,7 @@
         var nt = document.createElement("span");
         nt.textContent = bd.title;
         name.appendChild(nt);
-        name.title = "Открыть связку";
+        name.title = "Открыть проект";
         name.addEventListener("click", function () {
           if (typeof opts.closeCard === "function") opts.closeCard();
           openBundlePage(bd.id);
@@ -41116,7 +41273,7 @@
       add.type = "button";
       add.className = "linked-add";
       add.textContent = "+";
-      add.title = bd.title ? "Добавить в связку" : "Связать ещё";
+      add.title = bd.title ? "Добавить в проект" : "Связать ещё";
       add.setAttribute("aria-label", add.title);
       add.addEventListener("click", function () {
         openLinkPicker(
@@ -41141,7 +41298,7 @@
   }
 
   async function renameBundle(bd) {
-    var title = await promptDialog(bd.title ? "Название связки" : "Как назвать связку?", bd.title || "");
+    var title = await promptDialog(bd.title ? "Название проекта" : "Название проекта (связанное станет проектом)", bd.title || "");
     if (title == null) return;
     try {
       await apiFetch("/bundles/" + encodeURIComponent(bd.id), {
@@ -41158,7 +41315,7 @@
     var items = [];
     if (bd.title) {
       items.push({
-        label: "Открыть связку",
+        label: "Открыть проект",
         onClick: function () {
           if (typeof opts.closeCard === "function") opts.closeCard();
           openBundlePage(bd.id);
@@ -41166,7 +41323,7 @@
       });
     }
     items.push({
-      label: bd.title ? "Переименовать" : "Назвать связку",
+      label: bd.title ? "Переименовать" : "Сделать проектом",
       onClick: function () {
         renameBundle(bd);
       },
@@ -41184,7 +41341,7 @@
     }
     if (bd.can_delete) {
       items.push({
-        label: "Удалить связку",
+        label: bd.title ? "Удалить проект" : "Убрать связь",
         danger: true,
         onClick: function () {
           deleteBundle(bd);
@@ -41208,7 +41365,7 @@
 
   async function deleteBundle(bd) {
     var ok = await confirmDialog(
-      "Удалить связку" + (bd.title ? " «" + bd.title + "»" : "") + "? Документы, задачи и чаты останутся, пропадёт только связь между ними."
+      (bd.title ? "Удалить проект «" + bd.title + "»" : "Убрать связь") + "? Документы, задачи и чаты останутся, пропадёт только связь между ними."
     );
     if (!ok) return;
     try {
@@ -41233,6 +41390,12 @@
   ];
 
   function openBundlePage(bundleId) {
+    // Именованные связки — это проекты: своя страница в projects.js.
+    if (window.LeoProjects && window.LeoProjects.openPage) return window.LeoProjects.openPage(bundleId);
+    return openBundlePageOld(bundleId);
+  }
+
+  function openBundlePageOld(bundleId) {
     var ov = document.getElementById("bundle-page-overlay");
     if (!ov) {
       ov = document.createElement("div");
@@ -41257,7 +41420,7 @@
         else if (act === "ask") askLeoAboutBundle(bd);
         else if (act === "more") {
           var items = [{ label: "Переименовать", onClick: function () { renameBundle(bd); } }];
-          if (bd.can_delete) items.push({ label: "Удалить связку", danger: true, onClick: function () { deleteBundle(bd); } });
+          if (bd.can_delete) items.push({ label: "Удалить проект", danger: true, onClick: function () { deleteBundle(bd); } });
           openNotesActionSheet(bd.title || "Связка", items, b);
         }
       });
@@ -41295,7 +41458,7 @@
         if (ov._bundleId !== bundleId) return;
         var body = ov.querySelector(".bundle-page-body");
         body.innerHTML = '<p class="ev-materials-empty"></p>';
-        body.firstChild.textContent = (e && e.message) || "Связка не найдена";
+        body.firstChild.textContent = (e && e.message) || "Проект не найден";
       });
   }
 
@@ -41349,7 +41512,7 @@
           var x = document.createElement("button");
           x.type = "button";
           x.className = "nmp-x bundle-row-x";
-          x.setAttribute("aria-label", "Убрать из связки");
+          x.setAttribute("aria-label", "Убрать из проекта");
           x.textContent = "×";
           x.addEventListener("click", function () {
             removeFromBundle(bd.id, it);
@@ -41364,7 +41527,7 @@
     foot.className = "bundle-page-foot";
     foot.innerHTML =
       '<button type="button" class="btn ghost" data-bp="add">+ Добавить</button>' +
-      '<button type="button" class="btn primary" data-bp="ask">Спросить Лео про связку</button>';
+      '<button type="button" class="btn primary" data-bp="ask">Спросить Лео про проект</button>';
     body.appendChild(foot);
   }
 
@@ -41372,7 +41535,7 @@
     var noteItem = bd.items.filter(function (it) {
       return it.kind === "note";
     })[0];
-    var prompt = "Что важного в связке «" + (bd.title || "Связанное") + "»? Коротко: договорённости, открытые задачи, риски.";
+    var prompt = "Что важного в " + (bd.title ? "проекте «" + bd.title + "»" : "связанном") + "? Коротко: договорённости, открытые задачи, риски.";
     closeBundlePage();
     if (noteItem) {
       // Лео отвечает в чате документа — контекст связки он подтягивает сам.
@@ -41517,11 +41680,11 @@
   });
 
   async function startNamedBundleForOpenNote(noteId) {
-    var title = await promptDialog("Название новой связки", "");
+    var title = await promptDialog("Название нового проекта", "");
     if (title == null || !String(title).trim()) return;
     var src = linkSourceForOpenNote(noteId);
     openLinkPicker({
-      title: "Новая связка «" + String(title).trim() + "»",
+      title: "Новый проект «" + String(title).trim() + "»",
       bundleTitle: String(title).trim(),
       include: [src],
       exclude: [linkKey(src)],
@@ -45032,7 +45195,7 @@
     if (saved) {
       var st = noteBundlesState.id === shareId ? noteBundlesState : { bundles: [] };
       var linkNew = { label: "Связать с…", onClick: run(function () { openLinkPicker({ source: linkSourceForOpenNote(shareId) }); }) };
-      var bundleNew = { label: "Новая связка", onClick: run(function () { startNamedBundleForOpenNote(shareId); }) };
+      var bundleNew = { label: "Новый проект", onClick: run(function () { startNamedBundleForOpenNote(shareId); }) };
       if (!st.bundles.length) {
         groups.push(linkNew);
       } else {
@@ -63627,7 +63790,7 @@
 
   function openNewTodoistNote(opts) {
     opts = opts || {};
-    var project = activeNotesProjectTag();
+    var project = opts.project || activeNotesProjectTag();
     if (notesSplitCapable() && isNoteEditorModalOpen()) {
       // Сначала сохраняем открытую заметку, потом открываем новую.
       // Переключение в списке: изменения сохраняем молча, без диалога.
@@ -63666,7 +63829,7 @@
 
   // Документ сразу доской, макетом или презентацией: пустая «Основная» + лист нужного типа.
   // Открывается сразу на нём (см. hydrateNoteSheets).
-  async function createTypedNote(kindRaw) {
+  async function createTypedNote(kindRaw, projectOverride) {
     if (isAppOffline()) {
       showNoteToast("Нужна сеть, чтобы создать " + NEW_SHEET_TITLES[kindRaw].toLowerCase());
       return;
@@ -63677,7 +63840,7 @@
     }
     var title = NEW_SHEET_TITLES[kindRaw] || "Лист";
     var design = kindRaw === "design";
-    var project = activeNotesProjectTag();
+    var project = projectOverride || activeNotesProjectTag();
     try {
       var res = await apiFetch("/notes/local", {
         method: "POST",
@@ -65704,6 +65867,7 @@
     if (window.OrbitaTheme) window.OrbitaTheme.syncTelegram();
 
     document.querySelectorAll(".tabbar-btn").forEach(function (btn) {
+      if (!btn.getAttribute("data-tab")) return; // «Задачи», «Проекты», «Ещё» — свои обработчики (projects.js)
       btn.addEventListener("click", function (e) {
         if (e.target && e.target.closest && e.target.closest("[data-sidebar-toggle]")) return;
         var same = currentTab === btn.getAttribute("data-tab");
@@ -65792,12 +65956,8 @@
         if (counts.none) {
           items.push({ label: "Без проекта", hint: String(counts.none), icon: notesActiveProjectId === "none" ? "check" : "folder", active: notesActiveProjectId === "none", onClick: function () { pick("none"); } });
         }
-        (userBundlesCache || []).slice(0, 30).forEach(function (b, i) {
-          if (!i) items.push({ section: "Связки" });
-          items.push({ label: b.title, hint: String((b.items || []).length), icon: "link", onClick: function () { openBundlePage(b.id); } });
-        });
         items.push("-");
-        items.push({ label: "Управление проектами", icon: "folder", onClick: function () { openTagsManageSheet(); } });
+        items.push({ label: "Все проекты", icon: "folder", onClick: function () { openTagsManageSheet(); } });
         openNotesActionSheet("", items, projectBtn);
         if (!userBundlesCache) loadUserBundles();
       });
@@ -67136,8 +67296,50 @@
   });
 
   // Мост для webapp/mail.js (почта: подключение, разбор писем, окно письма).
+  // Создать в проекте (страница проекта, «+ Добавить»): документ, доска, макет, презентация,
+  // надиктовать — с проектом сразу; задача — с полем «Проект»; встреча и чат — добавляются после создания.
+  function createInProject(kind, project, onDone) {
+    var ref = { id: Number(project.id), name: String(project.name || project.title || "") };
+    if (kind === "task") return openTaskModal({}, { projectId: ref.id, onSaved: onDone });
+    if (kind === "meeting") return openEventModal({}, { projectId: ref.id, onSaved: onDone });
+    if (kind === "chat") {
+      setTab("notes", { noAnim: true });
+      setNotesSubTab("chats");
+      return createAndOpenChatThread({}).then(function () {
+        if (!activeChatThreadId) return;
+        return apiFetch("/projects/" + encodeURIComponent(String(ref.id)) + "/items", {
+          method: "POST",
+          body: JSON.stringify({ items: [{ kind: "chat", id: String(activeChatThreadId), label: "" }] }),
+        }).then(function () { if (typeof onDone === "function") onDone(); });
+      }).catch(function (e) { showNoteToast((e && e.message) || "Не получилось"); });
+    }
+    setTab("notes", { noAnim: true });
+    setNotesSubTab("notes");
+    if (kind === "doc") return openNewTodoistNote({ project: ref });
+    if (kind === "dictate") return openNewTodoistNote({ project: ref, dictate: true });
+    return createTypedNote(kind, ref);
+  }
+
+  function askLeoAboutProject(p) {
+    askLeoAboutBundle({ title: p.title, items: p.items || [] });
+  }
+
+  function openMyTasksFromNav() {
+    if (currentTab !== "actual") setTab("actual");
+    setMyTasksScreen(true);
+  }
+
   window.LeoApp = {
     apiFetch: apiFetch,
+    openActionSheet: openNotesActionSheet,
+    openLinkedItem: openLinkedItem,
+    openLinkPicker: openLinkPicker,
+    searchLinkItems: searchLinkItems,
+    createInProject: createInProject,
+    askLeoAboutProject: askLeoAboutProject,
+    openMyTasks: openMyTasksFromNav,
+    isMyTasksOpen: function () { return isMyTasksOpen(); },
+    isDesktopLayout: function () { return isDesktopLayout(); },
     syncAppOverlay: syncAppOverlay,
     setHidden: setHidden,
     toast: showNoteToast,

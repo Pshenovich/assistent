@@ -101,6 +101,7 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
   <link rel="stylesheet" href="/webapp/styles.css?v=20261113-mtgpick3" />
+  <link rel="stylesheet" href="/webapp/projects.css?v=20261113-projects3" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261113-miro4" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261111-connect1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -1995,6 +1996,29 @@
           </span>
           <span class="tabbar-label">Актуальное</span>
         </button>
+        <button type="button" class="tabbar-btn tabbar-btn--nav" data-nav="tasks">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 11l3 3 8-8" />
+              <path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Задачи</span>
+        </button>
+        <div class="sidebar-nav-group" data-sidebar-group="projects">
+          <button type="button" class="tabbar-btn tabbar-btn--nav" data-nav="projects">
+            <span class="tabbar-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            </span>
+            <span class="tabbar-label">Проекты</span>
+            <span class="sidebar-tree-toggle" data-pj-toggle="1" role="button" tabindex="0" aria-expanded="false" aria-label="Список проектов" title="Проекты">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            </span>
+          </button>
+          <div class="sidebar-tree hidden" id="sidebar-tree-projects" role="group" aria-label="Проекты"></div>
+        </div>
         <div class="sidebar-nav-group" data-sidebar-group="notes">
           <button type="button" class="tabbar-btn" data-tab="notes" role="tab" aria-selected="false">
             <span class="tabbar-icon" aria-hidden="true">
@@ -2041,6 +2065,14 @@
             <path d="M9 3v18" />
             <path d="m13 9 3 3-3 3" />
           </svg>
+        </button>
+        <button type="button" class="tabbar-btn tabbar-btn--nav tabbar-btn--more" data-nav="more" aria-haspopup="menu">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Ещё</span>
         </button>
         <button type="button" class="tabbar-btn" data-tab="profile" role="tab" aria-selected="false">
           <span class="tabbar-icon" aria-hidden="true">
@@ -2840,7 +2872,8 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261113-miro4" defer></script>
+  <script src="/webapp/app.js?v=20261113-projects3" defer></script>
+  <script src="/webapp/projects.js?v=20261113-projects3" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261113-push" defer></script>
   <script src="/webapp/digest-chats.js?v=20261112-rules3" defer></script>

@@ -32,26 +32,7 @@ class HashtagsStoreTests(unittest.TestCase):
         hashtags_store.sync_item_hashtags(4, "local", n["id"], "без тегов")
         self.assertEqual(hashtags_store.get_item_hashtags(4, "local", n["id"]), [])
 
-    def test_migrate_extra_tags(self) -> None:
-        n = notes_store.create_note(6, "N", "<p>Hello</p>")
-        t1 = tags_store.create_tag(6, "Inbox")
-        t2 = tags_store.create_tag(6, "urgent")
-        with tags_store._LOCK:  # type: ignore[attr-defined]
-            conn = tags_store._conn()  # type: ignore[attr-defined]
-            conn.execute(
-                """
-                INSERT INTO tag_links (user_id, tag_id, item_kind, item_id, created_at)
-                VALUES (?, ?, 'local', ?, '2026-01-01T00:00:00+00:00'),
-                       (?, ?, 'local', ?, '2026-01-02T00:00:00+00:00')
-                """,
-                ("6", t1["id"], str(n["id"]), "6", t2["id"], str(n["id"])),
-            )
-            conn.commit()
-        hashtags_store.migrate_extra_tags_to_hashtags(6)
-        projects = tags_store.get_item_tags(6, "local", n["id"])
-        self.assertEqual([p["name"] for p in projects], ["Inbox"])
-        hashes = hashtags_store.get_item_hashtags(6, "local", n["id"])
-        self.assertEqual([h["name"] for h in hashes], ["urgent"])
-        fresh = notes_store.get_note(6, n["id"])
-        assert fresh is not None
-        self.assertIn("#urgent", fresh["body"])
+    def test_migrate_extra_tags_noop_with_projects(self) -> None:
+        # запись может быть в нескольких проектах — лишних ярлыков больше нет
+        self.assertFalse(hashtags_store.migrate_extra_tags_to_hashtags(6))
+

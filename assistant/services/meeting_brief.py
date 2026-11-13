@@ -335,6 +335,42 @@ def related_items(uid: int, meeting: dict[str, Any], series: list[dict[str, Any]
     return out
 
 
+def project_context(user_id: int, ev: dict[str, Any]) -> list[dict[str, Any]]:
+    """Проекты, куда входит встреча (сама встреча или её серия): факты считает код (project_facts)."""
+    from assistant.services import project_facts
+    from assistant.stores import meeting_links
+    from assistant.stores import projects as projects_store
+
+    raw = ev.get("raw") if isinstance(ev.get("raw"), dict) else {}
+    cal = ev.get("calendar_id") or "primary"
+    ev_id = str(ev.get("event_id") or ev.get("id") or raw.get("id") or "").strip()
+    series_id = str(raw.get("recurringEventId") or ev.get("recurringEventId") or "").strip()
+    if not series_id and "_" in ev_id and ev_id.startswith("orb-"):
+        series_id = ev_id.split("_", 1)[0]  # встреча серии Орбиты: orb-N_<время>
+    pids: list[int] = []
+    try:
+        if ev_id:
+            pids += projects_store.ids_with_item("event", meeting_links.event_key(cal, ev_id))
+        if series_id:
+            pids += projects_store.ids_with_item("series", meeting_links.event_key(cal, series_id))
+    except Exception as e:
+        print(f"[meeting_brief] project uid={user_id} err={e!r}")
+        return []
+    out = []
+    tz = project_facts._user_tz(user_id)  # type: ignore[attr-defined]
+    for pid in list(dict.fromkeys(pids))[:2]:
+        try:
+            f = project_facts.facts(user_id, pid)
+        except Exception as e:
+            print(f"[meeting_brief] project facts pid={pid} err={e!r}")
+            f = None
+        if not f:
+            continue
+        out.append({"title": f["title"], "status": f["status"], "facts": project_facts.text(f, tz=tz, with_title=False),
+                    "overdue": f["overdue_total"], "stuck": f["stuck"]})
+    return out
+
+
 def linked_items(user_id: int, ev: dict[str, Any]) -> list[dict[str, Any]]:
     """Что пользователь сам связал со встречей (связки): документы — с началом текста, задачи — со статусом."""
     from assistant.services import bundle_access
@@ -449,6 +485,7 @@ def collect_facts(user_id: int, ev: dict[str, Any], *, assume_topics: bool = Fal
         "chats": chats,
         "related": related,
         "linked": linked_items(int(user_id), ev),
+        "project": project_context(int(user_id), ev),
     }
 
 
@@ -468,6 +505,7 @@ def has_substance(facts: dict[str, Any]) -> bool:
     return bool(
         facts.get("series") or facts.get("chats") or facts.get("related")
         or any(x.get("excerpt") or x.get("status") == "открыта" for x in facts.get("linked") or [])
+        or any(x.get("overdue") or x.get("stuck") for x in facts.get("project") or [])
         or len((facts.get("meeting") or {}).get("description") or "") >= _DESC_MIN
     )
 

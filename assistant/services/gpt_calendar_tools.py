@@ -277,7 +277,7 @@ SYSTEM_ADDON = """У тебя есть доступ к календарю пол
 - Повтор (каждый день / по будням / еженедельно / до даты): один вызов с recurrence (freq + byday/until). НЕ создавай серию отдельными вызовами — иначе пользователь не сможет удалить всё сразу.
 - Действия из прошлых сообщений уже выполнены (в истории они помечены «Уже выполнено»). Не повторяй их: создавай/меняй только то, о чём просит последнее сообщение. На вопросы «какие у меня…» ничего не создавай — смотри calendar_events.
 - Удаление никогда не выполняй сам: вызови propose_delete — пользователь подтвердит кнопкой. id бери из calendar_events/reminders_list; если не знаешь id — передай title (название), найду сам.
-- Вопрос про связку («что по Контент заводу», «что в связке …») — bundles_find, потом при необходимости читай её документы.
+- Вопрос про проект («что по БГПТ», «как дела в проекте …», «что буксует», «кто что должен по …») — project_overview: факты (цифры считает код — не пересчитывай), состав, ссылка; с query — поиск только по материалам проекта. Название проекта в ответе — ссылкой на project_url. Список проектов или поиск по названию — bundles_find. «Сколько часов / времени ушло на проект, кто сколько потратил» — project_hours (цифры не пересчитывай; без оценок людей).
 - «Свяжи / объедини в связку» документы, саммари встреч, задачи, чаты: найди id (notes_find, tasks_search) и вызови propose_link — сам не связывай, пользователь подтвердит кнопкой. «Этот документ» — type=current_note.
 - id встреч для изменения бери из calendar_events, не придумывай.
 - Участников указывай именами из контактов; если не уверен — contacts_find.
@@ -366,7 +366,8 @@ TOOLS: list[dict[str, Any]] = [
         {"title": {"type": "string"}, "start": _DT, "duration_min": {"type": "integer", "default": 30},
          "all_day": {"type": "boolean", "description": "true — задача на день без времени («на завтра», «в пятницу»): start = YYYY-MM-DDT00:00, duration_min не нужен"},
          "assignee": {"type": "string", "description": "Имя/ник из контактов; пусто — себе"},
-         "description": {"type": "string"}, "recurrence": _RECURRENCE},
+         "description": {"type": "string"}, "recurrence": _RECURRENCE,
+         "project": {"type": "string", "description": "Название проекта, если пользователь назвал его или задача явно про него; иначе не передавай"}},
         ["title", "start"]),
     _fn("reminder_create", "Создать напоминание в Telegram — сразу. Серию — с recurrence одним вызовом.",
         {"text": {"type": "string"}, "when": _DT, "recurrence": _RECURRENCE}, ["text", "when"]),
@@ -418,10 +419,21 @@ TOOLS: list[dict[str, Any]] = [
          "reason": {"type": "string", "enum": ["not_a_task", "not_relevant", "duplicate", "recognition_error"]},
          "type": {"type": "string", "enum": ["task", "promise", "decision", "reminder", "thought"]}},
         ["op"]),
-    _fn("bundles_find", "Связки пользователя (именованные наборы документов, саммари встреч, задач, чатов — "
-        "«Контент завод», «Запуск Pro»): по названию связки или её элементов. Пустой query — все. "
-        "Возвращает состав связки с id; тексты документов читай через notes_find/чтение документа.",
-        {"query": {"type": "string", "description": "Название связки или слова из него; можно пусто"}}),
+    _fn("project_hours", "Часы по проектам за неделю (встречи + задачи) и прошлая неделя для сравнения: "
+        "кто сколько потратил на какой проект. Видно себя и тех, чьи показатели пользователю открыты.",
+        {"project": {"type": "string", "description": "Название проекта; пусто — все"},
+         "person": {"type": "string", "description": "Имя человека; пусто — все доступные"},
+         "week": {"type": "string", "description": "Любая дата недели YYYY-MM-DD; пусто — текущая"}}),
+    _fn("project_overview", "Проект целиком: статус, руководитель, задачи (открыто/просрочено/сдано), ближайшие встречи, "
+        "свежие саммари и документы, ссылка project_url. query — ещё найти ответ в материалах только этого проекта.",
+        {"project": {"type": "string", "description": "Название проекта (или его часть)"},
+         "query": {"type": "string", "description": "Что найти в материалах проекта; можно пусто"}},
+        ["project"]),
+    _fn("bundles_find", "Проекты пользователя (наборы встреч, саммари, задач, документов, чатов — "
+        "«БГПТ», «Запуск Pro»): по названию проекта или его элементов. Пустой query — все. "
+        "Возвращает состав с id и project_url; название проекта в ответе делай ссылкой на project_url. "
+        "Тексты документов читай через notes_find/чтение документа.",
+        {"query": {"type": "string", "description": "Название проекта или слова из него; можно пусто"}}),
     _fn("propose_link", "Предложить связать документы, саммари встреч, задачи, чаты в одну связку («свяжи X с Y»). "
         "НЕ связывает — пользователь подтвердит кнопкой. id документов бери из notes_find, задач — из tasks_search; "
         "открытый документ — type=current_note.",
@@ -1030,6 +1042,7 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
             row = ctx.sync_task_google(ctx.uid, row, "create") or row
         except Exception as e:
             print(f"[gpt_calendar] task_sync err={e!r}")
+    project_note = _task_put_in_project(ctx, row, str(args.get("project") or ""))
     delegated = int(a_uid) != int(ctx.uid)
     if delegated and ctx.notify_task_assignee:
         try:
@@ -1053,7 +1066,44 @@ def tool_task_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         "when": when,
         "assignee": a_name,
         "recurrence": recur_h or None,
+        **project_note,
     })
+
+
+def _task_put_in_project(ctx: GptCalendarContext, row: dict[str, Any], name: str) -> dict[str, Any]:
+    """Положить созданную задачу в проект по названию: только в проект, где человек может править,
+    и только если он находится однозначно. Иначе задача остаётся без проекта — модель скажет об этом."""
+    if not row.get("id"):
+        return {}
+    if not name.strip():
+        # задачу ставят из открытого документа проекта — она в его проектах
+        if ctx.open_note_id:
+            try:
+                from assistant.services import project_inherit
+                from assistant.stores import projects as projects_store
+
+                pids = project_inherit.from_open_note(ctx.uid, row, ctx.open_note_id)
+                titles = [str((projects_store.get(p) or {}).get("title") or "") for p in pids]
+                if titles:
+                    return {"project": ", ".join(titles)}
+            except Exception as e:
+                print(f"[gpt_calendar] task project from note err={e!r}")
+        return {}
+    from assistant.stores import projects as projects_store
+
+    found = projects_store.find_for_user(ctx.uid, name, need="editor")
+    if len(found) != 1:
+        opts = [str(p.get("title") or "") for p in found[:5]]
+        return {"project": None, "project_note": (
+            "Проект не выбран: несколько подходят — " + ", ".join(f"«{o}»" for o in opts)
+            if opts else "Проект не найден или нет прав добавлять в него — задача без проекта"
+        )}
+    p = found[0]
+    try:
+        projects_store.add_items(ctx.uid, p["id"], [("task", str(row["id"]), str(row.get("title") or ""))])
+    except ValueError as e:
+        return {"project": None, "project_note": str(e)}
+    return {"project": str(p.get("title") or "")}
 
 
 def tool_reminder_create(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
@@ -1192,10 +1242,104 @@ def tool_bundles_find(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
                 except Exception:
                     pass
             items.append(row)
-        out.append({"bundle": b["title"], "items": items, "hidden_from_user": b.get("hidden", 0)})
+        row_b: dict[str, Any] = {"bundle": b["title"], "items": items, "hidden_from_user": b.get("hidden", 0)}
+        if b.get("is_project"):
+            from assistant.stores import projects as projects_store
+
+            row_b["project_url"] = projects_store.webapp_url(b["id"])  # ссылка на страницу проекта
+            row_b["status"] = b.get("status_label") or ""
+        out.append(row_b)
     if not out:
-        return _ok({"bundles": [], "note": "Связок с таким названием нет."})
+        return _ok({"bundles": [], "note": "Проектов с таким названием нет."})
     return _ok({"bundles": out})
+
+
+def tool_project_hours(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    """Часы по проектам для ответа Лео: цифры считает код (project_hours), права — как в «Показателях»."""
+    from assistant.services import project_hours
+    from assistant.stores import projects as projects_store
+
+    pid = None
+    pname = str(args.get("project") or "").strip()
+    if pname:
+        found = projects_store.find_for_user(ctx.uid, pname)
+        if len(found) != 1:
+            return _ok({"found": False, "candidates": [str(p.get("title") or "") for p in found[:8]],
+                        "note": "Проект не найден" if not found else "Подходит несколько проектов — уточни, какой."})
+        pid = int(found[0]["id"])
+    people = None
+    who = str(args.get("person") or "").strip().lower()
+    if who:
+        allowed = project_hours.visible_people(ctx.uid)
+        names = project_hours.person_names(allowed)
+        people = [u for u, n in names.items() if who in n.lower()]
+        if not people:
+            return _ok({"found": False, "note": "Этого человека нет среди тех, чьи часы пользователю видны."})
+    week = str(args.get("week") or "").strip()[:10]
+    try:
+        rep = project_hours.report(ctx.uid, week=week, weeks=2, people=people, project_id=pid)
+    except ValueError as e:
+        return _err(str(e))
+    return _ok({
+        "week": rep["week_label"], "prev_week": rep["prev_label"],
+        "rows": [{"project": r["title"], "meetings_h": r["meet"], "tasks_h": r["task"], "total_h": r["total"],
+                  "prev_week_h": r["prev"],
+                  "people": [{"name": x["name"], "meetings_h": x["meet"], "tasks_h": x["task"], "total_h": x["total"],
+                              "prev_week_h": x["prev"]} for x in r["people"]]} for r in rep["rows"]],
+        "tasks_without_hours": rep["no_hours"],
+        "note": "Часы посчитаны кодом: встречи с другими участниками из календаря, задачи — «сколько ушло» или время в календаре. Это учёт, не оценка.",
+    })
+
+
+def tool_project_overview(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
+    """Проект для ответа Лео: факты считает код (project_facts), поиск — только по материалам проекта."""
+    from assistant.services import bundle_access, project_facts
+    from assistant.stores import projects as projects_store
+
+    name = str(args.get("project") or "").strip()
+    found = projects_store.find_for_user(ctx.uid, name)
+    if not found:
+        return _ok({"found": False, "note": "Такого проекта нет среди проектов пользователя."})
+    if len(found) > 1:
+        return _ok({"found": False, "candidates": [str(p.get("title") or "") for p in found[:8]],
+                    "note": "Подходит несколько проектов — уточни у пользователя, какой."})
+    p = found[0]
+    f = project_facts.facts(ctx.uid, p["id"])
+    view = bundle_access.project_full(ctx.uid, p["id"])
+    if not f or not view:
+        return _ok({"found": False, "note": "Проект недоступен."})
+    items = [{"kind": it["kind"], "type": it.get("subtitle") or it["kind"], "title": it["title"], "id": it["id"]}
+             for it in view["items"][:40]]
+    out: dict[str, Any] = {
+        "found": True,
+        "project": f["title"],
+        "project_url": projects_store.webapp_url(p["id"]),
+        "facts": project_facts.text(f, tz=_tz(ctx.uid)),
+        "items": items,
+        "hidden_from_user": f["hidden"],
+    }
+    q = str(args.get("query") or "").strip()
+    if q:
+        notes = {str(it["id"]) for it in view["items"] if it["kind"] == "note"}
+        tasks = {str(it["id"]) for it in view["items"] if it["kind"] == "task"}
+        try:
+            from assistant.services import semantic_memory
+
+            hits = semantic_memory.search(ctx.uid, q, k=30)
+        except Exception as e:
+            print(f"[gpt_calendar] project search err={e!r}")
+            hits = []
+        mine = []
+        for h in hits:
+            ref = h.get("ref") or {}
+            if str(ref.get("note_id") or "") in notes or str(ref.get("task_id") or "") in tasks:
+                mine.append({k: h.get(k) for k in ("title", "date", "kind", "snippet", "url") if h.get(k)})
+            if len(mine) >= 8:
+                break
+        out["found_in_project"] = mine
+        if not mine:
+            out["search_note"] = "В материалах проекта по запросу ничего не нашлось."
+    return _ok(out)
 
 
 def tool_propose_link(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
@@ -1543,6 +1687,8 @@ EXECUTORS: dict[str, Callable[[GptCalendarContext, dict[str, Any]], str]] = {
     "reminder_create": tool_reminder_create,
     "propose_delete": tool_propose_delete,
     "bundles_find": tool_bundles_find,
+    "project_overview": tool_project_overview,
+    "project_hours": tool_project_hours,
     "propose_link": tool_propose_link,
     "show_calendar_cards": tool_show_calendar_cards,
     "offer_slots": tool_offer_slots,

@@ -51,6 +51,7 @@
   function listHtml(d) {
     var s = d.summary;
     var html = filtersHtml(d);
+    html += '<button type="button" class="pj-hours-entry" data-project-hours="1"><span>Часы по проектам</span><small>встречи и задачи по неделям ›</small></button>';
     html += '<p class="metrics-lead">Каждый видит свою карточку с теми же цифрами. Без рейтинга: порядок — по алфавиту.' +
       "<small>В срок — с поправками: переносы постановщика, ожидание ответа на вопрос, короткие сроки и отпуск не засчитываются.</small></p>";
     html += '<div class="metrics-kpis">' +
@@ -161,6 +162,10 @@
   function onClick(e) {
     var b = e.target.closest("button");
     if (!b) return;
+    if (b.dataset.projectHours != null) {
+      if (window.LeoProjects && window.LeoProjects.openHours) window.LeoProjects.openHours();
+      return;
+    }
     if (b.dataset.days) {
       state.days = Number(b.dataset.days);
       if (state.person) state.personData = null;

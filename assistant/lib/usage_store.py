@@ -320,6 +320,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "market_digest": "Рынок: выпуск",
     "bulk_map": "Большие данные по ссылке",
     "task_result_draft": "Описание результата задачи",
+    "project_passport": "Паспорт проекта",
 }
 
 

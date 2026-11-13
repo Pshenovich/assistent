@@ -508,7 +508,20 @@ def get_readable_note(
     uid = str(int(user_id))
     note = _org_note(uid, int(note_id), need="reader")
     if not note:
-        return None
+        # участник проекта, куда документ добавил тот, кто может его править (только чтение)
+        try:
+            from assistant.services import project_access
+
+            pnote = project_access.readable_note(uid, int(note_id))
+        except Exception as e:
+            print(f"[notes] project access note={note_id} err={e!r}")
+            pnote = None
+        if not pnote:
+            return None
+        out = _with_sharing(pnote, uid) if with_sharing else dict(pnote)
+        out["can_edit"] = False
+        out["can_comment"] = pnote["project_role"] in ("editor", "owner")
+        return out
     out = _with_sharing(note, uid) if with_sharing else dict(note)
     out["can_edit"] = False
     out["can_comment"] = note["org_role"] == "commenter"
@@ -990,7 +1003,7 @@ def delete_note(user_id: int | str, note_id: int) -> bool:
                 from assistant.stores import tags as tags_store
 
                 mapping = tags_store.tags_by_items(uid, [("local", str(int(note_id)))])
-                extra["tag_ids"] = [
+                extra["project_ids"] = [
                     int(t["id"]) for t in mapping.get(("local", str(int(note_id))), []) if t.get("id") is not None
                 ]
             except Exception:

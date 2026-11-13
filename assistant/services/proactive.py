@@ -911,6 +911,13 @@ def build_feed(uid: int, events: list[dict[str, Any]], *, now: Optional[datetime
             items += rule_kb_stale(uid, now, tz)
         except Exception as e:
             print(f"[proactive] kb stale failed uid={uid} err={e!r}")
+        try:
+            from assistant.services import project_focus
+
+            items += project_focus.stuck_cards(uid, now, tz)
+            items += project_focus.suggest_cards(uid, now, tz, dismissed_keys(uid))
+        except Exception as e:
+            print(f"[proactive] project cards failed uid={uid} err={e!r}")
     except Exception as e:
         print(f"[proactive] insights failed uid={uid} err={e!r}")
     try:

@@ -313,7 +313,7 @@
       el.innerHTML = seg + '<p class="pf-hint">' + (state.loading ? "Считаю…" : "") + "</p>";
       return;
     }
-    el.innerHTML = seg + cardHtml(d, { self: true });
+    el.innerHTML = seg + '<button type="button" class="pj-hours-entry" data-project-hours="1"><span>Часы по проектам</span><small>встречи и задачи по неделям ›</small></button>' + cardHtml(d, { self: true });
     loadLead("/metrics/me/summary?days=" + state.days);
   }
 
@@ -349,6 +349,10 @@
   function onClick(e) {
     var b = e.target.closest("button");
     if (!b) return;
+    if (b.dataset.projectHours != null) {
+      if (window.LeoProjects && window.LeoProjects.openHours) window.LeoProjects.openHours();
+      return;
+    }
     if (b.dataset.days) {
       state.days = Number(b.dataset.days);
       state.data = null;

@@ -2651,6 +2651,10 @@ class _MiniappCalendarTaskBody(BaseModel):
     parent_id: Optional[int] = None
     # Исполнитель не из нашей команды (клиент, подрядчик): можно просто по имени; задачу ведёт постановщик.
     assignee_external: Optional[bool] = None
+    # Проект задачи: при создании — положить в проект; в PATCH — 0 убирает из проектов, где человек правит.
+    project_id: Optional[int] = None
+    # «Сколько ушло» при сдаче (необязательно): минуты или «1 ч 30 мин»; "" — убрать отметку
+    spent: Optional[str] = None
 
 
 class _MiniappCalendarAvailabilityBody(BaseModel):
@@ -2885,6 +2889,31 @@ class _MiniappBundlePatch(BaseModel):
 
 class _MiniappBundleItems(BaseModel):
     items: list[_MiniappLinkItem] = []
+
+
+class _MiniappProjectCreate(BaseModel):
+    title: str = ""
+    org_id: str = ""
+    lead_user_id: str = ""
+    description: str = ""
+    color: str = ""
+    items: list[_MiniappLinkItem] = []
+
+
+class _MiniappProjectPatch(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    color: Optional[str] = None
+    status: Optional[str] = None
+    lead_user_id: Optional[str] = None
+    archived: Optional[bool] = None
+
+
+class _MiniappProjectMember(BaseModel):
+    principal: str = ""
+    role: str = "editor"
+    # отдел, команда или вся организация у личного проекта: проект становится проектом этой организации
+    org_id: str = ""
 
 
 class _MiniappTagCreate(BaseModel):
@@ -6985,6 +7014,8 @@ class _MiniappTaskTriageBody(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     result: Optional[str] = None
+    # «Сколько ушло» при «Сделано» (необязательно): минуты числом или «1 ч 30 мин»
+    spent: Optional[str] = None
     note: str = ""
     # undo: вернуть прежнее состояние разбора
     state: Optional[str] = None
@@ -7127,6 +7158,8 @@ async def miniapp_calendar_tasks_triage(
             )
             if row:  # событие «Сдано» пишет update_task
                 await run_in_threadpool(partial(task_notify.notify_task_owner_done, task=row, completer_name=name))
+            if body.spent is not None:
+                await run_in_threadpool(_task_spent_save, uid, task_id, body.spent)
         elif action == "undo":
             # Отмена «Сделано» снимает и отметку о выполнении (постановщик уже получил пуш — это ок).
             if task.get("done"):
@@ -7659,12 +7692,22 @@ async def miniapp_calendar_tasks_get(
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
-    row = await run_in_threadpool(calendar_tasks_store.get_task_for_user, uid, task_id)
+    from assistant.services import project_access
+
+    row = await run_in_threadpool(project_access.viewable_task, uid, task_id)
     if not row:
         raise HTTPException(status_code=404, detail="Задача не найдена")
+    if row.get("project_view"):
+        # участник проекта — только смотрит: «просмотрено» не ставим, менять нельзя
+        out = _task_api(row, tz=tz, viewer_id=uid)
+        out["read_only"] = True
+        out["projects"] = await run_in_threadpool(_task_projects, uid, task_id)
+        return {"ok": True, "task": out}
     # Исполнитель открыл поручение (ссылка из Telegram, календарь) — постановщик видит «просмотрено».
     row = await run_in_threadpool(calendar_tasks_store.mark_seen, uid, task_id) or row
-    return {"ok": True, "task": _task_api(row, tz=tz, viewer_id=uid)}
+    out = _task_api(row, tz=tz, viewer_id=uid)
+    out["projects"] = await run_in_threadpool(_task_projects, uid, task_id)
+    return {"ok": True, "task": out}
 
 
 @miniapp_router.post("/calendar/tasks/parse")
@@ -7748,6 +7791,8 @@ async def miniapp_calendar_tasks_create(
             body.end = parsed["end"].isoformat()
     if not start_raw:
         raise HTTPException(status_code=400, detail="Укажите начало задачи")
+    if body.project_id:
+        await run_in_threadpool(_task_project_check, uid, int(body.project_id))
     meeting_item = str(body.meeting_item or "").strip()
     if meeting_item and not str(body.note_id or "").isdigit():
         raise HTTPException(status_code=400, detail="Пункт встречи — только вместе с документом")
@@ -7758,7 +7803,10 @@ async def miniapp_calendar_tasks_create(
             _find_reusable_note_task, uid, str(body.note_id or ""), title, start_raw, tz
         )
         if reused:
-            return {"ok": True, "task": _task_api(reused, tz=tz, viewer_id=uid)}
+            res = _task_api(reused, tz=tz, viewer_id=uid)
+            if body.project_id:
+                res["projects"] = await run_in_threadpool(_task_project_add, uid, int(reused["id"]), int(body.project_id))
+            return {"ok": True, "task": res}
     assignee_uid = _resolve_calendar_task_assignee(principal, body)
     owner_uid = uid
     external = bool(body.assignee_external)
@@ -7812,6 +7860,11 @@ async def miniapp_calendar_tasks_create(
         raise HTTPException(status_code=400, detail=str(e)) from e
     synced = await run_in_threadpool(_sync_task_google, uid, row, "create")
     out = synced or row
+    projects_out: list[dict[str, Any]] = []
+    if body.project_id:
+        projects_out = await run_in_threadpool(_task_project_add, uid, int(out["id"]), int(body.project_id))
+    elif out.get("note_id") or out.get("parent_id"):
+        projects_out = await run_in_threadpool(_task_projects, uid, int(out["id"]))  # унаследованные
     if calendar_tasks_store.task_is_delegated(out):
         await run_in_threadpool(
             partial(
@@ -7830,7 +7883,71 @@ async def miniapp_calendar_tasks_create(
                 assigner_name=_principal_display_name(principal),
             )
         )
-    return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid)}
+    res = _task_api(out, tz=tz, viewer_id=uid)
+    res["projects"] = projects_out
+    return {"ok": True, "task": res}
+
+
+def _task_spent_save(uid: int, task_id: int, raw: Any) -> Optional[int]:
+    """«Сколько ушло»: пишет исполнитель (или постановщик своей задачи). Непонятный ввод — 400."""
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+    from assistant.stores import task_spent
+
+    t = calendar_tasks_store.get_task_for_user(uid, task_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
+    if str(t.get("assignee_user_id") or "") != str(uid) and str(t.get("owner_user_id") or "") != str(uid):
+        raise HTTPException(status_code=400, detail="Сколько ушло отмечает исполнитель")
+    text = str(raw if raw is not None else "").strip()
+    minutes = task_spent.clean_minutes(text) if text else None
+    if text and minutes is None:
+        raise HTTPException(status_code=400, detail="Не понял, сколько ушло: например, 1,5 или «1 ч 30 мин»")
+    task_spent.set_spent(task_id, uid, minutes)
+    return minutes
+
+
+def _task_project_check(uid: int, project_id: int) -> None:
+    """Положить задачу в проект может его редактор."""
+    from assistant.stores import projects as projects_store
+
+    p = projects_store.get(project_id)
+    if not p or not projects_store.at_least(projects_store.role_of(uid, p), "editor"):
+        raise HTTPException(status_code=400, detail="Нет такого проекта или прав добавлять в него")
+
+
+def _task_project_set(uid: int, task_id: int, project_id: Optional[int]) -> list[dict[str, Any]]:
+    """Проект задачи (простой выбор): 0/None — убрать из проектов, где человек правит."""
+    from assistant.stores import projects as projects_store
+
+    try:
+        projects_store.set_item_project(uid, "task", task_id, project_id or None)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return _task_projects(uid, task_id)
+
+
+def _task_project_add(uid: int, task_id: int, project_id: int) -> list[dict[str, Any]]:
+    """Новая задача: добавить в выбранный проект, не убирая из унаследованных (документ, общая задача)."""
+    from assistant.stores import projects as projects_store
+
+    try:
+        if project_id not in projects_store.ids_with_item("task", task_id):
+            projects_store.add_items(uid, project_id, [("task", str(task_id), "")])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return _task_projects(uid, task_id)
+
+
+def _task_projects(uid: int, task_id: int) -> list[dict[str, Any]]:
+    """Проекты задачи, где человек участник: [{id, title}]."""
+    from assistant.stores import projects as projects_store
+
+    out = []
+    for pid in projects_store.ids_with_item("task", task_id):
+        p = projects_store.get(pid)
+        if p and projects_store.role_of(uid, p):
+            out.append({"id": int(p["id"]), "title": str(p.get("title") or "")})
+    return out
 
 
 @miniapp_router.patch("/calendar/tasks/{task_id}")
@@ -7963,7 +8080,12 @@ async def miniapp_calendar_tasks_patch(
             )
         )
     _memory_task_changed(out)
-    return {"ok": True, "task": _task_api(out, tz=tz, viewer_id=uid)}
+    if body.spent is not None:
+        await run_in_threadpool(_task_spent_save, uid, task_id, body.spent)
+    res = _task_api(out, tz=tz, viewer_id=uid)
+    if body.project_id is not None:
+        res["projects"] = await run_in_threadpool(_task_project_set, uid, int(task_id), int(body.project_id))
+    return {"ok": True, "task": res}
 
 
 @miniapp_router.delete("/calendar/tasks/{task_id}")
@@ -12089,6 +12211,20 @@ async def miniapp_gpt_chat(
                     attached_notes = (attached_notes + "\n\n" + extra).strip()
             except Exception as e:
                 print(f"[gpt.chat] bundle context note={iid} err={e!r}")
+            try:
+                # документ в проекте — короткие факты проекта (цифры посчитал код)
+                from assistant.services import project_facts as _pf
+
+                blocks = []
+                for pr in _pf.projects_for_item(uid, "note", iid)[:2]:
+                    f = _pf.facts(uid, pr["id"])
+                    if f:
+                        blocks.append(_pf.text(f, tz=_pf._user_tz(uid)))  # type: ignore[attr-defined]
+                if blocks:
+                    attached_notes = (attached_notes + "\n\nДокумент входит в проект (факты посчитаны кодом, бери как есть):\n"
+                                      + "\n\n".join(blocks)).strip()
+            except Exception as e:
+                print(f"[gpt.chat] project context note={iid} err={e!r}")
         from assistant.integrations.openrouter_client import model_emits_images as _emits_images
         from assistant.nlu import auto_model
 
@@ -14753,7 +14889,12 @@ async def miniapp_notes_trash_restore(
             except Exception as e:
                 failed += 1
                 print(f"[notes_trash] sheet restore failed note={note_id} err={e!r}")
-        tag_ids = [int(t) for t in (extra.get("tag_ids") or []) if str(t).isdigit()]
+        tag_ids = [int(t) for t in (extra.get("project_ids") or []) if str(t).isdigit()]
+        if not tag_ids and extra.get("tag_ids"):
+            # удалён до переезда ярлыков в проекты — старые id ярлыков
+            from assistant.stores import tags as tags_store
+
+            tag_ids = tags_store.project_ids_for_legacy_tags(extra.get("tag_ids") or [])
         if tag_ids:
             try:
                 from assistant.stores import tags as tags_store
@@ -14861,7 +15002,7 @@ async def miniapp_links_for_item(
 
     def _run() -> list[dict[str, Any]]:
         k = str(kind or "").strip().lower()
-        if k not in ("person", "event") and not bundle_access.resolve(uid, k, id):
+        if k not in ("person", "event", "series", "mailaddr") and not bundle_access.resolve(uid, k, id):
             return []
         try:
             return bundle_access.bundles_for_item(uid, k, id)
@@ -14923,6 +15064,11 @@ async def miniapp_bundle_create(
             bundle = bundles_store.create(uid, body.title, items)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from None
+        if bundles_store.is_project(bundle):
+            from assistant.services import project_inherit
+
+            project_inherit.after_add(bundle["id"], [(k, rid) for k, rid, _l in items])
+            bundle = bundles_store.get(bundle["id"]) or bundle
         _links_notify(bundle, [uid])
         return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
 
@@ -14979,8 +15125,13 @@ async def miniapp_bundle_rename(
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any]:
-        _bundle_or_400(uid, bundle_id)
-        bundle = bundles_store.rename(bundle_id, body.title)
+        _raw, view = _bundle_or_400(uid, bundle_id)
+        if view.get("is_project") and not view.get("can_edit"):
+            raise HTTPException(status_code=400, detail="Нет прав менять проект")
+        try:
+            bundle = bundles_store.rename(bundle_id, body.title, user_id=uid)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
         _links_notify(bundle, [uid])
         return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
 
@@ -14999,12 +15150,19 @@ async def miniapp_bundle_add_items(
     uid = int(principal.telegram_user_id)
 
     def _run() -> dict[str, Any]:
-        _bundle_or_400(uid, bundle_id)
+        _raw, view = _bundle_or_400(uid, bundle_id)
+        if view.get("is_project") and not view.get("can_edit"):
+            raise HTTPException(status_code=400, detail="Добавлять в проект может редактор проекта")
         items = _links_checked(uid, body.items)
         try:
             bundle = bundles_store.add_items(uid, bundle_id, items)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from None
+        if bundles_store.is_project(bundle):
+            from assistant.services import project_inherit
+
+            project_inherit.after_add(bundle_id, [(k, rid) for k, rid, _l in items])
+            bundle = bundles_store.get(bundle_id) or bundle
         _links_notify(bundle, [uid])
         return {"ok": True, "bundle": bundle_access.view_bundle(uid, bundle)}
 
@@ -15057,6 +15215,429 @@ async def miniapp_bundle_delete(
         bundles_store.delete(bundle_id)
         _links_notify(raw, [uid])
         return {"ok": True}
+
+    return await run_in_threadpool(_run)
+
+
+def _project_or_400(uid: int, project_id: int) -> dict[str, Any]:
+    from assistant.services import bundle_access
+
+    v = bundle_access.project_full(uid, project_id)
+    if not v:
+        raise HTTPException(status_code=400, detail="Проект не найден")
+    return v
+
+
+def _project_org_ok(uid: int, org_id: str) -> str:
+    """Проект организации может завести только её участник."""
+    oid = str(org_id or "").strip()
+    if not oid:
+        return ""
+    from assistant.stores import orgs_store
+
+    if not oid.isdigit() or not orgs_store.role_of(int(oid), uid):
+        raise HTTPException(status_code=400, detail="Нет такой организации")
+    return oid
+
+
+@miniapp_router.get("/projects")
+async def miniapp_projects_list(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    q: str = "",
+    archived: int = 0,
+) -> dict[str, Any]:
+    """Проекты, где человек участник (свои и общие), без разбора элементов."""
+    from assistant.services import bundle_access
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(
+        partial(bundle_access.project_list, uid, query=str(q or "")[:200], include_archived=bool(archived))
+    )
+    return {
+        "ok": True,
+        "projects": items,
+        "statuses": [{"id": s, "label": projects_store.STATUS_LABEL[s]} for s in projects_store.STATUSES],
+        "colors": list(projects_store.COLORS),
+    }
+
+
+@miniapp_router.post("/projects")
+async def miniapp_project_create(
+    body: _MiniappProjectCreate,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        oid = _project_org_ok(uid, body.org_id)
+        items = _links_checked(uid, body.items) if body.items else []
+        try:
+            p = projects_store.create(
+                uid, body.title, org_id=oid, lead_user_id=body.lead_user_id,
+                description=body.description, color=body.color, items=items,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(p, [uid])
+        return {"ok": True, "project": _project_or_400(uid, int(p["id"]))}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/projects/{project_id}")
+async def miniapp_project_get(
+    project_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    return {"ok": True, "project": await run_in_threadpool(_project_or_400, uid, project_id)}
+
+
+@miniapp_router.patch("/projects/{project_id}")
+async def miniapp_project_patch(
+    project_id: int,
+    body: _MiniappProjectPatch,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Название, описание, цвет, статус, руководитель (редактор); в архив и обратно (владелец)."""
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        _project_or_400(uid, project_id)
+        try:
+            p = projects_store.update(uid, project_id, body.model_dump(exclude_none=True))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(p, [uid])
+        return {"ok": True, "project": _project_or_400(uid, project_id)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.delete("/projects/{project_id}")
+async def miniapp_project_delete(
+    project_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Удалить проект (документы, задачи и встречи остаются). Только владелец."""
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        raw = projects_store.get(project_id)
+        _project_or_400(uid, project_id)
+        try:
+            projects_store.delete(uid, project_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(raw, [uid])
+        return {"ok": True}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.post("/projects/{project_id}/members")
+async def miniapp_project_member_set(
+    project_id: int,
+    body: _MiniappProjectMember,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Поделиться проектом: человек (u:<id>), отдел/команда (g:<id>) или вся организация (all)."""
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        v = _project_or_400(uid, project_id)
+        pr = str(body.principal or "").strip().lower()
+        if (pr == "all" or pr.startswith("g:")) and not v["org_id"] and str(body.org_id or "").strip():
+            oid = _project_org_ok(uid, body.org_id)
+            if pr.startswith("g:"):
+                from assistant.stores import orgs_store
+
+                with orgs_store._LOCK:  # type: ignore[attr-defined]
+                    row = orgs_store._conn().execute(  # type: ignore[attr-defined]
+                        "SELECT org_id FROM org_groups WHERE id = ?", (int(pr[2:]) if pr[2:].isdigit() else 0,)
+                    ).fetchone()
+                if not row or str(row[0]) != oid:
+                    raise HTTPException(status_code=400, detail="Нет такого отдела или команды")
+            if not v["can_edit"]:
+                raise HTTPException(status_code=400, detail="Нет прав менять проект")
+            projects_store._write(int(project_id), {"org_id": oid})  # type: ignore[attr-defined]
+        try:
+            p = projects_store.set_member(uid, project_id, body.principal, body.role)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(p, [uid])
+        return {"ok": True, "project": _project_or_400(uid, project_id)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.delete("/projects/{project_id}/members/{member}")
+async def miniapp_project_member_remove(
+    project_id: int,
+    member: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.services import bundle_access
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        before = projects_store.get(project_id)
+        _project_or_400(uid, project_id)
+        try:
+            projects_store.remove_member(uid, project_id, member)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(before, [uid])
+        # убрал себя — проекта больше не видно: project будет None
+        return {"ok": True, "project": bundle_access.project_full(uid, project_id)}
+
+    return await run_in_threadpool(_run)
+
+
+def _project_share_candidates(uid: int, project_id: int, q: str) -> dict[str, Any]:
+    """С кем можно поделиться: люди, отделы и команды из организаций человека (у проекта организации —
+    только из неё), вся организация. Уже участники — с пометкой."""
+    from assistant.stores import org_groups, orgs_store
+
+    v = _project_or_400(uid, project_id)
+    have = {m["principal"] for m in v["members"]}
+    words = [w for w in str(q or "").lower().split() if w]
+    orgs = orgs_store.orgs_for_user(uid)
+    if v["org_id"]:
+        orgs = [o for o in orgs if str(o.get("id")) == v["org_id"]]
+
+    def hit(*texts: str) -> bool:
+        hay = " ".join(t or "" for t in texts).lower()
+        return all(w in hay for w in words)
+
+    people: dict[str, dict[str, Any]] = {}
+    groups: list[dict[str, Any]] = []
+    whole: list[dict[str, Any]] = []
+    for org in orgs:
+        oid = int(org["id"])
+        oname = str(org.get("name") or "Организация")
+        for m in orgs_store.list_members(oid):
+            if m["status"] != "active" or not m["user_id"] or str(m["user_id"]) == str(uid):
+                continue
+            pr = "u:" + str(m["user_id"])
+            if pr in people or not hit(m["name"], m.get("email") or "", m.get("username") or ""):
+                continue
+            people[pr] = {"principal": pr, "label": m["name"], "sub": m.get("email") or oname,
+                          "org_id": str(oid), "member": pr in have}
+        try:
+            depts = org_groups.list_groups(oid, uid)
+        except Exception:
+            depts = []
+        for d in depts:
+            for g in [d, *d.get("teams", [])]:
+                label = g["name"] if g is d else f"{d['name']} · {g['name']}"
+                if hit(label):
+                    pr = f"g:{int(g['id'])}"
+                    groups.append({"principal": pr, "label": label, "sub": f"{len(g['member_ids'])} чел. · {oname}",
+                                   "org_id": str(oid), "member": pr in have})
+        if hit("вся организация", oname):
+            whole.append({"principal": "all", "label": f"Вся организация «{oname}»", "sub": "кроме гостей",
+                          "org_id": str(oid), "member": "all" in have and v["org_id"] == str(oid)})
+    return {"ok": True, "people": list(people.values())[:30], "groups": groups[:20], "orgs": whole}
+
+
+@miniapp_router.get("/projects/{project_id}/share-candidates")
+async def miniapp_project_share_candidates(
+    project_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    q: str = "",
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    return await run_in_threadpool(_project_share_candidates, uid, project_id, str(q or "")[:100])
+
+
+@miniapp_router.get("/projects/{project_id}/passport")
+async def miniapp_project_passport(
+    project_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Паспорт проекта: 2–3 строки Лео по фактам (цифры считает код), кэш до изменения фактов."""
+    from assistant.integrations.openrouter_client import usage_user
+    from assistant.services import project_facts
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        with usage_user(uid):
+            out = project_facts.passport(uid, project_id)
+        if out is None:
+            raise HTTPException(status_code=400, detail="Проект не найден")
+        return {"ok": True, **out}
+
+    return await run_in_threadpool(_run)
+
+
+class _MiniappProjectSuggest(BaseModel):
+    op: str = "add"  # add | reject
+    key: str = ""
+    project_id: int = 0
+    items: list[_MiniappLinkItem] = []
+
+
+@miniapp_router.post("/proactive/project")
+async def miniapp_proactive_project(
+    body: _MiniappProjectSuggest,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """Карточка Фокуса «Добавить в проект?»: add — положить всё (проверка доступа как у «+ Добавить»),
+    reject — «не сюда», эти элементы этому проекту больше не предлагать."""
+    from assistant.services import proactive, project_focus
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        raw = [{"kind": it.kind, "id": it.id} for it in body.items if it.kind in ("note", "task")]
+        if body.op == "reject":
+            project_focus.reject(uid, body.project_id, raw)
+        else:
+            _project_or_400(uid, body.project_id)
+            items = _links_checked(uid, [it for it in body.items if it.kind in ("note", "task")])
+            try:
+                p = projects_store.add_items(uid, body.project_id, items)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from None
+            _links_notify(p, [uid])
+        if body.key:
+            proactive.dismiss(uid, body.key)
+        _FOCUS_CACHE.pop(uid, None)  # лента без этой карточки — сразу
+        return {"ok": True}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/calendar/tasks/{task_id}/spent")
+async def miniapp_task_spent(
+    task_id: int,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """«Сколько ушло»: что уже отмечено и подсказка Лео (время в календаре или типичное у человека)."""
+    from assistant.services import project_hours
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+    from assistant.stores import task_spent
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        t = calendar_tasks_store.get_task_for_user(uid, task_id)
+        if not t:
+            raise HTTPException(status_code=404, detail="Задача не найдена")
+        return {"ok": True, "minutes": task_spent.get(task_id), "hint": project_hours.spent_hint(uid, t)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/metrics/project-hours")
+async def miniapp_project_hours(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    week: str = "",
+    weeks: int = 8,
+    people: str = "",
+    project_id: Optional[int] = None,
+) -> dict[str, Any]:
+    """Часы по проектам: столбики по неделям и таблица выбранной недели с прошлой (проект → люди и люди → проекты).
+    Видно себя и тех, чьи показатели человеку открыты (как в «Показателях»)."""
+    from assistant.services import project_hours
+
+    uid = int(principal.telegram_user_id)
+    who = [p.strip() for p in str(people or "").split(",") if p.strip().isdigit()] or None
+
+    def _run() -> dict[str, Any]:
+        try:
+            rep = project_hours.report(uid, week=str(week or "")[:10], weeks=weeks, people=who, project_id=project_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        rep["by_person"] = project_hours.by_person(rep)
+        return {"ok": True, **rep}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.get("/project-sources")
+async def miniapp_project_sources(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    tab: str = "meetings",
+    q: str = "",
+) -> dict[str, Any]:
+    """Что добавить в проект: встречи и серии, темы (tab=meetings), внешние чаты (tgchats), почта (mail)."""
+    from assistant.services import project_sources
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(project_sources.for_tab, uid, str(tab or ""), str(q or "")[:100])
+    return {"ok": True, "items": items}
+
+
+@miniapp_router.get("/project-sources/series")
+async def miniapp_project_series(
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+    key: str = "",
+) -> dict[str, Any]:
+    """Встречи серии — для «только выбранные встречи»."""
+    from assistant.services import project_sources
+
+    uid = int(principal.telegram_user_id)
+    items = await run_in_threadpool(project_sources.series_occurrences, uid, str(key or "")[:300])
+    return {"ok": True, "items": items}
+
+
+@miniapp_router.post("/projects/{project_id}/items")
+async def miniapp_project_add_items(
+    project_id: int,
+    body: _MiniappBundleItems,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        _project_or_400(uid, project_id)
+        items = _links_checked(uid, body.items)
+        try:
+            p = projects_store.add_items(uid, project_id, items)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(p, [uid])
+        return {"ok": True, "project": _project_or_400(uid, project_id)}
+
+    return await run_in_threadpool(_run)
+
+
+@miniapp_router.delete("/projects/{project_id}/items/{kind}/{item_id}")
+async def miniapp_project_remove_item(
+    project_id: int,
+    kind: str,
+    item_id: str,
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import projects as projects_store
+
+    uid = int(principal.telegram_user_id)
+
+    def _run() -> dict[str, Any]:
+        _project_or_400(uid, project_id)
+        try:
+            p = projects_store.remove_item(uid, project_id, kind, item_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from None
+        _links_notify(p, [uid])
+        return {"ok": True, "project": _project_or_400(uid, project_id)}
 
     return await run_in_threadpool(_run)
 

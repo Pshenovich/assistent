@@ -18,9 +18,28 @@ from assistant.stores import notes as notes_store
 
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 
-KINDS = ("note", "task", "chat", "reminder", "person", "event")
-MAX_ITEMS = 60
+KINDS = (
+    "note", "task", "chat", "reminder", "person", "event", "journal",
+    # с 2026-11 (проекты): серия встреч, тема встреч, внешний Telegram-чат (или его топик),
+    # переписка (ветка письма), почтовый адрес
+    "series", "topic", "tgchat", "mail", "mailaddr",
+)
+MAX_ITEMS = 60  # у «Связанного»; у проекта предела нет
 MAX_TITLE = 120
+
+# kind связки: related — безымянное «Связанное»; project — проект (название, участники, статус).
+BUNDLE_RELATED = "related"
+BUNDLE_PROJECT = "project"
+
+_PROJECT_COLS = (
+    ("kind", "TEXT NOT NULL DEFAULT 'related'"),
+    ("lead_user_id", "TEXT NOT NULL DEFAULT ''"),
+    ("status", "TEXT NOT NULL DEFAULT 'active'"),
+    ("description", "TEXT NOT NULL DEFAULT ''"),
+    ("color", "TEXT NOT NULL DEFAULT ''"),
+    ("org_id", "TEXT NOT NULL DEFAULT ''"),
+    ("archived_at", "TEXT NOT NULL DEFAULT ''"),
+)
 
 
 @sqlite_conn.schema_once(lambda: notes_store._conn())  # type: ignore[attr-defined]
@@ -51,8 +70,50 @@ def _conn() -> sqlite3.Connection:
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bundle_items_item ON bundle_items(item_kind, item_id)")
+    # Участники проекта: principal — u:<id> / g:<id отдела или команды> / all (вся организация org_id).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bundle_members (
+            bundle_id INTEGER NOT NULL,
+            principal TEXT NOT NULL,
+            role TEXT NOT NULL,
+            added_by TEXT NOT NULL DEFAULT '',
+            added_at TEXT NOT NULL,
+            PRIMARY KEY (bundle_id, principal)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bundle_members_principal ON bundle_members(principal)")
+    have = {str(r[1]) for r in conn.execute("PRAGMA table_info(bundles)")}
+    added_kind = "kind" not in have
+    for col, decl in _PROJECT_COLS:
+        if col not in have:
+            conn.execute(f"ALTER TABLE bundles ADD COLUMN {col} {decl}")
+    if added_kind:
+        _promote_named_bundles(conn)
     conn.commit()
     return conn
+
+
+def _promote_named_bundles(conn: sqlite3.Connection) -> None:
+    """Разовый переезд: именованные связки становятся проектами. Участники — автор (владелец)
+    и все, кто добавлял элементы (редакторы): раньше они видели связку через свои элементы."""
+    now = _now()
+    rows = conn.execute("SELECT id, owner_user_id FROM bundles WHERE title != ''").fetchall()
+    for r in rows:
+        bid, owner = int(r[0]), str(r[1])
+        conn.execute("UPDATE bundles SET kind = ? WHERE id = ?", (BUNDLE_PROJECT, bid))
+        conn.execute(
+            "INSERT OR IGNORE INTO bundle_members(bundle_id, principal, role, added_by, added_at) VALUES (?, ?, 'owner', ?, ?)",
+            (bid, f"u:{owner}", owner, now),
+        )
+        for (adder,) in conn.execute("SELECT DISTINCT added_by FROM bundle_items WHERE bundle_id = ?", (bid,)).fetchall():
+            if str(adder) and str(adder) != owner:
+                conn.execute(
+                    "INSERT OR IGNORE INTO bundle_members(bundle_id, principal, role, added_by, added_at) "
+                    "VALUES (?, ?, 'editor', ?, ?)",
+                    (bid, f"u:{adder}", owner, now),
+                )
 
 
 def _now() -> str:
@@ -71,7 +132,7 @@ def norm_item(kind: Any, item_id: Any) -> tuple[str, str]:
         raise ValueError("Такой элемент нельзя связать")
     if not rid or any(ch in rid for ch in "\"'<>\n"):
         raise ValueError("Нет id элемента")
-    if k in ("note", "task", "chat"):
+    if k in ("note", "task", "chat", "journal", "topic"):
         try:
             n = int(rid)
         except ValueError:
@@ -79,8 +140,20 @@ def norm_item(kind: Any, item_id: Any) -> tuple[str, str]:
         if n <= 0:
             raise ValueError("Нет id элемента")
         rid = str(n)
-    elif k == "person":
+    elif k in ("person", "mailaddr"):
         rid = rid.lower()
+        if k == "mailaddr" and ("@" not in rid or " " in rid):
+            raise ValueError("Нужен почтовый адрес")
+    elif k == "tgchat":
+        # "<chat_id>" или "<chat_id>:<thread_id>" (топик форума)
+        parts = rid.split(":")
+        try:
+            nums = [int(x) for x in parts]
+        except ValueError:
+            raise ValueError("Нет id чата") from None
+        if len(nums) > 2 or nums[0] == 0 or (len(nums) == 2 and nums[1] < 0):
+            raise ValueError("Нет id чата")
+        rid = ":".join(str(n) for n in nums)
     return k, rid
 
 
@@ -133,8 +206,8 @@ def bundles_for_item(kind: Any, item_id: Any) -> list[dict[str, Any]]:
                 b["items"] = _items(conn, bid)
                 out.append(b)
     # безымянные («Связанное») — первыми, потом именованные; внутри — свежие выше
-    named = sorted([b for b in out if b["title"]], key=lambda b: b["updated_at"], reverse=True)
-    plain = sorted([b for b in out if not b["title"]], key=lambda b: b["updated_at"], reverse=True)
+    named = sorted([b for b in out if is_project(b)], key=lambda b: b["updated_at"], reverse=True)
+    plain = sorted([b for b in out if not is_project(b)], key=lambda b: b["updated_at"], reverse=True)
     return plain + named
 
 
@@ -142,10 +215,12 @@ def _insert_items(
     conn: sqlite3.Connection, bundle_id: int, uid: str, items: Iterable[tuple[str, str, str]]
 ) -> int:
     have = conn.execute("SELECT COUNT(*) FROM bundle_items WHERE bundle_id = ?", (bundle_id,)).fetchone()[0]
+    row = conn.execute("SELECT kind FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    limited = not row or str(row[0]) != BUNDLE_PROJECT
     added = 0
     now = _now()
     for k, rid, label in items:
-        if have + added >= MAX_ITEMS:
+        if limited and have + added >= MAX_ITEMS:
             raise ValueError(f"В связке не больше {MAX_ITEMS} элементов")
         cur = conn.execute(
             "INSERT OR IGNORE INTO bundle_items(bundle_id, item_kind, item_id, label, added_by, added_at) "
@@ -161,8 +236,21 @@ def _clean_title(title: Any) -> str:
     return " ".join(str(title or "").split())[:MAX_TITLE]
 
 
+def is_project(bundle: Optional[dict[str, Any]]) -> bool:
+    return bool(bundle) and str((bundle or {}).get("kind") or "") == BUNDLE_PROJECT
+
+
+def _add_owner(conn: sqlite3.Connection, bundle_id: int, uid: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO bundle_members(bundle_id, principal, role, added_by, added_at) VALUES (?, ?, 'owner', ?, ?)",
+        (int(bundle_id), f"u:{uid}", uid, _now()),
+    )
+
+
 def create(user_id: Any, title: Any, items: list[tuple[str, str, str]]) -> dict[str, Any]:
-    """Новая связка. items — [(вид, id, подпись-снимок)], уже проверенные на доступ."""
+    """Новая связка. items — [(вид, id, подпись-снимок)], уже проверенные на доступ.
+    С названием — это проект (автор — владелец, элементов может быть сколько угодно, хоть ноль);
+    без названия — «Связанное» (минимум два элемента)."""
     uid = _uid(user_id)
     norm = []
     seen = set()
@@ -172,17 +260,22 @@ def create(user_id: Any, title: Any, items: list[tuple[str, str, str]]) -> dict[
             continue
         seen.add(key)
         norm.append((key[0], key[1], label))
-    if len(norm) < 2:
+    clean = _clean_title(title)
+    kind = BUNDLE_PROJECT if clean else BUNDLE_RELATED
+    if kind == BUNDLE_RELATED and len(norm) < 2:
         raise ValueError("Выберите хотя бы два элемента")
     now = _now()
     with _LOCK:
         conn = _conn()
         cur = conn.execute(
-            "INSERT INTO bundles(owner_user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (uid, _clean_title(title), now, now),
+            "INSERT INTO bundles(owner_user_id, title, kind, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (uid, clean, kind, now, now),
         )
         bid = int(cur.lastrowid)
-        _insert_items(conn, bid, uid, norm)
+        if kind == BUNDLE_PROJECT:
+            _add_owner(conn, bid, uid)
+        if norm:
+            _insert_items(conn, bid, uid, norm)
         conn.commit()
     return get(bid) or {}
 
@@ -220,7 +313,7 @@ def link(
 
     def _plain_bundle(k: tuple[str, str]) -> Optional[int]:
         for bd in bundles_for_item(*k):
-            if bd["title"]:
+            if is_project(bd):
                 continue
             if visible_bundle_ids is not None and int(bd["id"]) not in visible_bundle_ids:
                 continue
@@ -237,21 +330,41 @@ def link(
     return add_items(user_id, target, [other])
 
 
-def rename(bundle_id: Any, title: Any) -> dict[str, Any]:
+def rename(bundle_id: Any, title: Any, *, user_id: Any = None) -> dict[str, Any]:
+    """Переименовать. «Связанное», получив название, становится проектом (назвавший — владелец).
+    Проект без названия оставить нельзя."""
+    clean = _clean_title(title)
     with _LOCK:
         conn = _conn()
-        if not _bundle_row(conn, int(bundle_id)):
+        row = _bundle_row(conn, int(bundle_id))
+        if not row:
             raise ValueError("Связка не найдена")
-        conn.execute(
-            "UPDATE bundles SET title = ?, updated_at = ? WHERE id = ?",
-            (_clean_title(title), _now(), int(bundle_id)),
-        )
+        if is_project(row):
+            if not clean:
+                raise ValueError("У проекта должно быть название")
+            conn.execute(
+                "UPDATE bundles SET title = ?, updated_at = ? WHERE id = ?", (clean, _now(), int(bundle_id))
+            )
+        elif clean:
+            uid = _uid(user_id if user_id is not None else row["owner_user_id"])
+            conn.execute(
+                "UPDATE bundles SET title = ?, kind = ?, updated_at = ? WHERE id = ?",
+                (clean, BUNDLE_PROJECT, _now(), int(bundle_id)),
+            )
+            _add_owner(conn, int(bundle_id), str(row["owner_user_id"]))
+            if uid != str(row["owner_user_id"]):
+                conn.execute(
+                    "INSERT OR IGNORE INTO bundle_members(bundle_id, principal, role, added_by, added_at) "
+                    "VALUES (?, ?, 'editor', ?, ?)",
+                    (int(bundle_id), f"u:{uid}", uid, _now()),
+                )
         conn.commit()
     return get(bundle_id) or {}
 
 
 def remove_item(bundle_id: Any, kind: Any, item_id: Any) -> Optional[dict[str, Any]]:
-    """Убрать элемент. Если в связке остался один элемент — связка удаляется (возвращает None)."""
+    """Убрать элемент. Если в «Связанном» остался один элемент — оно удаляется (возвращает None).
+    Проект остаётся и пустым."""
     k, rid = norm_item(kind, item_id)
     bid = int(bundle_id)
     with _LOCK:
@@ -260,7 +373,7 @@ def remove_item(bundle_id: Any, kind: Any, item_id: Any) -> Optional[dict[str, A
             "DELETE FROM bundle_items WHERE bundle_id = ? AND item_kind = ? AND item_id = ?", (bid, k, rid)
         )
         left = conn.execute("SELECT COUNT(*) FROM bundle_items WHERE bundle_id = ?", (bid,)).fetchone()[0]
-        if left < 2:
+        if left < 2 and not is_project(_bundle_row(conn, bid)):
             conn.execute("DELETE FROM bundle_items WHERE bundle_id = ?", (bid,))
             conn.execute("DELETE FROM bundles WHERE id = ?", (bid,))
             conn.commit()
@@ -275,6 +388,7 @@ def delete(bundle_id: Any) -> bool:
     with _LOCK:
         conn = _conn()
         conn.execute("DELETE FROM bundle_items WHERE bundle_id = ?", (bid,))
+        conn.execute("DELETE FROM bundle_members WHERE bundle_id = ?", (bid,))
         cur = conn.execute("DELETE FROM bundles WHERE id = ?", (bid,))
         conn.commit()
     return bool(cur.rowcount)

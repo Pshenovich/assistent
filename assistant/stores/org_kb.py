@@ -746,6 +746,15 @@ def transfer_docs(org_id: int, from_user_id: int | str) -> list[int]:
                 if table in tables and "user_id" in _table_cols(conn, table):
                     conn.execute(f"DELETE FROM {table} WHERE user_id = ? AND item_kind = 'local' AND item_id = ?",
                                  (old, str(nid)))
+            if "bundle_members" in tables:
+                # личные проекты ушедшего (он там единственный участник) — без этого документа;
+                # общие проекты документ сохраняют
+                conn.execute(
+                    "DELETE FROM bundle_items WHERE item_kind = 'note' AND item_id = ? AND bundle_id IN ("
+                    " SELECT b.id FROM bundles b WHERE b.kind = 'project' AND b.owner_user_id = ?"
+                    " AND NOT EXISTS (SELECT 1 FROM bundle_members m WHERE m.bundle_id = b.id AND m.principal != ?))",
+                    (str(nid), old, f"u:{old}"),
+                )
         conn.commit()
     _transfer_outside(ids, old, new)
     print(f"[org_kb] transfer org={org_id} from={old} to={new} docs={ids}")

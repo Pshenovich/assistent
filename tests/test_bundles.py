@@ -49,14 +49,15 @@ class BundlesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             bundles.norm_item("vault", "1")
         with self.assertRaises(ValueError):
-            bundles.create(1, "x", [("note", a, "")])
+            bundles.create(1, "", [("note", a, "")])
+        self.assertEqual(len(bundles.create(1, "x", [("note", a, "")])["items"]), 1)  # проект — можно
 
     def test_viewer_sees_only_accessible_items(self) -> None:
         mine = self._n(1, "Мой")
         secret = self._n(1, "Закрытый")
         shared = self._n(1, "Общий")
         note_members.add_member(1, int(shared), 2)
-        b = bundles.create(1, "Проект", [("note", mine, ""), ("note", secret, ""), ("note", shared, "")])
+        b = bundles.create(1, "", [("note", mine, ""), ("note", secret, ""), ("note", shared, "")])
         v2 = bundle_access.visible_bundle(2, b["id"])
         self.assertIsNotNone(v2)
         self.assertEqual([i["title"] for i in v2["items"]], ["Общий"])
@@ -147,16 +148,21 @@ class BundlesTests(unittest.TestCase):
         bundles.create(1, "Контент завод", [("note", a, ""), ("note", b, "")])
         bundles.link(1, ("note", b, ""), ("note", c, ""))  # безымянная — не в списке
         self.assertEqual([x["title"] for x in bundle_access.list_for_user(1)], ["Контент завод"])
-        # второй видит связку через общий документ, но только его
+        # второй не участник — проекта не видит, даже через общий документ
+        self.assertEqual(bundle_access.list_for_user(2), [])
+        from assistant.stores import projects
+
+        projects.set_member(1, bundle_access.list_for_user(1)[0]["id"], "u:2", "viewer")
         seen = bundle_access.list_for_user(2)
         self.assertEqual([x["title"] for x in seen], ["Контент завод"])
-        self.assertEqual([i["title"] for i in seen[0]["items"]], ["Тариф Pro"])
+        # участнику проекта открыты документы, которые добавил их автор
+        self.assertEqual([i["title"] for i in seen[0]["items"]], ["Тариф Pro", "Бюджет"])
         self.assertEqual(bundle_access.list_for_user(3), [])
         # поиск по названию связки и по названиям элементов
         self.assertEqual(len(bundle_access.list_for_user(1, query="завод")), 1)
         self.assertEqual(len(bundle_access.list_for_user(1, query="бюджет")), 1)
         self.assertEqual(bundle_access.list_for_user(1, query="черновик"), [])
-        self.assertEqual(bundle_access.list_for_user(2, query="бюджет"), [])  # недоступное не ищется
+        self.assertEqual(bundle_access.list_for_user(3, query="бюджет"), [])  # не участник — не ищется
 
     def test_leo_finds_bundle_by_name(self) -> None:
         import json
@@ -216,8 +222,10 @@ class BundlesApiTests(unittest.TestCase):
         self.assertEqual(renamed["bundle"]["title"], "Проект")
         with self.assertRaises(HTTPException):
             self._run(us.miniapp_bundle_get(bid, self._p(2)))
-        gone = self._run(us.miniapp_bundle_remove_item(bid, "note", b, self._p(1)))
-        self.assertIsNone(gone["bundle"])
+        # названное «Связанное» стало проектом: последний элемент не удаляет проект
+        self.assertTrue(renamed["bundle"]["is_project"])
+        left = self._run(us.miniapp_bundle_remove_item(bid, "note", b, self._p(1)))
+        self.assertEqual([i["id"] for i in left["bundle"]["items"]], [a])
 
 
 if __name__ == "__main__":

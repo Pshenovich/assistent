@@ -409,7 +409,35 @@ def _fix_tags(table: str, link_table: str, link_col: str) -> Callable[[sqlite3.C
     return fix
 
 
+def _fix_projects(c: sqlite3.Connection, src: int, dst: int) -> None:
+    """Одноимённые проекты двух аккаунтов (бывшие личные ярлыки) — в один проект основного."""
+    if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bundle_members'").fetchone():
+        return
+    mine = {
+        str(r["title"]).casefold(): int(r["id"])
+        for r in c.execute("SELECT id, title FROM bundles WHERE kind = 'project' AND owner_user_id = ?", (str(dst),))
+    }
+    for r in c.execute("SELECT id, title FROM bundles WHERE kind = 'project' AND owner_user_id = ?", (str(src),)).fetchall():
+        into = mine.get(str(r["title"]).casefold())
+        if not into:
+            continue
+        c.execute(
+            "INSERT OR IGNORE INTO bundle_items(bundle_id, item_kind, item_id, label, added_by, added_at) "
+            "SELECT ?, item_kind, item_id, label, added_by, added_at FROM bundle_items WHERE bundle_id = ?",
+            (into, r["id"]),
+        )
+        c.execute(
+            "INSERT OR IGNORE INTO bundle_members(bundle_id, principal, role, added_by, added_at) "
+            "SELECT ?, principal, role, added_by, added_at FROM bundle_members WHERE bundle_id = ? AND principal != ?",
+            (into, r["id"], f"u:{src}"),
+        )
+        for t in ("bundle_items", "bundle_members"):
+            c.execute(f"DELETE FROM {t} WHERE bundle_id = ?", (r["id"],))
+        c.execute("DELETE FROM bundles WHERE id = ?", (r["id"],))
+
+
 _FIXES: dict[str, Callable[[sqlite3.Connection, int, int], None]] = {
+    "bundles": _fix_projects,
     "org_members": _fix_org_members,
     "user_profiles": _fix_user_profiles,
     "credit_accounts": _fix_credit_accounts,
