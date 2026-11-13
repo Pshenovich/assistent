@@ -751,6 +751,34 @@ def claim_tracker(viewer_uid: Any, note_id: int, item_id: str, create: Any, *, b
         return result
 
 
+def link_existing_task(viewer_uid: Any, note_id: int, item_id: str, task_id: Any, *, by: str) -> dict[str, Any]:
+    """«Уже есть задача» → задача Орбиты: пункт закрыт ссылкой на неё, статус — из самой задачи.
+
+    Задачу не трогаем (не переименовываем, не переносим); связать можно только ту, что видит
+    нажавший. Пункт должен быть ничей — как у «Беру»."""
+    from assistant.stores import calendar_tasks
+
+    try:
+        tid = int(task_id)
+    except (TypeError, ValueError):
+        raise ValueError("Не выбрана задача") from None
+    row = _task_row(tid)
+    if not row or not calendar_tasks.user_can_access_task(viewer_uid, row):
+        raise LookupError("Задача не найдена или нет доступа")
+    claim(viewer_uid, note_id, item_id, lambda: row, by=by)
+    return state_for(viewer_uid, note_id, item_id)
+
+
+def link_existing_tracker(viewer_uid: Any, note_id: int, item_id: str, link: dict[str, Any], *, by: str) -> dict[str, Any]:
+    """«Уже есть задача» → задача в трекере (Битрикс24): у пункта ссылка, статус «В трекере».
+
+    existing=1 — задачу завели не из встречи: её родителя в трекере не переставляем."""
+    if not str(link.get("url") or "").lower().startswith(("http://", "https://")):
+        raise ValueError("Нужна ссылка на задачу")
+    claim_tracker(viewer_uid, note_id, item_id, lambda: (None, {**link, "existing": "1"}), by=by)
+    return state_for(viewer_uid, note_id, item_id)
+
+
 def tracker_step(viewer_uid: Any, note_id: int, provider: str) -> Optional[dict[str, Any]]:
     """Следующий шаг, чтобы вложенность пунктов совпала с вложенностью задач в трекере:
     {"op": "create", item, title, who, parent} — неразобранный пункт под пунктом в трекере;
@@ -773,6 +801,8 @@ def tracker_step(viewer_uid: Any, note_id: int, provider: str) -> Optional[dict[
         mine = ext(t)
         link = t.get("link") if isinstance(t.get("link"), dict) else {}
         if mine:
+            if link.get("existing"):
+                continue  # своя задача трекера, связанная вручную, — её вложенность не трогаем
             had = str(link.get("parent_external") or "")
             if had != up and (up or had):
                 return {"op": "reparent", "item": iid, "ext": mine, "parent": up}

@@ -352,6 +352,40 @@ class MeetingTasksTests(unittest.TestCase):
         self.assertIn(f"note={self.nid}&amp;tasks=1", old)
         self.assertNotIn("Главное", old)
 
+    def test_link_existing_orbita_task(self) -> None:
+        """«Уже есть задача»: пункт закрыт ссылкой на чужую-не-встречную задачу, новая не ставится."""
+        old = tasks_store.create_task(1, title="Бюджет Q4", start_at="2026-10-31T12:00:00+03:00", all_day=True,
+                                      assignee_user_id=2, assignee_name="Аня")
+        before = len(tasks_store.list_involved_tasks(1, limit=100))
+        st = mt.link_existing_task(1, self.nid, "iaaaaaaaaa1", old["id"], by="Вова")
+        self.assertEqual(st["task_id"], int(old["id"]))
+        self.assertIn(st["code"], ("assigned", "accepted"))
+        self.assertEqual(len(tasks_store.list_involved_tasks(1, limit=100)), before)
+        self.assertEqual(tasks_store._get_task_row(int(old["id"]))["title"], "Бюджет Q4")  # задачу не трогаем
+        with self.assertRaises(mt.Taken):
+            mt.link_existing_task(1, self.nid, "iaaaaaaaaa1", old["id"], by="Аня")
+
+    def test_link_existing_needs_access(self) -> None:
+        foreign = tasks_store.create_task(5, title="Чужая", start_at="2026-10-31T12:00:00+03:00", all_day=True)
+        with self.assertRaises(LookupError):
+            mt.link_existing_task(1, self.nid, "iaaaaaaaaa2", foreign["id"], by="Вова")
+        _, items = self._items()
+        self.assertEqual(items["iaaaaaaaaa2"]["code"], "open")
+
+    def test_link_existing_tracker_keeps_its_parent(self) -> None:
+        link = {"url": "https://b24.example/company/personal/user/1/tasks/task/view/42/", "title": "Юр. тексты",
+                "provider": "bitrix24", "external_id": "42", "stage": "В работе"}
+        st = mt.link_existing_tracker(1, self.nid, "iaaaaaaaaa2", link, by="Вова")
+        self.assertEqual(st["code"], "tracker")
+        self.assertEqual(st["label"], "В трекере · В работе")
+        # родитель пункта в трекере — но свою задачу трекера, связанную вручную, не переносим
+        parent = {"url": "https://b24.example/x/view/7/", "provider": "bitrix24", "external_id": "7"}
+        mt.claim_tracker(1, self.nid, "iaaaaaaaaa1", lambda: (None, parent), by="Вова")
+        mt.nest(1, self.nid, ["iaaaaaaaaa2"], "iaaaaaaaaa1", by="Вова")
+        self.assertIsNone(mt.tracker_step(1, self.nid, "bitrix24"))
+        with self.assertRaises(ValueError):
+            mt.link_existing_tracker(1, self.nid, "iaaaaaaaaa3", {"url": "", "external_id": "1"}, by="Вова")
+
 
     def test_verifier_dropped_kept_as_doubtful(self) -> None:
         from assistant.services.transcription_notes import create_with_summary

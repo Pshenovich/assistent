@@ -7542,6 +7542,27 @@ async def miniapp_calendar_tasks_cancel(
     return await _owner_task_action(task_id, principal, "cancel")
 
 
+def _similar_open_tasks(uid: int, text: str, limit: int = 8) -> list[dict[str, Any]]:
+    """Открытые задачи пользователя (поставил / исполняет), похожие на текст: общие основы слов."""
+    from assistant.stores import calendar_tasks as calendar_tasks_store
+
+    def stems(s: str) -> set[str]:
+        return {w[:5] for w in re.findall(r"[0-9a-zа-яё]+", str(s or "").casefold()) if len(w) > 2}
+
+    want = stems(text)
+    if not want:
+        return []
+    scored = []
+    for r in calendar_tasks_store.list_involved_tasks(uid, limit=1000):
+        if r.get("done"):
+            continue
+        hit = len(want & stems(str(r.get("title") or "")))
+        if hit:
+            scored.append((hit, str(r.get("updated_at") or ""), r))
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [x[2] for x in scored[:limit]]
+
+
 @miniapp_router.get("/calendar/tasks")
 async def miniapp_calendar_tasks_list(
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
@@ -7549,12 +7570,17 @@ async def miniapp_calendar_tasks_list(
     end: Optional[str] = Query(None),
     note_id: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    similar: Optional[str] = Query(None),
 ) -> dict[str, Any]:
     from assistant.services.calendar import _tz_for
     from assistant.stores import calendar_tasks as calendar_tasks_store
 
     uid = int(principal.telegram_user_id)
     tz = _tz_for(uid)
+    if similar is not None and q is None:
+        # «Уже есть задача»: открытые задачи, похожие по словам на пункт (основы слов, как в Фокусе).
+        rows = await run_in_threadpool(_similar_open_tasks, uid, similar)
+        return {"ok": True, "tasks": [_task_api(r, tz=tz, viewer_id=uid) for r in rows]}
     if q is not None:
         # «+» в заметке: поиск задачи за всё время, открытые — первыми.
         needle = " ".join(str(q).split()).casefold()[:200]
@@ -13871,12 +13897,74 @@ async def miniapp_note_people_delete(
     return {"ok": True, "people": people}
 
 
+def _parse_recorded_at(raw: Any) -> Optional[datetime]:
+    """Время записи (ISO или мс от эпохи, как File.lastModified): только правдоподобное —
+    не в будущем и не старше года; иначе None."""
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromtimestamp(int(s) / 1000, tz=timezone.utc) if s.isdigit() else datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, OverflowError, OSError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if dt > now + timedelta(minutes=5) or dt < now - timedelta(days=366):
+        return None
+    return dt.replace(microsecond=0)
+
+
+def _note_recorded_at(note: dict[str, Any]) -> datetime:
+    """Когда сделана запись: meta.recorded_at (дата файла при загрузке), иначе создание документа."""
+    meta = note.get("meta") if isinstance(note.get("meta"), dict) else {}
+    at = _parse_recorded_at(meta.get("recorded_at"))
+    if at is not None:
+        return at
+    try:
+        at = datetime.fromisoformat(str(note.get("created_at") or ""))
+    except ValueError:
+        at = datetime.now(timezone.utc)
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
+def _meeting_candidates_payload(uid: int, at: datetime, *, back: int = 3, day: str = "") -> dict[str, Any]:
+    """Встречи вокруг времени записи (back дней назад … +1 день) или за выбранный день (day).
+
+    Запись встречи часто загружают через несколько дней — поэтому окно можно расширить
+    («Показать раньше») или выбрать день вручную."""
+    back = max(1, min(int(back or 3), 60))
+    picked = None
+    if day:
+        try:
+            picked = date.fromisoformat(str(day)[:10])
+        except ValueError:
+            picked = None
+    if picked is not None:
+        payload = _calendar_range_payload(uid, picked.isoformat(), picked.isoformat())
+        ranked = _rank_meeting_candidates(payload.get("events") or [], at, any_time=True)
+    else:
+        payload = _calendar_range_payload(
+            uid, (at - timedelta(days=back)).date().isoformat(), (at + timedelta(days=1)).date().isoformat()
+        )
+        ranked = _rank_meeting_candidates(payload.get("events") or [], at)
+    return {
+        "connected": bool(payload.get("connected", True)),
+        "at": at.isoformat(),
+        "back": back,
+        "day": picked.isoformat() if picked else "",
+        **ranked,
+    }
+
+
 @miniapp_router.get("/notes/local/{note_id}/meeting-candidates")
 async def miniapp_note_meeting_candidates(
     note_id: int,
+    back: int = 3,
+    day: str = "",
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    """Встречи вокруг времени записи (−3…+1 день); подходящая по времени — первой."""
+    """Встречи вокруг времени записи; подходящая по времени — первой."""
     from assistant.stores import notes as notes_store
 
     uid = int(principal.telegram_user_id)
@@ -13885,16 +13973,7 @@ async def miniapp_note_meeting_candidates(
         note = notes_store.get_accessible_note(uid, note_id, with_sharing=False)
         if note is None:
             return None
-        try:
-            at = datetime.fromisoformat(str(note.get("created_at") or ""))
-        except ValueError:
-            at = datetime.now(timezone.utc)
-        if at.tzinfo is None:
-            at = at.replace(tzinfo=timezone.utc)
-        payload = _calendar_range_payload(
-            uid, (at - timedelta(days=3)).date().isoformat(), (at + timedelta(days=1)).date().isoformat()
-        )
-        return {"connected": bool(payload.get("connected", True)), **_rank_meeting_candidates(payload.get("events") or [], at)}
+        return _meeting_candidates_payload(uid, _note_recorded_at(note), back=back, day=day)
 
     res = await run_in_threadpool(_run)
     if res is None:
@@ -13902,8 +13981,25 @@ async def miniapp_note_meeting_candidates(
     return {"ok": True, **res}
 
 
-def _rank_meeting_candidates(events: list[dict[str, Any]], at: datetime) -> dict[str, Any]:
-    """Подходящие встречи: запись сделана во время встречи или вскоре после неё (до 3 ч)."""
+@miniapp_router.get("/calendar/meeting-candidates")
+async def miniapp_calendar_meeting_candidates(
+    at: str = "",
+    back: int = 3,
+    day: str = "",
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    """То же до создания документа — окно «Загрузить запись» в «Транскрипциях»:
+    at — время записи (дата файла), без него — сейчас."""
+    uid = int(principal.telegram_user_id)
+    when = _parse_recorded_at(at) or datetime.now(timezone.utc).replace(microsecond=0)
+    res = await run_in_threadpool(lambda: _meeting_candidates_payload(uid, when, back=back, day=day))
+    return {"ok": True, **res}
+
+
+def _rank_meeting_candidates(events: list[dict[str, Any]], at: datetime, *, any_time: bool = False) -> dict[str, Any]:
+    """Подходящие встречи: запись сделана во время встречи или вскоре после неё (до 3 ч).
+
+    any_time — выбранный вручную день: показываем и встречи позже времени записи."""
     rows = []
     for ev in events:
         if not isinstance(ev, dict) or ev.get("entry_type") == "task" or str(ev.get("id") or "").startswith("task-"):
@@ -13921,14 +14017,15 @@ def _rank_meeting_candidates(events: list[dict[str, Any]], at: datetime) -> dict
             s_dt = s_dt.replace(tzinfo=timezone.utc)
         if e_dt.tzinfo is None:
             e_dt = e_dt.replace(tzinfo=timezone.utc)
-        if s_dt > at + timedelta(minutes=30):
+        if s_dt > at + timedelta(minutes=30) and not any_time:
             continue  # встреча после записи
         match = s_dt - timedelta(minutes=15) <= at <= e_dt + timedelta(hours=3)
-        rows.append((not match, abs((at - e_dt).total_seconds()), ev, match))
+        order = s_dt.timestamp() if any_time else abs((at - e_dt).total_seconds())  # выбранный день — по порядку
+        rows.append((not match, order, ev, match))
     rows.sort(key=lambda r: (r[0], r[1]))
     return {
         "suggested": [r[2] for r in rows if r[3]][:2],
-        "others": [r[2] for r in rows if not r[3]][:40],
+        "others": [r[2] for r in rows if not r[3]][:80],
     }
 
 
@@ -15806,13 +15903,15 @@ async def miniapp_transcription_upload(
     url: str = Form(""),
     with_summary: str = Form("0"),
     meeting: str = Form(""),
+    recorded_at: str = Form(""),
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
     """Загрузка аудио/видео из миниаппа → транскрипция (+ опционально саммари).
 
     Вместо файла можно передать url — прямую ссылку, Яндекс.Диск или Google Диск.
-    meeting — JSON встречи (из окна встречи «Добавить запись»): транскрипция получает
-    её тему и сразу привязывается к встрече.
+    meeting — JSON встречи (из окна встречи «Добавить запись» или выбранной в окне загрузки):
+    транскрипция получает её тему и сразу привязывается к встрече.
+    recorded_at — дата файла (File.lastModified): по ней потом ищем встречу для привязки.
     """
     _track(principal.telegram_user_id, "transcription.create", source="upload")
     from assistant.integrations import transcribe as obu
@@ -15898,6 +15997,9 @@ async def miniapp_transcription_upload(
             }
             if source_url:
                 meta["url"] = source_url
+            rec_at = _parse_recorded_at(recorded_at)
+            if rec_at is not None:
+                meta["recorded_at"] = rec_at.isoformat()  # дата файла: по ней ищем встречу для привязки
             note = tnotes.create_transcript_only(
                 uid,
                 title=title,
@@ -16588,6 +16690,31 @@ async def miniapp_note_meeting_tasks_groups(
     return {"ok": True, **state}
 
 
+def _existing_tracker_link(uid: int, f: dict[str, Any]) -> dict[str, Any]:
+    """«Уже есть задача» в трекере: ссылка или номер → {url, title, provider, external_id, stage}.
+
+    Трекер подключён — берём название, ссылку и стадию у него; нет — нужна ссылка на задачу."""
+    from assistant.stores.task_blockers import parse_bitrix_ref
+
+    p = _tracker_or_404(str(f.get("provider") or "bitrix24"))
+    raw = str(f.get("url") or f.get("ref") or f.get("external_id") or "").strip()[:500]
+    ext_id, url = parse_bitrix_ref(raw)
+    if not ext_id:
+        raise ValueError("Вставьте ссылку на задачу или её номер")
+    title, stage = str(f.get("title") or "").strip()[:200], ""
+    connected = False
+    try:
+        connected = bool(p.is_connected(uid))
+    except Exception as e:  # noqa: BLE001
+        print(f"[trackers] status failed provider={p.id} uid={uid} err={e!r}")
+    if connected and hasattr(p, "get_task"):
+        ref = _tracker_call(p.get_task, uid, ext_id)
+        title, url, stage = ref.title or title, ref.url or url, ref.stage or ref.status or ""
+    if not url:
+        raise ValueError(f"Подключите {p.title} в профиле или вставьте ссылку на задачу целиком")
+    return {"url": url, "title": title or f"Задача #{ext_id}", "provider": p.id, "external_id": ext_id, "stage": stage}
+
+
 @miniapp_router.post("/notes/local/{note_id}/meeting-tasks/{item_id}")
 async def miniapp_note_meeting_task_op(
     note_id: int,
@@ -16595,10 +16722,32 @@ async def miniapp_note_meeting_task_op(
     body: _MeetingTaskOpBody,
     principal: _MiniappPrincipal = Depends(require_miniapp_user),
 ) -> dict[str, Any]:
-    """Действие с пунктом из таблицы: Сделано / Не задача / Дубль / Вернуть / правка ячейки."""
+    """Действие с пунктом из таблицы: Сделано / Не задача / Дубль / Вернуть / правка ячейки /
+    «Уже есть задача» (link_existing: fields.task_id — задача Орбиты, fields.provider + ref — трекер)."""
     from assistant.services import meeting_tasks
 
     uid = int(principal.telegram_user_id)
+    if body.op == "link_existing":
+        f = dict(body.fields or {})
+        by = _principal_display_name(principal)
+        try:
+            if str(f.get("task_id") or "").strip():
+                item = await run_in_threadpool(
+                    partial(meeting_tasks.link_existing_task, uid, note_id, item_id, f.get("task_id"), by=by)
+                )
+            else:
+                link = await run_in_threadpool(_existing_tracker_link, uid, f)
+                item = await run_in_threadpool(
+                    partial(meeting_tasks.link_existing_tracker, uid, note_id, item_id, link, by=by)
+                )
+        except meeting_tasks.Taken as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        _FOCUS_CACHE.pop(uid, None)
+        return {"ok": True, "item": item}
     if body.op == "controller":
         try:
             item = await run_in_threadpool(

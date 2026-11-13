@@ -5864,6 +5864,41 @@
   }
 
   var transcriptionUploadBusy = false;
+  var transcriptionUploadMeeting = null; // встреча, выбранная в окне загрузки (необязательно)
+
+  // Время записи — дата файла (lastModified): запись часто загружают через несколько дней.
+  function transcriptionUploadRecordedAt() {
+    var f = transcriptionUploadSelectedFile();
+    var t = f && f.lastModified;
+    return t && t > 0 && t <= Date.now() + 300000 ? String(t) : "";
+  }
+
+  function pickTranscriptionUploadMeeting() {
+    if (transcriptionUploadBusy) return;
+    openNoteMeetingPicker("", {
+      at: transcriptionUploadRecordedAt(),
+      onPick: function (ev) {
+        transcriptionUploadMeeting = ev;
+        syncTranscriptionUploadUi();
+      },
+    });
+  }
+
+  function syncTranscriptionUploadMeeting() {
+    var ev = transcriptionUploadMeeting;
+    var chosen = document.getElementById("transcription-upload-meeting-chosen");
+    var btn = document.getElementById("transcription-upload-meeting-btn");
+    var x = document.getElementById("transcription-upload-meeting-x");
+    if (chosen) {
+      chosen.textContent = ev ? (meetingDisplayTitle(ev, { blank: true }) || "Без названия") + " · " + meetingWhenText(ev.start, ev.end) : "";
+      chosen.classList.toggle("hidden", !ev);
+    }
+    if (btn) {
+      btn.textContent = ev ? "Другая" : "Выбрать встречу";
+      btn.disabled = transcriptionUploadBusy;
+    }
+    if (x) x.classList.toggle("hidden", !ev || transcriptionUploadBusy);
+  }
 
   function transcriptionUploadSelectedFile() {
     var input = document.getElementById("transcription-upload-input");
@@ -5914,10 +5949,12 @@
       submit.textContent = transcriptionUploadBusy ? "Обработка…" : url ? "Транскрибировать" : "Загрузить";
     }
     syncTranscriptionUploadModeOptions();
+    syncTranscriptionUploadMeeting();
   }
 
   function resetTranscriptionUploadModal() {
     transcriptionUploadBusy = false;
+    transcriptionUploadMeeting = null;
     var input = document.getElementById("transcription-upload-input");
     if (input) input.value = "";
     var urlInput = document.getElementById("transcription-upload-url");
@@ -5989,6 +6026,10 @@
     if (file) fd.append("file", file, file.name || "audio.mp3");
     else fd.append("url", url);
     fd.append("with_summary", withSummary ? "1" : "0");
+    var recAt = transcriptionUploadRecordedAt();
+    if (recAt) fd.append("recorded_at", recAt);
+    var pickedMeeting = transcriptionUploadMeeting;
+    if (pickedMeeting) fd.append("meeting", JSON.stringify(meetingEventPayload(pickedMeeting)));
     try {
       var res = await apiFetch("/notes/transcriptions/upload", {
         method: "POST",
@@ -21797,6 +21838,7 @@
     fd.append("file", f, f.name || "audio.mp3");
     fd.append("with_summary", "1");
     fd.append("meeting", JSON.stringify(meetingEventPayload(ev)));
+    if (f.lastModified > 0 && f.lastModified <= Date.now() + 300000) fd.append("recorded_at", String(f.lastModified));
     try {
       var res = await apiFetch("/notes/transcriptions/upload", { method: "POST", body: fd, timeout: 900000 });
       var item = res && res.item;
@@ -22294,9 +22336,13 @@
   }
 
   // ---- «Добавить ко встрече» ----
-  async function openNoteMeetingPicker(noteId) {
-    var id = String(noteId || currentOpenNoteId() || "");
-    if (!id) return;
+  // opts.onPick(ev) — режим выбора без документа (окно «Загрузить запись»): встречу ищем
+  // вокруг opts.at (дата файла), привязка случится при создании транскрипции.
+  // Запись часто загружают через несколько дней после встречи — поэтому «Показать раньше» и выбор дня.
+  async function openNoteMeetingPicker(noteId, opts) {
+    opts = opts || {};
+    var id = String(noteId || (opts.onPick ? "" : currentOpenNoteId()) || "");
+    if (!id && !opts.onPick) return;
     var ov = document.getElementById("meeting-pick-overlay");
     if (!ov) {
       ov = document.createElement("div");
@@ -22308,7 +22354,8 @@
         '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg></button>' +
         '<h2 class="modal-title">Добавить ко встрече</h2><span></span></div>' +
         '<div class="modal-body meeting-pick-body">' +
-        '<input type="search" class="field-input meeting-pick-search" placeholder="Найти встречу" autocomplete="off" />' +
+        '<div class="meeting-pick-tools"><input type="search" class="field-input meeting-pick-search" placeholder="Найти встречу" autocomplete="off" />' +
+        '<label class="meeting-pick-day" title="Встречи за другой день"><span>День</span><input type="date" class="field-input meeting-pick-date" /></label></div>' +
         '<div class="meeting-pick-list"></div></div></div>';
       document.body.appendChild(ov);
       ov.addEventListener("click", function (e) {
@@ -22317,20 +22364,46 @@
       ov.querySelector(".meeting-pick-search").addEventListener("input", function () {
         paintMeetingPicker();
       });
+      ov.querySelector(".meeting-pick-date").addEventListener("change", function () {
+        loadMeetingPickerData({ day: this.value || "" });
+      });
     }
     ov._noteId = id;
+    ov._onPick = opts.onPick || null;
+    ov._at = opts.at || "";
+    ov._back = 3;
+    ov._day = "";
     ov._data = null;
+    ov.querySelector(".modal-title").textContent = opts.onPick ? "К какой встрече запись" : "Добавить ко встрече";
     ov.querySelector(".meeting-pick-search").value = "";
-    ov.querySelector(".meeting-pick-list").innerHTML = '<p class="ev-materials-empty">Ищу встречи вокруг времени записи…</p>';
+    ov.querySelector(".meeting-pick-date").value = "";
     ov.classList.remove("hidden");
     ov.setAttribute("aria-hidden", "false");
     onModalSheetOpen();
     syncAppOverlay();
+    await loadMeetingPickerData({});
+  }
+
+  async function loadMeetingPickerData(p) {
+    var ov = document.getElementById("meeting-pick-overlay");
+    if (!ov) return;
+    if (p.back) ov._back = p.back;
+    if (p.day != null) ov._day = p.day;
+    var list = ov.querySelector(".meeting-pick-list");
+    list.innerHTML = '<p class="ev-materials-empty">' + (ov._day ? "Ищу встречи за выбранный день…" : "Ищу встречи вокруг времени записи…") + "</p>";
+    var qs = "back=" + encodeURIComponent(ov._back) + (ov._day ? "&day=" + encodeURIComponent(ov._day) : "");
+    var url = ov._noteId
+      ? "/notes/local/" + encodeURIComponent(ov._noteId) + "/meeting-candidates?" + qs
+      : "/calendar/meeting-candidates?" + qs + (ov._at ? "&at=" + encodeURIComponent(ov._at) : "");
+    var token = (ov._loadToken = (ov._loadToken || 0) + 1);
+    var data;
     try {
-      ov._data = await apiFetch("/notes/local/" + encodeURIComponent(id) + "/meeting-candidates", { method: "GET" });
+      data = await apiFetch(url, { method: "GET" });
     } catch (e) {
-      ov._data = { error: (e && e.message) || "Не удалось загрузить встречи" };
+      data = { error: (e && e.message) || "Не удалось загрузить встречи" };
     }
+    if (ov._loadToken !== token) return;
+    ov._data = data;
     paintMeetingPicker();
   }
 
@@ -22360,9 +22433,11 @@
       var hay = (String(ev.summary || "") + " " + (ev.attendees || []).map(function (a) { return (a.name || "") + " " + (a.email || ""); }).join(" ")).toLowerCase();
       return hay.indexOf(q) >= 0;
     }
+    var shown = 0;
     function section(title, evs, best) {
       evs = evs.filter(match);
       if (!evs.length) return;
+      shown += evs.length;
       var h = document.createElement("div");
       h.className = "meeting-pick-sect";
       h.textContent = title;
@@ -22384,7 +22459,11 @@
         }
         b.appendChild(sub);
         b.addEventListener("click", function () {
-          linkNoteToMeeting(ov._noteId, ev);
+          if (ov._onPick) {
+            var cb = ov._onPick;
+            closeNoteMeetingPicker();
+            cb(ev);
+          } else linkNoteToMeeting(ov._noteId, ev);
         });
         list.appendChild(b);
       });
@@ -22395,8 +22474,38 @@
       p.textContent = "Календарь не подключён — подключите Google Календарь в Профиле.";
       list.appendChild(p);
     }
-    section("Похоже по времени записи", d.suggested || [], true);
-    section("Другие встречи", d.others || [], false);
+    if (ov._day) {
+      section("Встречи за " + meetingWhenText(ov._day), (d.suggested || []).concat(d.others || []), false);
+    } else {
+      section("Похоже по времени записи", d.suggested || [], true);
+      section("Другие встречи", d.others || [], false);
+    }
+    if (!shown && d.connected !== false) {
+      var empty = document.createElement("p");
+      empty.className = "ev-materials-empty";
+      empty.textContent = q ? "Ничего не нашлось." : ov._day ? "В этот день встреч нет." : "Рядом со временем записи встреч нет.";
+      list.appendChild(empty);
+    }
+    // Запись могли загрузить через несколько дней после встречи — окно можно расширить.
+    var more = document.createElement("button");
+    more.type = "button";
+    more.className = "meeting-pick-more";
+    if (ov._day) {
+      more.textContent = "← Встречи вокруг времени записи";
+      more.addEventListener("click", function () {
+        ov.querySelector(".meeting-pick-date").value = "";
+        loadMeetingPickerData({ day: "" });
+      });
+      list.appendChild(more);
+    } else if ((d.back || ov._back) < 60) {
+      var next = (d.back || ov._back) < 14 ? 14 : (d.back || ov._back) < 30 ? 30 : 60;
+      more.textContent = "Показать раньше — за " + next + " дней";
+      more.addEventListener("click", function () {
+        loadMeetingPickerData({ back: next });
+      });
+      list.appendChild(more);
+    }
+    if (ov._onPick) return; // документа ещё нет — «Только участники» добавят после загрузки
     var none = document.createElement("button");
     none.type = "button";
     none.className = "meeting-pick-row";
@@ -23800,7 +23909,7 @@
     { id: "decline", label: "Не задача", icon: "x", key: "←", code: "ArrowLeft", tone: "danger" },
     { id: "snooze", label: "Позже", icon: "clock", key: "P", code: "KeyP" },
     { id: "done", label: "Выполнено", icon: "check", key: "D", code: "KeyD" },
-    { id: "link", label: "Связать", icon: "link", key: "L", code: "KeyL" },
+    { id: "link", label: "Уже есть", icon: "link", key: "L", code: "KeyL" },
     { id: "task", label: "В задачу", icon: "taskBox", key: "→", code: "ArrowRight", tone: "accent" },
   ];
 
@@ -24319,8 +24428,11 @@
       return;
     }
     if (id === "edit") Object.assign(ui, { mode: "task", menu: "", draft: {} });
-    else if (id === "link") Object.assign(ui, { mode: ui.mode === id ? "view" : id, menu: "", draft: ui.mode === id ? ui.draft : {} });
-    else Object.assign(ui, { mode: "view", menu: ui.menu === id ? "" : id });
+    else if (id === "link") {
+      // «Уже есть задача»: окно поиска в Орбите и Битрикс24 — пункт закроется ссылкой.
+      focusLinkExisting(f, function (body, okText) { return fstackOp(f, body, okText); });
+      return;
+    } else Object.assign(ui, { mode: "view", menu: ui.menu === id ? "" : id });
     renderFocusStack();
   }
 
@@ -24524,6 +24636,9 @@
       var c = mine ? null : focusAssigneeContact(named);
       if (c) items.push({ label: "Поручить: " + String(c.name || named), fn: function () { take({ user_id: String(c.user_id || c.telegram_user_id || ""), email: String(c.email || ""), name: String(c.name || "") }); } });
       items.push({ label: c ? "Поручить другому…" : "Поручить…", fn: form });
+      items.push("-", { label: "Уже есть задача…", fn: function () {
+        focusLinkExisting(f, function (body, okText) { return fstackOp(f, body, okText); });
+      } });
       av2OpenMenu(b, items);
     });
     task.insertAdjacentHTML("beforeend", av2Svg("down", 14));
@@ -25039,6 +25154,19 @@
       });
   }
 
+  // «Уже есть задача…»: пункт уже заведён в Орбите или в Битрикс24 — связываем, новую не ставим.
+  function meetingTaskLinkExisting(st) {
+    return openExistingTaskPicker({ text: st.task || "" }).then(function (pick) {
+      if (!pick) return;
+      var fields = pick.kind === "task"
+        ? { task_id: pick.task_id }
+        : { provider: pick.provider, ref: pick.ref, url: pick.url || "", title: pick.title || "" };
+      return meetingTaskOp(st.id, { op: "link_existing", fields: fields }).then(function (ok) {
+        if (ok) showNoteToast(pick.kind === "task" ? "Связано с задачей «" + (pick.title || "задача") + "»" : "Связано с задачей в Битрикс24");
+      });
+    });
+  }
+
   // «Беру» / «Поручить…»: окно задачи с формулировкой пункта; сервер поставит задачу, только если пункт ничей.
   function meetingTaskCreate(st, delegate) {
     var nid = meetingTasksBound.noteId;
@@ -25457,6 +25585,7 @@
       items.push({ label: "Это задача", fn: function () { meetingTaskOp(st.id, { op: "undo" }); } });
       items.push({ label: "Беру", fn: function () { meetingTaskCreate(st, false); } });
       items.push({ label: "Поручить…", fn: function () { meetingTaskCreate(st, true); } });
+      items.push({ label: "Уже есть задача…", fn: function () { meetingTaskLinkExisting(st); } });
       items.push({ label: "Не задача", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "not_a_task" }); } });
       showPostedMenu(d.anchor, items);
       return;
@@ -25465,6 +25594,7 @@
       items.push({ label: "Беру", fn: function () { meetingTaskCreate(st, false); } });
       items.push({ label: "Поручить…", fn: function () { meetingTaskCreate(st, true); } });
       items.push({ label: "Сделано", fn: function () { meetingTaskOp(st.id, { op: "done" }); } });
+      items.push({ label: "Уже есть задача…", fn: function () { meetingTaskLinkExisting(st); } });
       items.push({ label: "Не задача", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "not_a_task" }); } });
       items.push({ label: "Дубль", fn: function () { meetingTaskOp(st.id, { op: "dismiss", reason: "duplicate" }); } });
     } else if (st.task_id) {
@@ -29921,6 +30051,225 @@
     return n ? "блокирует " + (n > 1 ? n + " " + pluralRu(n, "задачу", "задачи", "задач") : "задачу") : "";
   }
 
+  // Окно «Уже есть задача»: пункт (задача из саммари, карточка Фокуса) уже заведён — в Орбите или в трекере.
+  // Вкладки Орбита / Битрикс24; без запроса — похожие по словам открытые задачи.
+  // → Promise: {kind:"task", task_id, title} | {kind:"tracker", provider, ref, external_id, url, title} | null.
+  function openExistingTaskPicker(opts) {
+    opts = opts || {};
+    var text = String(opts.text || "").trim();
+    return new Promise(function (resolve) {
+      var tab = "task";
+      var ov = document.createElement("div");
+      ov.className = "leo-prompt-overlay";
+      ov.innerHTML =
+        '<div class="leo-prompt-sheet tb-sheet et-sheet" role="dialog" aria-modal="true" aria-label="Уже есть задача">' +
+        '<p class="leo-prompt-message">Уже есть задача</p>' +
+        '<p class="tb-sub"></p>' +
+        '<div class="tb-tabs" role="tablist"></div>' +
+        '<div class="tb-pane"></div>' +
+        '<div class="leo-prompt-actions"><button type="button" class="btn-text leo-prompt-cancel">Отмена</button></div>' +
+        "</div>";
+      var sub = ov.querySelector(".tb-sub");
+      sub.textContent = text ? "Пункт «" + text + "» закроется ссылкой на выбранную задачу" : "Пункт закроется ссылкой на выбранную задачу";
+      document.body.appendChild(ov);
+      var tabsEl = ov.querySelector(".tb-tabs");
+      var pane = ov.querySelector(".tb-pane");
+      var seq = 0;
+      [["task", "Орбита"], ["bitrix", "Битрикс24"]].forEach(function (t) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-tab";
+        b.setAttribute("role", "tab");
+        b.setAttribute("data-tab", t[0]);
+        b.textContent = t[1];
+        b.addEventListener("click", function () {
+          tab = t[0];
+          paint();
+        });
+        tabsEl.appendChild(b);
+      });
+      function finish(v) {
+        if (ov.parentNode) ov.parentNode.removeChild(ov);
+        document.removeEventListener("keydown", onKey, true);
+        resolve(v);
+      }
+      function onKey(e) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          finish(null);
+        }
+      }
+      document.addEventListener("keydown", onKey, true);
+      ov.querySelector(".leo-prompt-cancel").addEventListener("click", function () { finish(null); });
+      ov.addEventListener("click", function (e) {
+        if (e.target === ov) finish(null);
+      });
+      function input(placeholder, onInput, onEnter) {
+        var inp = document.createElement("input");
+        inp.type = "text";
+        inp.className = "field-input tb-input";
+        inp.placeholder = placeholder;
+        inp.autocomplete = "off";
+        var t = null;
+        inp.addEventListener("input", function () {
+          if (t) clearTimeout(t);
+          t = setTimeout(function () { onInput(inp.value); }, 220);
+        });
+        inp.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && onEnter) {
+            e.preventDefault();
+            onEnter(inp.value);
+          }
+        });
+        pane.appendChild(inp);
+        setTimeout(function () { inp.focus(); }, 30);
+        return inp;
+      }
+      function results() {
+        var box = document.createElement("div");
+        box.className = "tb-results";
+        pane.appendChild(box);
+        return box;
+      }
+      function row(box, title, hint, pick) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "tb-result";
+        b.innerHTML = '<span class="tb-result-title"></span><span class="tb-result-hint"></span>';
+        b.querySelector(".tb-result-title").textContent = title;
+        b.querySelector(".tb-result-hint").textContent = hint || "";
+        b.addEventListener("click", function () { finish(pick); });
+        box.appendChild(b);
+      }
+      function note(box, t) {
+        var p = document.createElement("p");
+        p.className = "tb-hint";
+        p.textContent = t;
+        box.appendChild(p);
+      }
+      function taskHint(t) {
+        var who = t.assignee_name || (t.assignee && t.assignee.name) || "";
+        var when = noteRefShortDate(t.start_at || (t.event && t.event.start && t.event.start.dateTime));
+        return [who, t.done ? "выполнена" : when].filter(Boolean).join(" · ");
+      }
+      function bitrixRef(q) {
+        q = String(q || "").trim();
+        var m = q.match(/\/tasks\/task\/view\/(\d+)/) || q.match(/^#?(\d{1,12})$/);
+        return m ? { id: m[1], url: /^https?:/i.test(q) ? q : "" } : null;
+      }
+      function paint() {
+        tabsEl.querySelectorAll(".tb-tab").forEach(function (b) {
+          var on = b.getAttribute("data-tab") === tab;
+          b.classList.toggle("is-on", on);
+          b.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        pane.innerHTML = "";
+        var box;
+        if (tab === "task") {
+          var run = function (q) {
+            q = String(q || "").trim();
+            var my = ++seq;
+            var url = q ? "/calendar/tasks?q=" + encodeURIComponent(q) : "/calendar/tasks?similar=" + encodeURIComponent(text);
+            apiFetch(url, { method: "GET" })
+              .then(function (r) {
+                if (my !== seq) return;
+                box.innerHTML = "";
+                var list = ((r && r.tasks) || []).slice(0, 8);
+                if (!q && list.length) note(box, "Похожие открытые задачи");
+                list.forEach(function (t) {
+                  row(box, String(t.title || "").trim() || "Задача", taskHint(t), { kind: "task", task_id: Number(t.id), title: String(t.title || "") });
+                });
+                if (!list.length) note(box, q ? "Ничего не нашлось" : "Похожих задач нет — найдите по названию");
+              })
+              .catch(function (e) {
+                if (my !== seq) return;
+                box.innerHTML = "";
+                note(box, (e && e.message) || "Не удалось найти задачи");
+              });
+          };
+          input("Название задачи в Орбите", run);
+          box = results();
+          run("");
+        } else {
+          var connected = false;
+          var runB = function (q) {
+            q = String(q || "").trim();
+            var my = ++seq;
+            box.innerHTML = "";
+            var ref = bitrixRef(q);
+            if (ref) {
+              row(box, "Задача #" + ref.id, ref.url ? "по ссылке" : "по номеру", { kind: "tracker", provider: "bitrix24", ref: q, external_id: ref.id, url: ref.url, title: "" });
+            }
+            if (!connected) {
+              if (!ref) note(box, "Вставьте ссылку на задачу Битрикс24. Чтобы искать по названию и видеть стадию, подключите Битрикс24 в профиле.");
+              return;
+            }
+            apiFetch("/trackers/bitrix24/tasks?q=" + encodeURIComponent(q || text.slice(0, 60)), { method: "GET" })
+              .then(function (r) {
+                if (my !== seq) return;
+                var list = (r && r.tasks) || [];
+                if (!list.length && !q && text) {
+                  // по тексту пункта ничего — показать свои открытые задачи
+                  return apiFetch("/trackers/bitrix24/tasks?q=", { method: "GET" }).then(function (r2) {
+                    return (r2 && r2.tasks) || [];
+                  });
+                }
+                return list;
+              })
+              .then(function (list) {
+                if (my !== seq || !list) return;
+                if (!list.length && !ref) note(box, q ? "Ничего не нашлось" : "Ваших открытых задач в Битрикс24 нет");
+                list.slice(0, 10).forEach(function (t) {
+                  if (ref && String(t.external_id) === ref.id && box.firstChild) box.firstChild.remove();
+                  row(box, t.title + " · #" + t.external_id, [t.stage || t.status, t.responsible].filter(Boolean).join(" · "), {
+                    kind: "tracker", provider: "bitrix24", ref: String(t.external_id), external_id: String(t.external_id), url: t.url || "", title: t.title || "",
+                  });
+                });
+              })
+              .catch(function (e) {
+                if (my !== seq) return;
+                note(box, (e && e.message) || "Битрикс24 не ответил");
+              });
+          };
+          input("Ссылка, номер или название задачи", runB, function (v) {
+            var ref = bitrixRef(v);
+            if (ref) finish({ kind: "tracker", provider: "bitrix24", ref: String(v).trim(), external_id: ref.id, url: ref.url, title: "" });
+          });
+          box = results();
+          loadTrackers().then(function (list) {
+            connected = (list || []).some(function (t) { return t.id === "bitrix24" && t.connected; });
+            var inp = pane.querySelector(".tb-input");
+            if (tab === "bitrix") runB(inp ? inp.value : "");
+          });
+        }
+      }
+      paint();
+    });
+  }
+
+  // «Уже есть задача» у пункта Фокуса: связать с задачей Орбиты или с задачей в трекере (ссылкой).
+  // Ссылку на задачу Битрикс24 по номеру без подключения не построить — тогда просим вставить ссылку.
+  function focusLinkExisting(f, run) {
+    return openExistingTaskPicker({ text: f.text || "" }).then(function (pick) {
+      if (!pick) return;
+      if (pick.kind === "task") return run({ op: "link", task_id: pick.task_id, title: pick.title || "" }, "Связано с задачей");
+      var go = function (url, title) {
+        return run({ op: "link", url: url, title: title || "Задача #" + pick.external_id }, "Связано с задачей в Битрикс24");
+      };
+      if (pick.url) return go(pick.url, pick.title);
+      return apiFetch("/trackers/bitrix24/tasks/" + encodeURIComponent(pick.external_id), { method: "GET" })
+        .then(function (r) {
+          var t = (r && r.task) || {};
+          if (!t.url) throw new Error("no url");
+          return go(t.url, t.title || pick.title);
+        })
+        .catch(function () {
+          showNoteToast("Вставьте ссылку на задачу Битрикс24 целиком");
+        });
+    });
+  }
+
   // Окно «Чем заблокировано?»: вкладки Задача / Человек / Битрикс24 / Другое, можно несколько, плюс комментарий.
   function openTaskBlockerDialog(task) {
     return new Promise(function (resolve) {
@@ -33301,6 +33650,26 @@
       { quote: quote || text }
     );
   }
+  // «Уже есть задача…» на карточке Лео с одним пунктом: пункт (с ключом) — у Фокуса, связываем его.
+  function av2LinkExisting(it) {
+    apiFetch("/proactive/items", { method: "POST", body: JSON.stringify({ key: it.key }) })
+      .then(function (res) {
+        var f = ((res && res.items) || []).filter(function (x) { return x.status === "new"; })[0];
+        if (!f) {
+          showNoteToast("Пункт уже разобран");
+          refreshDiscussFeedNow();
+          return;
+        }
+        return focusLinkExisting(f, function (body, okText) {
+          return focusItemOp(f.key, body).then(function (r) {
+            if (r && r.item) focusApplyItem(r.item);
+            if (okText) showNoteToast(okText);
+            refreshDiscussFeedNow();
+          });
+        });
+      })
+      .catch(function (e) { showNoteToast((e && e.message) || "Не получилось"); });
+  }
   function av2LeoModel(it) {
     var src = focusSplitSource(it.source);
     var all = it.actions || [];
@@ -33356,6 +33725,10 @@
       if (doneAct && !m.iconBtn) m.iconBtn = { icon: "check", title: "Готово", fn: function (b) { runFocusAction(it, doneAct, b); } };
       if (openSrc) m.menu.push({ label: "Открыть источник", fn: function () { openSrc(null); } });
       if (it.type === "open_question") m.menu.unshift({ label: "В задачу", fn: function () { av2QuestionToTask(it); } });
+      if (focusHasItems(it) && it.items.length === 1 && (taskAct || it.type === "summary_tasks")) {
+        // Одно дело на карточке, а задача на него уже заведена (в Орбите или в Битрикс24).
+        m.menu.unshift({ label: "Уже есть задача…", fn: function () { av2LinkExisting(it); } });
+      }
     }
     m.menu.push(av2LaterItem(m), { label: "Удалить", danger: true, fn: m.dismiss });
     return m;
@@ -54597,8 +54970,8 @@
       chev.title = "Отложить";
       split.appendChild(chev);
       acts.appendChild(split);
-      acts.appendChild(focusCardBtn("Связать", "is-soft", function () {
-        focusSetUi(aid, { mode: "link", menu: "", draft: {} });
+      acts.appendChild(focusCardBtn("Уже есть", "is-soft", function () {
+        focusLinkExisting(f, function (body, okText) { return focusRunOp(aid, f, body, okText); });
       }));
       card.appendChild(acts);
       if (ui.menu === "snooze") card.appendChild(focusMenu(focusSnoozeMenuItems(aid, f)));
@@ -65567,6 +65940,15 @@
     document.querySelectorAll('input[name="transcription-upload-mode"]').forEach(function (radio) {
       radio.addEventListener("change", syncTranscriptionUploadModeOptions);
     });
+    var trUpMeetBtn = document.getElementById("transcription-upload-meeting-btn");
+    if (trUpMeetBtn) trUpMeetBtn.addEventListener("click", pickTranscriptionUploadMeeting);
+    var trUpMeetX = document.getElementById("transcription-upload-meeting-x");
+    if (trUpMeetX) {
+      trUpMeetX.addEventListener("click", function () {
+        transcriptionUploadMeeting = null;
+        syncTranscriptionUploadUi();
+      });
+    }
     var transcriptionUploadSubmit = document.getElementById("transcription-upload-submit");
     if (transcriptionUploadSubmit) {
       transcriptionUploadSubmit.addEventListener("click", function () {

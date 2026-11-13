@@ -97,6 +97,39 @@ class CandidateRankingTests(unittest.TestCase):
         self.assertEqual([e["id"] for e in res["suggested"]], ["match"])
         self.assertEqual([e["id"] for e in res["others"]], ["old"])
 
+    def test_picked_day_shows_later_meetings_in_order(self) -> None:
+        import usage_server
+
+        def ev(i: str, start: str, end: str) -> dict:
+            return {"id": i, "start": {"dateTime": start}, "end": {"dateTime": end}, "entry_type": "event"}
+
+        at = datetime(2026, 10, 16, 9, 10, tzinfo=timezone.utc)
+        res = usage_server._rank_meeting_candidates(
+            [
+                ev("late", "2026-10-20T15:00:00+00:00", "2026-10-20T16:00:00+00:00"),
+                ev("early", "2026-10-20T08:00:00+00:00", "2026-10-20T08:30:00+00:00"),
+            ],
+            at,
+            any_time=True,
+        )
+        self.assertEqual([e["id"] for e in res["others"]], ["early", "late"])
+
+    def test_recorded_at_parsing(self) -> None:
+        import usage_server
+        from datetime import timedelta
+
+        now = datetime.now(timezone.utc)
+        ms = str(int((now - timedelta(days=5)).timestamp() * 1000))
+        got = usage_server._parse_recorded_at(ms)
+        self.assertIsNotNone(got)
+        self.assertLess(abs((got - (now - timedelta(days=5))).total_seconds()), 2)
+        self.assertIsNone(usage_server._parse_recorded_at(str(int((now + timedelta(days=1)).timestamp() * 1000))))
+        self.assertIsNone(usage_server._parse_recorded_at("0"))
+        self.assertIsNone(usage_server._parse_recorded_at("мусор"))
+        note = {"created_at": now.isoformat(), "meta": {"recorded_at": (now - timedelta(days=4)).isoformat()}}
+        self.assertLess(usage_server._note_recorded_at(note), now - timedelta(days=3))
+        self.assertGreater(usage_server._note_recorded_at({"created_at": now.isoformat(), "meta": {}}), now - timedelta(minutes=1))
+
 
 class AutolinkTests(unittest.TestCase):
     def test_matches_by_zoom_id_and_url(self) -> None:

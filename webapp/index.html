@@ -100,7 +100,7 @@
        приложение не висело на пустом экране — сначала системный шрифт, Unbounded подставится, если загрузится. -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;600&display=swap" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/webapp/vkui-ios-dark.css?v=20260605-browser-gate" />
-  <link rel="stylesheet" href="/webapp/styles.css?v=20261113-push" />
+  <link rel="stylesheet" href="/webapp/styles.css?v=20261113-mtgpick3" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261113-bigboard" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261111-connect1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
@@ -2181,6 +2181,15 @@
               placeholder="Google Диск, Яндекс.Диск или прямая ссылка"
             />
           </label>
+          <div class="field transcription-upload-meeting">
+            <span class="field-label">Встреча</span>
+            <div class="transcription-upload-meeting-row">
+              <span id="transcription-upload-meeting-chosen" class="transcription-upload-meeting-chosen hidden"></span>
+              <button type="button" class="btn ghost transcription-upload-meeting-btn" id="transcription-upload-meeting-btn">Выбрать встречу</button>
+              <button type="button" class="transcription-upload-meeting-x hidden" id="transcription-upload-meeting-x" aria-label="Без встречи" title="Без встречи">×</button>
+            </div>
+            <span class="muted small">Необязательно: запись сразу привяжется к встрече и получит её название</span>
+          </div>
           <fieldset class="transcription-upload-mode" aria-label="Что сделать">
             <legend class="field-label">После загрузки</legend>
             <label class="transcription-upload-option">
@@ -2831,7 +2840,7 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261113-bigboard" defer></script>
+  <script src="/webapp/app.js?v=20261113-existing1" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261113-push" defer></script>
   <script src="/webapp/digest-chats.js?v=20261112-rules3" defer></script>
