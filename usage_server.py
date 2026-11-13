@@ -22307,9 +22307,28 @@ if _webapp_static_dir.is_dir():
         name="webapp_static",
     )
 
+_PUBLIC_DOCS_SUFFIXES = (
+    ".html", ".js", ".css", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".ico", ".woff2",
+)
+
+
+class _PublicDocsStaticFiles(StaticFiles):
+    """docs/ наружу — только веб-страницы и их ассеты (лендинги, Zoom/Google-проверка).
+
+    Внутренние .md/.txt/.srt (планы переезда, шаблон учёток для Zoom, инструкции агентам)
+    раньше открывались всем по /docs/<файл> — теперь 404.
+    """
+
+    async def get_response(self, path: str, scope):
+        clean = (path or "").strip("/").lower()
+        if not clean.endswith(_PUBLIC_DOCS_SUFFIXES) or "/." in "/" + clean:
+            raise HTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
 if _docs_static_dir.is_dir():
     app.mount(
         "/docs",
-        StaticFiles(directory=str(_docs_static_dir), html=True),
+        _PublicDocsStaticFiles(directory=str(_docs_static_dir), html=False),
         name="docs_static",
     )
