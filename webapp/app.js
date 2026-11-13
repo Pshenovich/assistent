@@ -35449,9 +35449,12 @@
     var notesOpen = detail && !detail.classList.contains("hidden") && notesPanelVisible;
     var panelDigest = document.getElementById("panel-digest");
     var digestPanelVisible = panelDigest && !panelDigest.classList.contains("hidden");
+    var panelProjects = document.getElementById("panel-projects");
+    var projectsPanelVisible = panelProjects && !panelProjects.classList.contains("hidden");
+    // документ из «Проектов» открывается поверх раздела — «Назад» нужен и там
     var noteEditorOpen =
       isNoteEditorModalOpen() &&
-      (notesPanelVisible || knowledgePanelVisible || digestPanelVisible);
+      (notesPanelVisible || knowledgePanelVisible || digestPanelVisible || projectsPanelVisible);
     var payOpen = pay && !pay.classList.contains("hidden") && profilePanelVisible;
     var expOpen = exp && !exp.classList.contains("hidden") && profilePanelVisible;
     var bookingOpen =
@@ -65903,6 +65906,13 @@
       btn.addEventListener("click", function (e) {
         if (e.target && e.target.closest && e.target.closest("[data-sidebar-toggle]")) return;
         var same = currentTab === btn.getAttribute("data-tab");
+        // «Задачи» и «Поставленные» — подэкраны «Актуального»: нажатие «Актуальное» возвращает из них.
+        if (same && currentTab === "actual" && (isMyTasksOpen() || isPostedTasksOpen())) {
+          if (isMyTasksOpen()) setMyTasksScreen(false);
+          if (isPostedTasksOpen()) setPostedTasksScreen(false);
+          scrollTabToTop();
+          return;
+        }
         setTab(btn.getAttribute("data-tab"), { fromTabbar: true });
         // Нажали на уже открытый раздел — к началу экрана.
         if (same) scrollTabToTop();

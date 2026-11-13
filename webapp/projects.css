@@ -350,7 +350,8 @@ button.pj-status:not([disabled]) { cursor: pointer; }
   .pj-sheet.pj-inline.pj-sheet--list { max-width: 760px; }
 }
 @media (max-width: 959px) {
-  .pj-sheet.pj-inline { height: auto; padding: var(--space-2) var(--page-x, 1rem) var(--space-8); }
+  /* поля по бокам уже даёт .main-scroll (--page-x) — второй отступ сужал список */
+  .pj-sheet.pj-inline { height: auto; padding: var(--space-2) 0 var(--space-8); }
 }
 
 /* «Часы по проектам» внутри «Показателей сотрудников» */
