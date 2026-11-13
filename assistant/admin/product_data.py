@@ -63,6 +63,20 @@ SNAPSHOT_LABEL = {
 }
 
 
+def feature_keys(ev: str, props: dict[str, Any]) -> list[str]:
+    """Какие функции из FEATURES отмечает событие (с учётом условия на свойство)."""
+    out = []
+    for key, _label, fev, cond in FEATURES:
+        if not (ev.startswith(fev[:-1]) if fev.endswith("*") else fev == ev):
+            continue
+        if cond:
+            k, _, v = cond.partition("=")
+            if str(props.get(k) or "") != v:
+                continue
+        out.append(key)
+    return out
+
+
 def platform_label(p: str) -> str:
     if p.startswith("tma-"):
         return "Миниапп Telegram · " + p[4:]
@@ -188,13 +202,7 @@ def _events_block(start: date, skip: set[str], *, mau_users: set[str]) -> dict[s
             props = json.loads(r["props_json"] or "{}")
         except ValueError:
             props = {}
-        for key, _label, fev, cond in FEATURES:
-            if not (ev.startswith(fev[:-1]) if fev.endswith("*") else fev == ev):
-                continue
-            if cond:
-                k, _, v = cond.partition("=")
-                if str(props.get(k) or "") != v:
-                    continue
+        for key in feature_keys(ev, props):
             by_feature_users[key].add(uid)
             by_feature_n[key] += 1
         if ev == "presentation.generate" and props.get("action") == "create":

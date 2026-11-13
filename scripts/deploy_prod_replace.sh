@@ -278,6 +278,8 @@ if [[ -f .env ]]; then
   if grep -q '^USAGE_DASHBOARD_URL_PREFIX=' .env; then
     sed -i 's|^USAGE_DASHBOARD_URL_PREFIX=.*|USAGE_DASHBOARD_URL_PREFIX=/dashboard|' .env
   fi
+  # Дашборд «Орбита — продукт» (id 1, организация Obuchat AI): сервер сам пишет в него DAU/удержание/функции.
+  grep -q '^PRODUCT_DASHBOARD_ID=' .env || echo 'PRODUCT_DASHBOARD_ID=1' >> .env
   grep -q '^USAGE_DASHBOARD_FORCE_AUTH=' .env || echo 'USAGE_DASHBOARD_FORCE_AUTH=1' >> .env
   python3 - <<'PY'
 from pathlib import Path

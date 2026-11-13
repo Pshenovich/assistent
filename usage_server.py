@@ -106,6 +106,16 @@ def _start_analytics_forward() -> None:
 
 
 @app.on_event("startup")
+def _start_product_dashboard() -> None:
+    try:
+        from assistant.lib import product_dashboard
+
+        product_dashboard.start()
+    except Exception as exc:
+        print(f"[product-dashboard] start_fail err={exc!r}")
+
+
+@app.on_event("startup")
 def _recover_note_paei_jobs() -> None:
     try:
         from assistant.board.note_paei import recover_jobs_after_restart
