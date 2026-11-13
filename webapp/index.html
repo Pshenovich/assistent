@@ -103,6 +103,7 @@
   <link rel="stylesheet" href="/webapp/styles.css?v=20261113-mtgpick3" />
   <link rel="stylesheet" href="/webapp/projects.css?v=20261113-projects3" />
   <link rel="stylesheet" href="/webapp/board.css?v=20261113-miro4" />
+  <link rel="stylesheet" href="/webapp/dashboards.css?v=20261113-dash3" />
   <link rel="stylesheet" href="/webapp/onboarding.css?v=20261111-connect1" />
   <link rel="stylesheet" href="/webapp/org.css?v=20261111-orgviews2" />
   <link rel="stylesheet" href="/webapp/metrics.css?v=20261111-silent1" />
@@ -709,6 +710,9 @@
       </section>
 
       <!-- Профиль -->
+      <section id="panel-dashboards" class="panel hidden" role="tabpanel" hidden>
+        <div id="dashboards-root" class="dsh-root"></div>
+      </section>
       <section id="panel-profile" class="panel hidden" role="tabpanel" hidden>
         <div id="profile-main">
           <div class="pf-side">
@@ -1620,7 +1624,7 @@
                 <p class="pf-hint">Входите по почте — пришлём код. Telegram — чтобы писать Лео и получать уведомления.</p>
               </div>
               <div class="pf-group hidden" id="account-ai-group">
-                <p class="pf-group-title">Доступ к базе знаний для ИИ</p>
+                <p class="pf-group-title">Доступ для ИИ: база знаний и дашборды</p>
                 <div id="account-ai-body"></div>
               </div>
             </div>
@@ -2058,6 +2062,17 @@
             </svg>
           </span>
           <span class="tabbar-label">База знаний</span>
+        </button>
+        <button type="button" class="tabbar-btn tabbar-btn--dashboards" data-tab="dashboards" role="tab" aria-selected="false">
+          <span class="tabbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="9" rx="1.5" />
+              <rect x="14" y="3" width="7" height="5" rx="1.5" />
+              <rect x="14" y="12" width="7" height="9" rx="1.5" />
+              <rect x="3" y="16" width="7" height="5" rx="1.5" />
+            </svg>
+          </span>
+          <span class="tabbar-label">Дашборды</span>
         </button>
         <button type="button" class="sidebar-expand" id="sidebar-expand" aria-controls="app-sidebar" aria-label="Развернуть меню" title="Развернуть меню">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -2872,16 +2887,17 @@
   <script src="/webapp/failover.js?v=20261110-eu1" defer></script>
   <script src="/webapp/realtime.js?v=20261103-analytics" defer></script>
   <script src="/webapp/note-yjs.js?v=20261106-reseedack" defer></script>
-  <script src="/webapp/app.js?v=20261113-projects3" defer></script>
+  <script src="/webapp/app.js?v=20261113-dash1" defer></script>
   <script src="/webapp/projects.js?v=20261113-projects3" defer></script>
   <script src="/webapp/mail.js?v=20261023-mail6" defer></script>
   <script src="/webapp/mail-inbox.js?v=20261113-push" defer></script>
   <script src="/webapp/digest-chats.js?v=20261112-rules3" defer></script>
   <script src="/webapp/digest-market.js?v=20261029-mktgen" defer></script>
   <script src="/webapp/org.js?v=20261111-pfgroups" defer></script>
+  <script src="/webapp/dashboards.js?v=20261113-dash3" defer></script>
   <script src="/webapp/metrics.js?v=20261111-silent1" defer></script>
   <script src="/webapp/people.js?v=20261111-silent1" defer></script>
-  <script src="/webapp/org-kb.js?v=20261109-guest1" defer></script>
+  <script src="/webapp/org-kb.js?v=20261113-dash1" defer></script>
   <script src="/webapp/org-kb-desk.js?v=20261109-guest1" defer></script>
   <!-- Сейфы — на отдельном адресе (vault.getorbita.me); здесь только ссылка туда -->
   <script src="/webapp/vault-link.js?v=20261110-vh3" defer></script>

@@ -9439,15 +9439,23 @@ async def miniapp_org_kb_inherit(
 class _MiniappAiTokenCreate(BaseModel):
     name: str = ""
     write: bool = False
+    kb: bool = True
+    dash: str = ""  # '' — без дашбордов, read — смотреть, write — создавать и настраивать
 
 
 def _ai_token_setup(token: str = "<токен>") -> dict[str, str]:
     from assistant.lib.webapp_public import public_base_url
 
     url = f"{public_base_url()}/mcp/kb"
+    dash_url = f"{public_base_url()}/mcp/dashboards"
     return {
         "mcp_url": url,
         "command": f'claude mcp add --transport http orbita-kb {url} --header "Authorization: Bearer {token}"',
+        "dash_mcp_url": dash_url,
+        "dash_command": (
+            f'claude mcp add --transport http orbita-dashboards {dash_url} --header "Authorization: Bearer {token}"'
+        ),
+        "dash_guide_url": f"{public_base_url()}/mcp/dashboards/guide.md",
     }
 
 
@@ -9468,12 +9476,17 @@ async def miniapp_ai_token_create(
 
     uid = int(principal.telegram_user_id)
     try:
-        tok = await run_in_threadpool(
-            partial(ai_tokens.create, uid, body.name, scope="kb:write" if body.write else "kb:read")
-        )
+        parts = []
+        if body.kb:
+            parts.append("kb:write" if body.write else "kb:read")
+        if body.dash in ("read", "write"):
+            parts.append(f"dash:{body.dash}")
+        if not parts:
+            raise ValueError("Выберите, к чему дать доступ: база знаний или дашборды")
+        tok = await run_in_threadpool(partial(ai_tokens.create, uid, body.name, scope=" ".join(parts)))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
-    _track(uid, "kb.token_create", write=bool(body.write))
+    _track(uid, "kb.token_create", write=bool(body.write), kb=bool(body.kb), dash=body.dash or "")
     items = await run_in_threadpool(ai_tokens.list_for, uid)
     return {"ok": True, "created": tok, "items": items, **_ai_token_setup(tok["token"])}
 
@@ -9485,6 +9498,275 @@ async def miniapp_ai_token_revoke(token_id: int, principal: _MiniappPrincipal = 
     uid = int(principal.telegram_user_id)
     await run_in_threadpool(ai_tokens.revoke, uid, token_id)
     return {"ok": True, "items": await run_in_threadpool(ai_tokens.list_for, uid), **_ai_token_setup()}
+
+
+# ---------- Дашборды (assistant/stores/dashboards.py, assistant/lib/dashboard_data.py) ----------
+
+
+async def _dash_call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Вызов хранилища дашбордов в потоке; DashboardError → 400 с текстом (правило: права → 400, не 403)."""
+    from assistant.stores.dashboards import DashboardError
+
+    try:
+        return await run_in_threadpool(partial(fn, *args, **kwargs))
+    except DashboardError as e:
+        raise HTTPException(status_code=e.code, detail=str(e)) from e
+
+
+def _dash_tz(uid: int, tz: str = "") -> str:
+    if tz:
+        return tz
+    try:
+        from assistant.stores import user_prefs
+
+        return str(getattr(user_prefs.get_user_tz(int(uid)), "key", "") or "Europe/Moscow")
+    except Exception:
+        return "Europe/Moscow"
+
+
+def _dash_full(uid: int, dash_id: int, period: str, tz: str) -> dict[str, Any]:
+    from assistant.lib import dashboard_data as DD
+    from assistant.lib import dash_mcp
+    from assistant.stores import dashboards as D
+
+    d = D.require(uid, dash_id)
+    view = DD.dashboard_view(d, period=period, tz=_dash_tz(uid, tz))
+    labels = D.principal_labels(d["org_id"], [m["principal"] for m in d["members"]])
+    view["members"] = [
+        {"principal": m["principal"], "role": m["role"], "label": labels.get(m["principal"], m["principal"]),
+         "creator": m["principal"] == f"u:{d['owner_uid']}"}
+        for m in d["members"]
+    ]
+    base = dash_mcp._base(dash_mcp.DashSource(user_id=uid))
+    for ds in view["datasets"]:
+        ds["ingest_url"] = dash_mcp.ingest_url(base, ds["id"])
+    view["can"] = {"edit": D.at_least(d["my_role"], "editor"), "own": D.at_least(d["my_role"], "owner")}
+    org_name = ""
+    if d["org_id"]:
+        try:
+            from assistant.stores import orgs_store
+
+            org_name = (orgs_store.get_org(int(d["org_id"])) or {}).get("name") or ""
+        except Exception:
+            pass
+    view["org_name"] = org_name
+    candidates: list[dict[str, str]] = []
+    if view["can"]["own"] and d["org_id"].isdigit():
+        try:
+            from assistant.stores import org_groups, orgs_store
+
+            oid = int(d["org_id"])
+            candidates.append({"principal": "all", "label": "Вся организация", "kind": "all"})
+            for g in org_groups.list_groups(oid, uid):
+                candidates.append({"principal": f"g:{g['id']}", "label": g.get("name") or "Отдел", "kind": "group"})
+                for t in g.get("teams") or []:
+                    candidates.append({"principal": f"g:{t['id']}", "label": f"{g.get('name')} · {t.get('name')}",
+                                       "kind": "group"})
+            for m in orgs_store.list_members(oid):
+                if m.get("user_id") and m.get("status") == "active" and m["user_id"] != d["owner_uid"]:
+                    candidates.append({"principal": f"u:{m['user_id']}", "label": m.get("name") or "Участник",
+                                       "kind": "person"})
+        except Exception as e:
+            print(f"[dashboards] candidates dash={dash_id} err={e!r}")
+    view["candidates"] = candidates
+    return view
+
+
+def _dash_list(uid: int, tz: str) -> dict[str, Any]:
+    from assistant.lib import dashboard_data as DD
+    from assistant.stores import dashboards as D
+
+    zone = _dash_tz(uid, tz)
+    items = []
+    for d in D.list_for(uid):
+        dss = D.datasets(d["id"])
+        pushes = [x["last_push_at"] for x in dss if x.get("last_push_at")]
+        items.append({
+            "id": d["id"], "title": d["title"], "org_id": d["org_id"], "my_role": d["my_role"],
+            "updated_at": d["updated_at"], "last_push_at": max(pushes) if pushes else "",
+            "stale": any(D.stale(x) for x in dss), "widgets": len(D.widgets(d["id"])), "datasets": len(dss),
+            "headline": DD.headline(d, tz=zone),
+        })
+    orgs = []
+    try:
+        from assistant.stores import orgs_store
+
+        orgs = [{"id": str(o["id"]), "name": o.get("name") or ""} for o in orgs_store.orgs_for_user(uid)]
+    except Exception:
+        pass
+    return {"items": items, "orgs": orgs}
+
+
+class _DashCreate(BaseModel):
+    title: str
+    org_id: str = ""
+    description: str = ""
+
+
+class _DashPatch(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    archived: Optional[bool] = None
+
+
+class _DashMember(BaseModel):
+    principal: str
+    role: str = "viewer"
+
+
+class _DashWidget(BaseModel):
+    kind: Optional[str] = None
+    title: Optional[str] = None
+    dataset: Optional[str] = None
+    options: Optional[dict[str, Any]] = None
+    width: Optional[int] = None
+    position: Optional[int] = None
+
+
+class _DashOrder(BaseModel):
+    ids: list[int]
+
+
+@miniapp_router.get("/dashboards")
+async def miniapp_dashboards(tz: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    return {"ok": True, **(await _dash_call(_dash_list, uid, tz))}
+
+
+@miniapp_router.get("/dashboards/catalog")
+async def miniapp_dashboards_catalog(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.lib import dashboard_widgets as W
+
+    return {"ok": True, "widgets": W.catalog(), "column_types": list(W.COLUMN_TYPES), **_ai_token_setup()}
+
+
+@miniapp_router.post("/dashboards")
+async def miniapp_dashboard_create(body: _DashCreate, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    uid = int(principal.telegram_user_id)
+    d = await _dash_call(D.create, uid, body.title, org_id=body.org_id, description=body.description)
+    _track(uid, "dashboard_created", org=bool(d["org_id"]), via="app")
+    return {"ok": True, "dashboard": await _dash_call(_dash_full, uid, d["id"], "30d", "")}
+
+
+@miniapp_router.get("/dashboards/{dash_id}")
+async def miniapp_dashboard(
+    dash_id: int, period: str = "30d", tz: str = "", principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    uid = int(principal.telegram_user_id)
+    view = await _dash_call(_dash_full, uid, dash_id, period, tz)
+    _track(uid, "dashboard_viewed", throttle_key=f"dashboard_viewed:{dash_id}", throttle_sec=1800)
+    return {"ok": True, "dashboard": view}
+
+
+@miniapp_router.patch("/dashboards/{dash_id}")
+async def miniapp_dashboard_patch(
+    dash_id: int, body: _DashPatch, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    uid = int(principal.telegram_user_id)
+    await _dash_call(D.update, uid, dash_id, body.model_dump(exclude_none=True) if hasattr(body, "model_dump")
+                     else body.dict(exclude_none=True))
+    return {"ok": True}
+
+
+@miniapp_router.delete("/dashboards/{dash_id}")
+async def miniapp_dashboard_delete(dash_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    await _dash_call(D.delete, int(principal.telegram_user_id), dash_id)
+    return {"ok": True}
+
+
+@miniapp_router.put("/dashboards/{dash_id}/members")
+async def miniapp_dashboard_member(
+    dash_id: int, body: _DashMember, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    uid = int(principal.telegram_user_id)
+    await _dash_call(D.set_member, uid, dash_id, body.principal, body.role)
+    return {"ok": True}
+
+
+@miniapp_router.delete("/dashboards/{dash_id}/members")
+async def miniapp_dashboard_member_remove(
+    dash_id: int, principal_id: str = Query("", alias="principal"),
+    principal: _MiniappPrincipal = Depends(require_miniapp_user),
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    await _dash_call(D.remove_member, int(principal.telegram_user_id), dash_id, principal_id)
+    return {"ok": True}
+
+
+@miniapp_router.post("/dashboards/{dash_id}/widgets")
+async def miniapp_dashboard_widget_add(
+    dash_id: int, body: _DashWidget, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    w = await _dash_call(D.add_widget, int(principal.telegram_user_id), dash_id, body.kind, title=body.title or "",
+                         dataset=body.dataset, options=body.options, width=body.width, position=body.position)
+    return {"ok": True, "widget": w}
+
+
+@miniapp_router.patch("/dashboards/{dash_id}/widgets/{widget_id}")
+async def miniapp_dashboard_widget_patch(
+    dash_id: int, widget_id: int, body: _DashWidget, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    patch = body.model_dump(exclude_none=True) if hasattr(body, "model_dump") else body.dict(exclude_none=True)
+    patch.pop("position", None)
+    w = await _dash_call(D.update_widget, int(principal.telegram_user_id), dash_id, widget_id, patch)
+    return {"ok": True, "widget": w}
+
+
+@miniapp_router.delete("/dashboards/{dash_id}/widgets/{widget_id}")
+async def miniapp_dashboard_widget_remove(
+    dash_id: int, widget_id: int, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    await _dash_call(D.remove_widget, int(principal.telegram_user_id), dash_id, widget_id)
+    return {"ok": True}
+
+
+@miniapp_router.put("/dashboards/{dash_id}/widgets-order")
+async def miniapp_dashboard_widgets_order(
+    dash_id: int, body: _DashOrder, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    ws = await _dash_call(D.reorder_widgets, int(principal.telegram_user_id), dash_id, body.ids)
+    return {"ok": True, "order": [w["id"] for w in ws]}
+
+
+@miniapp_router.post("/dashboards/{dash_id}/datasets/{key}/rotate")
+async def miniapp_dashboard_dataset_rotate(
+    dash_id: int, key: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.lib import dash_mcp
+    from assistant.stores import dashboards as D
+
+    uid = int(principal.telegram_user_id)
+    ds = await _dash_call(D.rotate_key, uid, dash_id, key)
+    url = dash_mcp.ingest_url(dash_mcp.DashSource(user_id=uid), ds["id"])
+    return {"ok": True, "key": ds["key"], "ingest_key": ds["ingest_key"], "ingest_url": url,
+            "examples": dash_mcp.examples(url, ds["ingest_key"], ds["kind"])}
+
+
+@miniapp_router.delete("/dashboards/{dash_id}/datasets/{key}")
+async def miniapp_dashboard_dataset_delete(
+    dash_id: int, key: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)
+) -> dict[str, Any]:
+    from assistant.stores import dashboards as D
+
+    await _dash_call(D.delete_dataset, int(principal.telegram_user_id), dash_id, key)
+    return {"ok": True}
 
 
 # ---------- Сейфы: сервер хранит и отдаёт только шифр (см. assistant/stores/vaults.py) ----------
@@ -21806,8 +22088,14 @@ async def kb_mcp_endpoint(request: Request) -> Response:
         payload = json.loads(await request.body() or b"null")
     except ValueError:
         return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
+    if not ai_tokens.can(scope, "kb"):
+        return JSONResponse(
+            {"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": "У токена нет доступа к базе знаний"}},
+            status_code=401,
+            headers={"WWW-Authenticate": 'Bearer realm="orbita-kb"'},
+        )
     _track(uid, "kb.mcp_call", throttle_key="kb.mcp_call", throttle_sec=600)
-    src = kb_mcp.KbSource(user_id=int(uid), can_write=scope == "kb:write")
+    src = kb_mcp.KbSource(user_id=int(uid), can_write=ai_tokens.can(scope, "kb", write=True))
     out = await run_in_threadpool(kb_mcp.handle_payload, src, payload)
     if out is None:
         return Response(status_code=202)
@@ -21817,6 +22105,85 @@ async def kb_mcp_endpoint(request: Request) -> Response:
 @app.get("/mcp/kb")
 async def kb_mcp_get() -> Response:
     return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@app.post("/ingest/dashboards/{dataset_id}")
+async def dashboards_ingest(dataset_id: int, request: Request) -> Response:
+    """Приём данных дашборда с сервера компании: Authorization: Bearer dsk_… (ключ одного источника)."""
+    from assistant.stores import dashboards as D
+
+    auth = request.headers.get("authorization") or ""
+    raw = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    ds = await run_in_threadpool(D.resolve_ingest, dataset_id, raw) if raw else None
+    if not ds:
+        return JSONResponse({"ok": False, "error": "Неверный ключ источника или источник удалён"}, status_code=401,
+                            headers={"WWW-Authenticate": 'Bearer realm="orbita-ingest"'})
+    body = await request.body()
+    if len(body) > D.MAX_BODY_BYTES:
+        msg = f"Тело больше {D.MAX_BODY_BYTES // 1000} КБ — разбейте на части"
+        await run_in_threadpool(D.record_error, ds["id"], msg)
+        return JSONResponse({"ok": False, "error": msg}, status_code=413)
+    if not D.rate_ok(ds["id"]):
+        msg = f"Больше {D.RATE_PER_MIN} отправок в минуту — подождите и отправляйте реже"
+        await run_in_threadpool(D.record_error, ds["id"], msg)
+        return JSONResponse({"ok": False, "error": msg}, status_code=429, headers={"Retry-After": "60"})
+    try:
+        payload = json.loads(body or b"null")
+    except ValueError:
+        await run_in_threadpool(D.record_error, ds["id"], "Тело — не JSON")
+        return JSONResponse({"ok": False, "error": "Тело — не JSON"}, status_code=400)
+    try:
+        res = await run_in_threadpool(D.ingest, ds, payload)
+    except ValueError as e:
+        await run_in_threadpool(D.record_error, ds["id"], str(e))
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    return JSONResponse(res, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/ingest/dashboards/{dataset_id}")
+async def dashboards_ingest_get(dataset_id: int) -> Response:
+    return JSONResponse({"ok": False, "error": "Отправляйте POST с JSON и заголовком Authorization: Bearer <ключ источника>"},
+                        status_code=405, headers={"Allow": "POST"})
+
+
+@app.post("/mcp/dashboards")
+async def dash_mcp_endpoint(request: Request) -> Response:
+    """MCP дашбордов: claude mcp add --transport http orbita-dashboards <URL> --header "Authorization: Bearer <токен>"."""
+    from assistant.lib import dash_mcp
+    from assistant.stores import ai_tokens
+
+    auth = request.headers.get("authorization") or ""
+    raw = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    hit = await run_in_threadpool(ai_tokens.resolve_full, raw) if raw else None
+    uid, scope = hit if hit else (None, "")
+    if not uid or not ai_tokens.can(scope, "dash"):
+        msg = "Нужен токен Орбиты с доступом к дашбордам (Профиль → Доступ для ИИ)"
+        return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32001, "message": msg}}, status_code=401,
+                            headers={"WWW-Authenticate": 'Bearer realm="orbita-dashboards"'})
+    try:
+        payload = json.loads(await request.body() or b"null")
+    except ValueError:
+        return JSONResponse({"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}, status_code=400)
+    _track(uid, "dash.mcp_call", throttle_key="dash.mcp_call", throttle_sec=600)
+    src = dash_mcp.DashSource(user_id=int(uid), can_write=ai_tokens.can(scope, "dash", write=True))
+    out = await run_in_threadpool(dash_mcp.handle_payload, src, payload)
+    if out is None:
+        return Response(status_code=202)
+    return JSONResponse(out, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/mcp/dashboards")
+async def dash_mcp_get() -> Response:
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
+@app.get("/mcp/dashboards/guide.md")
+async def dash_mcp_guide() -> Response:
+    """Инструкция для агентов (та же, что инструмент guide) — публично, без секретов."""
+    from assistant.lib import dash_mcp
+
+    return Response(dash_mcp.guide_text(), media_type="text/markdown; charset=utf-8",
+                    headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.get("/mcp/design/{token}")

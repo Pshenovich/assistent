@@ -968,36 +968,53 @@
 
   // ---------- доступ к базе знаний для ИИ (Профиль → Аккаунт) ----------
 
-  var ai = { items: [], created: null, command: "", url: "", client: "claude" };
+  var ai = { items: [], created: null, command: "", url: "", dashCommand: "", dashUrl: "", client: "claude" };
 
   // Наш MCP — обычный удалённый MCP по HTTP с токеном в заголовке: подходит любой клиент,
   // где можно задать адрес и заголовок. Веб-коннекторы claude.ai и ChatGPT требуют OAuth — их нет.
   var AI_CLIENTS = [
-    { id: "claude", label: "Claude Code", hint: "Выполните команду в терминале — Claude Code подключит базу знаний." },
+    { id: "claude", label: "Claude Code", hint: "Выполните в терминале — Claude Code подключит базу знаний и/или дашборды (по команде на каждый сервер)." },
     { id: "cursor", label: "Cursor", hint: "Добавьте в ~/.cursor/mcp.json (или .cursor/mcp.json проекта) и включите сервер в настройках MCP." },
     { id: "vscode", label: "VS Code", hint: "Добавьте в .vscode/mcp.json проекта (или в пользовательский mcp.json) — агент Copilot увидит инструменты." },
     { id: "desktop", label: "Claude Desktop", hint: "Добавьте в claude_desktop_config.json (Настройки → Разработчик → Изменить конфиг). Нужен Node.js: мост mcp-remote." },
     { id: "other", label: "Другие", hint: "Windsurf, Codex, Gemini CLI и другие клиенты с удалённым MCP по HTTP: адрес и заголовок Authorization." },
   ];
 
-  function aiConfig(client, token) {
-    var url = ai.url;
+  // Права токена: «kb:read dash:write» → какие MCP-серверы ему подключать.
+  function aiScopes(scope) {
+    var p = String(scope || "").split(/\s+/);
+    return {
+      kb: p.indexOf("kb:write") >= 0 ? "write" : p.indexOf("kb:read") >= 0 ? "read" : "",
+      dash: p.indexOf("dash:write") >= 0 ? "write" : p.indexOf("dash:read") >= 0 ? "read" : "",
+    };
+  }
+  function aiScopeText(scope) {
+    var s = aiScopes(scope), out = [];
+    if (s.kb) out.push("база знаний: " + (s.kb === "write" ? "чтение и запись" : "чтение"));
+    if (s.dash) out.push("дашборды: " + (s.dash === "write" ? "чтение и запись" : "чтение"));
+    return out.join(", ") || "без доступа";
+  }
+  function aiServers(scope) {
+    var s = aiScopes(scope), out = [];
+    if (s.kb) out.push({ name: "orbita-kb", url: ai.url, command: ai.command });
+    if (s.dash && ai.dashUrl) out.push({ name: "orbita-dashboards", url: ai.dashUrl, command: ai.dashCommand });
+    return out;
+  }
+  function aiConfig(client, token, scope) {
     var bearer = "Bearer " + token;
-    if (client === "claude") return ai.command;
-    if (client === "cursor") {
-      return JSON.stringify({ mcpServers: { "orbita-kb": { url: url, headers: { Authorization: bearer } } } }, null, 2);
-    }
-    if (client === "vscode") {
-      return JSON.stringify({ servers: { "orbita-kb": { type: "http", url: url, headers: { Authorization: bearer } } } }, null, 2);
-    }
-    if (client === "desktop") {
-      return JSON.stringify({ mcpServers: { "orbita-kb": {
-        command: "npx",
-        args: ["-y", "mcp-remote", url, "--header", "Authorization:${ORBITA_AUTH}"],
-        env: { ORBITA_AUTH: bearer },
-      } } }, null, 2);
-    }
-    return "Адрес (HTTP): " + url + "\nЗаголовок: Authorization: " + bearer;
+    var servers = aiServers(scope || "kb:read");
+    if (client === "claude") return servers.map(function (x) { return x.command; }).join("\n");
+    var map = {};
+    servers.forEach(function (x) {
+      if (client === "cursor") map[x.name] = { url: x.url, headers: { Authorization: bearer } };
+      else if (client === "vscode") map[x.name] = { type: "http", url: x.url, headers: { Authorization: bearer } };
+      else if (client === "desktop") {
+        map[x.name] = { command: "npx", args: ["-y", "mcp-remote", x.url, "--header", "Authorization:${ORBITA_AUTH}"], env: { ORBITA_AUTH: bearer } };
+      }
+    });
+    if (client === "cursor" || client === "desktop") return JSON.stringify({ mcpServers: map }, null, 2);
+    if (client === "vscode") return JSON.stringify({ servers: map }, null, 2);
+    return servers.map(function (x) { return x.name + " — адрес (HTTP): " + x.url; }).join("\n") + "\nЗаголовок: Authorization: " + bearer;
   }
 
   function aiApi(path, opts) {
@@ -1008,6 +1025,8 @@
     ai.items = (r && r.items) || [];
     ai.command = (r && r.command) || ai.command;
     ai.url = (r && r.mcp_url) || ai.url;
+    ai.dashCommand = (r && r.dash_command) || ai.dashCommand;
+    ai.dashUrl = (r && r.dash_mcp_url) || ai.dashUrl;
     renderAi();
   }
 
@@ -1017,7 +1036,7 @@
     if (!body || !group) return;
     group.classList.remove("hidden");
     var rows = ai.items.map(function (t) {
-      var used = (t.scope === "kb:write" ? "чтение и запись · " : "только чтение · ") +
+      var used = aiScopeText(t.scope) + " · " +
         (t.last_used_at ? "использовался " + ago(t.last_used_at) : "ещё не использовался");
       return '<div class="pf-row pf-row--static"><span class="pf-ico" aria-hidden="true">' + ICO.key + "</span>" +
         '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(t.name) + "</span>" +
@@ -1034,14 +1053,14 @@
           return '<button type="button" role="tab" data-ai="client" data-client="' + c.id + '"' +
             (c.id === cur.id ? ' class="is-on" aria-selected="true"' : ' aria-selected="false"') + ">" + esc(c.label) + "</button>";
         }).join("") + "</div>" +
-        '<pre class="kb-ai-code" data-ai="code">' + esc(aiConfig(cur.id, ai.created.token)) + "</pre>" +
+        '<pre class="kb-ai-code" data-ai="code">' + esc(aiConfig(cur.id, ai.created.token, ai.created.scope)) + "</pre>" +
         '<div class="kb-ai-actions"><button type="button" class="pf-btn" data-ai="copy">' +
         (cur.id === "claude" ? "Скопировать команду" : cur.id === "other" ? "Скопировать" : "Скопировать конфиг") + "</button>" +
         '<button type="button" class="pf-link" data-ai="copy-token">Только токен</button>' +
         '<button type="button" class="pf-link pf-link--muted" data-ai="hide">Готово</button></div>' +
         '<p class="pf-hint">' + esc(cur.hint) + " Веб-версии claude.ai и ChatGPT пока не подключаются — им нужен вход по OAuth.</p></div>";
     }
-    html += '<p class="pf-hint">Агент видит то же, что вы в базе знаний. С токеном «чтение и запись» — ещё пишет там, где вы редактор. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
+    html += '<p class="pf-hint">Агент видит то же, что вы, — только в базе знаний и дашбордах, смотря что разрешили токену. С правом «чтение и запись» — ещё пишет там, где вы редактор. Обычные документы, почта, задачи и сейфы ему недоступны. Ушёл ноутбук или токен попал не туда — отзовите.</p>';
     body.innerHTML = html;
     if (ai.scrollTo) {
       ai.scrollTo = false;
@@ -1066,7 +1085,10 @@
     sh.body.innerHTML =
       '<div class="pf-group"><div class="pf-list"><label class="pf-field"><span class="pf-field-label">Где будете использовать</span>' +
       '<input type="text" class="pf-input" data-ai-new="name" maxlength="60" value="" placeholder="Например, Claude Code или Cursor на ноутбуке" /></label></div></div>' +
-      '<div class="pf-group"><p class="pf-group-title">Доступ</p><div class="pf-list">' +
+      '<div class="pf-group"><p class="pf-group-title">База знаний</p><div class="pf-list">' +
+      '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Нет доступа</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">Токен только для дашбордов</span></span>' +
+      '<input type="radio" class="kb-radio" name="ai-scope" value="none" /></span></label>' +
       '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Только чтение</span>' +
       '<span class="pf-row-sub pf-row-sub--wrap">Искать и читать документы базы знаний</span></span>' +
       '<input type="radio" class="kb-radio" name="ai-scope" value="read" checked /></span></label>' +
@@ -1074,13 +1096,25 @@
       '<span class="pf-row-sub pf-row-sub--wrap">Ещё создавать разделы и документы и править документы — там, где вы редактор. Удалять и менять доступ агент не может</span></span>' +
       '<input type="radio" class="kb-radio" name="ai-scope" value="write" /></span></label>' +
       '</div><p class="pf-hint">Правки агента сохраняются в истории версий документа с пометкой «ИИ» — любую можно откатить.</p></div>' +
+      '<div class="pf-group"><p class="pf-group-title">Дашборды</p><div class="pf-list">' +
+      '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Нет доступа</span></span>' +
+      '<input type="radio" class="kb-radio" name="ai-dash" value="" checked /></span></label>' +
+      '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Только чтение</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">Смотреть дашборды и их цифры</span></span>' +
+      '<input type="radio" class="kb-radio" name="ai-dash" value="read" /></span></label>' +
+      '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Чтение и запись</span>' +
+      '<span class="pf-row-sub pf-row-sub--wrap">Создавать дашборды, источники и виджеты и настраивать отправку данных с вашего сервера. Удалять и менять доступ агент не может</span></span>' +
+      '<input type="radio" class="kb-radio" name="ai-dash" value="write" /></span></label>' +
+      '</div></div>' +
       '<button type="button" class="pf-btn" data-ai-new="go">Создать токен</button>';
     var input = sh.body.querySelector('[data-ai-new="name"]');
     if (input) input.focus();
     sh.body.querySelector('[data-ai-new="go"]').addEventListener("click", function () {
       var name = String((input && input.value) || "").trim();
       var write = !!sh.body.querySelector('input[name="ai-scope"][value="write"]:checked');
-      aiApi("", json("POST", { name: name, write: write })).then(function (r) {
+      var kb = !sh.body.querySelector('input[name="ai-scope"][value="none"]:checked');
+      var dashEl = sh.body.querySelector('input[name="ai-dash"]:checked');
+      aiApi("", json("POST", { name: name, write: write, kb: kb, dash: dashEl ? dashEl.value : "" })).then(function (r) {
         sh.close();
         ai.created = r.created;
         aiApply(r);
@@ -1107,7 +1141,7 @@
       ai.client = b.getAttribute("data-client") || "claude";
       renderAi();
     } else if (kind === "copy") {
-      if (ai.created) aiCopy(aiConfig(ai.client, ai.created.token));
+      if (ai.created) aiCopy(aiConfig(ai.client, ai.created.token, ai.created.scope));
     } else if (kind === "copy-token") {
       if (ai.created) aiCopy(ai.created.token);
     } else if (kind === "hide") {

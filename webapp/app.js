@@ -1319,7 +1319,7 @@
   var tagPickerActiveClose = null;
   var tagPickerDocClickBound = false;
   var tabInited = { profile: false };
-  var TAB_ORDER = ["actual", "notes", "digest", "knowledge", "profile"];
+  var TAB_ORDER = ["actual", "notes", "digest", "knowledge", "dashboards", "profile"];
   var digestTabEnabled = false;
   var digestChatsEnabled = false; // дайджест чатов включён в профиле
   var mailAvailable = false; // подключена почта — «Почта» во вкладке «Дайджест»
@@ -7694,6 +7694,7 @@
         })
         .catch(function () {});
     }
+    if (name === "dashboards" && window.LeoDashboards) window.LeoDashboards.show();
     if (name === "digest") {
       closeDigestDetail();
       setDigestSubTab(digestSubTab || "chats");
@@ -7872,6 +7873,10 @@
     }
     if (tab === "knowledge") {
       await loadKnowledgeNotes();
+      return;
+    }
+    if (tab === "dashboards") {
+      if (window.LeoDashboards) await window.LeoDashboards.refresh();
       return;
     }
     if (tab === "digest") {
@@ -43988,6 +43993,11 @@
       }, 400);
       return;
     }
+    if (type === "dashboard.changed") {
+      // Сервер компании прислал данные или дашборд поправили — открытая вкладка перечитывает его.
+      if (window.LeoDashboards && !document.hidden) window.LeoDashboards.changed(ev.id);
+      return;
+    }
     if (type === "calendar.changed") {
       // Встречу добавили или передвинули в Google Календаре — открытое «Актуальное» перечитывает календарь.
       // Google часто шлёт несколько уведомлений подряд — склеиваем их в одно обновление.
@@ -62371,6 +62381,7 @@
     check: '<path d="M5 12.5l4.5 4.5L19 7.5" />',
     file: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" />',
     stack: '<path d="m12 4 8 4-8 4-8-4z" /><path d="m4 12 8 4 8-4M4 16l8 4 8-4" />',
+    chart: '<rect x="3" y="3" width="7" height="9" rx="1.5" /><rect x="14" y="3" width="7" height="5" rx="1.5" /><rect x="14" y="12" width="7" height="9" rx="1.5" /><rect x="3" y="16" width="7" height="5" rx="1.5" />',
     chat: '<path d="M5 18l-1 3 4-1.5A8 8 0 1 0 5 18z" />',
     person: '<circle cx="12" cy="8" r="4" /><path d="M5 20a7 7 0 0 1 14 0" />',
   };

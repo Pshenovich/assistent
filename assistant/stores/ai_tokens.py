@@ -1,9 +1,10 @@
-"""Личные токены доступа для ИИ-агентов (Claude Code и др.): MCP базы знаний, только чтение.
+"""Личные токены доступа для ИИ-агентов (Claude Code и др.): MCP базы знаний и дашбордов.
 
 Токен показывается один раз при создании; в базе — только его хэш и первые символы (чтобы узнать в списке).
 Токен видит ровно то, что видит человек, и только базу знаний — не документы вообще, не почту, не сейфы.
 Права: kb:read — только чтение; kb:write — ещё создавать разделы и документы и править документы там, где
-человек редактор (удалять и менять доступ — нет). Права токена не меняются — только выпустить новый.
+человек редактор (удалять и менять доступ — нет). dash:read / dash:write — то же для дашбордов (MCP
+/mcp/dashboards). У токена может быть несколько прав через пробел. Права токена не меняются — только выпустить новый.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from assistant.stores import notes as notes_store
 _LOCK = notes_store._LOCK  # type: ignore[attr-defined]
 
 PREFIX = "orb_"
-SCOPES = ("kb:read", "kb:write")
+SCOPES = ("kb:read", "kb:write", "dash:read", "dash:write")
 MAX_ACTIVE = 10
 NAME_MAX = 60
 _USED_EVERY = timedelta(minutes=5)  # last_used_at обновляем не чаще — без записи на каждый вызов
@@ -65,8 +66,7 @@ def _public(r: sqlite3.Row) -> dict[str, Any]:
 def create(user_id: int | str, name: str = "", *, scope: str = "kb:read") -> dict[str, Any]:
     """Новый токен. ``token`` в ответе — единственный раз, когда он виден целиком."""
     uid = str(int(user_id))
-    if scope not in SCOPES:
-        raise ValueError("Неизвестный доступ токена")
+    scope = normalize_scope(scope)
     title = " ".join(str(name or "").split())[:NAME_MAX] or "ИИ-агент"
     raw = PREFIX + secrets.token_urlsafe(32)
     with _LOCK:
@@ -83,6 +83,28 @@ def create(user_id: int | str, name: str = "", *, scope: str = "kb:read") -> dic
         conn.commit()
         row = conn.execute("SELECT * FROM ai_tokens WHERE id = ?", (cur.lastrowid,)).fetchone()
     return {**_public(row), "token": raw}
+
+
+def normalize_scope(scope: str) -> str:
+    """Несколько прав через пробел: «kb:read dash:write». Запись включает чтение той же области."""
+    parts = [p for p in str(scope or "").replace(",", " ").split() if p]
+    if not parts or any(p not in SCOPES for p in parts):
+        raise ValueError("Неизвестный доступ токена")
+    out = []
+    for area in ("kb", "dash"):
+        if f"{area}:write" in parts:
+            out.append(f"{area}:write")
+        elif f"{area}:read" in parts:
+            out.append(f"{area}:read")
+    return " ".join(out)
+
+
+def can(scope: str, area: str, write: bool = False) -> bool:
+    """Есть ли у токена доступ к области (kb | dash); write — нужно право записи."""
+    parts = str(scope or "").split()
+    if f"{area}:write" in parts:
+        return True
+    return not write and f"{area}:read" in parts
 
 
 def list_for(user_id: int | str) -> list[dict[str, Any]]:
@@ -111,7 +133,7 @@ def resolve(raw: str) -> Optional[int]:
 
 
 def resolve_full(raw: str) -> Optional[tuple[int, str]]:
-    """Токен → (id пользователя, доступ kb:read | kb:write) или None."""
+    """Токен → (id пользователя, права через пробел: kb:read | kb:write | dash:read | dash:write) или None."""
     raw = str(raw or "").strip()
     if not raw.startswith(PREFIX) or len(raw) > 120:
         return None
