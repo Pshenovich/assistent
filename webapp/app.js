@@ -1,5 +1,5 @@
 (function () {
-  var WEBAPP_BUILD = "20261103-analytics";
+  var WEBAPP_BUILD = "20261113-push";
   var CANONICAL_WEBAPP_ORIGIN = "https://assistent.networ.ru";
   var OBSOLETE_WEBAPP_HOSTS = {
     "assistant.obuchat.me": 1,
@@ -13234,6 +13234,103 @@
     }
   }
 
+  // ---- Плашка «Включить уведомления»: телефон сам не спрашивает, а iPhone разрешает спросить
+  // только по нажатию. Показываем в приложении (PWA) и в браузере, не в Telegram; «Не сейчас» — на неделю.
+  var PUSH_ASK_KEY = "leo_push_ask_snooze";
+
+  function pushAskSnoozed() {
+    try {
+      var until = parseInt(localStorage.getItem(PUSH_ASK_KEY) || "0", 10) || 0;
+      return until > Date.now();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function snoozePushAsk(days) {
+    try {
+      localStorage.setItem(PUSH_ASK_KEY, String(Date.now() + days * 86400000));
+    } catch (_) {}
+  }
+
+  function hidePushAsk() {
+    var el = document.getElementById("push-ask");
+    if (el) el.classList.add("is-hidden");
+  }
+
+  async function maybeShowPushAsk() {
+    if (webPushPermission() !== "default" || pushAskSnoozed()) return;
+    if (document.hidden) return;
+    var standalone = false;
+    try {
+      standalone =
+        (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+        window.navigator.standalone === true;
+    } catch (_) {}
+    // В обычной вкладке браузера не пристаём: там уведомления включают из Профиля.
+    if (!standalone) return;
+    try {
+      var settings = (await apiFetch("/settings", { method: "GET" })) || {};
+      if (settings.discussion_notify_web_push === false) return; // сам выключил
+    } catch (_) {
+      return;
+    }
+    if (document.querySelector(".ob-hole, .ob-card, .ob-intro, .ob-overlay")) {
+      setTimeout(maybeShowPushAsk, 60000); // не поверх тура и интро
+      return;
+    }
+    showPushAsk();
+  }
+
+  function showPushAsk() {
+    var el = document.getElementById("push-ask");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "push-ask";
+      el.className = "discuss-banner push-ask is-hidden";
+      el.setAttribute("role", "dialog");
+      el.setAttribute("aria-label", "Уведомления");
+      el.innerHTML =
+        '<span class="discuss-banner-ico">' + DISCUSS_ICONS.chat + "</span>" +
+        '<span class="discuss-banner-body">' +
+        '<span class="push-ask-text">Включить уведомления? Лео сообщит о задачах, сообщениях и срочном из чатов, даже когда Orbita закрыта.</span>' +
+        '<span class="push-ask-err hidden"></span>' +
+        '<span class="push-ask-acts">' +
+        '<button type="button" class="pf-btn push-ask-yes">Включить</button>' +
+        '<button type="button" class="pf-btn pf-btn--ghost push-ask-no">Не сейчас</button>' +
+        "</span></span>";
+      el.querySelector(".push-ask-no").addEventListener("click", function () {
+        snoozePushAsk(7);
+        hidePushAsk();
+      });
+      el.querySelector(".push-ask-yes").addEventListener("click", async function (ev) {
+        var btn = ev.currentTarget;
+        var err = el.querySelector(".push-ask-err");
+        btn.disabled = true;
+        try {
+          await subscribeWebPush();
+          await apiFetch("/settings", {
+            method: "PATCH",
+            body: JSON.stringify({ discussion_notify_web_push: true }),
+          });
+          hidePushAsk();
+        } catch (e) {
+          if (webPushPermission() === "denied") {
+            snoozePushAsk(30);
+            err.textContent = "Телефон запретил уведомления. Включить их можно в настройках телефона → Уведомления → Orbita.";
+          } else {
+            err.textContent = (e && e.message) || "Не получилось включить";
+          }
+          setHidden(err, false);
+          btn.disabled = false;
+        }
+      });
+      document.body.appendChild(el);
+    }
+    void el.offsetWidth;
+    el.classList.remove("is-hidden");
+  }
+
   function applyDiscussionNotifyTelegramUi(enabled) {
     var block = document.getElementById("discussion-notifications-setting");
     var toggle = document.getElementById("discussion-notify-telegram-toggle");
@@ -13251,14 +13348,38 @@
     var hint = document.getElementById("discussion-notify-web-push-hint");
     if (block) setHidden(block, false);
     discussionNotifyWebPushEnabled = !!enabled;
+    // Настройка на сервере включена по умолчанию, но без разрешения телефона пуши не придут —
+    // переключатель показывает, что реально работает на этом устройстве.
+    var perm = webPushPermission();
+    var on = discussionNotifyWebPushEnabled && perm === "granted";
     if (toggle) {
-      toggle.classList.toggle("svc-toggle--on", discussionNotifyWebPushEnabled);
+      toggle.classList.toggle("svc-toggle--on", on);
       toggle.classList.toggle("svc-toggle--pending", discussionNotifyWebPushSaveInFlight);
-      toggle.setAttribute("aria-pressed", discussionNotifyWebPushEnabled ? "true" : "false");
+      toggle.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    var desc = document.getElementById("discussion-notify-web-push-desc");
+    if (desc) {
+      desc.classList.toggle("pf-status--warn", perm === "denied" || (discussionNotifyWebPushEnabled && perm === "default"));
+      desc.textContent =
+        perm === "denied"
+          ? "Запрещены в настройках телефона или браузера — разрешите уведомления для Orbita там"
+          : discussionNotifyWebPushEnabled && perm === "default"
+            ? "На этом устройстве ещё не разрешены — нажмите, чтобы включить"
+            : "Задачи, сообщения и срочное из чатов — когда Orbita закрыта";
     }
     if (hint) {
       var unsupported = !webPushSupported();
       setHidden(hint, !unsupported);
+    }
+  }
+
+  /** "granted" | "default" | "denied" | "" (нет поддержки). */
+  function webPushPermission() {
+    try {
+      if (!webPushSupported()) return "";
+      return String(Notification.permission || "default");
+    } catch (_) {
+      return "";
     }
   }
 
@@ -13336,7 +13457,8 @@
         ev.preventDefault();
         ev.stopPropagation();
         if (discussionNotifyWebPushSaveInFlight) return;
-        var next = !discussionNotifyWebPushEnabled;
+        // Включено на сервере, но устройство не подписано — нажатие включает, а не выключает.
+        var next = !(discussionNotifyWebPushEnabled && webPushPermission() === "granted");
         applyDiscussionNotifyWebPushUi(next);
         saveDiscussionNotifyWebPush(next);
       });
@@ -66389,6 +66511,7 @@
         // Пуши: разрешение уже выдано — подписка этого устройства должна быть на сервере
         // (раньше она обновлялась, только если открыть Профиль → Уведомления).
         setTimeout(syncWebPushSubscriptionIfNeeded, 3000);
+        setTimeout(maybeShowPushAsk, 8000);
         // Новичку — интро, команда и тур; пришёл по ссылке — онбординг в следующий запуск.
         // onboarding.js грузится после app.js: если ещё не готов — он заберёт /me сам.
         var obOpts = { deepLink: locationHasDeepLink() };

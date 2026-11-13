@@ -50,6 +50,12 @@ async def chat_alert_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
             # отмечаем до отправки: при сбое сети не пришлём тот же алерт повторно
             alert_id = await asyncio.to_thread(chat_alerts.record_alert, uid, a)
             url = chat_alerts.message_url(a["chat_id"], a["thread_id"] or None, a["message_id"])
+            try:  # и в приложение (PWA) — со ссылкой на сообщение в Telegram
+                from assistant.services.discussion_notify import push_html_soon
+
+                push_html_soon(uid, chat_alerts.message_html(uid, a), url=url, tag=f"calert-{alert_id}")
+            except Exception as e:
+                print(f"[chat_alerts] webpush uid={uid} err={e!r}")
             try:
                 await context.bot.send_message(
                     chat_id=int(uid),

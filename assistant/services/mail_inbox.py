@@ -122,6 +122,37 @@ def _labels_uncached(uid: int) -> dict[str, list[dict[str, str]]]:
     return out
 
 
+def _hidden(row: dict[str, Any], mine_threads: set[str]) -> bool:
+    """Входящее, которое Лео отсеял как рассылку/робота (приглашения из календаря — не считаем)."""
+    from assistant.services import mail_filters
+
+    if row.get("direction") != "in" or visible(row, mine_threads):
+        return False
+    return not mail_filters.CALENDAR_SUBJECT.match(str(row.get("subject") or ""))
+
+
+def check_status(uid: int, rows: list[dict[str, Any]], mine_threads: set[str], *, account_id: str = "") -> dict[str, Any]:
+    """Строка над списком: когда проверяли ящик и сколько писем за сутки пришло / скрыто как рассылки."""
+    accs = [a for a in mail_accounts.list_accounts(uid) if not account_id or a["account_id"] == account_id]
+    since = (_now() - timedelta(hours=24)).isoformat()
+    day = [r for r in rows if r.get("direction") == "in" and str(r.get("date_utc") or "") >= since
+           and (not account_id or r["account_id"] == account_id)]
+    synced = sorted(str(a.get("last_sync_at") or "") for a in accs if a.get("last_sync_at"))
+    broken = [a for a in accs if a.get("status") in ("auth_error", "error")]
+    from assistant.services import mail_source
+
+    return {
+        # самый давний из ящиков: «проверено в …» не должно прятать отставший ящик
+        "checked_at": synced[0] if synced else "",
+        "day_in": len(day),
+        "day_hidden": sum(1 for r in day if _hidden(r, mine_threads)),
+        "error": (broken[0].get("last_error") or "Не удалось прочитать почту") if broken else "",
+        "gmail_primary_only": any(a.get("provider") == "gmail" for a in accs),
+        "poll_min": int(round(mail_source.poll_interval_sec() / 60)),
+        "running": int(uid) in mail_source._RUNNING,
+    }
+
+
 def threads(uid: int, *, filt: str = "all", account_id: str = "") -> dict[str, Any]:
     from assistant.services import mail_source
 
@@ -130,10 +161,19 @@ def threads(uid: int, *, filt: str = "all", account_id: str = "") -> dict[str, A
     reads = read_keys(uid)
     mine_threads = mail_index.my_thread_keys(uid)
     by: dict[str, list[dict[str, Any]]] = {}
+    hidden_by: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
-        if not visible(r, mine_threads) or (account_id and r["account_id"] != account_id):
+        if account_id and r["account_id"] != account_id:
+            continue
+        if _hidden(r, mine_threads):
+            hidden_by.setdefault(r.get("thread_key") or r["mail_key"], []).append(r)
+        if not visible(r, mine_threads):
             continue
         by.setdefault(r.get("thread_key") or r["mail_key"], []).append(r)
+    status = check_status(uid, rows, mine_threads, account_id=account_id)
+    hidden_n = len(hidden_by)
+    if filt == "hidden":  # «Скрытые»: что Лео отсеял — проверить глазами и вернуть отправителя
+        by = hidden_by
     labels = _labels(uid)
     out = []
     for tk, msgs in by.items():
@@ -145,24 +185,28 @@ def threads(uid: int, *, filt: str = "all", account_id: str = "") -> dict[str, A
                     if n or a not in people:
                         people[a] = n or people.get(a) or ""
         last = msgs[-1]
-        unread = [m["mail_key"] for m in msgs if m["direction"] == "in" and m["mail_key"] not in reads]
+        unread = [] if filt == "hidden" else [m["mail_key"] for m in msgs if m["direction"] == "in" and m["mail_key"] not in reads]
         out.append({
             "thread_key": tk, "subject": clean_subject(next((m.get("subject") for m in reversed(msgs) if m.get("subject")), "")),
             "people": [{"addr": a, "name": n} for a, n in people.items()][:8], "count": len(msgs), "unread": len(unread),
-            "account_id": last["account_id"], "labels": labels.get(tk, []),
+            "account_id": last["account_id"], "labels": labels.get(tk, []), "hidden": filt == "hidden",
+            "from_addr": last.get("from_addr") or "",
             "last": {"mail_key": last["mail_key"], "direction": last["direction"],
                      "from": last.get("from_name") or last.get("from_addr") or "",
                      "snippet": re.sub(r"\s+", " ", str(last.get("snippet") or ""))[:160], "date": last.get("date_utc") or ""},
         })
     out.sort(key=lambda t: t["last"]["date"], reverse=True)
     warm_async(uid, [t["thread_key"] for t in out[:WARM_TOP]])  # открытие верхних веток — без ожидания ящика
+    if filt == "hidden":
+        return {"threads": out[:MAX_THREADS], "counts": {"hidden": hidden_n}, "status": status,
+                "accounts": [{"account_id": a["account_id"], "email": a["email"]} for a in mail_accounts.list_accounts(uid)]}
     counts = {"all": len(out), "awaiting": sum(1 for t in out if any(lab["kind"] == "awaiting" for lab in t["labels"])),
-              "unread": sum(1 for t in out if t["unread"])}
+              "unread": sum(1 for t in out if t["unread"]), "hidden": hidden_n}
     if filt == "awaiting":
         out = [t for t in out if any(lab["kind"] == "awaiting" for lab in t["labels"])]
     elif filt == "unread":
         out = [t for t in out if t["unread"]]
-    return {"threads": out[:MAX_THREADS], "counts": counts,
+    return {"threads": out[:MAX_THREADS], "counts": counts, "status": status,
             "accounts": [{"account_id": a["account_id"], "email": a["email"]} for a in mail_accounts.list_accounts(uid)]}
 
 
@@ -238,6 +282,11 @@ def _bodies(uid: int, rows: list[dict[str, Any]], *, fetch: bool = True) -> dict
 def thread(uid: int, thread_key: str) -> dict[str, Any]:
     """Ветка из сохранённых писем; в ящик — только за теми, которых у нас ещё нет."""
     rows = _rows(uid, thread_key)
+    if not rows:  # ветка из «Скрытых» — открываем как есть (кроме приглашений из календаря)
+        from assistant.services import mail_filters
+
+        rows = [r for r in mail_index.thread(uid, thread_key)
+                if not mail_filters.CALENDAR_SUBJECT.match(str(r.get("subject") or ""))]
     with _WARM_LOCK:
         warming = _WARMING.get(int(uid))
     if warming and thread_key in warming[0]:

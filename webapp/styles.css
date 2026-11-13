@@ -21581,6 +21581,24 @@ form.pf-list .pf-add-row .pf-row-body {
   box-shadow: 0 1px 2px color-mix(in srgb, var(--shadow-color) 25%, transparent);
 }
 
+/* «Проверено в 14:05 · за сутки 7 писем, 5 рассылок скрыто · Проверить сейчас» */
+.mail-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+.mail-status-btn { font-size: 0.8125rem; }
+.mail-status-hint {
+  margin-top: -0.3rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-tertiary, var(--text-secondary));
+}
+.mail-unhide { display: inline-block; margin-top: 0.15rem; }
+
 .mail-empty {
   padding: 2rem 1rem;
   text-align: center;
@@ -22383,6 +22401,9 @@ form.pf-list .pf-add-row .pf-row-body {
 .mail-split-list .mail-seg {
   display: none;
 }
+
+.mail-split-list .mail-status { padding: 0.5rem 0.6rem 0; }
+.mail-split-list .mail-status-hint { margin-top: 0; padding: 0.2rem 0.6rem 0.5rem; border-bottom: 1px solid var(--border); }
 
 .mail-split-list .mail-thread-row {
   width: 100%;
@@ -25144,6 +25165,14 @@ body.mt-drag-active, body.mt-drag-active * { cursor: grabbing !important; user-s
   line-height: 1;
   cursor: pointer;
 }
+
+/* «Включить уведомления?» — та же плашка сверху, но с кнопками и не исчезает сама. */
+.push-ask { align-items: flex-start; cursor: default; }
+.push-ask .push-ask-text { display: block; font-size: 0.9rem; line-height: 1.35; }
+.push-ask .push-ask-err { display: block; margin-top: 6px; font-size: 0.8rem; color: var(--danger, var(--text-secondary)); }
+.push-ask .push-ask-err.hidden { display: none; }
+.push-ask .push-ask-acts { display: flex; gap: 8px; margin-top: 10px; }
+.push-ask .push-ask-acts .pf-btn { width: auto; flex: 0 0 auto; padding: 8px 14px; margin: 0; }
 
 /* Широкая заметка (десктоп): «К списку», заголовок, проект и кнопки — одной строкой, вкладки — ниже.
    Полоса с кнопками ложится поверх строки заголовка (app.js syncNoteHeadInline задаёт --head-*). */

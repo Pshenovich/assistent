@@ -1,6 +1,6 @@
 /* Mini App service worker: shell + offline open for PWA. */
 /* Bump CACHE_VERSION при смене precache-списка или критичных ассетов. */
-var CACHE_VERSION = "miniapp-v1-20261111-comps2";
+var CACHE_VERSION = "miniapp-v1-20261113-push";
 var SHELL_CACHE = CACHE_VERSION + "-shell";
 var CANONICAL_ORIGIN = "https://assistent.networ.ru";
 var OBSOLETE_HOSTS = {
@@ -12,14 +12,14 @@ var PRECACHE_URLS = [
   "./",
   "./index.html",
   "./theme.js?v=20261029-spktools",
-  "./styles.css?v=20261111-inboxlist",
+  "./styles.css?v=20261113-push",
   "./board.css?v=20261111-comps2",
   "./failover.js?v=20261110-eu1",
   "./realtime.js?v=20261103-analytics",
   "./note-yjs.js?v=20261106-reseedack",
-  "./app.js?v=20261111-comps2",
+  "./app.js?v=20261113-push",
   "./mail.js?v=20261023-mail6",
-  "./mail-inbox.js?v=20261111-compose",
+  "./mail-inbox.js?v=20261113-push",
   "./digest-chats.js?v=20261025-mobfix",
   "./digest-market.js?v=20261029-mktgen",
   "./onboarding.js?v=20261111-connect1",
@@ -282,14 +282,18 @@ self.addEventListener("push", function (event) {
   var title = String((payload && payload.title) || "Orbita");
   var body = String((payload && payload.body) || "Новое сообщение");
   var url = String((payload && payload.url) || "./");
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body: body,
-      data: { url: url },
-      icon: "./icons/icon-192.png",
-      badge: "./icons/icon-192.png",
-    })
-  );
+  var opts = {
+    body: body,
+    data: { url: url },
+    icon: "./icons/icon-192.png",
+    badge: "./icons/icon-192.png",
+  };
+  // tag — одно уведомление на событие: повтор заменяет старое, а не копится.
+  if (payload && payload.tag) {
+    opts.tag = String(payload.tag);
+    opts.renotify = true;
+  }
+  event.waitUntil(self.registration.showNotification(title, opts));
 });
 
 // Не начинается с "miniapp-", поэтому clearAllMiniappCaches его не трогает.
@@ -320,6 +324,15 @@ self.addEventListener("notificationclick", function (event) {
   try {
     url = new URL(raw, self.location.href).href;
   } catch (_) {}
+  // Чужой адрес (сообщение в Telegram) — просто открываем, приложение не трогаем.
+  var external = false;
+  try {
+    external = new URL(url).origin !== self.location.origin;
+  } catch (_) {}
+  if (external) {
+    if (self.clients.openWindow) event.waitUntil(self.clients.openWindow(url));
+    return;
+  }
   // iOS PWA: нет WindowClient.navigate, а openWindow может открыть start_url —
   // поэтому ссылку дублируем в Cache Storage, приложение заберёт её при старте/возврате.
   event.waitUntil(

@@ -58,6 +58,10 @@ async def task_reminder_tick(context: ContextTypes.DEFAULT_TYPE) -> None:
                 sent_store.mark_sent(
                     user_id, tr.TASK_REMINDER_CAL, f"task-{tid}", start_iso
                 )
+                # и в приложение (PWA): свой переключатель «Напоминания о задачах» уже проверен
+                from assistant.services.discussion_notify import push_html_soon
+
+                push_html_soon(user_id, text, tag=f"task-rem-{tid}", force=True)
                 print(f"[task_reminder] sent uid={user_id} task={tid}")
             except Exception as e:
                 print(f"[task_reminder] send uid={user_id} task={tid} err={e!r}")

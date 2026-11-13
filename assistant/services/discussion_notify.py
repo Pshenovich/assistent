@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 from html import escape as html_escape
+from html import unescape as html_unescape
 from typing import Any
 from urllib.parse import quote
 
@@ -215,6 +217,74 @@ def send_web_push(user_id: int | str, payload: dict[str, Any]) -> int:
             else:
                 print(f"[discuss_notify] webpush_fail uid={user_id} status={status} body={body!r} err={e!r}")
     return sent
+
+
+_A_HREF = re.compile(r"<a\s[^>]*href=\"([^\"]+)\"", re.I)
+
+
+def push_payload_from_html(text_html: str, *, url: str = "", tag: str = "") -> dict[str, Any] | None:
+    """Telegram-текст (HTML) → Web Push: первая строка — заголовок, остальное — текст.
+
+    Ссылка — ``url`` или первая ``<a href>`` в тексте (ссылка на задачу/документ в приложении).
+    """
+    raw = str(text_html or "")
+    if not url:
+        m = _A_HREF.search(raw)
+        url = html_unescape(m.group(1)) if m else ""
+    plain = html_unescape(re.sub(r"<[^>]+>", "", raw)).strip()
+    if not plain:
+        return None
+    lines = [ln.strip() for ln in plain.splitlines() if ln.strip()]
+    title = lines[0]
+    body = "\n".join(lines[1:])
+    if len(title) > 120:
+        body = (title[120:] + ("\n" + body if body else "")).strip()
+        title = title[:120].rstrip() + "…"
+    if len(body) > 300:
+        body = body[:300].rstrip() + "…"
+    out: dict[str, Any] = {"title": title, "body": body, "url": url or "./"}
+    if tag:
+        out["tag"] = tag
+    return out
+
+
+def push_html(user_id: int | str, text_html: str, *, url: str = "", tag: str = "", force: bool = False) -> int:
+    """Web Push в приложение (PWA) рядом с Telegram-уведомлением.
+
+    Учитывает «Профиль → Уведомления → В приложении» (``discussion_notify_web_push``);
+    ``force`` — для напоминаний, у которых свой переключатель.
+    """
+    try:
+        uid = int(str(user_id).strip())
+    except (TypeError, ValueError):
+        return 0
+    if uid <= 0:
+        return 0
+    try:
+        if not force and not user_prefs.discussion_notify_web_push(uid):
+            return 0
+    except Exception:
+        pass
+    payload = push_payload_from_html(text_html, url=url, tag=tag)
+    if not payload:
+        return 0
+    try:
+        return send_web_push(uid, payload)
+    except Exception as e:
+        print(f"[discuss_notify] push_html uid={uid} err={e!r}")
+        return 0
+
+
+def push_html_soon(user_id: int | str, text_html: str, *, url: str = "", tag: str = "", force: bool = False) -> None:
+    """То же в фоне: запрос к Apple/Google не задерживает ответ пользователю."""
+    import threading
+
+    if not vapid_configured():
+        return
+
+    threading.Thread(
+        target=push_html, args=(user_id, text_html), kwargs={"url": url, "tag": tag, "force": force}, daemon=True
+    ).start()
 
 
 def _notify_in_app(

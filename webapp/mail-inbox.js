@@ -40,6 +40,7 @@
     summary: null,
     pending: null, // отправляемый ответ {action, text}
     menu: false,
+    checking: false, // «Проверить сейчас» — ждём новое время проверки
   };
 
   function root() {
@@ -89,7 +90,10 @@
     st.loading = !st.data;
     renderList();
     try {
+      var prevCounts = (st.data && st.data.counts) || {};
       st.data = await api("/mail/threads?filter=" + encodeURIComponent(st.filter) + (st.account ? "&account=" + encodeURIComponent(st.account) : ""));
+      // «Скрытые» считают только себя — счётчики остальных фильтров берём из прошлого списка
+      if (st.data && st.data.counts && st.filter === "hidden") st.data.counts = Object.assign({}, prevCounts, st.data.counts);
     } catch (e) {
       st.data = { error: (e && e.message) || "Не удалось загрузить почту" };
     }
@@ -153,6 +157,7 @@
       ["all", "Все", counts.all],
       ["awaiting", "Ждут ответа", counts.awaiting],
       ["unread", "Непрочитанные", counts.unread],
+      ["hidden", "Скрытые", counts.hidden],
     ].forEach(function (f) {
       h +=
         '<button type="button" class="mail-chip-filter' + (st.filter === f[0] ? " is-on" : "") + '" data-mi="filter" data-f="' + f[0] + '">' +
@@ -166,6 +171,7 @@
       h += "</select>";
     }
     h += '<span class="mail-bar-spacer"></span>' + viewSwitchHtml() + "</div>";
+    if (!st.loading && !d.error && (d.accounts || []).length) h += statusHtml(d.status || {});
     if (st.loading) h += '<div class="mail-empty">Загружаю почту…</div>';
     else if (d.error) h += '<div class="mail-empty">' + esc(d.error) + ' <button type="button" class="pf-link" data-mi="retry">Повторить</button></div>';
     else if (!(d.accounts || []).length)
@@ -173,7 +179,13 @@
     else if (!(d.threads || []).length)
       h +=
         '<div class="mail-empty">' +
-        (st.filter === "awaiting" ? "Никто не ждёт вашего ответа 🎉" : st.filter === "unread" ? "Всё прочитано" : "Писем от людей пока нет — рассылки Лео отсеивает") +
+        (st.filter === "awaiting"
+          ? "Никто не ждёт вашего ответа 🎉"
+          : st.filter === "unread"
+            ? "Всё прочитано"
+            : st.filter === "hidden"
+              ? "Лео ничего не скрыл"
+              : "Писем от людей пока нет — рассылки Лео отсеивает") +
         "</div>";
     else {
       h += '<div class="mail-threads">';
@@ -195,11 +207,85 @@
           });
           h += "</span>";
         }
+        if (t.hidden && t.from_addr)
+          h +=
+            '<span class="mail-labels"><span role="button" tabindex="0" class="mail-mini mail-unhide" data-mi="unhide" data-addr="' +
+            esc(t.from_addr) + '">Не рассылка</span></span>';
         h += "</span>" + (t.unread ? '<span class="mail-unread">' + t.unread + "</span>" : "") + "</button>";
       });
       h += "</div>";
     }
     r.innerHTML = h;
+  }
+
+  /* ——— строка «Проверено …» ——— */
+
+  function plural(n, one, few, many) {
+    var m = Math.abs(n) % 100;
+    var k = m % 10;
+    if (m > 10 && m < 20) return many;
+    if (k > 1 && k < 5) return few;
+    if (k === 1) return one;
+    return many;
+  }
+
+  function statusHtml(s) {
+    var line;
+    if (st.checking || s.running) line = "Проверяю почту…";
+    else if (s.error) line = '<span class="pf-status--err">' + esc(s.error) + "</span>";
+    else if (s.checked_at) {
+      line = "Проверено " + (when(s.checked_at).indexOf(":") > 0 ? "в " : "") + esc(when(s.checked_at));
+      var n = s.day_in || 0;
+      if (!n) line += " · за сутки новых писем нет";
+      else {
+        line += " · за сутки " + n + " " + plural(n, "письмо", "письма", "писем");
+        if (s.day_hidden) {
+          line += ", " + (s.day_hidden === n ? (n === 1 ? "это рассылка" : "все — рассылки") : s.day_hidden + " " + plural(s.day_hidden, "рассылка скрыта", "рассылки скрыты", "рассылок скрыто"));
+        }
+      }
+    } else line = "Читаю письма в первый раз…";
+    var h = '<div class="mail-status"><span class="mail-status-text">' + line + "</span>";
+    if (!st.checking && !s.running) h += '<button type="button" class="pf-link mail-status-btn" data-mi="check">Проверить сейчас</button>';
+    h += "</div>";
+    var hint = [];
+    if (st.filter === "hidden")
+      hint.push("Это Лео отсеял как рассылки и уведомления. «Не рассылка» — письма отправителя вернутся в «Почту», и Лео будет их разбирать.");
+    if (s.gmail_primary_only && st.filter !== "hidden")
+      hint.push("В Gmail Лео читает вкладку «Несортированные»; «Промоакции», «Соцсети» и «Оповещения» не трогает. Спам не читается.");
+    else if (s.poll_min && st.filter !== "hidden") hint.push("Лео проверяет ящик раз в " + s.poll_min + " мин. Спам не читается.");
+    if (hint.length) h += '<div class="mail-status-hint">' + esc(hint.join(" ")) + "</div>";
+    return h;
+  }
+
+  async function checkNow() {
+    var before = ((st.data && st.data.status) || {}).checked_at || "";
+    st.checking = true;
+    renderList();
+    try {
+      await post("/mail/check", {});
+    } catch (e) {
+      st.checking = false;
+      toast((e && e.message) || "Не удалось проверить почту");
+      return renderList();
+    }
+    // Проверка идёт в фоне: ждём, пока сменится время проверки (до ~1,5 мин).
+    var waits = [4000, 6000, 8000, 10000, 15000, 20000, 25000];
+    for (var i = 0; i < waits.length; i++) {
+      await new Promise(function (res) {
+        setTimeout(res, waits[i]);
+      });
+      if (!root() || !root().isConnected) break;
+      try {
+        var fresh = await api("/mail/threads?filter=" + encodeURIComponent(st.filter) + (st.account ? "&account=" + encodeURIComponent(st.account) : ""));
+        var s = fresh.status || {};
+        if (!s.running && (s.checked_at !== before || s.error)) {
+          st.data = fresh;
+          break;
+        }
+      } catch (_) {}
+    }
+    st.checking = false;
+    renderList();
   }
 
   /* ——— ветка ——— */
@@ -626,6 +712,19 @@
       return refresh();
     }
     if (act === "retry") return refresh();
+    if (act === "check") return checkNow();
+    if (act === "unhide") {
+      e.stopPropagation();
+      var addr = b.getAttribute("data-addr") || "";
+      b.textContent = "Возвращаю…";
+      try {
+        await post("/mail/senders", { pattern: addr, rule: "allow" });
+        toast("Письма от " + addr + " вернутся в «Почту»");
+      } catch (err) {
+        toast((err && err.message) || "Не получилось");
+      }
+      return refresh();
+    }
     if (act === "connect") return openProfileTab();
     if (act === "open") {
       var tkOpen = b.getAttribute("data-tk");

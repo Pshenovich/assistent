@@ -6,6 +6,19 @@ import html
 from typing import Any
 
 
+def _send(uid: Any, text: str, reply_markup: dict[str, Any] | None = None) -> Any:
+    """Telegram + Web Push в приложение (PWA): у кого бот не привязан или телефон без Telegram — всё равно узнает."""
+    from assistant.lib.telegram_notify import send_message
+
+    try:
+        from assistant.services.discussion_notify import push_html_soon
+
+        push_html_soon(uid, text)
+    except Exception as e:
+        print(f"[calendar_tasks] web push uid={uid} err={e!r}")
+    return send_message(uid, text, reply_markup=reply_markup)
+
+
 def task_webapp_url(task_id: int | str) -> str:
     from assistant.lib.webapp_public import webapp_entry_url
 
@@ -26,7 +39,6 @@ def notify_task_assignee(
     task: dict[str, Any],
     assigner_name: str,
 ) -> None:
-    from assistant.lib.telegram_notify import send_message
     from assistant.stores.calendar_tasks import chip_label, task_is_delegated
 
     if not task_is_delegated(task):
@@ -55,7 +67,7 @@ def notify_task_assignee(
         if when:
             lines.append(f"Когда: {html.escape(when)}")
     try:
-        send_message(mid, "\n".join(lines))
+        _send(mid, "\n".join(lines))
     except Exception as e:
         print(f"[calendar_tasks] notify_assignee uid={mid} err={e!r}")
 
@@ -66,7 +78,6 @@ def notify_task_owner_done(
     completer_name: str,
 ) -> None:
     """Пуш автору, когда исполнитель отметил делегированную задачу выполненной."""
-    from assistant.lib.telegram_notify import send_message
     from assistant.stores.calendar_tasks import task_is_delegated
 
     if not task_is_delegated(task):
@@ -94,7 +105,7 @@ def notify_task_owner_done(
         text += f"\nРезультат: {html.escape(result)}"
     try:
         # «Принять задачу» — как кнопка «Принять» в приложении; «Ответить» — уточнить, не открывая Орбиту.
-        send_message(owner, text, reply_markup=task_done_keyboard(task.get("id") or 0))
+        _send(owner, text, reply_markup=task_done_keyboard(task.get("id") or 0))
     except Exception as e:
         print(f"[calendar_tasks] notify_owner_done uid={owner} err={e!r}")
 
@@ -108,7 +119,6 @@ def _int_uid(raw: Any) -> int:
 
 def notify_task_nudge(*, task: dict[str, Any], assigner_name: str) -> bool:
     """«Напомнить» из «Поручено другим»: пуш исполнителю со ссылкой и сроком."""
-    from assistant.lib.telegram_notify import send_message
     from assistant.stores.calendar_tasks import chip_label, task_is_delegated
 
     if not task_is_delegated(task) or task.get("done"):
@@ -123,7 +133,7 @@ def notify_task_nudge(*, task: dict[str, Any], assigner_name: str) -> bool:
     if when:
         lines.append(f"Срок: {html.escape(when)}")
     try:
-        return bool(send_message(mid, "\n".join(lines)))
+        return bool(_send(mid, "\n".join(lines)))
     except Exception as e:
         print(f"[calendar_tasks] notify_nudge uid={mid} err={e!r}")
         return False
@@ -131,7 +141,6 @@ def notify_task_nudge(*, task: dict[str, Any], assigner_name: str) -> bool:
 
 def notify_task_owner_question(*, task: dict[str, Any], asker_name: str, question: str) -> None:
     """Исполнитель нажал «Есть вопрос» — пуш автору с текстом вопроса."""
-    from assistant.lib.telegram_notify import send_message
     from assistant.stores.calendar_tasks import task_is_delegated
 
     if not task_is_delegated(task):
@@ -146,7 +155,7 @@ def notify_task_owner_question(*, task: dict[str, Any], asker_name: str, questio
         q = q[:600].rstrip() + "…"
     text = f"{who} спрашивает по задаче {link}:\n{html.escape(q)}"
     try:
-        send_message(owner, text)
+        _send(owner, text)
     except Exception as e:
         print(f"[calendar_tasks] notify_owner_question uid={owner} err={e!r}")
 
@@ -172,13 +181,12 @@ def task_done_keyboard(task_id: int | str) -> dict[str, Any]:
 
 
 def _send_task_push(to_uid: Any, text: str, tag: str, *, reply_markup: dict[str, Any] | None = None) -> None:
-    from assistant.lib.telegram_notify import send_message
 
     uid = _int_uid(to_uid)
     if uid <= 0:
         return
     try:
-        send_message(uid, text, reply_markup=reply_markup)
+        _send(uid, text, reply_markup=reply_markup)
     except Exception as e:
         print(f"[calendar_tasks] {tag} uid={uid} err={e!r}")
 

@@ -182,3 +182,17 @@ def test_bodies_dropped_with_account_and_blocked_sender(env):
     mail_inbox.remember(ME, f"{aid}:x", m)
     mail_index.purge_account(ME, aid)
     assert not mail_index.bodies(ME, [f"{aid}:x"])
+
+
+def test_hidden_filter_and_check_status(env):
+    res = mail_inbox.threads(ME)
+    assert res["counts"]["hidden"] == 1
+    st = res["status"]
+    assert st["day_in"] == 3 and st["day_hidden"] == 1 and st["gmail_primary_only"] and st["error"] == ""
+    hid = mail_inbox.threads(ME, filt="hidden")
+    assert [t["thread_key"] for t in hid["threads"]] == ["t9"]
+    assert hid["threads"][0]["hidden"] and hid["threads"][0]["from_addr"] == "news@shop.ru"
+    # скрытую ветку можно открыть и посмотреть
+    assert [m["mail_key"] for m in mail_inbox.thread(ME, "t9")["messages"]] == ["n"]
+    mail_accounts.set_status(ME, env, status="ok", synced=True)
+    assert mail_inbox.threads(ME)["status"]["checked_at"]

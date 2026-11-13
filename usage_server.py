@@ -19272,6 +19272,19 @@ async def miniapp_mail_account_sync(account_id: str, principal: _MiniappPrincipa
     return {"ok": True}
 
 
+@miniapp_router.post("/mail/check")
+async def miniapp_mail_check(principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
+    """«Проверить сейчас» в «Почте»: все ящики пользователя, в фоне (повторное нажатие во время проверки — без второго входа)."""
+    from assistant.services import mail_source
+    from assistant.stores import mail_accounts
+
+    uid = int(principal.telegram_user_id)
+    if not mail_accounts.list_accounts(uid):
+        raise HTTPException(status_code=400, detail="Почта не подключена")
+    mail_source.kick(uid)
+    return {"ok": True}
+
+
 @miniapp_router.delete("/mail/accounts/{account_id}")
 async def miniapp_mail_account_delete(account_id: str, principal: _MiniappPrincipal = Depends(require_miniapp_user)) -> dict[str, Any]:
     """Отключить ящик: стереть пароль/доступ, состояние синхронизации и индекс писем."""
