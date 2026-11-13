@@ -1319,7 +1319,7 @@
   var tagPickerActiveClose = null;
   var tagPickerDocClickBound = false;
   var tabInited = { profile: false };
-  var TAB_ORDER = ["actual", "notes", "digest", "knowledge", "dashboards", "profile"];
+  var TAB_ORDER = ["actual", "projects", "notes", "digest", "knowledge", "dashboards", "profile"];
   var digestTabEnabled = false;
   var digestChatsEnabled = false; // дайджест чатов включён в профиле
   var mailAvailable = false; // подключена почта — «Почта» во вкладке «Дайджест»
@@ -7695,6 +7695,7 @@
         .catch(function () {});
     }
     if (name === "dashboards" && window.LeoDashboards) window.LeoDashboards.show();
+    if (name === "projects" && window.LeoProjects && window.LeoProjects.show) window.LeoProjects.show();
     if (name === "digest") {
       closeDigestDetail();
       setDigestSubTab(digestSubTab || "chats");

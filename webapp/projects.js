@@ -109,12 +109,63 @@
     setTimeout(markNav, 0);
     return ov;
   }
+  // Список и страница проекта — внутри раздела «Проекты» (#projects-root), как остальные разделы.
+  // id те же, что были у окон («pj-list-overlay», «pj-page-overlay»), — остальной код их и ищет.
+  function makeInline(id) {
+    var root = document.getElementById("projects-root");
+    if (!root) return makeOverlay(id, "");
+    root.innerHTML = "";
+    var wrap = document.createElement("div");
+    wrap.id = id;
+    wrap.className = "pj-inline-wrap";
+    wrap._inline = true;
+    wrap.innerHTML = '<div class="pj-sheet pj-inline"></div>';
+    root.appendChild(wrap);
+    var scroller = document.querySelector(".main-scroll");
+    if (scroller) scroller.scrollTop = 0;
+    return wrap;
+  }
+
+  function onProjectsTab() {
+    var panel = document.getElementById("panel-projects");
+    return !!panel && !panel.hidden && !panel.classList.contains("hidden");
+  }
+
+  var inlineView = { mode: "list", id: null };
+
+  // Раздел показали (setTab("projects")) — нарисовать текущий вид.
+  function show() {
+    if (inlineView.mode === "page" && inlineView.id) renderPage(inlineView.id);
+    else renderList();
+  }
+
+  function openList() {
+    inlineView = { mode: "list", id: null };
+    if (onProjectsTab()) renderList();
+    else if (app().setTab) app().setTab("projects");
+    else renderList();
+  }
+
+  function openPage(id) {
+    // модальные окна проекта (поделиться, добавить, часы) поверх раздела закрываем
+    document.querySelectorAll(".pj-overlay").forEach(function (o) { closeOverlay(o); });
+    inlineView = { mode: "page", id: String(id) };
+    if (onProjectsTab()) renderPage(String(id));
+    else if (app().setTab) app().setTab("projects");
+    else renderPage(String(id));
+  }
+
   function topOverlay() {
     var all = document.querySelectorAll(".pj-overlay");
     return all.length ? all[all.length - 1] : null;
   }
   function closeOverlay(ov) {
     if (!ov) return;
+    if (ov._inline) {
+      // «Назад» со страницы проекта — к списку; сам список не закрывается
+      if (ov.id === "pj-page-overlay") openList();
+      return;
+    }
     document.removeEventListener("keydown", ov._onKey);
     ov.remove();
     if (typeof ov._onClose === "function") ov._onClose();
@@ -176,8 +227,9 @@
 
   var listState = { tab: "active", q: "" };
 
-  function openList() {
-    var ov = makeOverlay("pj-list-overlay", "pj-list-overlay");
+  function renderList() {
+    var ov = makeInline("pj-list-overlay");
+    setTimeout(renderTree, 0);
     var sheet = ov.querySelector(".pj-sheet");
     sheet.classList.add("pj-sheet--list");
     sheet.setAttribute("aria-label", "Проекты");
@@ -185,7 +237,6 @@
       '<div class="pj-head">' +
       '<h2 class="pj-title">Проекты</h2>' +
       '<button type="button" class="pj-btn pj-btn--primary" data-pj="new">' + icon("plus", 16) + "<span>Новый проект</span></button>" +
-      '<button type="button" class="pj-icon-btn" data-pj="close" aria-label="Закрыть">' + icon("close") + "</button>" +
       "</div>" +
       '<div class="pj-tools">' +
       '<label class="pj-search">' + icon("search", 16) + '<input type="search" placeholder="Найти проект" aria-label="Найти проект" data-pj="q" /></label>' +
@@ -306,10 +357,11 @@
 
   var pageState = { id: null, tab: "all", data: null };
 
-  function openPage(id) {
+  function renderPage(id) {
+    if (pageState.id !== String(id)) pageState.tab = "all";
     pageState.id = String(id);
-    pageState.tab = "all";
-    var ov = makeOverlay("pj-page-overlay", "pj-page-overlay");
+    var ov = makeInline("pj-page-overlay");
+    setTimeout(renderTree, 0); // в левой колонке подсветить открытый проект
     var sheet = ov.querySelector(".pj-sheet");
     sheet.classList.add("pj-sheet--page");
     sheet.innerHTML = '<div class="pj-empty">Загружаю…</div>';
@@ -352,7 +404,7 @@
     var others = members.filter(function (m) { return m.principal.indexOf("u:") !== 0; }).map(function (m) { return m.label; });
     var head =
       '<div class="pj-page-top">' +
-      '<button type="button" class="pj-icon-btn pj-back" data-pj="close" aria-label="Закрыть">' + icon(isDesktop() ? "close" : "back") + "</button>" +
+      '<button type="button" class="pj-btn pj-back" data-pj="close" aria-label="К списку проектов">' + icon("back", 16) + '<span class="pj-hide-sm">Проекты</span></button>' +
       '<div class="pj-page-actions">' +
       (p.can_share ? '<button type="button" class="pj-btn" data-pj="share">' + icon("share", 16) + '<span class="pj-hide-sm">Поделиться</span></button>' : "") +
       (p.can_edit ? '<button type="button" class="pj-btn pj-btn--primary" data-pj="add" aria-haspopup="menu">' + icon("plus", 16) + "<span>Добавить</span></button>" : "") +
@@ -510,7 +562,7 @@
       var it = findItem(b.getAttribute("data-kind"), b.getAttribute("data-id"));
       if (!it) return;
       // документ и чат открываются под окнами — проект закрываем
-      if (it.kind === "note" || it.kind === "chat" || it.kind === "journal") closeOverlay(ov);
+      if (!ov._inline && (it.kind === "note" || it.kind === "chat" || it.kind === "journal")) closeOverlay(ov);
       if (app().openLinkedItem) app().openLinkedItem(it);
     } else if (act === "remove") {
       removeItem(b.getAttribute("data-kind"), b.getAttribute("data-id"));
@@ -532,7 +584,7 @@
       openLeadMenu(b);
     } else if (act === "ask") {
       if (app().askLeoAboutProject) app().askLeoAboutProject(p);
-      closeOverlay(ov);
+      if (!ov._inline) closeOverlay(ov);
     }
   }
 
@@ -654,7 +706,8 @@
     var ref = { id: Number(p.id), name: p.title };
     var A = app();
     function closePage() {
-      closeOverlay(document.getElementById("pj-page-overlay"));
+      var pg = document.getElementById("pj-page-overlay");
+      if (pg && !pg._inline) closeOverlay(pg); // в разделе страница остаётся — документ откроется в «Сохранённом»
     }
     var items = [
       { section: "Создать в проекте" },
@@ -1396,7 +1449,7 @@
     var activeTab = document.querySelector(".tabbar-btn.active[data-tab]");
     var cur = activeTab ? activeTab.getAttribute("data-tab") : "";
     var mobile = !isDesktop();
-    var pjOpen = mobile && !!document.querySelector(".pj-overlay");
+    var pjOpen = false; // «Проекты» — обычный раздел: подсветку пункта меню ставит setTab
     var tasksOn = !pjOpen && cur === "actual" && !!(app().isMyTasksOpen && app().isMyTasksOpen());
     var moreOn = !pjOpen && mobile && ["digest", "knowledge", "dashboards", "profile"].indexOf(cur) >= 0;
     document.querySelectorAll(".tabbar .tabbar-btn").forEach(function (x) {
@@ -1438,15 +1491,21 @@
         if (app().openMyTasks) app().openMyTasks();
         setTimeout(markNav, 30);
       });
-    if (projBtn)
+    if (projBtn) {
+      // нажали «Проекты» — раздел откроется (setTab в app.js) на списке, а не на последнем проекте
       projBtn.addEventListener("click", function (e) {
-        if (e.target.closest("[data-pj-toggle]")) {
+        if (!e.target.closest("[data-pj-toggle]")) inlineView = { mode: "list", id: null };
+      }, true);
+      var tgl = projBtn.querySelector("[data-pj-toggle]");
+      if (tgl)
+        tgl.addEventListener("click", function (e) {
+          // стрелка только сворачивает список проектов в левой колонке, раздел не открывает
+          e.preventDefault();
+          e.stopPropagation();
           setTreeOpen(!treeOpen());
           renderTree();
-          return;
-        }
-        openList();
-      });
+        });
+    }
     if (moreBtn)
       moreBtn.addEventListener("click", function () {
         openMoreSheet(moreBtn);
@@ -1538,6 +1597,7 @@
   window.LeoProjects = {
     openList: openList,
     openPage: openPage,
+    show: show,
     openHours: openHours,
     loadList: loadList,
     list: function () { return listCache || []; },

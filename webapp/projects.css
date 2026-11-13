@@ -330,3 +330,19 @@ button.pj-status:not([disabled]) { cursor: pointer; }
   .tabbar-btn.nav-dim.active, .tabbar-btn.nav-dim.active:hover { background: transparent; color: var(--text-secondary); }
 }
 .tabbar .tabbar-btn.nav-dim.active { color: var(--text-tertiary); }
+
+/* «Проекты» — обычный раздел (#panel-projects): список и страница проекта без окна */
+.pj-root { width: 100%; }
+.pj-sheet.pj-inline {
+  max-height: none; height: auto; overflow: visible; width: auto;
+  max-width: 1180px; margin: 0 auto; padding: var(--space-2) 0 var(--space-8);
+  background: transparent; border-radius: 0; box-shadow: none;
+}
+.pj-inline .pj-back { padding: 0 12px 0 8px; }
+@media (min-width: 960px) {
+  .pj-sheet.pj-inline.pj-sheet--list, .pj-sheet.pj-inline.pj-sheet--page { width: auto; height: auto; padding: var(--space-4) var(--space-6) var(--space-8); }
+  .pj-sheet.pj-inline.pj-sheet--list { max-width: 760px; }
+}
+@media (max-width: 959px) {
+  .pj-sheet.pj-inline { height: auto; padding: var(--space-2) var(--page-x, 1rem) var(--space-8); }
+}
