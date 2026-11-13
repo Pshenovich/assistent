@@ -33884,7 +33884,9 @@
       if (doneAct && !m.iconBtn) m.iconBtn = { icon: "check", title: "Готово", fn: function (b) { runFocusAction(it, doneAct, b); } };
       if (openSrc) m.menu.push({ label: "Открыть источник", fn: function () { openSrc(null); } });
       if (it.type === "open_question") m.menu.unshift({ label: "В задачу", fn: function () { av2QuestionToTask(it); } });
-      if (focusHasItems(it) && it.items.length === 1 && (taskAct || it.type === "summary_tasks")) {
+      // Одно дело — пункт саммари или одно обещание/договорённость (commitment_keys без items).
+      var oneThing = Math.max((it.items || []).length, (it.commitment_keys || []).length) === 1;
+      if (oneThing && (taskAct || it.type === "summary_tasks" || (it.commitment_keys || []).length)) {
         // Одно дело на карточке, а задача на него уже заведена (в Орбите или в Битрикс24).
         m.menu.unshift({ label: "Уже есть задача…", fn: function () { av2LinkExisting(it); } });
       }
