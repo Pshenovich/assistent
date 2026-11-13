@@ -76,7 +76,7 @@
     { id: "note", label: "Документы", icon: "note", test: function (it) { return (it.kind === "note" && !it.is_transcription) || it.kind === "journal"; } },
     { id: "chat", label: "Чаты", icon: "chat", test: function (it) { return it.kind === "chat" || it.kind === "tgchat"; } },
     { id: "mail", label: "Почта", icon: "mail", test: function (it) { return it.kind === "mail" || it.kind === "mailaddr"; } },
-    { id: "person", label: "Люди", icon: "person", test: function (it) { return it.kind === "person"; } },
+    { id: "person", label: "Связанные люди", icon: "person", test: function (it) { return it.kind === "person"; } },
   ];
   function groupOf(it) {
     for (var i = 0; i < GROUPS.length; i++) if (GROUPS[i].test(it)) return GROUPS[i];
@@ -401,7 +401,8 @@
     var people = members.slice(0, 4).map(function (m) {
       return '<span class="pj-mini-ava" title="' + esc(m.label) + '">' + esc(initials(m.label)) + "</span>";
     }).join("");
-    var others = members.filter(function (m) { return m.principal.indexOf("u:") !== 0; }).map(function (m) { return m.label; });
+    var team = teamRows(p);
+    var names = team.slice(0, 2).map(function (r) { return r.name; }).join(", ") + (team.length > 2 ? " и ещё " + (team.length - 2) : "");
     var head =
       '<div class="pj-page-top">' +
       '<button type="button" class="pj-btn pj-back" data-pj="close" aria-label="К списку проектов">' + icon("back", 16) + '<span class="pj-hide-sm">Проекты</span></button>' +
@@ -424,9 +425,8 @@
       '<span class="pj-meta-item">Руководитель ' +
       (p.can_edit ? '<button type="button" class="pj-link" data-pj="lead">' + esc(p.lead_label || "не назначен") + "</button>" : "<b>" + esc(p.lead_label || "не назначен") + "</b>") +
       "</span>" +
-      '<span class="pj-meta-item">Участники <span class="pj-ava-stack">' + people + "</span>" +
-      (others.length ? '<span class="pj-muted">и ' + esc(others.join(", ")) + "</span>" : "") +
-      "</span></div></div></div>";
+      '<button type="button" class="pj-meta-item pj-meta-btn" data-pj="tab" data-tab="team">Участники <span class="pj-ava-stack">' + people + "</span>" +
+      '<b>' + esc(names) + "</b></button></div></div></div>";
 
     var items = p.items || [];
     var counts = {};
@@ -438,6 +438,7 @@
       '<div class="pj-tabs" role="tablist" aria-label="Разделы проекта">' +
       [["all", "Всё", items.length]]
         .concat(GROUPS.map(function (g) { return [g.id, g.label, counts[g.id] || 0]; }))
+        .concat([["team", "Участники", team.length]])
         .filter(function (t) { return t[0] === "all" || t[2] || pageState.tab === t[0]; })
         .map(function (t) {
           var on = pageState.tab === t[0];
@@ -449,7 +450,9 @@
       "</div>";
 
     var body;
-    if (!items.length) {
+    if (pageState.tab === "team") {
+      body = '<div class="pj-grid pj-grid--one">' + teamCardHtml(p, team) + "</div>";
+    } else if (!items.length) {
       body =
         '<div class="pj-empty pj-empty--big">' +
         "<b>В проекте пока пусто</b>" +
@@ -459,6 +462,7 @@
     } else {
       var groups = pageState.tab === "all" ? GROUPS : GROUPS.filter(function (g) { return g.id === pageState.tab; });
       body = '<div class="pj-grid' + (pageState.tab === "all" ? "" : " pj-grid--one") + '">' +
+        (pageState.tab === "all" ? teamCardHtml(p, team) : "") +
         groups
           .map(function (g) {
             var xs = items.filter(function (it) { return groupOf(it) === g; });
@@ -488,6 +492,40 @@
       : "";
     sheet.innerHTML = head + ask + tabs + body + hidden;
     if (items.length && !pp) loadPassport(String(p.id));
+  }
+
+  // Участники проекта (у кого есть доступ) — отдельно от «Связанных людей» (контакты, добавленные как элементы).
+  function teamRows(p) {
+    var me = p.my_principal || "";
+    var lead = p.lead_user_id ? "u:" + p.lead_user_id : "";
+    var rows = (p.members || []).map(function (m) {
+      var user = m.principal.indexOf("u:") === 0;
+      var bits = [];
+      if (m.principal === lead) bits.push("руководитель");
+      bits.push(user ? (m.role_label || "").toLowerCase() : (m.principal === "all" ? "вся организация" : "отдел или команда") + " · " + (m.role_label || "").toLowerCase());
+      return { principal: m.principal, name: (m.label || "Участник") + (m.principal === me ? " (вы)" : ""), label: m.label || "", sub: bits.join(" · "), group: !user, lead: m.principal === lead, role: m.role };
+    });
+    if (lead && !rows.some(function (r) { return r.principal === lead; })) {
+      rows.push({ principal: lead, name: (p.lead_label || "Руководитель") + (lead === me ? " (вы)" : ""), label: p.lead_label || "", sub: "руководитель", group: false, lead: true, role: "editor" });
+    }
+    var rank = { owner: 0, editor: 1, viewer: 2 };
+    rows.sort(function (a, b) { return (b.lead - a.lead) || ((rank[a.role] || 3) - (rank[b.role] || 3)); });
+    return rows;
+  }
+  function teamCardHtml(p, team) {
+    var all = pageState.tab === "team";
+    var limit = all ? 1000 : 6;
+    return (
+      '<section class="pj-card"><h2 class="pj-card-title">Участники проекта <span class="pj-muted">' + team.length + "</span></h2>" +
+      team.slice(0, limit).map(function (r) {
+        return '<div class="pj-item pj-member"><span class="pj-mini-ava pj-member-ava' + (r.group ? " pj-mini-ava--grp" : "") + '">' + esc(initials(r.label || r.name)) + "</span>" +
+          '<span class="pj-item-txt"><span class="pj-item-title">' + esc(r.name) + '</span><span class="pj-item-sub">' + esc(r.sub) + "</span></span></div>";
+      }).join("") +
+      (team.length > limit ? '<button type="button" class="pj-link pj-card-more" data-pj="tab" data-tab="team">Все ' + team.length + " ›</button>" : "") +
+      (p.can_share ? '<button type="button" class="pj-link pj-card-more" data-pj="share">Пригласить или изменить доступ ›</button>' : "") +
+      '<p class="pj-member-note">Участники видят документы и задачи проекта. «Связанные люди» — контакты, добавленные в проект, доступа у них нет.</p>' +
+      "</section>"
+    );
   }
 
   // Паспорт проекта: строки Лео по фактам (сервер кэширует, пока факты не изменятся).
@@ -624,16 +662,46 @@
     );
   }
   function openLeadMenu(anchor) {
+    // Руководитель — участник проекта или любой человек из команды (организации проекта).
     var p = pageState.data;
-    var items = (p.members || [])
-      .filter(function (m) { return m.principal.indexOf("u:") === 0; })
-      .map(function (m) {
-        var uid = m.principal.slice(2);
-        return { label: m.label, icon: p.lead_user_id === uid ? "check" : "person", active: p.lead_user_id === uid, onClick: function () { patchProject({ lead_user_id: uid }); } };
-      });
-    if (p.lead_user_id) items.push("-", { label: "Без руководителя", onClick: function () { patchProject({ lead_user_id: "" }); } });
-    if (!items.length) items.push({ label: "Сначала поделитесь проектом", onClick: openShare });
-    sheetMenu("Руководитель — из участников", items, anchor);
+    var me = p.my_principal || "";
+    function row(pr, label, sub) {
+      var uid = pr.slice(2);
+      var on = String(p.lead_user_id || "") === uid;
+      return {
+        label: label + (pr === me ? " (вы)" : ""),
+        hint: sub || "",
+        icon: on ? "check" : "person",
+        active: on,
+        onClick: function () { if (!on) patchProject({ lead_user_id: uid }); },
+      };
+    }
+    function paint(team) {
+      var seen = {};
+      var mem = (p.members || [])
+        .filter(function (m) { return m.principal.indexOf("u:") === 0; })
+        .map(function (m) {
+          seen[m.principal] = 1;
+          return row(m.principal, m.label || "Участник", m.role_label);
+        });
+      var others = (team || [])
+        .filter(function (c) { return c.principal.indexOf("u:") === 0 && !seen[c.principal]; })
+        .map(function (c) { return row(c.principal, c.label, ""); });
+      var items = [];
+      if (mem.length) {
+        items.push({ section: "Участники проекта" });
+        items = items.concat(mem);
+      }
+      if (others.length) {
+        items.push({ section: "Команда — станет участником" });
+        items = items.concat(others);
+      }
+      if (p.lead_user_id) items.push("-", { label: "Без руководителя", onClick: function () { patchProject({ lead_user_id: "" }); } });
+      sheetMenu("Руководитель проекта", items, anchor);
+    }
+    api("/projects/" + encodeURIComponent(pageState.id) + "/share-candidates?q=")
+      .then(function (r) { paint((r && r.people) || []); })
+      .catch(function () { paint([]); });
   }
   function openMoreMenu(anchor, ov) {
     var p = pageState.data;
@@ -1157,7 +1225,7 @@
 
   function openHours(opts) {
     opts = opts || {};
-    hoursState = { week: "", group: "project", people: opts.people || null, projectId: opts.projectId || null, data: null, seq: 0,
+    hoursState = { week: "", group: opts.projectId ? "kind" : "project", people: opts.people || null, projectId: opts.projectId || null, data: null, seq: 0, showNoHours: false,
       title: opts.title || "", embedded: !!opts.host };
     var ov;
     if (opts.host) {
@@ -1194,8 +1262,10 @@
         loadHours(ov);
       } else if (act === "people") openPeopleMenu(ov, b);
       else if (act === "no-hours") {
-        closeOverlay(ov);
-        if (app().openMyTasks) app().openMyTasks();
+        hoursState.showNoHours = !hoursState.showNoHours;
+        paintHours(ov);
+      } else if (act === "no-hours-task") {
+        if (app().openTaskById) app().openTaskById(Number(b.getAttribute("data-id")), function () { loadHours(ov); });
       } else if (act === "open-project") {
         var id = b.getAttribute("data-id");
         if (id && /^\d+$/.test(id)) openPage(id);
@@ -1235,28 +1305,57 @@
     sheetMenu("Чьи часы", items, anchor);
   }
 
-  function hoursColors(d) {
-    // цвет — за проектом (его цвет или порядок по id), не по месту в рейтинге; до 4 проектов, остальное серым
-    var buckets = (d.projects || []).filter(function (p) { return /^\d+$/.test(p.bucket); });
+  // Серии графика по выбранной разбивке: проекты, люди или виды работы. Цвет — за самой серией
+  // (проект — его цвет или порядок по id, человек — порядок по id), не по месту в рейтинге; до 4 серий, остальное серым.
+  var KIND_COLORS = { meet: "#3b82e0", task: "#c2861f", docs: "#8b5cf6" };
+  function hoursSeries(d) {
+    var g = hoursState.group;
+    var weeks = d.weeks || [];
+    if (g === "kind") {
+      var kinds = d.kinds || [{ key: "meet", title: "Встречи" }, { key: "task", title: "Задачи" }, { key: "docs", title: "Документы" }];
+      var colorK = {};
+      var labelK = {};
+      kinds.forEach(function (k) { colorK[k.key] = KIND_COLORS[k.key] || HOURS_GRAY; labelK[k.key] = k.title; });
+      return { keys: kinds.map(function (k) { return k.key; }), color: colorK, label: labelK, rest: "",
+        value: function (w, k) { return (w.by_kind || {})[k] || 0; }, all: function (w) { return w.by_kind || {}; } };
+    }
+    var byField = g === "person" ? "by_person" : "by";
     var totals = {};
-    (d.weeks || []).forEach(function (w) { Object.keys(w.by || {}).forEach(function (b) { totals[b] = (totals[b] || 0) + w.by[b]; }); });
-    var top = buckets.slice().sort(function (a, b) { return (totals[b.bucket] || 0) - (totals[a.bucket] || 0); }).slice(0, 4);
-    top.sort(function (a, b) { return Number(a.bucket) - Number(b.bucket); });
+    weeks.forEach(function (w) { Object.keys(w[byField] || {}).forEach(function (b) { totals[b] = (totals[b] || 0) + w[byField][b]; }); });
+    var label = {};
+    var cands;
+    if (g === "person") {
+      (d.people || []).forEach(function (p) { label[p.user_id] = p.name; });
+      cands = Object.keys(totals).filter(function (k) { return totals[k] > 0; });
+    } else {
+      (d.projects || []).forEach(function (p) { label[p.bucket] = p.title; });
+      cands = (d.projects || []).filter(function (p) { return /^\d+$/.test(p.bucket); }).map(function (p) { return p.bucket; });
+    }
+    var top = cands.slice().sort(function (a, b) { return (totals[b] || 0) - (totals[a] || 0); }).slice(0, 4);
+    top.sort(function (a, b) { return Number(a) - Number(b); });
     var used = {};
     var map = {};
-    top.forEach(function (p) {
-      var i = HOURS_BY_KEY[p.color];
-      if (i != null && !used[i]) { map[p.bucket] = i; used[i] = 1; }
+    if (g !== "person") {
+      top.forEach(function (b) {
+        var p = (d.projects || []).filter(function (x) { return x.bucket === b; })[0] || {};
+        var ix = HOURS_BY_KEY[p.color];
+        if (ix != null && !used[ix]) { map[b] = ix; used[ix] = 1; }
+      });
+    }
+    top.forEach(function (b) {
+      if (map[b] != null) return;
+      for (var ix = 0; ix < HOURS_COLORS.length; ix++) if (!used[ix]) { map[b] = ix; used[ix] = 1; return; }
     });
-    top.forEach(function (p) {
-      if (map[p.bucket] != null) return;
-      for (var i = 0; i < HOURS_COLORS.length; i++) if (!used[i]) { map[p.bucket] = i; used[i] = 1; return; }
-    });
-    var out = {};
-    (d.projects || []).forEach(function (p) {
-      out[p.bucket] = map[p.bucket] != null ? HOURS_COLORS[map[p.bucket]] : HOURS_GRAY;
-    });
-    return { color: out, top: top.map(function (p) { return p.bucket; }) };
+    var color = {};
+    top.forEach(function (b) { color[b] = HOURS_COLORS[map[b]]; });
+    var restKeys = Object.keys(totals).filter(function (k) { return top.indexOf(k) < 0 && totals[k] > 0; });
+    var rest = "";
+    if (restKeys.length) {
+      if (g === "person") rest = "Остальные";
+      else rest = restKeys.length === 1 && restKeys[0] === "none" ? "Без проекта" : restKeys.indexOf("none") >= 0 ? "Остальное и без проекта" : "Остальные проекты";
+    }
+    return { keys: top, color: color, label: label, rest: rest,
+      value: function (w, k) { return (w[byField] || {})[k] || 0; }, all: function (w) { return w[byField] || {}; } };
   }
 
   function paintHours(ov) {
@@ -1265,21 +1364,23 @@
     if (!d) return;
     var multi = (d.people || []).length > 1;
     var selName = !hoursState.people ? "Все" : ((d.people || []).filter(function (p) { return p.user_id === hoursState.people[0]; })[0] || {}).name || "Выбранные";
-    var pal = hoursColors(d);
+    var series = hoursSeries(d);
     var head = hoursState.embedded
       ? '<p class="pj-muted pj-small">' + (multi ? "Видят сам человек и его руководитель. " : "") + "Это учёт, не рейтинг.</p>"
       : '<div class="pj-head"><div class="pj-head-txt"><span class="pj-muted pj-crumb">' + esc(hoursState.title ? "Проект «" + hoursState.title + "»" : "Показатели") + " › Часы по проектам</span>" +
         '<h2 class="pj-title">Часы по проектам</h2></div>' +
         '<button type="button" class="pj-icon-btn" data-pj="close" aria-label="Закрыть">' + icon("close") + "</button></div>" +
         '<p class="pj-muted pj-small">' + (multi ? "Видят сам человек и его руководитель. " : "") + "Это учёт, не рейтинг.</p>";
+    var groups = hoursState.projectId
+      ? [["kind", "По видам работы"], ["person", "По людям"]]
+      : [["project", "По проектам"], ["person", "По людям"], ["kind", "По видам работы"]];
     var controls =
       '<div class="pj-tools">' +
-      (hoursState.projectId ? "" :
-        '<div class="pj-seg" role="tablist" aria-label="Как сгруппировать">' +
-        ["project", "person"].map(function (g) {
-          var on = hoursState.group === g;
-          return '<button type="button" role="tab" aria-selected="' + on + '" class="pj-seg-btn' + (on ? " is-on" : "") + '" data-pj="group" data-group="' + g + '">' + (g === "project" ? "По проектам" : "По людям") + "</button>";
-        }).join("") + "</div>") +
+      '<div class="pj-seg" role="tablist" aria-label="Как разбить">' +
+      groups.map(function (g) {
+        var on = hoursState.group === g[0];
+        return '<button type="button" role="tab" aria-selected="' + on + '" class="pj-seg-btn' + (on ? " is-on" : "") + '" data-pj="group" data-group="' + g[0] + '">' + g[1] + "</button>";
+      }).join("") + "</div>" +
       '<div class="pj-week">' +
       '<button type="button" class="pj-icon-btn" data-pj="week-prev" aria-label="Предыдущая неделя">‹</button>' +
       '<button type="button" class="pj-btn" data-pj="week-now" title="К текущей неделе">Неделя ' + esc(d.week_label) + "</button>" +
@@ -1287,21 +1388,35 @@
       '<span class="pj-muted pj-small">сравнение с ' + esc(d.prev_label) + "</span>" +
       (multi ? '<button type="button" class="pj-btn" data-pj="people"><span class="pj-muted">Люди</span> ' + esc(selName) + " ▾</button>" : "") +
       '<span class="pj-grow"></span>' +
-      (d.no_hours ? '<button type="button" class="pj-btn pj-btn--warn" data-pj="no-hours">' + d.no_hours + " " + plural(d.no_hours, "задача", "задачи", "задач") + " без часов ›</button>" : "") +
-      "</div>";
-    sheet.innerHTML = head + controls + hoursChartHtml(d, pal) + (hoursState.group === "person" && !hoursState.projectId ? personTableHtml(d) : projectTableHtml(d, pal)) +
+      (d.no_hours ? '<button type="button" class="pj-btn pj-btn--warn" data-pj="no-hours" aria-expanded="' + !!hoursState.showNoHours + '">' +
+        d.no_hours + " " + plural(d.no_hours, "задача", "задачи", "задач") + " без часов " + (hoursState.showNoHours ? "▴" : "▾") + "</button>" : "") +
+      "</div>" + noHoursHtml(d);
+    var table = hoursState.group === "person" ? personTableHtml(d) : projectTableHtml(d, series);
+    sheet.innerHTML = head + controls + hoursChartHtml(d, series) + table +
       '<p class="pj-muted pj-small">Встречи — из календаря: только с другими участниками; к проекту — через встречу, серию, тему или саммари. ' +
-      "Задачи — «сколько ушло» при сдаче, иначе время задачи в календаре. Если вещь в нескольких проектах, часы делятся поровну. «Без проекта» — то, что ни в один проект не попало.</p>";
+      "Задачи — «сколько ушло» при сдаче, иначе время задачи в календаре. Документы — минуты, когда человек работал в открытом документе проекта (печатал, листал, кликал). " +
+      "Если вещь в нескольких проектах, часы делятся поровну. «Без проекта» — то, что ни в один проект не попало.</p>";
   }
 
-  function hoursChartHtml(d, pal) {
+  // Задачи без часов — прямо в отчёте: какие, у кого; нажатие открывает задачу (там «Сколько ушло»).
+  function noHoursHtml(d) {
+    if (!hoursState.showNoHours || !(d.no_hours_tasks || []).length) return "";
+    return '<section class="pj-card pj-nohours"><h3 class="pj-card-title">Сданы без часов <span class="pj-muted">— откройте и укажите «Сколько ушло»</span></h3>' +
+      d.no_hours_tasks.map(function (t) {
+        return '<button type="button" class="pj-item-open pj-nohours-row" data-pj="no-hours-task" data-id="' + esc(t.id) + '">' +
+          '<span class="pj-ico pj-ico--task">' + icon("task", 16) + '</span><span class="pj-item-txt"><span class="pj-item-title">' + esc(t.title) +
+          '</span><span class="pj-item-sub">' + esc(t.assignee || "") + "</span></span></button>";
+      }).join("") + "</section>";
+  }
+
+  function hoursChartHtml(d, series) {
     var weeks = d.weeks || [];
     if (!weeks.length) return "";
-    var order = pal.top.concat(["__rest"]);
     var max = 0;
     weeks.forEach(function (w) {
       var t = 0;
-      Object.keys(w.by || {}).forEach(function (b) { t += w.by[b]; });
+      var all = series.all(w);
+      Object.keys(all).forEach(function (b) { t += all[b]; });
       w._total = t;
       if (t > max) max = t;
     });
@@ -1309,24 +1424,22 @@
     var top = Math.max(step, Math.ceil(max / step) * step);
     var ticks = [];
     for (var v = top; v >= 0; v -= step) ticks.push(v);
-    var legend = pal.top.map(function (b) {
-      var p = (d.projects || []).filter(function (x) { return x.bucket === b; })[0] || {};
-      return '<span class="pj-leg"><i style="background:' + pal.color[b] + '"></i>' + esc(p.title || "") + "</span>";
-    }).join("") + (pal.top.length < (d.projects || []).length
-      ? '<span class="pj-leg"><i style="background:' + HOURS_GRAY + '"></i>' +
-        ((d.projects || []).some(function (p) { return /^\d+$/.test(p.bucket) && pal.top.indexOf(p.bucket) < 0; }) ? "Остальное и без проекта" : "Без проекта") + "</span>"
-      : "");
+    var legend = series.keys.map(function (b) {
+      return '<span class="pj-leg"><i style="background:' + series.color[b] + '"></i>' + esc(series.label[b] || "") + "</span>";
+    }).join("") + (series.rest ? '<span class="pj-leg"><i style="background:' + HOURS_GRAY + '"></i>' + esc(series.rest) + "</span>" : "");
+    var order = series.keys.concat(["__rest"]);
     var bars = weeks.map(function (w, i) {
+      var all = series.all(w);
       var segs = order.map(function (b) {
         var h = 0;
-        if (b === "__rest") Object.keys(w.by || {}).forEach(function (k) { if (pal.top.indexOf(k) < 0) h += w.by[k]; });
-        else h = (w.by || {})[b] || 0;
+        if (b === "__rest") Object.keys(all).forEach(function (k) { if (series.keys.indexOf(k) < 0) h += all[k]; });
+        else h = series.value(w, b);
         if (!h) return "";
-        return '<div class="pj-seg-bar" style="height:' + (h / top * 100).toFixed(2) + "%;background:" + (b === "__rest" ? HOURS_GRAY : pal.color[b]) + '"></div>';
+        return '<div class="pj-seg-bar" style="height:' + (h / top * 100).toFixed(2) + "%;background:" + (b === "__rest" ? HOURS_GRAY : series.color[b]) + '"></div>';
       }).reverse().join("");
-      var tip = w.label + ": " + fmtH(w._total) + " ч" + Object.keys(w.by || {}).filter(function (k) { return w.by[k]; }).map(function (k) {
-        var p = (d.projects || []).filter(function (x) { return x.bucket === k; })[0] || {};
-        return "\n" + (p.title || "") + " — " + fmtH(w.by[k]) + " ч";
+      var tip = w.label + ": " + fmtH(w._total) + " ч" + Object.keys(all).filter(function (k) { return all[k]; }).map(function (k) {
+        var name = series.label[k] || (k === "none" ? "Без проекта" : k === "other" ? "Другие проекты" : "");
+        return "\n" + name + " — " + fmtH(all[k]) + " ч";
       }).join("");
       var last = i === weeks.length - 1;
       return '<div class="pj-bar' + (last ? " is-cur" : "") + '" title="' + esc(tip) + '" role="img" aria-label="' + esc(tip.replace(/\n/g, "; ")) + '">' +
@@ -1335,9 +1448,10 @@
     var labels = weeks.map(function (w, i) {
       return '<span class="' + (i === weeks.length - 1 ? "is-cur" : "") + '">' + esc(w.label) + "</span>";
     }).join("");
+    var what = { project: "по проектам", person: "по людям", kind: "встречи, задачи и документы" }[hoursState.group] || "";
     return (
       '<section class="pj-card pj-chart"><div class="pj-chart-head"><h3 class="pj-card-title">Часы по неделям</h3>' +
-      '<span class="pj-muted pj-small">встречи + задачи, последние ' + weeks.length + " недель</span><span class=\"pj-grow\"></span>" +
+      '<span class="pj-muted pj-small">' + esc(what) + ", последние " + weeks.length + " недель</span><span class=\"pj-grow\"></span>" +
       '<div class="pj-legend">' + legend + "</div></div>" +
       '<div class="pj-chart-body"><div class="pj-axis">' + ticks.map(function (t) { return "<span>" + t + (t ? " ч" : "") + "</span>"; }).join("") + "</div>" +
       '<div class="pj-bars" style="--pj-rows:' + (ticks.length - 1) + '">' + bars + "</div>" +
@@ -1345,16 +1459,21 @@
     );
   }
 
-  function projectTableHtml(d, pal) {
-    if (!(d.rows || []).length) return '<div class="pj-empty">За эту неделю часов нет: ни встреч с другими участниками, ни задач со временем.</div>';
+  function cells(r) {
+    return "<td>" + fmtH(r.meet) + "</td><td>" + fmtH(r.task) + "</td><td>" + fmtH(r.docs) + "</td>";
+  }
+
+  function projectTableHtml(d, series) {
+    if (!(d.rows || []).length) return '<div class="pj-empty">За эту неделю часов нет: ни встреч с другими участниками, ни задач со временем, ни работы в документах.</div>';
     var body = d.rows.map(function (r) {
       var openable = /^\d+$/.test(r.bucket) && !hoursState.projectId;
       var name = openable ? '<button type="button" class="pj-link pj-strong" data-pj="open-project" data-id="' + esc(r.bucket) + '">' + esc(r.title) + "</button>" : '<span class="pj-strong">' + esc(r.title) + "</span>";
-      var head = '<tr class="pj-tr-group"><th scope="row"><i class="pj-dot" style="background:' + (pal.color[r.bucket] || HOURS_GRAY) + '"></i>' + name + "</th>" +
-        "<td>" + fmtH(r.meet) + "</td><td>" + fmtH(r.task) + '</td><td class="pj-strong">' + fmtH(r.total) + '</td><td class="pj-muted">' + fmtH(r.prev) + "</td><td>" + diffHtml(r.total, r.prev) + "</td></tr>";
+      var dot = hoursState.group === "project" ? (series.color[r.bucket] || HOURS_GRAY) : "transparent";
+      var head = '<tr class="pj-tr-group"><th scope="row"><i class="pj-dot" style="background:' + dot + '"></i>' + name + "</th>" +
+        cells(r) + '<td class="pj-strong">' + fmtH(r.total) + '</td><td class="pj-muted">' + fmtH(r.prev) + "</td><td>" + diffHtml(r.total, r.prev) + "</td></tr>";
       var people = (r.people || []).length > 1 || (d.people || []).length > 1
         ? r.people.map(function (p) {
-            return '<tr class="pj-tr-person"><th scope="row">' + esc(p.name) + "</th><td>" + fmtH(p.meet) + "</td><td>" + fmtH(p.task) + "</td><td>" + fmtH(p.total) +
+            return '<tr class="pj-tr-person"><th scope="row">' + esc(p.name) + "</th>" + cells(p) + "<td>" + fmtH(p.total) +
               '</td><td class="pj-muted">' + fmtH(p.prev) + "</td><td>" + diffHtml(p.total, p.prev) + "</td></tr>";
           }).join("")
         : "";
@@ -1366,11 +1485,12 @@
   function personTableHtml(d) {
     var xs = d.by_person || [];
     if (!xs.length) return '<div class="pj-empty">За эту неделю часов нет.</div>';
+    var series = hoursSeries(d);
     var body = xs.map(function (p) {
-      var head = '<tr class="pj-tr-group"><th scope="row"><span class="pj-strong">' + esc(p.name) + "</span></th><td>" + fmtH(p.meet) + "</td><td>" + fmtH(p.task) +
-        '</td><td class="pj-strong">' + fmtH(p.total) + '</td><td class="pj-muted">' + fmtH(p.prev) + "</td><td>" + diffHtml(p.total, p.prev) + "</td></tr>";
+      var head = '<tr class="pj-tr-group"><th scope="row"><i class="pj-dot" style="background:' + (series.color[p.user_id] || HOURS_GRAY) + '"></i><span class="pj-strong">' + esc(p.name) + "</span></th>" + cells(p) +
+        '<td class="pj-strong">' + fmtH(p.total) + '</td><td class="pj-muted">' + fmtH(p.prev) + "</td><td>" + diffHtml(p.total, p.prev) + "</td></tr>";
       return head + p.projects.map(function (r) {
-        return '<tr class="pj-tr-person"><th scope="row">' + esc(r.title) + "</th><td>" + fmtH(r.meet) + "</td><td>" + fmtH(r.task) + "</td><td>" + fmtH(r.total) +
+        return '<tr class="pj-tr-person"><th scope="row">' + esc(r.title) + "</th>" + cells(r) + "<td>" + fmtH(r.total) +
           '</td><td class="pj-muted">' + fmtH(r.prev) + "</td><td>" + diffHtml(r.total, r.prev) + "</td></tr>";
       }).join("");
     }).join("");
@@ -1381,7 +1501,7 @@
     return (
       '<section class="pj-card pj-table-card"><div class="pj-table-scroll"><table class="pj-table">' +
       "<caption>Неделя " + esc(d.week_label) + ' <span class="pj-muted">· рядом — ' + esc(d.prev_label) + "</span></caption>" +
-      '<thead><tr><th scope="col">' + first + '</th><th scope="col">Встречи, ч</th><th scope="col">Задачи, ч</th><th scope="col">Итого, ч</th>' +
+      '<thead><tr><th scope="col">' + first + '</th><th scope="col">Встречи, ч</th><th scope="col">Задачи, ч</th><th scope="col">Документы, ч</th><th scope="col">Итого, ч</th>' +
       '<th scope="col">Прошлая неделя</th><th scope="col">Разница</th></tr></thead><tbody>' + body + "</tbody></table></div></section>"
     );
   }

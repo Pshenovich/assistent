@@ -112,6 +112,12 @@ button.pj-status:not([disabled]) { cursor: pointer; }
   background: var(--surface-hover); color: var(--text);
 }
 .pj-mini-ava--grp { border-radius: 8px; background: var(--accent-muted); color: var(--accent-soft); }
+.pj-meta-btn { border: 0; padding: 2px 6px; margin: -2px -6px; border-radius: 8px; background: none; font: inherit; color: inherit; cursor: pointer; }
+.pj-meta-btn:hover { background: var(--surface-hover); }
+.pj-member { padding: 6px 8px; gap: 10px; }
+.pj-member-ava { width: 30px; height: 30px; border-radius: 15px; border: 0; }
+.pj-member-ava.pj-mini-ava--grp { border-radius: 9px; }
+.pj-member-note { margin: 8px 6px 2px; font-size: 0.75rem; color: var(--text-secondary); }
 
 .pj-ask {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px;
@@ -350,3 +356,8 @@ button.pj-status:not([disabled]) { cursor: pointer; }
 /* «Часы по проектам» внутри «Показателей сотрудников» */
 .people-view-seg { margin-bottom: var(--space-3); }
 .pj-sheet.pj-inline.pj-inline--embedded { max-width: none; margin: 0; padding: 0 0 var(--space-6); }
+
+/* «Сданы без часов» — прямо в отчёте */
+.pj-nohours { gap: 2px; }
+.pj-nohours-row { width: 100%; border-radius: 10px; }
+.pj-nohours-row:hover { background: var(--overlay-2); }

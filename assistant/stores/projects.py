@@ -302,13 +302,45 @@ def update(user_id: Any, project_id: Any, patch: dict[str, Any]) -> dict[str, An
         out["status"] = str(patch["status"])
     if "lead_user_id" in patch and patch["lead_user_id"] is not None:
         raw = str(patch["lead_user_id"]).strip()
-        out["lead_user_id"] = str(int(raw)) if raw else ""
+        lead = str(int(raw)) if raw else ""
+        if lead and not _can_be_lead(user_id, p, lead):
+            raise ValueError("Руководителем можно сделать участника проекта или человека из вашей команды")
+        out["lead_user_id"] = lead
     if "archived" in patch and patch["archived"] is not None:
         _require(user_id, p, "owner")
         out["archived_at"] = bundles_store._now() if patch["archived"] else ""  # type: ignore[attr-defined]
     if out:
         _write(int(p["id"]), out)
+    lead = out.get("lead_user_id") or ""
+    if lead and f"u:{lead}" not in {str(m["principal"]) for m in p["members"]}:
+        # руководитель из команды становится участником — его видно в списке, он редактирует проект
+        with _LOCK:
+            conn = _conn()
+            conn.execute(
+                "INSERT OR IGNORE INTO bundle_members(bundle_id, principal, role, added_by, added_at) VALUES (?, ?, 'editor', ?, ?)",
+                (int(p["id"]), f"u:{lead}", _uid(user_id), bundles_store._now()),  # type: ignore[attr-defined]
+            )
+            conn.commit()
     return get(p["id"]) or {}
+
+
+def _can_be_lead(actor: Any, project: dict[str, Any], lead: str) -> bool:
+    """Руководитель — участник проекта (лично) или человек из организации, где состоит назначающий
+    (у проекта организации — только из неё). Руководитель получает права редактора."""
+    if f"u:{lead}" in {str(m["principal"]) for m in project.get("members") or []}:
+        return True
+    try:
+        from assistant.stores import orgs_store
+
+        orgs = [str(o.get("id")) for o in orgs_store.orgs_for_user(_uid(actor))]
+        if str(project.get("org_id") or ""):
+            orgs = [o for o in orgs if o == str(project["org_id"])]
+        for oid in orgs:
+            if orgs_store.role_of(int(oid), lead):
+                return True
+    except Exception as e:
+        print(f"[projects] lead check err={e!r}")
+    return False
 
 
 def delete(user_id: Any, project_id: Any) -> bool:

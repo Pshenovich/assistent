@@ -68,6 +68,18 @@ class ProjectsStoreTests(_Base):
         self.assertEqual(projects.role_of(5, projects.get(p["id"])), "editor")
         self.assertIn(p["id"], projects.ids_for_user(5))
 
+    def test_lead_from_team_becomes_member(self) -> None:
+        p = projects.create(1, "П")
+        with self.assertRaises(ValueError):
+            projects.update(1, p["id"], {"lead_user_id": "7"})  # не участник и не из команды
+        with mock.patch("assistant.stores.orgs_store.orgs_for_user", return_value=[{"id": 3}]), \
+                mock.patch("assistant.stores.orgs_store.role_of", side_effect=lambda oid, u: "member" if str(u) == "7" else ""):
+            out = projects.update(1, p["id"], {"lead_user_id": "7"})
+        self.assertEqual(out["lead_user_id"], "7")
+        roles = {m["principal"]: m["role"] for m in out["members"]}
+        self.assertEqual(roles, {"u:1": "owner", "u:7": "editor"})
+        self.assertIn(p["id"], projects.ids_for_user(7))
+
     def test_group_and_all_only_for_org_projects(self) -> None:
         p = projects.create(1, "Личный")
         with self.assertRaises(ValueError):

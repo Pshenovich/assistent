@@ -2959,6 +2959,8 @@ class _MiniappNoteCollabBody(BaseModel):
     cursor: Optional[int] = None
     # Ревизия документа у клиента: не новее на сервере — тело в ответ не кладём.
     revision: Optional[int] = None
+    # Человек что-то делал в документе за последние 2 минуты — минута идёт в учёт времени (doc_time)
+    active: Optional[bool] = None
 
 
 class _MiniappShareCommentCreate(BaseModel):
@@ -17750,6 +17752,13 @@ async def miniapp_note_collab(
         note = notes_store.get_readable_note(uid, note_id)  # присутствие и курсор — читателю тоже
         if not note:
             return None
+        if payload.active:
+            try:
+                from assistant.stores import doc_time
+
+                doc_time.touch(uid, note_id)  # минута работы в документе — для «Часов по проектам»
+            except Exception as e:
+                print(f"[doc_time] touch note={note_id} err={e!r}")
         owner = str(note.get("owner_user_id") or uid)
         _, name, username = _comment_author_from_principal(principal)
         peers = note_members.heartbeat(

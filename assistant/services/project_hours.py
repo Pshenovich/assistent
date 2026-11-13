@@ -225,10 +225,26 @@ def week_label(m: datetime) -> str:
     return f"{s.day} {_MON[s.month - 1]}–{e.day} {_MON[e.month - 1]}"
 
 
+def _docs(uids: list[str], start: datetime, end: datetime) -> list[tuple[str, int, datetime]]:
+    """Минуты работы в документах: (человек, документ, начало минуты)."""
+    try:
+        from assistant.stores import doc_time
+
+        return [(u, n, datetime.fromtimestamp(m * 60, tz=timezone.utc))
+                for u, n, m in doc_time.minutes(uids, start.timestamp(), end.timestamp())]
+    except Exception as e:
+        print(f"[project_hours] doc_time err={e!r}")
+        return []
+
+
+KINDS = (("meet", "Встречи"), ("task", "Задачи"), ("docs", "Документы"))
+
+
 def report(viewer: int, *, week: str = "", weeks: int = 8, people: Optional[list[str]] = None,
            project_id: Optional[int] = None, now: Optional[datetime] = None) -> dict[str, Any]:
-    """Отчёт: weeks — столбики по неделям (по проектам), rows — выбранная неделя и прошлая, проект → люди.
-    week — понедельник выбранной недели (YYYY-MM-DD), по умолчанию текущая. project_id — только этот проект."""
+    """Отчёт: weeks — столбики по неделям (по проектам, людям и видам работы), rows — выбранная неделя
+    и прошлая (проект → люди), by_person — то же «человек → проекты». week — понедельник выбранной недели
+    (YYYY-MM-DD), по умолчанию текущая. project_id — только этот проект: и часы, и задачи без часов, и люди."""
     from assistant.services.calendar import _tz_for
     from assistant.stores import projects as projects_store
 
@@ -246,43 +262,43 @@ def report(viewer: int, *, week: str = "", weeks: int = 8, people: Optional[list
     allowed = visible_people(viewer)
     who = [p for p in (people or allowed) if p in allowed] or [str(int(viewer))]
     mine = set(projects_store.ids_for_user(viewer, include_archived=True))
-    if project_id is not None and int(project_id) not in mine:
+    keep = str(int(project_id)) if project_id is not None else None
+    if keep is not None and int(keep) not in mine:
         raise ValueError("Проект не найден")
     idx = _Index()
 
     def bucket(pids: set[int]) -> list[str]:
         if not pids:
             return [NO_PROJECT]
-        out = sorted({str(p) if p in mine else OTHER_PROJECTS for p in pids})
-        return out
+        return sorted({str(p) if p in mine else OTHER_PROJECTS for p in pids})
 
-    # cells[(week_index, bucket, person)] = [встречи, задачи]
-    cells: dict[tuple[int, str, str], list[float]] = defaultdict(lambda: [0.0, 0.0])
+    def week_of(at: datetime) -> int:
+        return int((_monday(at, tz) - first).days // 7)
+
+    # cells[(неделя, корзина, человек)] = [встречи, задачи, документы]
+    cells: dict[tuple[int, str, str], list[float]] = defaultdict(lambda: [0.0, 0.0, 0.0])
+
+    def add(wi: int, bs: list[str], p: str, k: int, h: float) -> None:
+        if 0 <= wi < weeks:
+            for b in bs:
+                cells[(wi, b, p)][k] += h / len(bs)
+
+    no_hours_tasks: list[int] = []
     for p in who:
         for m in _meetings(p, first, end):
-            wi = int((_monday(m["start"], tz) - first).days // 7)
-            if not 0 <= wi < weeks:
-                continue
-            bs = bucket(idx.meeting_projects(m["cal"], m["eid"], m["sid"], m["title"]))
-            for b in bs:
-                cells[(wi, b, p)][0] += m["hours"] / len(bs)
+            add(week_of(m["start"]), bucket(idx.meeting_projects(m["cal"], m["eid"], m["sid"], m["title"])), p, 0, m["hours"])
         tasks, _missing = _tasks(p, first, end)
         for t in tasks:
-            wi = int((_monday(t["at"], tz) - first).days // 7)
-            if not 0 <= wi < weeks:
-                continue
-            bs = bucket(idx.task.get(str(t["id"]), set()))
-            for b in bs:
-                cells[(wi, b, p)][1] += t["hours"] / len(bs)
-    # «задач без часов» — за выбранную неделю
-    no_hours_week = 0
-    for p in who:
+            add(week_of(t["at"]), bucket(idx.task.get(str(t["id"]), set())), p, 1, t["hours"])
         _t, missing = _tasks(p, cur, end)
-        no_hours_week += len(missing)
+        for tid in missing:
+            if keep is None or int(keep) in idx.task.get(str(tid), set()):
+                no_hours_tasks.append(tid)
+    for p, nid, at in _docs(who, first, end):
+        add(week_of(at), bucket(idx.notes.get(str(nid), set())), p, 2, 1 / 60)
 
-    if project_id is not None:
-        keep = str(int(project_id))
-        cells = defaultdict(lambda: [0.0, 0.0], {k: v for k, v in cells.items() if k[1] == keep})
+    if keep is not None:
+        cells = defaultdict(lambda: [0.0, 0.0, 0.0], {k: v for k, v in cells.items() if k[1] == keep})
 
     buckets = sorted({k[1] for k in cells}, key=lambda b: (b in (NO_PROJECT, OTHER_PROJECTS), b == NO_PROJECT, b))
     cur_i = weeks - 1
@@ -294,51 +310,94 @@ def report(viewer: int, *, week: str = "", weeks: int = 8, people: Optional[list
             return "Другие проекты"
         return idx.titles.get(int(b), "Проект")
 
-    def tot(wi: int, b: str, p: Optional[str] = None) -> tuple[float, float]:
-        mm = tt = 0.0
-        for (w, bb, pp), (a, c) in cells.items():
-            if w == wi and bb == b and (p is None or pp == p):
-                mm += a
-                tt += c
-        return mm, tt
+    def tot(wi: int, b: Optional[str] = None, p: Optional[str] = None) -> list[float]:
+        acc = [0.0, 0.0, 0.0]
+        for (w, bb, pp), v in cells.items():
+            if w == wi and (b is None or bb == b) and (p is None or pp == p):
+                for k in range(3):
+                    acc[k] += v[k]
+        return acc
+
+    def r1(v: float) -> float:
+        return round(v, 1)
+
+    # люди отчёта: у проекта — только те, кто к нему причастен (участник, руководитель, часы в проекте,
+    # исполнитель его задач); в общем отчёте — все, чьи часы открыты смотрящему
+    people_ids = list(allowed)
+    if keep is not None:
+        pr = projects_store.get(int(keep)) or {}
+        involved = {str(m["principal"])[2:] for m in pr.get("members") or [] if str(m["principal"]).startswith("u:")}
+        if pr.get("lead_user_id"):
+            involved.add(str(pr["lead_user_id"]))
+        involved |= {k[2] for k in cells}
+        try:
+            from assistant.stores import calendar_tasks
+
+            tids = [int(i) for i, ps in idx.task.items() if int(keep) in ps and str(i).isdigit()]
+            if tids:
+                with calendar_tasks._LOCK:  # type: ignore[attr-defined]
+                    q = ",".join("?" * len(tids))
+                    involved |= {str(r[0]) for r in calendar_tasks._conn().execute(  # type: ignore[attr-defined]
+                        f"SELECT DISTINCT assignee_user_id FROM calendar_tasks WHERE id IN ({q})", tids)}
+        except Exception as e:
+            print(f"[project_hours] project people err={e!r}")
+        people_ids = [u for u in allowed if u in involved]
+    who_shown = [p for p in who if p in people_ids] if keep is not None else who
+    names = person_names(sorted(set(people_ids) | set(who)))
 
     week_bars = []
     for wi in range(weeks):
         m = first + timedelta(weeks=wi)
+        by_kind = tot(wi)
         week_bars.append({
             "start": m.date().isoformat(),
             "label": week_label(m),
-            "by": {b: round(sum(tot(wi, b)), 1) for b in buckets},
+            "by": {b: r1(sum(tot(wi, b))) for b in buckets},
+            "by_person": {p: r1(sum(tot(wi, None, p))) for p in who_shown},
+            "by_kind": {KINDS[k][0]: r1(by_kind[k]) for k in range(3)},
         })
-    names = person_names(who)
+
+    def row(vals: list[float], prev: list[float]) -> dict[str, Any]:
+        return {"meet": r1(vals[0]), "task": r1(vals[1]), "docs": r1(vals[2]), "total": r1(sum(vals)), "prev": r1(sum(prev))}
+
     rows = []
     for b in buckets:
-        meet, task = tot(cur_i, b)
-        prev = sum(tot(cur_i - 1, b))
-        people_rows = []
-        for p in who:
-            pm, pt = tot(cur_i, b, p)
-            pp = sum(tot(cur_i - 1, b, p))
-            if pm or pt or pp:
-                people_rows.append({"user_id": p, "name": names.get(p, "Участник"), "meet": round(pm, 1),
-                                    "task": round(pt, 1), "total": round(pm + pt, 1), "prev": round(pp, 1)})
-        if not (meet or task or prev):
+        cur_v, prev_v = tot(cur_i, b), tot(cur_i - 1, b)
+        if not (sum(cur_v) or sum(prev_v)):
             continue
+        people_rows = []
+        for p in who_shown:
+            pv, pp = tot(cur_i, b, p), tot(cur_i - 1, b, p)
+            if sum(pv) or sum(pp):
+                people_rows.append({"user_id": p, "name": names.get(p, "Участник"), **row(pv, pp)})
         people_rows.sort(key=lambda r: -r["total"])
-        rows.append({"bucket": b, "title": title(b), "meet": round(meet, 1), "task": round(task, 1),
-                     "total": round(meet + task, 1), "prev": round(prev, 1), "people": people_rows})
+        rows.append({"bucket": b, "title": title(b), **row(cur_v, prev_v), "people": people_rows})
     projects = [{"bucket": b, "title": title(b),
                  "color": (projects_store.get(int(b)) or {}).get("color", "") if b.isdigit() else ""} for b in buckets]
+    no_hours_list = []
+    if no_hours_tasks:
+        from assistant.stores import calendar_tasks
+
+        with calendar_tasks._LOCK:  # type: ignore[attr-defined]
+            q = ",".join("?" * len(no_hours_tasks))
+            for r in calendar_tasks._conn().execute(  # type: ignore[attr-defined]
+                f"SELECT id, title, assignee_user_id, assignee_name FROM calendar_tasks WHERE id IN ({q})",
+                [int(t) for t in no_hours_tasks],
+            ):
+                no_hours_list.append({"id": int(r[0]), "title": str(r[1] or ""),
+                                      "assignee": names.get(str(r[2]), str(r[3] or ""))})
     return {
         "week": cur.date().isoformat(),
         "week_label": week_label(cur),
         "prev_label": week_label(cur - timedelta(weeks=1)),
         "weeks": week_bars,
         "projects": projects,
+        "kinds": [{"key": k, "title": t} for k, t in KINDS],
         "rows": rows,
-        "people": [{"user_id": p, "name": names.get(p, "Участник")} for p in allowed],
-        "selected_people": who,
-        "no_hours": no_hours_week,
+        "people": [{"user_id": p, "name": names.get(p, "Участник")} for p in people_ids],
+        "selected_people": who_shown,
+        "no_hours": len(no_hours_list),
+        "no_hours_tasks": no_hours_list[:30],
     }
 
 
@@ -348,10 +407,11 @@ def by_person(rep: dict[str, Any]) -> list[dict[str, Any]]:
     for r in rep["rows"]:
         for pr in r["people"]:
             a = acc.setdefault(pr["user_id"], {"user_id": pr["user_id"], "name": pr["name"], "meet": 0.0, "task": 0.0,
-                                               "total": 0.0, "prev": 0.0, "projects": []})
-            for k in ("meet", "task", "total", "prev"):
+                                               "docs": 0.0, "total": 0.0, "prev": 0.0, "projects": []})
+            for k in ("meet", "task", "docs", "total", "prev"):
                 a[k] = round(a[k] + pr[k], 1)
-            a["projects"].append({"bucket": r["bucket"], "title": r["title"], **{k: pr[k] for k in ("meet", "task", "total", "prev")}})
+            a["projects"].append({"bucket": r["bucket"], "title": r["title"],
+                                  **{k: pr[k] for k in ("meet", "task", "docs", "total", "prev")}})
     out = sorted(acc.values(), key=lambda a: -a["total"])
     for a in out:
         a["projects"].sort(key=lambda x: -x["total"])

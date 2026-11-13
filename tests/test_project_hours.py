@@ -173,3 +173,31 @@ def test_spent_saved_on_submit(env, monkeypatch):
     assert task_spent.get(t["id"]) == 90
     bad = c.patch(f"/api/miniapp/calendar/tasks/{t['id']}", json={"spent": "непонятно"}, headers=_headers(ASSIGNEE))
     assert bad.status_code == 400
+
+
+def test_docs_minutes_and_project_scoped_people_and_no_hours(env, monkeypatch, tmp_path):
+    from assistant.stores import doc_time
+
+    monkeypatch.setenv("DOC_TIME_DB_PATH", str(tmp_path / "doc_time.sqlite"))
+    doc_time._CONN = None  # type: ignore[attr-defined]
+    P, H, T = env["projects"], env["hours"], env["tasks"]
+    n = env["notes"].create_note(OWNER, "План", "<p>x</p>")
+    p = P.create(OWNER, "Контент завод", items=[("note", str(n["id"]), "")])
+    other = P.create(OWNER, "Другой")
+    base = MON + timedelta(days=1, hours=10)
+    for i in range(30):  # 30 активных минут в документе проекта
+        doc_time.touch(OWNER, n["id"], at=(base + timedelta(minutes=i)).timestamp())
+    doc_time.touch(OWNER, n["id"], at=(base + timedelta(minutes=3)).timestamp())  # та же минута — не дважды
+    # сданная без часов задача другого проекта — в отчёт проекта не попадает
+    t = T.create_task(OWNER, title="Чужое", start_at=MON + timedelta(days=2), tz=TZ, all_day=True)
+    T.update_task(OWNER, t["id"], done=True)
+    P.add_items(OWNER, other["id"], [("task", str(t["id"]), "")])
+    rep = H.report(OWNER, now=_now_in_week(t), project_id=p["id"])
+    row = rep["rows"][0]
+    assert row["title"] == "Контент завод" and row["docs"] == 0.5 and row["total"] == 0.5
+    assert rep["weeks"][-1]["by_kind"]["docs"] == 0.5
+    assert rep["no_hours"] == 0
+    assert [x["user_id"] for x in rep["people"]] == [str(OWNER)]
+    full = H.report(OWNER, now=_now_in_week(t))
+    assert full["no_hours"] == 1 and full["no_hours_tasks"][0]["title"] == "Чужое"
+    doc_time._CONN = None  # type: ignore[attr-defined]

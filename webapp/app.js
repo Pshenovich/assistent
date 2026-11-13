@@ -43551,6 +43551,13 @@
     }
   }
 
+  // Был ли человек активен в открытом документе (ввод, клики, прокрутка) за последние 2 минуты —
+  // только тогда минута идёт в учёт времени в документах (сервер: doc_time).
+  var noteActivityAt = 0;
+  ["keydown", "pointerdown", "wheel", "touchstart"].forEach(function (ev) {
+    document.addEventListener(ev, function () { if (noteCollabState.noteId) noteActivityAt = Date.now(); }, { capture: true, passive: true });
+  });
+
   function noteCollabTick() {
     var wrap = document.getElementById("note-editor-more-wrap");
     var id = noteCollabState.noteId;
@@ -43564,7 +43571,10 @@
     apiFetch("/notes/local/" + encodeURIComponent(id) + "/collab", {
       method: "POST",
       // Своя ревизия: сервер присылает тело, только если у него новее.
-      body: JSON.stringify(knownRev > 0 ? { cursor: cursor, revision: knownRev } : { cursor: cursor }),
+      body: JSON.stringify(Object.assign(
+        knownRev > 0 ? { cursor: cursor, revision: knownRev } : { cursor: cursor },
+        !document.hidden && Date.now() - noteActivityAt < 120000 ? { active: true } : {}
+      )),
     })
       .then(function (data) {
         if (noteCollabState.noteId !== String(id)) return;
@@ -65888,15 +65898,28 @@
         if (same) scrollTabToTop();
       });
     });
-    var sidebarLogo = document.querySelector(".sidebar-logo");
-    if (sidebarLogo) {
+    // Логотип и надпись Orbita в левой колонке — в «Актуальное», в том числе из «Задач» и «Поставленных»
+    // (это подэкраны «Актуального»: раньше вкладка не менялась и нажатие ничего не делало).
+    document.querySelectorAll(".sidebar-logo, .sidebar-brand").forEach(function (sidebarLogo) {
       sidebarLogo.setAttribute("role", "button");
+      sidebarLogo.setAttribute("tabindex", "0");
       sidebarLogo.setAttribute("title", "Актуальное");
-      sidebarLogo.addEventListener("click", function () {
-        if (currentTab === "actual") scrollTabToTop();
-        else setTab("actual", { fromTabbar: true });
+      sidebarLogo.style.cursor = "pointer";
+      function goHome() {
+        if (currentTab === "actual") {
+          if (isMyTasksOpen()) setMyTasksScreen(false);
+          else if (isPostedTasksOpen()) setPostedTasksScreen(false);
+          else scrollTabToTop();
+        } else setTab("actual", { fromTabbar: true });
+      }
+      sidebarLogo.addEventListener("click", goHome);
+      sidebarLogo.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          goHome();
+        }
       });
-    }
+    });
     var sidebarExpand = document.getElementById("sidebar-expand");
     if (sidebarExpand) sidebarExpand.addEventListener("click", function () { toggleSidebarCollapsed(); });
     bindPullToRefresh();

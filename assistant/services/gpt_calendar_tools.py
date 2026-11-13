@@ -1348,12 +1348,12 @@ def tool_project_hours(ctx: GptCalendarContext, args: dict[str, Any]) -> str:
         return _err(str(e))
     return _ok({
         "week": rep["week_label"], "prev_week": rep["prev_label"],
-        "rows": [{"project": r["title"], "meetings_h": r["meet"], "tasks_h": r["task"], "total_h": r["total"],
-                  "prev_week_h": r["prev"],
-                  "people": [{"name": x["name"], "meetings_h": x["meet"], "tasks_h": x["task"], "total_h": x["total"],
-                              "prev_week_h": x["prev"]} for x in r["people"]]} for r in rep["rows"]],
+        "rows": [{"project": r["title"], "meetings_h": r["meet"], "tasks_h": r["task"], "documents_h": r["docs"],
+                  "total_h": r["total"], "prev_week_h": r["prev"],
+                  "people": [{"name": x["name"], "meetings_h": x["meet"], "tasks_h": x["task"], "documents_h": x["docs"],
+                              "total_h": x["total"], "prev_week_h": x["prev"]} for x in r["people"]]} for r in rep["rows"]],
         "tasks_without_hours": rep["no_hours"],
-        "note": "Часы посчитаны кодом: встречи с другими участниками из календаря, задачи — «сколько ушло» или время в календаре. Это учёт, не оценка.",
+        "note": "Часы посчитаны кодом: встречи с другими участниками из календаря, задачи — «сколько ушло» или время в календаре, документы — минуты активной работы в открытом документе. Это учёт, не оценка.",
     })
 
 
