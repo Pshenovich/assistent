@@ -1157,8 +1157,21 @@
 
   function openHours(opts) {
     opts = opts || {};
-    hoursState = { week: "", group: "project", people: opts.people || null, projectId: opts.projectId || null, data: null, seq: 0, title: opts.title || "" };
-    var ov = makeOverlay("pj-hours-overlay", "pj-hours-overlay");
+    hoursState = { week: "", group: "project", people: opts.people || null, projectId: opts.projectId || null, data: null, seq: 0,
+      title: opts.title || "", embedded: !!opts.host };
+    var ov;
+    if (opts.host) {
+      // встроенный отчёт (например, в «Показателях сотрудников»): без окна, заголовка и крестика
+      opts.host.innerHTML = "";
+      ov = document.createElement("div");
+      ov.id = "pj-hours-inline";
+      ov.className = "pj-inline-wrap";
+      ov._inline = true;
+      ov.innerHTML = '<div class="pj-sheet pj-inline pj-inline--embedded"></div>';
+      opts.host.appendChild(ov);
+    } else {
+      ov = makeOverlay("pj-hours-overlay", "pj-hours-overlay");
+    }
     var sheet = ov.querySelector(".pj-sheet");
     sheet.classList.add("pj-sheet--page", "pj-sheet--hours");
     sheet.setAttribute("aria-label", "Часы по проектам");
@@ -1253,11 +1266,12 @@
     var multi = (d.people || []).length > 1;
     var selName = !hoursState.people ? "Все" : ((d.people || []).filter(function (p) { return p.user_id === hoursState.people[0]; })[0] || {}).name || "Выбранные";
     var pal = hoursColors(d);
-    var head =
-      '<div class="pj-head"><div class="pj-head-txt"><span class="pj-muted pj-crumb">' + esc(hoursState.title ? "Проект «" + hoursState.title + "»" : "Показатели") + " › Часы по проектам</span>" +
-      '<h2 class="pj-title">Часы по проектам</h2></div>' +
-      '<button type="button" class="pj-icon-btn" data-pj="close" aria-label="Закрыть">' + icon("close") + "</button></div>" +
-      '<p class="pj-muted pj-small">' + (multi ? "Видят сам человек и его руководитель. " : "") + "Это учёт, не рейтинг.</p>";
+    var head = hoursState.embedded
+      ? '<p class="pj-muted pj-small">' + (multi ? "Видят сам человек и его руководитель. " : "") + "Это учёт, не рейтинг.</p>"
+      : '<div class="pj-head"><div class="pj-head-txt"><span class="pj-muted pj-crumb">' + esc(hoursState.title ? "Проект «" + hoursState.title + "»" : "Показатели") + " › Часы по проектам</span>" +
+        '<h2 class="pj-title">Часы по проектам</h2></div>' +
+        '<button type="button" class="pj-icon-btn" data-pj="close" aria-label="Закрыть">' + icon("close") + "</button></div>" +
+        '<p class="pj-muted pj-small">' + (multi ? "Видят сам человек и его руководитель. " : "") + "Это учёт, не рейтинг.</p>";
     var controls =
       '<div class="pj-tools">' +
       (hoursState.projectId ? "" :
@@ -1298,7 +1312,10 @@
     var legend = pal.top.map(function (b) {
       var p = (d.projects || []).filter(function (x) { return x.bucket === b; })[0] || {};
       return '<span class="pj-leg"><i style="background:' + pal.color[b] + '"></i>' + esc(p.title || "") + "</span>";
-    }).join("") + '<span class="pj-leg"><i style="background:' + HOURS_GRAY + '"></i>' + (pal.top.length < (d.projects || []).length ? "Остальное и без проекта" : "Без проекта") + "</span>";
+    }).join("") + (pal.top.length < (d.projects || []).length
+      ? '<span class="pj-leg"><i style="background:' + HOURS_GRAY + '"></i>' +
+        ((d.projects || []).some(function (p) { return /^\d+$/.test(p.bucket) && pal.top.indexOf(p.bucket) < 0; }) ? "Остальное и без проекта" : "Без проекта") + "</span>"
+      : "");
     var bars = weeks.map(function (w, i) {
       var segs = order.map(function (b) {
         var h = 0;

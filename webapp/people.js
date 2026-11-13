@@ -6,7 +6,18 @@
 
   var TITLE = "Показатели сотрудников";
   var state = { orgId: null, days: 28, group: 0, list: null, person: null, personData: null, loading: false, error: "",
-    fromProfile: false, off: null };
+    fromProfile: false, off: null, view: "tasks" };
+
+  // Вкладки списка: поручения (показатели) и часы по проектам (projects.js, тот же отчёт без окна).
+  function viewTabsHtml() {
+    if (!(window.LeoProjects && window.LeoProjects.openHours)) return "";
+    return '<div class="pf-seg people-view-seg" role="tablist" aria-label="Что показать">' +
+      [["tasks", "Поручения"], ["hours", "Часы по проектам"]].map(function (t) {
+        var on = state.view === t[0];
+        return '<button type="button" role="tab" aria-selected="' + on + '"' + (on ? ' class="is-on"' : "") +
+          ' data-people-view="' + t[0] + '">' + t[1] + "</button>";
+      }).join("") + "</div>";
+  }
 
   function app() {
     return window.LeoApp || {};
@@ -51,7 +62,6 @@
   function listHtml(d) {
     var s = d.summary;
     var html = filtersHtml(d);
-    html += '<button type="button" class="pj-hours-entry" data-project-hours="1"><span>Часы по проектам</span><small>встречи и задачи по неделям ›</small></button>';
     html += '<p class="metrics-lead">Каждый видит свою карточку с теми же цифрами. Без рейтинга: порядок — по алфавиту.' +
       "<small>В срок — с поправками: переносы постановщика, ожидание ответа на вопрос, короткие сроки и отпуск не засчитываются.</small></p>";
     html += '<div class="metrics-kpis">' +
@@ -139,7 +149,12 @@
       }
       return;
     }
-    el.innerHTML = state.list ? listHtml(state.list) : '<p class="pf-hint">Считаю…</p>';
+    if (state.view === "hours") {
+      el.innerHTML = viewTabsHtml() + '<div class="people-hours-host"></div>';
+      window.LeoProjects.openHours({ host: el.querySelector(".people-hours-host") });
+      return;
+    }
+    el.innerHTML = viewTabsHtml() + (state.list ? listHtml(state.list) : '<p class="pf-hint">Считаю…</p>');
   }
 
   async function load() {
@@ -164,6 +179,13 @@
     if (!b) return;
     if (b.dataset.projectHours != null) {
       if (window.LeoProjects && window.LeoProjects.openHours) window.LeoProjects.openHours();
+      return;
+    }
+    if (b.dataset.peopleView) {
+      if (state.view === b.dataset.peopleView) return;
+      state.view = b.dataset.peopleView;
+      render();
+      if (state.view === "tasks" && !state.list) load();
       return;
     }
     if (b.dataset.days) {
@@ -207,6 +229,7 @@
     state.person = null;
     state.personData = null;
     state.list = null;
+    state.view = "tasks";
     if (app().profileScreen) app().profileScreen("people");
     title(TITLE);
     if (state.off) render();

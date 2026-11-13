@@ -346,3 +346,7 @@ button.pj-status:not([disabled]) { cursor: pointer; }
 @media (max-width: 959px) {
   .pj-sheet.pj-inline { height: auto; padding: var(--space-2) var(--page-x, 1rem) var(--space-8); }
 }
+
+/* «Часы по проектам» внутри «Показателей сотрудников» */
+.people-view-seg { margin-bottom: var(--space-3); }
+.pj-sheet.pj-inline.pj-inline--embedded { max-width: none; margin: 0; padding: 0 0 var(--space-6); }
