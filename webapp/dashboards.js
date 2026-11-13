@@ -491,7 +491,7 @@
       (d.search ? '<input type="search" placeholder="Поиск" data-tq="' + w.id + '" value="' + esc(ui.q) + '" aria-label="Поиск по таблице">' : "") +
       (statuses.length ? '<select data-tst="' + w.id + '" aria-label="Фильтр по статусу"><option value="">Все статусы</option>' +
         statuses.map(function (s) { return '<option value="' + esc(s) + '"' + (ui.st === s ? " selected" : "") + ">" + esc(s) + "</option>"; }).join("") + "</select>" : "") +
-      '<button type="button" class="dsh-btn dsh-btn--icon" data-tcsv="' + w.id + '" aria-label="Скачать CSV" title="Скачать CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 19h16"/></svg></button></div>';
+      '<button type="button" class="pj-icon-btn dsh-icon-sm" data-tcsv="' + w.id + '" aria-label="Скачать CSV" title="Скачать CSV"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 19h16"/></svg></button></div>';
     var head = "<tr>" + cols.map(function (c) {
       var arrow = ui.sort === c.name ? (ui.dir === "asc" ? " ↑" : " ↓") : "";
       return '<th class="' + (isNumType(c.type) ? "is-num" : "") + '" data-tsort="' + w.id + ":" + esc(c.name) + '">' + esc(c.label) + arrow + "</th>";
@@ -506,7 +506,7 @@
         return i === 0 ? "<td>Итого · " + d.total_rows + "</td>" : "<td></td>";
       }).join("") + "</tr>";
     }
-    var more = rows.length > shown.length ? '<button type="button" class="dsh-btn" data-tall="' + w.id + '">Показать все (' + rows.length + ")</button>" : "";
+    var more = rows.length > shown.length ? '<button type="button" class="pj-link" data-tall="' + w.id + '">Показать все (' + rows.length + ")</button>" : "";
     return tools + '<div class="dsh-table-wrap"><table class="dsh-table"><thead>' + head + "</thead><tbody>" + body + "</tbody></table></div>" + more;
   }
   function tableCsv(w) {
@@ -581,6 +581,7 @@
     db: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5.5" rx="8" ry="3"/><path d="M4 5.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6M4 11.5v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></svg>',
     dots: '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>',
     edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>',
   };
 
   function renderList() {
@@ -588,13 +589,13 @@
     if (!r) return;
     var items = state.list || [];
     var head = '<div class="dsh-head"><div class="dsh-head-left"><h1 class="screen-title">Дашборды</h1></div><div class="dsh-head-actions">' +
-      '<button type="button" class="dsh-btn" data-act="connect">' + IC.plug + "Как подключить</button>" +
-      '<button type="button" class="dsh-btn dsh-btn--primary" data-act="create">' + IC.plus + "Создать</button></div></div>";
+      '<button type="button" class="pj-btn" data-act="connect">' + IC.plug + '<span class="pj-hide-sm">Как подключить</span></button>' +
+      '<button type="button" class="pj-btn pj-btn--primary" data-act="create">' + IC.plus + "<span>Создать</span></button></div></div>";
     if (state.list == null) { r.innerHTML = head + '<div class="dsh-w-none">Загружаю…</div>'; return; }
     if (!items.length) {
       r.innerHTML = head + '<div class="dsh-empty"><h2>Соберите цифры компании в одном месте</h2>' +
         "<p>Дашборд обновляется сам: ИИ-агент через MCP Орбиты создаёт его и настраивает отправку данных с вашего сервера — выручка, заявки, загрузка, статусы сервисов.</p>" +
-        '<button type="button" class="dsh-btn dsh-btn--primary" data-act="connect">' + IC.plug + "Как подключить</button></div>";
+        '<button type="button" class="pj-btn pj-btn--primary" data-act="connect">' + IC.plug + "<span>Как подключить</span></button></div>";
       return;
     }
     r.innerHTML = head + '<div class="dsh-cards">' + items.map(function (d) {
@@ -614,27 +615,27 @@
     var r = root(), d = state.dash;
     if (!r || !d) return;
     var can = d.can || {};
-    var seg = '<span class="dsh-seg" role="group" aria-label="Период">' + PERIODS.map(function (p) {
-      return '<button type="button" data-period="' + p[0] + '" class="' + (state.period === p[0] ? "is-on" : "") + '">' + p[1] + "</button>";
+    var seg = '<span class="pj-seg" role="tablist" aria-label="Период">' + PERIODS.map(function (p) {
+      var on = state.period === p[0];
+      return '<button type="button" role="tab" aria-selected="' + on + '" data-period="' + p[0] + '" class="pj-seg-btn' + (on ? " is-on" : "") + '">' + p[1] + "</button>";
     }).join("") + "</span>";
     var status = d.stale ? '<span class="dsh-pill dsh-pill--warn">давно нет данных</span>' : '<span class="dsh-muted">обновлено ' + esc(ago(d.last_push_at)) + "</span>";
-    var html = '<button type="button" class="dsh-back" data-act="back">← Все дашборды</button>' +
+    var html = '<button type="button" class="pj-btn dsh-back" data-act="back">' + IC.back + '<span>Дашборды</span></button>' +
       '<div class="dsh-head"><div class="dsh-head-left"><h1 class="screen-title">' + esc(d.title) + "</h1>" + status + "</div>" +
       '<div class="dsh-head-actions">' + seg +
-      (can.own && d.org_id ? '<button type="button" class="dsh-btn dsh-btn--icon" data-act="access" aria-label="Доступ" title="Доступ">' + IC.users + "</button>" : "") +
-      (can.edit ? '<button type="button" class="dsh-btn dsh-btn--icon" data-act="sources" aria-label="Источники" title="Источники данных">' + IC.db + "</button>" : "") +
-      (can.edit ? '<button type="button" class="dsh-btn dsh-btn--icon" data-act="menu" aria-label="Ещё" title="Ещё">' + IC.dots + "</button>" : "") +
+      (can.own && d.org_id ? '<button type="button" class="pj-btn" data-act="access">' + IC.users + '<span class="pj-hide-sm">Доступ</span></button>' : "") +
+      (can.edit ? '<button type="button" class="pj-icon-btn" data-act="menu" aria-label="Ещё" title="Ещё" aria-haspopup="menu">' + IC.dots + "</button>" : "") +
       "</div></div>";
     if (d.description) html += '<p class="dsh-muted" style="margin:-0.5rem 0 0.85rem">' + esc(d.description) + "</p>";
     if (state.editing) {
       html += '<div class="dsh-edit-bar"><b>Правка</b><span class="dsh-muted">порядок ← →, ширина − +, ✎ — вид и опции</span><span style="flex:1"></span>' +
-        '<button type="button" class="dsh-btn" data-act="add-widget">' + IC.plus + "Виджет</button>" +
-        '<button type="button" class="dsh-btn dsh-btn--primary" data-act="edit-done">Готово</button></div>';
+        '<button type="button" class="pj-btn" data-act="add-widget">' + IC.plus + "<span>Виджет</span></button>" +
+        '<button type="button" class="pj-btn pj-btn--primary" data-act="edit-done">Готово</button></div>';
     }
     var ws = d.widgets || [];
     if (!ws.length) {
       html += '<div class="dsh-empty"><h2>Виджетов пока нет</h2><p>Попросите агента добавить виджеты через MCP или добавьте сами — из готового каталога.</p>' +
-        (can.edit ? '<button type="button" class="dsh-btn dsh-btn--primary" data-act="add-widget">' + IC.plus + "Добавить виджет</button>" : "") + "</div>";
+        (can.edit ? '<button type="button" class="pj-btn pj-btn--primary" data-act="add-widget">' + IC.plus + "<span>Добавить виджет</span></button>" : "") + "</div>";
     } else {
       html += '<div class="dsh-board' + (state.editing ? " dsh-editing" : "") + '">' + ws.map(function (w, i) {
         var tools = '<span class="dsh-w-tools">' +
@@ -694,7 +695,7 @@
     state.editing = false;
     var cached = (state.list || []).filter(function (x) { return x.id === state.id; })[0];
     var r = root();
-    if (r) r.innerHTML = '<button type="button" class="dsh-back" data-act="back">← Все дашборды</button><div class="dsh-head"><h1 class="screen-title">' +
+    if (r) r.innerHTML = '<button type="button" class="pj-btn dsh-back" data-act="back">' + IC.back + '<span>Дашборды</span></button><div class="dsh-head"><h1 class="screen-title">' +
       esc(cached ? cached.title : "Дашборд") + '</h1></div><div class="dsh-w-none">Загружаю…</div>';
     try { history.replaceState(null, "", setParam(location.href, "dashboard", String(state.id))); } catch (_) {}
     return loadDash(state.id);
@@ -722,23 +723,58 @@
     return state.catalog;
   }
 
-  // ---------- окна ----------
+  // ---------- окна (общие компоненты Орбиты: меню действий, лист modal--sheet, строки pf-*) ----------
 
+  var X_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>';
+  var PLUS_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>';
+  var DOTS_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>';
+
+  // Меню действий — то же, что «⋯» у документов и проектов (на компьютере — у кнопки, на телефоне — снизу).
+  function actionMenu(title, items, anchor) {
+    if (app().openActionSheet) return app().openActionSheet(title, items, anchor);
+    var it = items.filter(function (x) { return x && x.onClick; });
+    var pick = window.prompt(it.map(function (x, i) { return i + 1 + ". " + x.label; }).join("\n"));
+    var n = Number(pick) - 1;
+    if (it[n]) it[n].onClick();
+  }
+
+  // Лист как «Доступ» в базе знаний: шапка с крестиком, тело pf-screen-body.
   function sheet(title, bodyHtml, onMount) {
     var ov = document.createElement("div");
-    ov.className = "dsh-sheet-ov";
-    ov.innerHTML = '<div class="dsh-sheet" role="dialog" aria-modal="true"><div class="dsh-sheet-head"><h2>' + esc(title) +
-      '</h2><button type="button" class="dsh-btn dsh-btn--icon" data-close="1" aria-label="Закрыть">✕</button></div><div class="dsh-sheet-body">' + bodyHtml + "</div></div>";
-    function close() { ov.remove(); document.removeEventListener("keydown", onKey, true); }
+    ov.className = "modal-overlay kb-sheet-overlay";
+    ov.innerHTML = '<div class="modal modal--sheet kb-sheet" role="dialog" aria-modal="true">' +
+      '<div class="modal-form"><div class="modal-header">' +
+      '<button type="button" class="modal-header-btn modal-header-btn--close" data-close="1" aria-label="Закрыть" title="Закрыть">' +
+      '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button>' +
+      '<h2 class="modal-title">' + esc(title) + "</h2>" +
+      '<span class="modal-header-btn modal-header-btn--placeholder" aria-hidden="true"></span></div>' +
+      '<div class="modal-body"><div class="pf-screen-body kb-sheet-body">' + bodyHtml + "</div></div></div></div>";
+    function close() {
+      ov.remove();
+      document.removeEventListener("keydown", onKey, true);
+      if (app().syncAppOverlay) app().syncAppOverlay();
+    }
     function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); close(); } }
     ov.addEventListener("click", function (e) { if (e.target === ov || (e.target.closest && e.target.closest("[data-close]"))) close(); });
     document.addEventListener("keydown", onKey, true);
     document.body.appendChild(ov);
-    if (onMount) onMount(ov.querySelector(".dsh-sheet-body"), close);
-    return close;
+    if (app().syncAppOverlay) app().syncAppOverlay();
+    var body = ov.querySelector(".kb-sheet-body");
+    if (onMount) onMount(body, close);
+    return { body: body, close: close };
   }
-  function copyBtn(text, label) {
-    return '<button type="button" class="dsh-btn" data-copy="' + esc(text) + '">' + esc(label || "Скопировать") + "</button>";
+  function group(title, rowsHtml, hint) {
+    return '<div class="pf-group">' + (title ? '<p class="pf-group-title">' + title + "</p>" : "") +
+      '<div class="pf-list">' + rowsHtml + "</div>" + (hint ? '<p class="pf-hint">' + hint + "</p>" : "") + "</div>";
+  }
+  function row(title, sub, right, attrs) {
+    return '<div class="pf-row pf-row--static"' + (attrs || "") + '><span class="pf-row-body"><span class="pf-row-text">' +
+      '<span class="pf-row-title">' + title + "</span>" + (sub ? '<span class="pf-row-sub pf-row-sub--wrap">' + sub + "</span>" : "") +
+      "</span>" + (right || "") + "</span></div>";
+  }
+  function codeBlock(text, label) {
+    return '<pre class="kb-ai-code">' + esc(text) + '</pre><div class="kb-ai-actions"><button type="button" class="pf-btn" data-copy="' + esc(text) + '">' +
+      esc(label || "Скопировать") + "</button></div>";
   }
   function bindCopy(body) {
     body.addEventListener("click", function (e) {
@@ -746,9 +782,13 @@
       if (!b) return;
       var t = b.getAttribute("data-copy");
       (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(function () { toast("Скопировано"); }, function () {
-        window.prompt("Скопируйте:", t);
+        toast("Выделите и скопируйте вручную");
       });
     });
+  }
+  function initials(name) {
+    var p = String(name || "").trim().split(/\s+/);
+    return ((p[0] || "")[0] || "?").toUpperCase() + ((p[1] || "")[0] || "").toUpperCase();
   }
 
   async function openConnect() {
@@ -756,18 +796,19 @@
     var s = state.setup || {};
     var cmd = s.dash_command || "claude mcp add --transport http orbita-dashboards https://getorbita.me/mcp/dashboards --header \"Authorization: Bearer <токен>\"";
     var ask = "Сделай в Орбите дашборд продаж: выручка по дням, план месяца, топ менеджеров. Данные бери из нашей базы и настрой отправку с сервера по расписанию. Инструкция — инструмент guide в orbita-dashboards.";
-    sheet("Как подключить дашборды",
-      "<p>Дашборды наполняются автоматически: ИИ-агент (например, Claude Code) создаёт их через MCP Орбиты и ставит на сервер компании скрипт, который присылает цифры.</p>" +
-      "<p><b>1. Выпустите токен для агента.</b> Профиль → Аккаунт → «Доступ для ИИ», отметьте «Дашборды: чтение и запись». Токен показывается один раз.</p>" +
-      '<button type="button" class="dsh-btn" data-act-account="1">Открыть «Доступ для ИИ»</button>' +
-      '<p style="margin-top:1rem"><b>2. Подключите MCP у агента</b> — подставьте токен вместо &lt;токен&gt;:</p><code class="dsh-code">' + esc(cmd) + "</code>" + copyBtn(cmd) +
-      '<p style="margin-top:1rem"><b>3. Попросите агента</b>, например:</p><code class="dsh-code">' + esc(ask) + "</code>" + copyBtn(ask) +
-      '<p class="dsh-muted" style="margin-top:1rem">Агент может создавать дашборды, источники и виджеты, но удалить дашборд или источник и выдать доступ можете только вы. ' +
-      (s.dash_guide_url ? '<a href="' + esc(s.dash_guide_url) + '" target="_blank" rel="noopener">Инструкция для агента</a>.' : "") + "</p>",
+    sheet("Как подключить",
+      '<p class="pf-hint" style="margin-top:0">Дашборды наполняются сами: ИИ-агент (например, Claude Code) создаёт их через MCP Орбиты и ставит на сервер компании скрипт, который присылает цифры.</p>' +
+      group("1. Токен для агента",
+        '<button type="button" class="pf-row" data-act-account="1"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">Открыть «Доступ для ИИ»</span>' +
+        '<span class="pf-row-sub pf-row-sub--wrap">Новый токен → «Дашборды: чтение и запись». Токен покажем один раз</span></span><span class="pf-chev" aria-hidden="true">›</span></span></button>') +
+      '<div class="pf-group"><p class="pf-group-title">2. Подключите MCP у агента</p>' + codeBlock(cmd) +
+      '<p class="pf-hint">Вместо &lt;токен&gt; — токен из шага 1.</p></div>' +
+      '<div class="pf-group"><p class="pf-group-title">3. Попросите агента</p>' + codeBlock(ask) +
+      '<p class="pf-hint">Агент создаёт дашборды, источники и виджеты. Удалить дашборд или источник и выдать доступ можете только вы.' +
+      (s.dash_guide_url ? ' <a href="' + esc(s.dash_guide_url) + '" target="_blank" rel="noopener">Инструкция для агента</a>' : "") + "</p></div>",
       function (body, close) {
         bindCopy(body);
-        var acc = body.querySelector("[data-act-account]");
-        if (acc) acc.addEventListener("click", function () {
+        body.querySelector("[data-act-account]").addEventListener("click", function () {
           close();
           if (app().setTab) app().setTab("profile");
           setTimeout(function () { if (app().openAccount) app().openAccount(); }, 60);
@@ -778,11 +819,13 @@
   function openCreate() {
     var orgs = state.orgs || [];
     sheet("Новый дашборд",
-      '<label class="dsh-field">Название<input type="text" data-f="title" maxlength="80" placeholder="Продажи"></label>' +
-      (orgs.length ? '<label class="dsh-field">Где<select data-f="org">' + orgs.map(function (o) { return '<option value="' + esc(o.id) + '">' + esc(o.name) + "</option>"; }).join("") +
+      '<div class="pf-group"><div class="pf-list"><label class="pf-field"><span class="pf-field-label">Название</span>' +
+      '<input type="text" class="pf-input" data-f="title" maxlength="80" placeholder="Например, Продажи" /></label>' +
+      (orgs.length ? '<label class="pf-field"><span class="pf-field-label">Где</span><select class="pf-input" data-f="org">' +
+        orgs.map(function (o) { return '<option value="' + esc(o.id) + '">' + esc(o.name) + "</option>"; }).join("") +
         '<option value="">Личный — видите только вы</option></select></label>' : "") +
-      '<p class="dsh-muted">Пустой дашборд. Наполнять его удобнее через агента — см. «Как подключить».</p>' +
-      '<div class="dsh-head-actions" style="justify-content:flex-end"><button type="button" class="dsh-btn dsh-btn--primary" data-save="1">Создать</button></div>',
+      '</div><p class="pf-hint">Дашборд будет пустым. Наполнять его удобнее через агента — см. «Как подключить».</p></div>' +
+      '<button type="button" class="pf-btn" data-save="1">Создать</button>',
       function (body, close) {
         var t = body.querySelector('[data-f="title"]');
         t.focus();
@@ -806,21 +849,22 @@
       });
   }
 
-  function openMenu() {
+  function openMenu(anchor) {
     var d = state.dash, can = d.can || {};
-    var items = [["rename", "Переименовать"], ["describe", "Описание"], ["edit", "Править виджеты"], ["add-widget", "Добавить виджет"], ["sources", "Источники данных"], ["connect", "Как подключить сервер"]];
-    if (can.own && d.org_id) items.push(["access", "Доступ"]);
-    if (can.own) items.push(["archive", "Убрать в архив"], ["delete", "Удалить дашборд"]);
-    sheet(d.title, '<div class="dsh-list">' + items.map(function (it) {
-      return '<button type="button" class="dsh-btn' + (it[0] === "delete" ? " dsh-btn--danger" : "") + '" data-m="' + it[0] + '" style="justify-content:flex-start">' + esc(it[1]) + "</button>";
-    }).join("") + "</div>", function (body, close) {
-      body.addEventListener("click", function (e) {
-        var b = e.target.closest && e.target.closest("[data-m]");
-        if (!b) return;
-        close();
-        action(b.getAttribute("data-m"));
-      });
-    });
+    function go(name) { return function () { action(name); }; }
+    var items = [
+      { label: "Переименовать", icon: "edit", onClick: go("rename") },
+      { label: "Описание", icon: "text", onClick: go("describe") },
+      "-",
+      { label: "Править виджеты", icon: "grid", onClick: go("edit") },
+      { label: "Добавить виджет", icon: "plus", onClick: go("add-widget") },
+      { label: "Источники данных", icon: "db", onClick: go("sources") },
+      { label: "Как подключить сервер", icon: "plug", onClick: go("connect") },
+    ];
+    if (can.own && d.org_id) items.push({ label: "Доступ", icon: "person", onClick: go("access") });
+    if (can.own) items.push("-", { label: "Убрать в архив", icon: "archive", onClick: go("archive") },
+      { label: "Удалить дашборд", icon: "trash", danger: true, onClick: go("delete") });
+    actionMenu("", items, anchor);
   }
 
   async function patchDash(patch) {
@@ -830,48 +874,65 @@
     } catch (e) { toast((e && e.message) || "Не удалось сохранить"); }
   }
 
+  var KIND_NAME = { metric: "метрика", table: "таблица", events: "лента" };
+  function srcStatus(s) {
+    if (s.last_error) return '<span class="dsh-pill dsh-pill--bad">ошибка</span>';
+    if (s.stale) return '<span class="dsh-pill dsh-pill--warn">давно нет данных</span>';
+    if (s.last_push_at) return '<span class="dsh-pill dsh-pill--ok">работает</span>';
+    return '<span class="dsh-pill">ждёт данных</span>';
+  }
+  function srcCount(s) {
+    if (!s.count) return "";
+    var w = s.kind === "table" ? plural(s.count, "строка", "строки", "строк") : s.kind === "events"
+      ? plural(s.count, "событие", "события", "событий") : plural(s.count, "точка", "точки", "точек");
+    return " · " + grouped(s.count) + " " + w;
+  }
+
   function openSources() {
     var d = state.dash, can = d.can || {};
     var dss = d.datasets || [];
-    var kindName = { metric: "метрика", table: "таблица", events: "лента" };
-    var html = dss.length ? dss.map(function (s) {
-      var st = s.last_error ? '<span class="dsh-pill dsh-pill--bad">ошибка</span>' : s.stale ? '<span class="dsh-pill dsh-pill--warn">давно нет данных</span>'
-        : s.last_push_at ? '<span class="dsh-pill dsh-pill--ok">работает</span>' : '<span class="dsh-pill">ждёт данных</span>';
-      return '<div class="dsh-src"><div class="dsh-row"><span><b>' + esc(s.title) + '</b> <span class="dsh-faint">' + esc(s.key) + " · " + esc(kindName[s.kind] || s.kind) +
-        (s.unit ? " · " + esc(s.unit) : "") + "</span></span>" + st + "</div>" +
-        '<div class="dsh-faint">Последняя отправка: ' + esc(ago(s.last_push_at)) + (s.count ? " · " + grouped(s.count) + " " + (s.kind === "table" ? plural(s.count, "строка", "строки", "строк") : s.kind === "events" ? plural(s.count, "событие", "события", "событий") : plural(s.count, "точка", "точки", "точек")) : "") +
-        (s.expected_every_min ? " · ждём каждые " + s.expected_every_min + " мин" : "") + " · ключ " + esc(s.key_hint) + "</div>" +
-        (s.last_error ? '<div class="dsh-w-err">' + esc(s.last_error) + "</div>" : "") +
-        '<div class="dsh-src-actions"><button type="button" class="dsh-btn" data-srckey="' + esc(s.key) + '">Как подключить</button>' +
-        '<button type="button" class="dsh-btn" data-rotate="' + esc(s.key) + '">Сменить ключ</button>' +
-        (can.own ? '<button type="button" class="dsh-btn dsh-btn--danger" data-srcdel="' + esc(s.key) + '">Удалить</button>' : "") + "</div></div>";
-    }).join("") : '<p class="dsh-muted">Источников пока нет. Их создаёт агент через MCP (create_dataset) — он же получает ключ и ставит скрипт на сервер.</p>';
+    var rows = dss.map(function (s) {
+      var sub = esc(KIND_NAME[s.kind] || s.kind) + (s.unit ? " · " + esc(s.unit) : "") + " · " + esc(ago(s.last_push_at)) + esc(srcCount(s)) +
+        (s.expected_every_min ? " · ждём каждые " + s.expected_every_min + " мин" : "") +
+        (s.last_error ? '<br><span class="dsh-w-err">' + esc(s.last_error) + "</span>" : "");
+      return row(esc(s.title), sub, srcStatus(s) +
+        '<button type="button" class="pf-del" data-src="' + esc(s.key) + '" aria-label="Действия с источником" title="Ещё">' + DOTS_SVG + "</button>");
+    }).join("");
+    var html = dss.length
+      ? group("", rows, "Источники создаёт агент через MCP — он же получает ключ и ставит скрипт на сервер. Ключ виден только при создании и при смене.")
+      : '<div class="pj-empty">Источников пока нет. Их создаёт агент через MCP — см. «Как подключить».</div>';
     sheet("Источники данных", html, function (body, close) {
-      body.addEventListener("click", async function (e) {
-        var t = e.target.closest && e.target.closest("[data-srckey],[data-rotate],[data-srcdel]");
+      body.addEventListener("click", function (e) {
+        var t = e.target.closest && e.target.closest("[data-src]");
         if (!t) return;
-        var key = t.getAttribute("data-srckey") || t.getAttribute("data-rotate") || t.getAttribute("data-srcdel");
-        var ds = dss.filter(function (x) { return x.key === key; })[0];
-        if (t.hasAttribute("data-srckey")) { close(); showSourceHelp(ds, null); return; }
-        if (t.hasAttribute("data-rotate")) {
-          if (!(await app().confirm("Сменить ключ источника «" + ds.title + "»? Старый ключ перестанет работать сразу — его надо будет заменить на сервере."))) return;
-          try {
-            var res = await api("/dashboards/" + state.id + "/datasets/" + encodeURIComponent(key) + "/rotate", { method: "POST" });
-            close();
-            showSourceHelp(ds, res);
-            loadDash(state.id, true);
-          } catch (err) { toast((err && err.message) || "Не удалось сменить ключ"); }
-          return;
-        }
-        if (!(await app().confirm("Удалить источник «" + ds.title + "» со всеми данными и его виджетами? Это нельзя отменить."))) return;
-        try {
-          await api("/dashboards/" + state.id + "/datasets/" + encodeURIComponent(key), { method: "DELETE" });
-          close();
-          toast("Источник удалён");
-          loadDash(state.id, true);
-        } catch (err) { toast((err && err.message) || "Не удалось удалить"); }
+        var ds = dss.filter(function (x) { return x.key === t.getAttribute("data-src"); })[0];
+        if (!ds) return;
+        var items = [
+          { label: "Как подключить", icon: "plug", onClick: function () { close(); showSourceHelp(ds, null); } },
+          { label: "Сменить ключ", icon: "key", onClick: function () { rotateSource(ds, close); } },
+        ];
+        if (can.own) items.push("-", { label: "Удалить источник", icon: "trash", danger: true, onClick: function () { deleteSource(ds, close); } });
+        actionMenu(ds.title, items, t);
       });
     });
+  }
+  async function rotateSource(ds, close) {
+    if (!(await app().confirm("Сменить ключ источника «" + ds.title + "»? Старый ключ перестанет работать сразу — его надо будет заменить на сервере."))) return;
+    try {
+      var res = await api("/dashboards/" + state.id + "/datasets/" + encodeURIComponent(ds.key) + "/rotate", { method: "POST" });
+      close();
+      showSourceHelp(ds, res);
+      loadDash(state.id, true);
+    } catch (err) { toast((err && err.message) || "Не удалось сменить ключ"); }
+  }
+  async function deleteSource(ds, close) {
+    if (!(await app().confirm("Удалить источник «" + ds.title + "» со всеми данными и его виджетами? Это нельзя отменить."))) return;
+    try {
+      await api("/dashboards/" + state.id + "/datasets/" + encodeURIComponent(ds.key), { method: "DELETE" });
+      close();
+      toast("Источник удалён");
+      loadDash(state.id, true);
+    } catch (err) { toast((err && err.message) || "Не удалось удалить"); }
   }
 
   function showSourceHelp(ds, rotated) {
@@ -880,57 +941,113 @@
       events: '{"events":[{"ts":"2026-11-13T10:42:00+03:00","text":"Оплата 84 000 ₽","id":"pay-1"}]}' }[ds.kind];
     var curl = rotated ? rotated.examples.curl : "curl -sS -X POST " + url + ' -H "Authorization: Bearer $ORBITA_KEY" -H \'Content-Type: application/json\' -d \'' + body + "'";
     var html = (rotated
-      ? '<p><b>Новый ключ</b> — показывается один раз. Замените им старый в env-файле на сервере:</p><code class="dsh-code">' + esc(rotated.ingest_key) + "</code>" + copyBtn(rotated.ingest_key, "Скопировать ключ")
-      : '<p class="dsh-muted">Ключ источника виден только при создании (его получил агент) и при смене. Потеряли — «Сменить ключ».</p>') +
-      '<p style="margin-top:1rem"><b>Адрес приёма</b></p><code class="dsh-code">' + esc(url) + "</code>" +
-      "<p><b>Пример отправки</b> (ключ — в переменной ORBITA_KEY):</p><code class=\"dsh-code\">" + esc(curl) + "</code>" + copyBtn(curl) +
-      '<p class="dsh-muted" style="margin-top:1rem">Повторная отправка безопасна: точка за тот же день перезаписывается. Подробно — в инструкции для агента.</p>';
+      ? '<div class="kb-ai-new"><p class="kb-ai-new-title">Новый ключ — скопируйте сейчас, второй раз его не покажем</p>' + codeBlock(rotated.ingest_key, "Скопировать ключ") +
+        '<p class="pf-hint">Замените им старый ключ в env-файле на сервере.</p></div>'
+      : "") +
+      '<div class="pf-group"><p class="pf-group-title">Адрес приёма</p>' + codeBlock(url, "Скопировать адрес") + "</div>" +
+      '<div class="pf-group"><p class="pf-group-title">Пример отправки</p>' + codeBlock(curl) +
+      '<p class="pf-hint">Ключ — в переменной ORBITA_KEY. Повторная отправка безопасна: точка за тот же день перезаписывается.' +
+      (rotated ? "" : " Ключ виден только при создании и при смене — потеряли, смените.") + "</p></div>";
     sheet(ds.title, html, function (b) { bindCopy(b); });
   }
 
   function openAccess() {
     var d = state.dash;
-    var roles = { viewer: "Смотрит", editor: "Редактирует", owner: "Владелец" };
-    function membersHtml() {
-      return (d.members || []).map(function (m) {
-        if (m.creator) return '<div class="dsh-member"><span>' + esc(m.label) + '</span><span class="dsh-faint">Создатель</span></div>';
-        return '<div class="dsh-member"><span>' + esc(m.label) + '</span><span style="display:flex;gap:6px">' +
-          '<select data-mrole="' + esc(m.principal) + '"><option value="viewer"' + (m.role === "viewer" ? " selected" : "") + ">Смотрит</option>" +
-          '<option value="editor"' + (m.role === "editor" ? " selected" : "") + ">Редактирует</option></select>" +
-          '<button type="button" class="dsh-btn dsh-btn--icon" data-mdel="' + esc(m.principal) + '" aria-label="Убрать">✕</button></span></div>';
-      }).join("");
+    var sh = sheet("Доступ", "");
+    function roleSelect(value, attrs) {
+      return '<select class="pf-select kb-role" ' + attrs + ">" + [["viewer", "Смотрит"], ["editor", "Редактирует"]].map(function (r) {
+        return '<option value="' + r[0] + '"' + (r[0] === value ? " selected" : "") + ">" + r[1] + "</option>";
+      }).join("") + "</select>";
     }
-    var have = {};
-    (d.members || []).forEach(function (m) { have[m.principal] = 1; });
-    var cand = (d.candidates || []).filter(function (c) { return !have[c.principal]; });
-    var html = '<p class="dsh-muted">Владелец и админы организации видят все её дашборды. Остальным — доступ здесь.</p><div data-members>' + membersHtml() + "</div>" +
-      (cand.length ? '<div class="dsh-field dsh-field--row" style="margin-top:0.85rem"><select data-addp style="flex:1">' + cand.map(function (c) {
-        return '<option value="' + esc(c.principal) + '">' + esc(c.label) + "</option>";
-      }).join("") + '</select><select data-addr><option value="viewer">Смотрит</option><option value="editor">Редактирует</option></select>' +
-        '<button type="button" class="dsh-btn dsh-btn--primary" data-add="1">Добавить</button></div>' : "");
-    sheet("Доступ к дашборду", html, function (body, close) {
-      body.addEventListener("change", async function (e) {
-        var s = e.target.closest && e.target.closest("[data-mrole]");
-        if (!s) return;
-        try { await api("/dashboards/" + state.id + "/members", { method: "PUT", body: JSON.stringify({ principal: s.getAttribute("data-mrole"), role: s.value }) }); toast("Сохранено"); }
-        catch (err) { toast((err && err.message) || "Не удалось"); }
-      });
-      body.addEventListener("click", async function (e) {
-        var del = e.target.closest && e.target.closest("[data-mdel]");
-        var add = e.target.closest && e.target.closest("[data-add]");
-        try {
-          if (del) await api("/dashboards/" + state.id + "/members?principal=" + encodeURIComponent(del.getAttribute("data-mdel")), { method: "DELETE" });
-          else if (add) await api("/dashboards/" + state.id + "/members", { method: "PUT", body: JSON.stringify({ principal: body.querySelector("[data-addp]").value, role: body.querySelector("[data-addr]").value }) });
-          else return;
-          close();
-          await loadDash(state.id, true);
-          openAccess();
-        } catch (err) { toast((err && err.message) || "Не удалось"); }
-      });
+    function personRow(label, sub, right, isAll) {
+      return '<div class="pf-row pf-row--static"><span class="pf-avatar" aria-hidden="true">' + esc(isAll ? "В" : initials(label)) + "</span>" +
+        '<span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(label) + "</span>" +
+        (sub ? '<span class="pf-row-sub">' + esc(sub) + "</span>" : "") + "</span>" + right + "</span></div>";
+    }
+    function paint() {
+      var have = {};
+      (d.members || []).forEach(function (m) { have[m.principal] = 1; });
+      var cand = (d.candidates || []).filter(function (c) { return !have[c.principal]; });
+      var rows = (d.members || []).map(function (m) {
+        if (m.creator) return personRow(m.label, "", '<span class="pf-row-val">Создатель</span>');
+        return personRow(m.label, m.principal.indexOf("g:") === 0 ? "Отдел или команда" : "", roleSelect(m.role, 'data-acc="role" data-p="' + esc(m.principal) + '" aria-label="Роль"') +
+          '<button type="button" class="pf-del" data-acc="del" data-p="' + esc(m.principal) + '" aria-label="Убрать" title="Убрать">' + X_SVG + "</button>", m.principal === "all");
+      }).join("");
+      if (cand.length) {
+        var opts = '<option value="">Открыть: всем, отделу, человеку…</option>';
+        var all = cand.filter(function (c) { return c.kind === "all"; });
+        var groups = cand.filter(function (c) { return c.kind === "group"; });
+        var people = cand.filter(function (c) { return c.kind === "person"; });
+        all.forEach(function (c) { opts += '<option value="' + esc(c.principal) + '">' + esc(c.label) + "</option>"; });
+        if (groups.length) opts += '<optgroup label="Отделы и команды">' + groups.map(function (c) { return '<option value="' + esc(c.principal) + '">' + esc(c.label) + "</option>"; }).join("") + "</optgroup>";
+        if (people.length) opts += '<optgroup label="Люди">' + people.map(function (c) { return '<option value="' + esc(c.principal) + '">' + esc(c.label) + "</option>"; }).join("") + "</optgroup>";
+        rows += '<div class="pf-row pf-row--static pf-add-select"><span class="pf-ico pf-add-ico" aria-hidden="true">' + PLUS_SVG + "</span>" +
+          '<span class="pf-row-body org-add-row kb-add-row"><select class="pf-input" data-acc="add-who" aria-label="Кому открыть">' + opts + "</select>" +
+          roleSelect("viewer", 'data-acc="add-role" aria-label="Роль"') + "</span></div>";
+      }
+      sh.body.innerHTML = '<p class="kb-crumbs">Дашборд <b>«' + esc(d.title) + '»</b></p>' +
+        '<div class="pf-group"><p class="pf-group-title">Кому открыт<span class="org-save" data-save-mark></span></p><div class="pf-list">' + rows + "</div>" +
+        '<p class="pf-hint">Смотрит — видит цифры. Редактирует — ещё меняет виджеты и источники. Владелец и админы организации видят все её дашборды. Гости не входят во «Всю организацию».</p></div>';
+    }
+    function mark(kind, text) {
+      var m = sh.body.querySelector("[data-save-mark]");
+      if (!m) return;
+      m.textContent = text || "";
+      m.className = "org-save" + (kind ? " org-save--" + kind : "");
+    }
+    async function run(req) {
+      mark("", "Сохраняю…");
+      try {
+        await req();
+        var res = await api("/dashboards/" + state.id + "?period=" + state.period + "&tz=" + encodeURIComponent(TZ));
+        state.dash = d = res.dashboard;
+        paint();
+        mark("ok", "Сохранено ✓");
+      } catch (e) {
+        paint();
+        mark("err", (e && e.message) || "Не удалось");
+      }
+    }
+    function put(p, role) {
+      return run(function () { return api("/dashboards/" + state.id + "/members", { method: "PUT", body: JSON.stringify({ principal: p, role: role }) }); });
+    }
+    paint();
+    sh.body.addEventListener("change", function (e) {
+      var t = e.target, kind = t.getAttribute("data-acc");
+      if (kind === "role") put(t.getAttribute("data-p"), t.value);
+      else if (kind === "add-who" && t.value) {
+        var r = sh.body.querySelector('[data-acc="add-role"]');
+        put(t.value, r ? r.value : "viewer");
+      }
+    });
+    sh.body.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest('[data-acc="del"]');
+      if (!b) return;
+      run(function () { return api("/dashboards/" + state.id + "/members?principal=" + encodeURIComponent(b.getAttribute("data-p")), { method: "DELETE" }); });
     });
   }
 
-  // редактор виджета: вид из каталога, источник, заголовок, ширина, опции по схеме
+  // редактор виджета: вид из каталога, источник, заголовок, ширина, опции по схеме — подписи по-русски
+  var OPT_LABEL = {
+    agg: "Как считать", format: "Формат", unit: "Единица", period: "Период", series: "Серии", good: "Рост — это", spark: "Мини-график",
+    target: "Цель", goal_period: "Цель на", step: "Шаг", stacked: "Стопкой", highlight_last: "Выделить последний", top: "Сколько строк",
+    max_parts: "Частей не больше", label_field: "Колонка с названием", value_field: "Колонка с числом", layout: "Раскладка",
+    show_conversion: "Показывать конверсию", value_fields: "Колонки с числами", orientation: "Направление", fact_field: "Колонка «факт»",
+    plan_field: "Колонка «план»", warn_below: "Жёлтый ниже, %", bad_below: "Красный ниже, %", total_label: "Подпись итога",
+    x_field: "Колонка X", y_field: "Колонка Y", x_label: "Подпись X", y_label: "Подпись Y", highlight: "Выделить строку",
+    sort_field: "Сортировать по", sort_dir: "Порядок", search: "Поиск", status_filter: "Фильтр по колонке", totals: "Итоги по колонкам",
+    limit: "Строк на экране", row_field: "Строки — колонка", col_field: "Столбцы — колонка", cohort_field: "Колонка когорты",
+    step_field: "Колонка шага", state_field: "Колонка статуса", note_field: "Колонка подписи", text: "Текст", items: "Числа", columns: "Колонки",
+  };
+  var VALUE_LABEL = {
+    sum: "сумма", avg: "среднее", last: "последнее", min: "минимум", max: "максимум", count: "количество",
+    number: "число", money: "деньги", percent: "проценты", dash: "как на дашборде", "7d": "7 дней", "30d": "30 дней", "90d": "90 дней", "365d": "год",
+    up: "хорошо", down: "плохо", auto: "сам", hour: "час", day: "день", week: "неделя", month: "месяц", quarter: "квартал", year: "год",
+    weekday_hour: "день недели × час", date_series: "дата × серия", vertical: "вертикально", horizontal: "горизонтально", desc: "по убыванию", asc: "по возрастанию",
+  };
+  function optLabel(k) { return OPT_LABEL[k] || k; }
+  function valLabel(k, v) { return k === "agg" && v === "count" ? "количество точек" : VALUE_LABEL[v] || v; }
+
   async function openWidgetEditor(w) {
     var catalog;
     try { catalog = await ensureCatalog(); } catch (e) { toast("Каталог не загрузился"); return; }
@@ -938,48 +1055,53 @@
     var cur = { type: w ? w.kind : "number", dataset: w ? (w.dataset || "") : "", title: w ? w.title : "", width: w ? w.width : 0,
       options: w ? JSON.parse(JSON.stringify(w.options || {})) : {} };
     function spec() { return catalog.filter(function (c) { return c.type === cur.type; })[0]; }
+    function field(label, control) { return '<label class="pf-field"><span class="pf-field-label">' + esc(label) + "</span>" + control + "</label>"; }
     function dsOptions() {
       var sp = spec();
       if (!sp.source) return "";
       var ok = dss.filter(function (s) { return sp.source.indexOf(s.kind) >= 0; });
-      if (!ok.length) return '<p class="dsh-w-err">Нет подходящего источника (' + esc(sp.source.join(" или ")) + "). Его создаёт агент через MCP.</p>";
+      if (!ok.length) return '<div class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-sub pf-row-sub--wrap">Нет подходящего источника (' +
+        esc(sp.source.map(function (k) { return KIND_NAME[k] || k; }).join(" или ")) + "). Его создаёт агент через MCP.</span></span></span></div>";
       if (!cur.dataset || !ok.some(function (s) { return s.key === cur.dataset; })) cur.dataset = ok[0].key;
-      return '<label class="dsh-field">Источник<select data-f="dataset">' + ok.map(function (s) {
-        return '<option value="' + esc(s.key) + '"' + (s.key === cur.dataset ? " selected" : "") + ">" + esc(s.title) + " (" + esc(s.key) + ")</option>";
-      }).join("") + "</select></label>";
+      return field("Источник", '<select class="pf-input" data-f="dataset">' + ok.map(function (s) {
+        return '<option value="' + esc(s.key) + '"' + (s.key === cur.dataset ? " selected" : "") + ">" + esc(s.title) + "</option>";
+      }).join("") + "</select>");
     }
     function colsOf() {
       var ds = dss.filter(function (s) { return s.key === cur.dataset; })[0];
-      return ds && ds.schema && ds.schema.columns ? ds.schema.columns.map(function (c) { return c.name; }) : [];
+      return ds && ds.schema && ds.schema.columns ? ds.schema.columns : [];
     }
     function optField(name, o) {
-      var v = cur.options[name];
-      var label = name;
-      if (o.one_of) return '<label class="dsh-field">' + esc(label) + '<select data-o="' + name + '">' + o.one_of.map(function (x) {
-        return '<option value="' + esc(x) + '"' + ((v == null ? o.default : v) === x ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select></label>";
-      if (o.bool) return '<label class="dsh-field dsh-field--row"><input type="checkbox" data-o="' + name + '"' + ((v == null ? o.default : v) ? " checked" : "") + "> " + esc(label) + "</label>";
+      var v = cur.options[name], label = optLabel(name) + (o.required ? " *" : "");
+      if (o.one_of) return field(label, '<select class="pf-input" data-o="' + name + '">' + o.one_of.map(function (x) {
+        return '<option value="' + esc(x) + '"' + ((v == null ? o.default : v) === x ? " selected" : "") + ">" + esc(valLabel(name, x)) + "</option>"; }).join("") + "</select>");
+      if (o.bool) return '<label class="pf-row pf-row--static"><span class="pf-row-body"><span class="pf-row-text"><span class="pf-row-title">' + esc(optLabel(name)) + "</span></span>" +
+        '<input type="checkbox" class="pf-switch" data-o="' + name + '"' + ((v == null ? o.default : v) ? " checked" : "") + "></span></label>";
       if (o.column) {
         var cols = colsOf();
-        if (cols.length) return '<label class="dsh-field">' + esc(label) + (o.required ? " *" : "") + '<select data-o="' + name + '"><option value=""></option>' + cols.map(function (c) {
-          return '<option value="' + esc(c) + '"' + (v === c ? " selected" : "") + ">" + esc(c) + "</option>"; }).join("") + "</select></label>";
-        return '<label class="dsh-field">' + esc(label) + (o.required ? " *" : "") + '<input type="text" data-o="' + name + '" value="' + esc(v || "") + '" placeholder="имя колонки"></label>';
+        if (cols.length) return field(label, '<select class="pf-input" data-o="' + name + '"><option value="">—</option>' + cols.map(function (c) {
+          return '<option value="' + esc(c.name) + '"' + (v === c.name ? " selected" : "") + ">" + esc(c.label || c.name) + "</option>"; }).join("") + "</select>");
+        return field(label, '<input type="text" class="pf-input" data-o="' + name + '" value="' + esc(v || "") + '" placeholder="имя колонки латиницей">');
       }
-      if (o.columns_max || o.series_max) return '<label class="dsh-field">' + esc(label) + ' (через запятую)<input type="text" data-o="' + name + '" data-list="1" value="' + esc((v || []).join(", ")) + '"></label>';
-      if (o.list) return '<label class="dsh-field">' + esc(label) + ' (JSON)<textarea data-o="' + name + '" data-json="1">' + esc(v ? JSON.stringify(v, null, 1) : "") + "</textarea></label>";
-      if (o.int || o.number) return '<label class="dsh-field">' + esc(label) + (o.required ? " *" : "") + '<input type="number" step="any" data-o="' + name + '" value="' + esc(v == null ? (o.default == null ? "" : o.default) : v) + '"></label>';
-      if (o.text_max > 200) return '<label class="dsh-field">' + esc(label) + '<textarea data-o="' + name + '" style="font-family:inherit;font-size:0.875rem">' + esc(v || "") + "</textarea></label>";
-      return '<label class="dsh-field">' + esc(label) + '<input type="text" data-o="' + name + '" maxlength="' + (o.text_max || 80) + '" value="' + esc(v || "") + '"></label>';
+      if (o.columns_max || o.series_max) return field(optLabel(name) + " (через запятую)", '<input type="text" class="pf-input" data-o="' + name + '" data-list="1" value="' + esc((v || []).join(", ")) + '">');
+      if (o.list) return field(optLabel(name) + " (JSON)", '<textarea class="pf-input" rows="4" data-o="' + name + '" data-json="1" style="font-family:var(--font-mono);font-size:0.75rem">' + esc(v ? JSON.stringify(v, null, 1) : "") + "</textarea>");
+      if (o.int || o.number) return field(label, '<input type="number" step="any" class="pf-input" data-o="' + name + '" value="' + esc(v == null ? (o.default == null ? "" : o.default) : v) + '">');
+      if (o.text_max > 200) return field(label, '<textarea class="pf-input" rows="4" data-o="' + name + '">' + esc(v || "") + "</textarea>");
+      return field(label, '<input type="text" class="pf-input" data-o="' + name + '" maxlength="' + (o.text_max || 80) + '" value="' + esc(v || "") + '">');
     }
     function bodyHtml() {
       var sp = spec();
-      return '<div class="dsh-types">' + catalog.map(function (c) {
-        return '<button type="button" class="dsh-type' + (c.type === cur.type ? " is-on" : "") + '" data-type="' + c.type + '"><b>' + esc(c.label) + "</b><span>" + esc(c.about) + "</span></button>";
-      }).join("") + "</div>" + dsOptions() +
-        '<label class="dsh-field">Заголовок<input type="text" data-f="title" maxlength="60" value="' + esc(cur.title) + '" placeholder="по источнику"></label>' +
-        '<label class="dsh-field">Ширина (из 4)<select data-f="width">' + [1, 2, 3, 4].filter(function (n) { return n >= sp.min_width; }).map(function (n) {
-          return '<option value="' + n + '"' + ((cur.width || sp.min_width) === n ? " selected" : "") + ">" + n + "</option>"; }).join("") + "</select></label>" +
-        Object.keys(sp.options).map(function (k) { return optField(k, sp.options[k]); }).join("") +
-        '<div class="dsh-head-actions" style="justify-content:flex-end"><button type="button" class="dsh-btn dsh-btn--primary" data-save="1">' + (w ? "Сохранить" : "Добавить") + "</button></div>";
+      return '<div class="pf-group"><p class="pf-group-title">Вид</p><div class="dsh-types">' + catalog.map(function (c) {
+          return '<button type="button" class="dsh-type' + (c.type === cur.type ? " is-on" : "") + '" data-type="' + c.type + '"><b>' + esc(c.label) + "</b><span>" + esc(c.about) + "</span></button>";
+        }).join("") + "</div></div>" +
+        '<div class="pf-group"><div class="pf-list">' + dsOptions() +
+        field("Заголовок", '<input type="text" class="pf-input" data-f="title" maxlength="60" value="' + esc(cur.title) + '" placeholder="Как у источника">') +
+        field("Ширина", '<select class="pf-input" data-f="width">' + [1, 2, 3, 4].filter(function (n) { return n >= sp.min_width; }).map(function (n) {
+          return '<option value="' + n + '"' + ((cur.width || sp.min_width) === n ? " selected" : "") + ">" + (n === 4 ? "Во всю ширину" : n + " из 4") + "</option>"; }).join("") + "</select>") +
+        "</div></div>" +
+        (Object.keys(sp.options).length ? '<div class="pf-group"><p class="pf-group-title">Настройки</p><div class="pf-list">' +
+          Object.keys(sp.options).map(function (k) { return optField(k, sp.options[k]); }).join("") + "</div></div>" : "") +
+        '<button type="button" class="pf-btn" data-save="1">' + (w ? "Сохранить" : "Добавить виджет") + "</button>";
     }
     sheet(w ? "Виджет" : "Новый виджет", "", function (body, close) {
       function paint() { body.innerHTML = bodyHtml(); }
@@ -1021,14 +1143,14 @@
   }
   // ---------- действия ----------
 
-  async function action(name) {
+  async function action(name, el) {
     var d = state.dash;
     if (name === "connect") return openConnect();
     if (name === "create") return openCreate();
     if (name === "back") return backToList();
     if (name === "sources") return openSources();
     if (name === "access") return openAccess();
-    if (name === "menu") return openMenu();
+    if (name === "menu") return openMenu(el);
     if (name === "add-widget") return openWidgetEditor(null);
     if (name === "edit") { state.editing = true; return renderDash(); }
     if (name === "edit-done") { state.editing = false; return renderDash(); }
@@ -1080,7 +1202,7 @@
     var t = e.target.closest ? e.target : null;
     if (!t) return;
     var a = t.closest("[data-act]");
-    if (a) return action(a.getAttribute("data-act"));
+    if (a) return action(a.getAttribute("data-act"), a);
     var o = t.closest("[data-open]");
     if (o) return openDash(o.getAttribute("data-open"));
     var p = t.closest("[data-period]");

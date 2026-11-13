@@ -69,52 +69,22 @@ html[data-theme="light"] {
   color: var(--text-tertiary);
   font-size: 0.75rem;
 }
-.dsh-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  min-height: 34px;
-  padding: 0 0.75rem;
-  border-radius: 10px;
-  border: 1px solid var(--border-strong);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8125rem;
-  cursor: pointer;
+.dsh-back {
+  margin: 0 0 0.75rem;
 }
-.dsh-btn:hover {
-  background: var(--surface-muted);
-}
-.dsh-btn--primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--on-accent);
-}
-.dsh-btn--primary:hover {
-  background: var(--accent-pressed);
-}
-.dsh-btn--danger {
-  color: var(--danger-text);
-}
-.dsh-btn--icon {
-  width: 34px;
-  padding: 0;
-  justify-content: center;
-}
-.dsh-btn svg {
+.dsh-back svg,
+.dsh-head-actions svg {
   width: 16px;
   height: 16px;
   flex: none;
 }
-.dsh-back {
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-size: 0.875rem;
-  padding: 0.25rem 0;
-  cursor: pointer;
+.pj-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.dsh-icon-sm {
+  width: 32px;
+  height: 32px;
 }
 
 /* список */
@@ -201,26 +171,6 @@ html[data-theme="light"] {
 }
 
 /* дашборд */
-.dsh-seg {
-  display: inline-flex;
-  border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  overflow: hidden;
-}
-.dsh-seg button {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 0.75rem;
-  padding: 0 0.6rem;
-  min-height: 32px;
-  cursor: pointer;
-}
-.dsh-seg button.is-on {
-  background: var(--accent-muted);
-  color: var(--accent);
-}
 .dsh-board {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -425,10 +375,10 @@ html[data-theme="light"] {
 }
 .dsh-tools input,
 .dsh-tools select {
-  min-height: 30px;
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: transparent;
+  min-height: 32px;
+  border-radius: var(--ui-r);
+  border: 1px solid var(--ui-field-border);
+  background: var(--ui-field-bg);
   color: var(--text);
   font: inherit;
   font-size: 0.8125rem;
@@ -540,146 +490,43 @@ html[data-theme="light"] {
 }
 
 /* панели и окна */
-.dsh-sheet-ov {
-  position: fixed;
-  inset: 0;
-  z-index: 900;
-  background: color-mix(in srgb, var(--shadow-color) 55%, transparent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-}
-.dsh-sheet {
-  width: min(640px, 100%);
-  max-height: min(86vh, 900px);
-  overflow-y: auto;
-  border-radius: 16px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border);
-  padding: 1rem 1.15rem 1.15rem;
-  color: var(--text);
-}
-.dsh-sheet h2 {
-  margin: 0;
-  font-size: 1.0625rem;
-}
-.dsh-sheet-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 0.75rem;
-  margin: 0 0 0.85rem;
-}
-.dsh-sheet p {
-  line-height: 1.5;
-}
-.dsh-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  margin: 0 0 0.75rem;
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
-}
-.dsh-field input,
-.dsh-field select,
-.dsh-field textarea {
-  min-height: 36px;
-  border-radius: 10px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.875rem;
-  padding: 0.35rem 0.6rem;
-}
-.dsh-field textarea {
-  min-height: 90px;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-}
-.dsh-field--row {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
-}
-.dsh-code {
-  display: block;
-  white-space: pre-wrap;
-  word-break: break-all;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  background: var(--overlay-2);
-  border-radius: 10px;
-  padding: 0.6rem 0.7rem;
-  margin: 0.35rem 0 0.75rem;
-  color: var(--text);
-}
 .dsh-types {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 0.4rem;
-  margin: 0 0 0.85rem;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
 }
 .dsh-type {
   text-align: left;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  border-radius: var(--ui-r);
+  border: 1px solid transparent;
+  background: var(--ui-btn-bg);
   color: var(--text);
   font: inherit;
-  padding: 0.5rem 0.6rem;
+  padding: 8px 10px;
   cursor: pointer;
 }
+.dsh-type:hover {
+  background: var(--ui-btn-bg-hover);
+}
 .dsh-type.is-on {
-  border-color: var(--accent);
-  background: var(--accent-subtle);
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
 }
 .dsh-type b {
   display: block;
-  font-size: 0.8125rem;
+  font-size: var(--ui-font-sm);
+  font-weight: 600;
 }
 .dsh-type span {
-  display: block;
-  font-size: 0.6875rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 0.72rem;
+  line-height: 1.3;
   color: var(--text-tertiary);
   margin-top: 2px;
 }
-.dsh-src {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.7rem 0;
-  border-bottom: 1px solid var(--border);
-}
-.dsh-src:last-child {
-  border-bottom: 0;
-}
-.dsh-src-actions {
-  display: flex;
-  gap: 0.35rem;
-  flex-wrap: wrap;
-}
-.dsh-member {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.45rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.875rem;
-}
-.dsh-member select {
-  border-radius: 8px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8125rem;
-  min-height: 30px;
-}
-
 .dsh-tip {
   position: fixed;
   z-index: 950;
