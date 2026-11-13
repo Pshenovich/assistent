@@ -397,6 +397,19 @@ def _comet_model_for_request(openrouter_model: str | None) -> str:
     return m or "gpt-4o-mini"
 
 
+def _with_data_policy(payload: dict[str, Any]) -> dict[str, Any]:
+    """Только поставщики, которые не хранят запросы и не учатся на них (OpenRouter provider.data_collection).
+
+    Требование Google Limited Use: данные пользователей не должны попадать к ИИ, обучающемуся на них.
+    OPENROUTER_DATA_COLLECTION=allow — отключить (только для отладки).
+    """
+    if (os.getenv("OPENROUTER_DATA_COLLECTION", "deny").strip().lower() or "deny") == "allow":
+        return payload
+    out = dict(payload)
+    out["provider"] = {**dict(out.get("provider") or {}), "data_collection": "deny"}
+    return out
+
+
 def _post_json(
     url: str,
     api_key: str,
@@ -664,6 +677,7 @@ def _payload_for_comet(payload: dict[str, Any]) -> dict[str, Any]:
     out.pop("plugins", None)
     out.pop("modalities", None)
     out.pop("prompt_cache_key", None)  # параметр OpenAI через OpenRouter; Comet его не знает
+    out.pop("provider", None)  # маршрутизация поставщиков — только у OpenRouter
     messages: list[Any] = []
     for msg in out.get("messages") or []:
         if not isinstance(msg, dict):
@@ -778,7 +792,7 @@ def openrouter_generate_images(
             data = _post_json(
                 images_url,
                 or_key,
-                payload,
+                _with_data_policy(payload),
                 extra_headers=extra,
                 timeout=timeout,
             )
@@ -862,7 +876,7 @@ def _chat_completion(
             data = _post_json(
                 url,
                 or_key,
-                payload,
+                _with_data_policy(payload),
                 extra_headers=extra,
                 timeout=(_or_connect_timeout(), timeout),
             )
