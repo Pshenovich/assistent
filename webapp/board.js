@@ -3859,7 +3859,8 @@
           (info.failed
             ? '<div class="lb-miro-text">' + (info.offline
               ? "Miro не открывается с этого устройства — проверьте, открывается ли miro.com, и повторите."
-              : "Не удалось: " + info.failed + ". Эти остались заглушками — можно повторить или вставить картинку вручную.") + "</div>"
+              : "Не удалось: " + info.failed + ". Эти остались заглушками — можно повторить или вставить картинку вручную.") + "</div>" +
+              (info.why ? '<div class="lb-miro-note">Причина: ' + esc(info.why) + "</div>" : "")
             : "") +
           '<div class="lb-miro-acts">' + (info.failed ? '<button type="button" class="lb-miro-btn is-primary" data-miro="start">Повторить</button>' : "") +
           '<button type="button" class="lb-miro-btn" data-miro="close">' + (info.failed ? "Закрыть" : "Хорошо") + "</button></div>";
@@ -4030,26 +4031,57 @@
       });
     }
 
+    /** Причина неудачи по-человечески (одна, первая) — в окне итога. */
+    function miroWhy(err) {
+      if (!err) return "";
+      var where = err.where === "file" ? "файл картинки" : err.where === "pic" ? "картинка" : "Miro";
+      if (err instanceof TypeError) return where === "файл картинки" ? "не удалось скачать файл картинки (нет связи)" : "нет связи с Miro";
+      if (err.status) return where + " ответил " + err.status + (err.msg ? ": " + String(err.msg).slice(0, 140) : "");
+      return String(err.msg || err.message || "неизвестная ошибка").slice(0, 160);
+    }
+
     function miroFetch(slot, token) {
       var m = slot.miro;
       var api = "https://api.miro.com/v2/boards/" + encodeURIComponent(m.board) + "/resources/images/" +
         encodeURIComponent(m.res) + "?format=original&redirect=false";
+      // Ответ с ошибкой — код и текст Miro (их видно в окне: по ним понятно, что не так).
+      var fail = function (r, where) {
+        return r.text().then(function (t) {
+          var msg = "";
+          try {
+            var j = JSON.parse(t);
+            msg = String((j && (j.message || j.code || j.error)) || "");
+          } catch (_) {
+            msg = String(t || "").slice(0, 120);
+          }
+          throw { status: r.status, where: where, msg: msg };
+        }, function () {
+          throw { status: r.status, where: where, msg: "" };
+        });
+      };
       return fetch(api, { headers: { Authorization: "Bearer " + token }, credentials: "omit" })
         .then(function (r) {
           if (r.status === 401) throw { auth: true };
-          if (!r.ok) throw { status: r.status };
+          if (!r.ok) return fail(r, "api");
           return r.json();
         })
         .then(function (j) {
-          if (!j || !j.url) throw { status: 0 };
-          return fetch(j.url, { credentials: "omit" });
+          if (!j || !j.url) throw { status: 0, where: "api", msg: "Miro не дал ссылку на файл" };
+          return fetch(j.url, { credentials: "omit" }).catch(function (e) {
+            e.where = "file";
+            throw e;
+          });
         })
         .then(function (r) {
-          if (!r.ok) throw { status: r.status };
+          if (!r.ok) return fail(r, "file");
           return r.blob();
         })
         .then(function (blob) {
           return miroPicture(blob, m.crop);
+        })
+        .then(function (src) {
+          if (!src) throw { status: 0, where: "pic", msg: "файл не открылся как картинка" };
+          return src;
         });
     }
 
@@ -4107,6 +4139,8 @@
             run.failed++;
             // TypeError у fetch — до Miro не достучались (нет сети, блокировка), а не ошибка Miro.
             if (err instanceof TypeError) run.net++;
+            if (!run.why) run.why = miroWhy(err);
+            if (window.console) console.warn("Miro image", slot.miro && slot.miro.res, err);
           })
           .then(function () {
             if (!run.auth && !destroyed) renderMiro("run", run);
