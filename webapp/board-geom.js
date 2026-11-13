@@ -613,7 +613,8 @@
     if (routeCache.has(key)) return routeCache.get(key);
     var result = astar(s0, n0, s1, n1, rects);
     if (result) result = cleanPoly([p0].concat(result, [p1]));
-    if (routeCache.size > 400) routeCache.clear();
+    // Запас — на большую схему (сотни ломаных): при меньшем кэш сбрасывался посреди одной перерисовки.
+    if (routeCache.size > 3000) routeCache.clear();
     routeCache.set(key, result);
     return result;
   }

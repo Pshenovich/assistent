@@ -197,12 +197,12 @@
   // Доска и макет (kind=board): скрипты грузятся при первом открытии, а не с каждой страницей.
   // Порядок важен — board.js при загрузке берёт LeoBoardGeom/Blocks/Templates. Смена ?v= — только здесь (и в share.html).
   const BOARD_SCRIPTS = [
-    "/webapp/board-geom.js?v=20261105-design43",
+    "/webapp/board-geom.js?v=20261113-bigboard",
     "/webapp/board-blocks.js?v=20261103-boardtpl",
     "/webapp/board-templates.js?v=20261104-doctype2",
     "/webapp/board-import.js?v=20261112-miroframes",
     "/webapp/board-figma.js?v=20261111-comps2",
-    "/webapp/board.js?v=20261111-comps2",
+    "/webapp/board.js?v=20261113-bigboard",
   ];
   let boardScriptsPromise = null;
 

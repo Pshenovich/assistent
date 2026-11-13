@@ -27,8 +27,15 @@
   };
   var FONT_SIZES = [{ v: 12, t: "S" }, { v: 16, t: "M" }, { v: 24, t: "L" }, { v: 36, t: "XL" }];
   var WIDTHS = [1, 2, 4, 6];
-  var MIN_Z = 0.1;
+  // Отдаление — до 2%, как в Miro: вставленная из Miro схема бывает в десятки экранов шириной.
+  var MIN_Z = 0.02;
   var MAX_Z = 4;
+  // Текст мельче этого на экране (px) не рисуем — его всё равно не прочесть, а отрисовка тормозит.
+  var TINY_TEXT_PX = 3;
+  // Объекты дальше этого от края экрана (px) не рисуем; запас — чтобы при прокрутке не мигало.
+  var CULL_MARGIN_PX = 400;
+  // Выделено больше — рамка одна общая, без контура у каждого объекта.
+  var OUTLINE_MAX = 150;
   var GRID = 20;
   // Фигуры блок-схем (доска): капсула, цилиндр, треугольники, параллелограммы — как ромб, свой контур.
   var FLOW = ["pill", "cylinder", "triangle", "triangleDown", "parallelogram", "parallelogramL"];
@@ -1112,6 +1119,7 @@
     function flush() {
       frame = 0;
       if (destroyed) return;
+      obstCache = null;
       // Линии, прилипшие к изменённым блокам, тоже перерисовываем.
       if (dirty.size) {
         var extra = [];
@@ -1181,7 +1189,10 @@
       } else {
         stage.classList.remove("has-grid");
       }
-      stage.style.setProperty("--lb-zoom", String(view.z));
+      // Подписи фреймов — одного размера на экране при любом масштабе. Не через CSS-переменную на сцене:
+      // её смена пересчитывала стили всех объектов доски (на большой доске — десятки мс на шаг зума).
+      world.querySelectorAll(":scope > .lb-t-frame > .lb-frame-head").forEach(sizeFrameHead);
+      cullAll();
       // Меню открытой таблицы — обычного размера при любом масштабе.
       if (editing && editing.kind === "table") {
         var etb = tables.get(editing.id);
@@ -1306,18 +1317,35 @@
       return ln.type === "line" && ln.route === "elbow" && !ln.bend && !(ln.waypoints && ln.waypoints.length);
     }
 
-    function pathOptsOf(ln) {
-      if (!autoRouted(ln)) return null;
-      var own = {};
-      if (ln.start && ln.start.el) own[ln.start.el] = 1;
-      if (ln.end && ln.end.el) own[ln.end.el] = 1;
-      var obstacles = [];
+    // Препятствия ломаных — блоки доски. Считаем один раз на кадр, а не для каждой стрелки:
+    // на вставленной из Miro схеме (тысячи блоков, сотни стрелок) пересчёт на каждую стрелку
+    // делал прокрутку с выделением в полсекунды на шаг. Сбрасывается после текущей задачи,
+    // в начале отрисовки и при перерисовке блока.
+    var obstCache = null;
+    function allObstacles() {
+      if (obstCache) return obstCache;
+      var list = [];
       els.forEach(function (el) {
         if (!BOXED[el.type]) return;
         var b = G.elBounds(el, getEl);
-        if (b) obstacles.push({ x: b.x, y: b.y, w: b.w, h: b.h, own: !!own[el.id] });
+        if (b) list.push({ id: el.id, x: b.x, y: b.y, w: b.w, h: b.h, own: false });
       });
-      return { obstacles: obstacles };
+      obstCache = list;
+      Promise.resolve().then(function () {
+        obstCache = null;
+      });
+      return list;
+    }
+
+    function pathOptsOf(ln) {
+      if (!autoRouted(ln)) return null;
+      var a = ln.start && ln.start.el;
+      var b = ln.end && ln.end.el;
+      return {
+        obstacles: allObstacles().map(function (o) {
+          return o.id === a || o.id === b ? { x: o.x, y: o.y, w: o.w, h: o.h, own: true } : o;
+        }),
+      };
     }
 
     function linePathOf(ln, res) {
@@ -1342,6 +1370,7 @@
           '<path d="' + path.d + '" fill="none" stroke="' + stroke + '" stroke-width="' + sw + '"' +
           (dash ? ' stroke-dasharray="' + dash + '"' : "") + ' stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>' +
           heads + "</svg>",
+        bounds: G.boundsOf(path.poly || []),
         mid: G.labelPoint(el, path),
       };
     }
@@ -1380,6 +1409,8 @@
     }
 
     function renderNode(id) {
+      var prev = els.get(id);
+      if (!prev || BOXED[prev.type]) obstCache = null;
       renderNodeInner(id);
       var el = els.get(id);
       var node = nodes.get(id);
@@ -1389,6 +1420,65 @@
       if (node) node.style.visibility = penPath && penPath.editId === id ? "hidden" : "";
       // Скрытый в слоях — не показывается и не ловит клики.
       if (node) node.style.display = el && isHidden(el) ? "none" : "";
+      if (!el) {
+        drawnBounds.delete(id);
+        return;
+      }
+      if (!node) return;
+      // Линия запомнила границы сама (lineSvg — с обходом препятствий), остальное — по геометрии.
+      if (el.type !== "line") drawnBounds.set(id, G.elBounds(el, getEl));
+      // className перезаписан при отрисовке — отметки «не рисовать» ставим заново.
+      node.lbCulled = node.lbTiny = false;
+      cullOne(id, node, cullBox());
+    }
+
+    // ---- большая доска: рисуем только то, что видно ----
+    // Границы объекта на холсте (как нарисован в последний раз): отсечение и мини-карта.
+    var drawnBounds = new Map();
+    var cullBoxCache = null;
+
+    /** Видимая часть холста с запасом; null — сцена не показана (мерить нечего, рисуем всё). */
+    function cullBox() {
+      if (cullBoxCache) return cullBoxCache.box;
+      var r = stageRect();
+      var box = null;
+      if (r.width && r.height) {
+        var m = CULL_MARGIN_PX / view.z;
+        box = { x: -view.x / view.z - m, y: -view.y / view.z - m, w: r.width / view.z + 2 * m, h: r.height / view.z + 2 * m };
+      }
+      // Один замер на кадр: в цикле отрисовки сотни объектов, вид в нём не меняется.
+      cullBoxCache = { box: box };
+      Promise.resolve().then(function () {
+        cullBoxCache = null;
+      });
+      return box;
+    }
+
+    function cullOne(id, node, box) {
+      var el = els.get(id);
+      var isEd = !!(editing && editing.id === id);
+      var b = drawnBounds.get(id);
+      var off = !!(box && b && !isEd && !G.intersects(b, box));
+      if (node.lbCulled !== off) {
+        node.lbCulled = off;
+        node.classList.toggle("is-culled", off);
+      }
+      var tiny = false;
+      if (!off && el && !isEd && el.type !== "frame" && !BLOCKS[el.type]) {
+        tiny = (Number(el.style && el.style.fontSize) || 16) * view.z < TINY_TEXT_PX;
+      }
+      if (node.lbTiny !== tiny) {
+        node.lbTiny = tiny;
+        node.classList.toggle("is-tiny", tiny);
+      }
+    }
+
+    function cullAll() {
+      cullBoxCache = null;
+      var box = cullBox();
+      nodes.forEach(function (node, id) {
+        cullOne(id, node, box);
+      });
     }
 
     var SHADOW_RE = /^(-?\d{1,3}) (-?\d{1,3}) (\d{1,3}) (#[0-9a-f]{8})$/i;
@@ -1485,6 +1575,16 @@
         nm.classList.toggle("is-empty", !el.name);
       }
       head.querySelector(".lb-frame-size").textContent = Math.round(el.w) + " × " + Math.round(el.h);
+      sizeFrameHead(head);
+    }
+
+    function sizeFrameHead(head) {
+      var z = view.z || 1;
+      var fs = r2(13 / z) + "px";
+      if (head.style.fontSize !== fs) {
+        head.style.fontSize = fs;
+        head.style.paddingBottom = r2(6 / z) + "px";
+      }
     }
 
     function renderNodeInner(id) {
@@ -1512,6 +1612,7 @@
       var textEl;
       if (el.type === "line") {
         var ls = lineSvg(el);
+        drawnBounds.set(id, ls.bounds);
         node.style.cssText = "left:0;top:0;width:0;height:0";
         replaceShape(node, ls.svg);
         textEl = ensureText(node);
@@ -1652,7 +1753,8 @@
 
     /** Таблица и карточка растут по высоте под содержимое (без шага отмены). */
     function fitBlockHeight(el, node) {
-      if (!node.isConnected || !root.offsetWidth) return;
+      // За краем экрана блок не нарисован — высота 0, мерить нечего.
+      if (!node.isConnected || !root.offsetWidth || node.classList.contains("is-culled")) return;
       var h = Math.max(20, Math.ceil(node.offsetHeight));
       var w = el.type === "table" ? Math.max(el.w, Math.ceil(node.scrollWidth)) : el.w;
       if (Math.abs(h - el.h) > 1 || Math.abs(w - el.w) > 1) {
@@ -1845,6 +1947,13 @@
       }));
     }
 
+    /** Рамка большого выделения — по границам, как объекты нарисованы (без пересчёта ломаных). */
+    function drawnSelBounds(list) {
+      return G.unionBounds(list.map(function (el) {
+        return drawnBounds.get(el.id) || G.elBounds(el, getEl);
+      }));
+    }
+
     function renderOverlay() {
       if (destroyed) return;
       var r = stage.getBoundingClientRect();
@@ -1856,7 +1965,9 @@
       var list = selList();
       var single = list.length === 1 ? list[0] : null;
       var hs = 8;
-      list.forEach(function (el) {
+      // Выделено много (вставили схему, ⌘A) — контур у каждого не рисуем: общая рамка ниже.
+      var outlined = list.length > OUTLINE_MAX ? [] : list;
+      outlined.forEach(function (el) {
         if (el.type === "line") {
           var lp = linePathOf(el);
           h.push('<path ' + tr + ' d="' + lp.d + '" class="lb-sel-line" vector-effect="non-scaling-stroke"/>');
@@ -1947,7 +2058,7 @@
             h.push('<circle class="lb-handle lb-end" data-h="' + n[0] + '" cx="' + s.x + '" cy="' + s.y + '" r="' + 6 * hr + '"/>');
           });
         } else if (list.length > 1) {
-          var sb = selBounds();
+          var sb = list.length > OUTLINE_MAX ? drawnSelBounds(list) : selBounds();
           if (sb) {
             h.push(rectPath(sb, "lb-sel-group"));
             var a = toScreen(G.pt(sb.x, sb.y));
@@ -3933,8 +4044,16 @@
 
     function renderZoomBar() {
       var pct = Math.round(view.z * 100) + "%";
-      var stateKey = pct + showGrid + showMap + "|" + chatBadge + "|" + mode + "|" + layersOn();
-      if (zoomBar.getAttribute("data-pct") === stateKey) return;
+      var stateKey = String(showGrid) + showMap + "|" + chatBadge + "|" + mode + "|" + layersOn();
+      // Сменился только процент — меняем одну надпись: пересборка панели при каждом шаге зума
+      // пересчитывала стили всей доски (на большой доске — ~30 мс на шаг).
+      var pctBtn = zoomBar.querySelector(".lb-pct");
+      var pctText = pctBtn && pctBtn.firstChild;
+      if (zoomBar.getAttribute("data-pct") === stateKey && pctText && pctText.nodeType === 3) {
+        // Значение текстового узла, не textContent: замена узла пересчитывала стили всей доски.
+        if (pctText.nodeValue !== pct) pctText.nodeValue = pct;
+        return;
+      }
       zoomBar.setAttribute("data-pct", stateKey);
       zoomBar.innerHTML =
         (readOnly ? "" : '<button type="button" class="lb-btn' + (layersOn() ? " is-on" : "") + '" data-act="layers" title="Слои">' + icon("layers") + "</button>" +
@@ -10137,7 +10256,11 @@
       var r = stage.getBoundingClientRect();
       if (!r.width) return;
       var vw = { x: -view.x / view.z, y: -view.y / view.z, w: r.width / view.z, h: r.height / view.z };
-      var cb = contentBounds();
+      // Границы — как объекты нарисованы (drawnBounds): без пересчёта всех ломаных несколько раз в секунду.
+      var boundsOf = function (el) {
+        return drawnBounds.get(el.id) || G.elBounds(el, getEl);
+      };
+      var cb = G.unionBounds(Array.from(els.values()).map(boundsOf));
       var b = G.unionBounds([cb, vw]);
       var cw = minimap.width;
       var ch = minimap.height;
@@ -10151,7 +10274,7 @@
       var cs = getComputedStyle(root);
       var ink = cs.getPropertyValue("--lb-map-ink").trim() || "#888";
       sortedEls().forEach(function (el) {
-        var eb = G.elBounds(el, getEl);
+        var eb = boundsOf(el);
         if (!eb) return;
         ctx.fillStyle = el.type === "sticky" ? cs.getPropertyValue("--lb-sticky-" + ((el.style && el.style.fill) || "yellow")).trim() || ink : ink;
         if (el.type === "line" || el.type === "pen") {
@@ -10301,6 +10424,18 @@
 
     /** Блок для экспорта: прямоугольники, тексты и фото по тому, как он нарисован сейчас (координаты холста). */
     function blockPrims(el, colors, measure) {
+      // Блок за краем экрана не нарисован (cullAll) — на время замера показываем.
+      var node = nodes.get(el.id);
+      var culled = !!(node && node.classList.contains("is-culled"));
+      if (culled) node.classList.remove("is-culled");
+      try {
+        return blockPrimsDrawn(el, colors, measure);
+      } finally {
+        if (culled) node.classList.add("is-culled");
+      }
+    }
+
+    function blockPrimsDrawn(el, colors, measure) {
       var node = nodes.get(el.id);
       var out = [];
       if (!node) return out;

@@ -190,6 +190,17 @@ html:has(.leo-board) body {
   pointer-events: none;
 }
 
+/* Большая доска: объект далеко за краем экрана не рисуется (board.js, cullAll). */
+.lb-el.is-culled {
+  display: none;
+}
+
+/* Отдалили так, что текст меньше пары пикселей, — не рисуем его (как Miro). */
+.lb-el.is-tiny > .lb-text,
+.lb-el.is-tiny > .lb-author {
+  visibility: hidden;
+}
+
 .lb-shape {
   position: absolute;
   left: 0;
@@ -1430,9 +1441,10 @@ html:has(.leo-board) body {
   align-items: baseline;
   gap: 8px;
   max-width: 100%;
-  padding-bottom: calc(6px / var(--lb-zoom, 1));
+  /* Размер под масштаб ставит board.js (sizeFrameHead) — подпись одного размера на экране. */
+  padding-bottom: 6px;
   color: var(--lb-muted);
-  font-size: calc(13px / var(--lb-zoom, 1));
+  font-size: 13px;
   line-height: 1.2;
   white-space: nowrap;
   pointer-events: auto;
